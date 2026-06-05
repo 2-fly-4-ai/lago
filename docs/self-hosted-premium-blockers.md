@@ -8,6 +8,7 @@ This file records the remaining premium-adjacent features that still depend on c
 - frontend premium paywall flows no longer need Lago sales contact paths
 - Data API analytics fall back to local implementations when the hosted Data API is absent
 - AI no longer hard-fails when Mistral is not configured
+- AI can run against MiniMax via its OpenAI-compatible API without Lago-hosted dependencies
 - Segment tracking is disabled by default in self-hosted compose/deploy templates
 
 ## Remaining self-hosted setup requirements
@@ -48,14 +49,20 @@ If you want Segment enabled, set:
 
 ## AI
 
-AI remains the last major follow-up.
+Self-hosted AI now supports a real non-Lago provider path.
 
 Current behavior:
 
-- if Mistral/MCP is configured, Lago uses it
+- if `MINIMAX_API_KEY` is configured, Lago uses MiniMax via `https://api.minimax.io/v1/chat/completions`
+- if `LAGO_MCP_SERVER_URL` is also configured, MiniMax runs with Lago MCP tool access
+- otherwise, if Mistral/MCP is configured, Lago still uses Mistral
 - otherwise AI falls back to a safe null provider
 
-What is still missing:
+Required MiniMax configuration:
 
-- a real self-hosted/local or OpenAI-compatible default AI provider
-- clear provider selection/config docs for self-hosted deployments
+- `MINIMAX_API_KEY`
+- optional: `MINIMAX_MODEL` (defaults to `MiniMax-M3`)
+
+Implementation note:
+
+- AI conversation messages are now persisted locally for self-hosted history, so MiniMax does not depend on a hosted remote conversation store
