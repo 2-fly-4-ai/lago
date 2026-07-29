@@ -258,6 +258,20 @@ services:
         bundle install && ./scripts/start.webhook.worker.sh
       '
 
+  mcp-server:
+    image: lago-mcp-server_dev
+    pull_policy: never
+    container_name: lago_mcp_server_dev
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/mcp-server/Dockerfile
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      - LAGO_API_URL=http://api:3000/api/v1
+      - RUST_LOG=info
   api-analytics-worker:
     <<: *api_worker
     container_name: lago_api_analytics_worker_dev
