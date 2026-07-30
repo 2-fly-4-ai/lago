@@ -34,6 +34,15 @@
 
 ---
 
+## SERP fork documentation
+
+This fork participates in SERP's app-store platform. Before changing submodule pins, billing
+contracts, deployment composition, or provider integrations, read
+[`docs/README.md`](docs/README.md) and the root [`AGENTS.md`](AGENTS.md). Source and feature-branch
+presence do not prove that a customization is merged, deployed, or enabled.
+
+---
+
 ## Trusted by
 
 <p align="center">
