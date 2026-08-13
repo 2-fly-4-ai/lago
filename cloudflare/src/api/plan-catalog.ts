@@ -96,6 +96,46 @@ export async function handlePlanCatalogRequest(
   requestId: string,
 ): Promise<Response | null> {
   const url = new URL(request.url);
+  const fixedChargesMatch = url.pathname.match(/^\/api\/v1\/plans\/([^/]+)\/fixed_charges$/);
+  if (request.method === "GET" && fixedChargesMatch?.[1]) {
+    return listFixedCharges(
+      decodeURIComponent(fixedChargesMatch[1]),
+      url,
+      env.BILLING_DB,
+      auth,
+      requestId,
+    );
+  }
+  if (request.method === "POST" && fixedChargesMatch?.[1]) {
+    throw new ApiError(
+      422,
+      "unsupported_fixed_charge_mutation",
+      "Standalone fixed-charge creation requires the unported subscription unit-event workflow",
+    );
+  }
+  const fixedChargeMatch = url.pathname.match(
+    /^\/api\/v1\/plans\/([^/]+)\/fixed_charges\/([^/]+)$/,
+  );
+  if (request.method === "GET" && fixedChargeMatch?.[1] && fixedChargeMatch[2]) {
+    return showFixedCharge(
+      decodeURIComponent(fixedChargeMatch[1]),
+      decodeURIComponent(fixedChargeMatch[2]),
+      env.BILLING_DB,
+      auth,
+      requestId,
+    );
+  }
+  if (
+    (request.method === "PUT" || request.method === "DELETE") &&
+    fixedChargeMatch?.[1] &&
+    fixedChargeMatch[2]
+  ) {
+    throw new ApiError(
+      422,
+      "unsupported_fixed_charge_mutation",
+      "Fixed-charge update and deletion require the unported unit-event and billing workflow",
+    );
+  }
   if (request.method === "POST" && url.pathname === "/api/v1/plans") {
     return createPlan(request, env, auth, requestId);
   }
@@ -369,6 +409,60 @@ async function listPlans(
   );
 }
 
+async function listFixedCharges(
+  planCode: string,
+  url: URL,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const plan = await findPlan(database, auth.organizationId, planCode);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const page = positiveInteger(url.searchParams.get("page"), 1);
+  const perPage = Math.min(positiveInteger(url.searchParams.get("per_page"), 20), 100);
+  const offset = (page - 1) * perPage;
+  const count = await database
+    .prepare("SELECT COUNT(*) AS total FROM fixed_charges WHERE plan_id = ?")
+    .bind(plan.id)
+    .first<{ total: number }>();
+  const result = await database
+    .prepare(`${fixedChargeSelect()} WHERE fc.plan_id = ?
+              ORDER BY fc.created_at DESC, fc.id DESC LIMIT ? OFFSET ?`)
+    .bind(plan.id, perPage, offset)
+    .all<FixedChargeRow>();
+  return json(
+    {
+      fixed_charges: result.results.map(serializeFixedCharge),
+      meta: pagination(count?.total ?? 0, page, perPage),
+    },
+    { requestId },
+  );
+}
+
+async function showFixedCharge(
+  planCode: string,
+  fixedChargeCode: string,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const plan = await findPlan(database, auth.organizationId, planCode);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const charge = await database
+    .prepare(`${fixedChargeSelect()} WHERE fc.plan_id = ? AND fc.code = ? LIMIT 1`)
+    .bind(plan.id, fixedChargeCode)
+    .first<FixedChargeRow>();
+  if (!charge) throw new ApiError(404, "fixed_charge_not_found", "Fixed charge was not found");
+  return json({ fixed_charge: serializeFixedCharge(charge) }, { requestId });
+}
+
+function fixedChargeSelect(): string {
+  return `SELECT fc.id, fc.add_on_id, ao.code AS add_on_code, fc.code,
+                 fc.invoice_display_name, fc.charge_model, fc.properties_json, fc.units,
+                 fc.pay_in_advance, fc.prorated, fc.created_at
+          FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id`;
+}
+
 async function showPlan(
   code: string,
   database: D1Database,
@@ -578,13 +672,7 @@ async function serializePlan(
       updated_at: string;
     }>();
   const fixedCharges = await database
-    .prepare(
-      `SELECT fc.id, fc.add_on_id, ao.code AS add_on_code, fc.code,
-              fc.invoice_display_name, fc.charge_model, fc.properties_json, fc.units,
-              fc.pay_in_advance, fc.prorated, fc.created_at
-       FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id
-       WHERE fc.plan_id = ? ORDER BY fc.created_at, fc.id`,
-    )
+    .prepare(`${fixedChargeSelect()} WHERE fc.plan_id = ? ORDER BY fc.created_at, fc.id`)
     .bind(plan.id)
     .all<FixedChargeRow>();
   return {

@@ -93,6 +93,40 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
       },
     });
     expect((await api("/api/v1/plans", "POST", planPayload)).status).toBe(200);
+    await expect(apiJson("/api/v1/plans/fixed-plan/fixed_charges")).resolves.toMatchObject({
+      meta: { total_count: 1 },
+      fixed_charges: [
+        {
+          lago_add_on_id: addOnId,
+          code: "seat-fixed",
+          add_on_code: "seat",
+          units: "2.5",
+        },
+      ],
+    });
+    await expect(
+      apiJson("/api/v1/plans/fixed-plan/fixed_charges/seat-fixed"),
+    ).resolves.toMatchObject({
+      fixed_charge: {
+        lago_add_on_id: addOnId,
+        code: "seat-fixed",
+        charge_model: "standard",
+        properties: { amount: "100" },
+      },
+    });
+    for (const method of ["POST", "PUT", "DELETE"]) {
+      const path =
+        method === "POST"
+          ? "/api/v1/plans/fixed-plan/fixed_charges"
+          : "/api/v1/plans/fixed-plan/fixed_charges/seat-fixed";
+      const response = await api(path, method, {
+        fixed_charge: { invoice_display_name: "Mutation blocked" },
+      });
+      expect(response.status).toBe(422);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "unsupported_fixed_charge_mutation",
+      });
+    }
 
     expect(
       (

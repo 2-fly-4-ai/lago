@@ -319,6 +319,8 @@ Acceptance:
       charges. Fixed fees enter the exact recurring invoice pipeline before minimum commitments,
       coupons, taxes, credit notes, and wallets. Pay-in-advance charges, proration, unit events,
       inherited/overridden fixed charges and targeted taxes remain pending and fail explicitly.
+      Standalone fixed-charge list/show routes expose the same ledger; standalone create/update/
+      delete remain guarded because they require per-subscription unit-event and rebilling flows.
       Plan creation now emits transactional versioned outbox events, and scalar plan updates
       support the Rails-safe mutable subset for attached plans with optimistic concurrency.
       Charge/fixed-charge/commitment/tax/threshold graph replacement, deletion, one-time plans,
@@ -714,3 +716,8 @@ resource and mutation described.
   `2dfd5a73-70d2-49ef-a16a-5c89fa995fea`; no D1 migration was pending. Remote health/readiness
   returned `200`, unauthenticated charge list returned `401`, and the stack remains unseeded with
   no production route, provider secret, or enabled external-mutation flag.
+- 2026-08-14: Added Lago-compatible standalone fixed-charge list/show routes over the embedded plan
+  ledger. Standalone create/update/delete now return explicit unsupported errors rather than
+  bypassing required subscription unit-event and immediate-rebilling behavior. All 58
+  Workers-runtime tests pass across 18 files; the full local gate and 358.54 KiB dry-run bundle are
+  green.
