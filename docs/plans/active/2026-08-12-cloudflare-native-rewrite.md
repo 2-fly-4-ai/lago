@@ -634,3 +634,7 @@ resource and mutation described.
   rounded and precise shortfalls and verify coupon application occurs after the threshold is met.
   Commitment-specific tax targeting fails explicitly. All 50 Workers-runtime tests pass; the full
   local gate and 291.85 KiB deployment dry run are green.
+- 2026-08-14: Applied only migration `0013` to isolated development D1 and deployed Worker version
+  `ba847804-a588-4cbd-a411-ad8fe2686a34`. Follow-up migration inventory was empty; remote
+  health/readiness returned `200` and unauthenticated plan access returned `401`. The stack remains
+  unseeded with no production route, provider secret, or enabled provider mutation.
