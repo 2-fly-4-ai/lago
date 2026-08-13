@@ -282,10 +282,14 @@ Acceptance:
 
 ### M3: Invoice and rating engine
 
-- [ ] Implement versioned charge-model interfaces.
+- [x] Implement exact-decimal standard, graduated, package, volume, percentage, and graduated
+      percentage charge-model interfaces; dynamic/custom, filters, and advanced percentage
+      adjustments remain pending.
 - [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
       and rounding behavior according to feature disposition.
-- [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines.
+- [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
+      leased, idempotent recurring period-close finalization path now produces plan and usage lines;
+      manual draft/finalize, void, and broader retry transitions remain pending.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
 - [ ] Add deterministic replay and total reconciliation.
 
@@ -343,11 +347,15 @@ Acceptance:
 
 ### M7: Usage metering and analytics
 
-- [ ] Implement event validation, deduplication, batching, and immutable archive policy.
-- [ ] Port enabled aggregation and charge-expression behavior.
+- [x] Implement single-event validation, semantic deduplication/conflict detection, tenant-scoped
+      reads, Queue/outbox emission, and immutable R2 archives; batch ingestion remains pending.
+- [x] Port count, sum, maximum, latest, and add/remove unique-count aggregations plus six core
+      charge models; weighted/custom aggregation, expressions, filters, rounding configuration,
+      and advanced adjustments remain pending.
 - [ ] Replace the Ruby subprocess and Go/Rust native library with a restricted TypeScript parser or
       a supported precompiled Wasm module.
-- [ ] Add usage projections and reconciliation against invoice lines.
+- [ ] Add usage projections and reconciliation against invoice lines. A synchronous
+      Lago-compatible current-usage projection now covers bounded billing windows.
 - [ ] Select D1, Durable Object SQL, R2/Pipelines, or Analytics Engine by verified query and volume
       requirements; do not recreate Kafka/ClickHouse by habit.
 
@@ -498,3 +506,20 @@ resource and mutation described.
   remain disabled, no provider secrets were configured, and no production route or data was used.
 - 2026-08-13: Applied migrations `0001` through `0004` only and verified remote `/health`, D1-backed
   `/ready`, and the unauthenticated API boundary.
+- 2026-08-13: Added migration `0005_metered_usage.sql`, billable-metric and plan-charge APIs,
+  Lago-compatible event ingestion/list/show APIs, stable event request hashing, R2 event archives,
+  D1 deduplication, outbox/Queue publication, exact-decimal usage aggregation and six core rating
+  models, plus a bounded current-usage projection. All 29 Workers-runtime tests passed.
+- 2026-08-13: Replayed all five migrations from an empty local D1 persistence directory, applied
+  only migration `0005` to the isolated development D1 database, deployed Worker version
+  `a45278d4-30e7-48fc-bc46-5175eec4ade6`, and reverified remote `/health`, `/ready`, and the
+  unauthenticated `/api/v1/events` boundary. No remote tenant, API-key, plan, customer, event, or
+  payment data was seeded.
+- 2026-08-13: Added leased, Durable-Object-serialized recurring billing-period close, half-open
+  usage windows, exact-to-integer minor-unit rounding, plan and usage invoice lines, deterministic
+  invoices, one-time period advancement, and `invoice.finalized` outbox/Queue events. Replay tests
+  prove one cycle, invoice, and event while month-end renewal clamps July 31 to September 30.
+- 2026-08-13: Replayed all six migrations from an empty local D1 directory, passed 31
+  Workers-runtime tests and the full local gate, applied only migration `0006` to isolated
+  development D1, deployed version `f1dbf691-bce3-4e0f-80ca-cfc4d0ca954c`, and reverified health,
+  readiness, and authentication. The remote database remains unseeded.

@@ -11,6 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
+- Latest verified version: `f1dbf691-bce3-4e0f-80ca-cfc4d0ca954c`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -21,7 +22,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Kind | Name or ID | Binding | Purpose |
 | --- | --- | --- | --- |
 | D1 | `serp-dev-lago-native-d1` / `2f32f159-c269-46c6-a4dd-9e38477f5d25` | `BILLING_DB` | Synthetic billing state |
-| R2 | `serp-dev-lago-native-billing-artifacts` | `BILLING_ARTIFACTS` | Immutable provider webhook artifacts |
+| R2 | `serp-dev-lago-native-billing-artifacts` | `BILLING_ARTIFACTS` | Immutable provider webhook and usage-event artifacts |
 | Queue | `serp-dev-lago-domain-events` | `DOMAIN_EVENTS` | Domain events and reconciliation dispatch |
 | DLQ | `serp-dev-lago-domain-events-dlq` | none | Poison/retry exhaustion |
 | Durable Object | `BillingAccount` | `BILLING_ACCOUNTS` | Per-invoice command reservations |
@@ -30,16 +31,17 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron | `17 * * * *` | Worker scheduled handler | Hourly reconciliation dispatch |
 | Browser Rendering | account binding | `BROWSER` | Reserved for document milestone |
 
-Applied D1 migrations: `0001_foundation.sql` through
-`0004_subscription_idempotency.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0006_billing_cycles.sql`.
 
 ## Verified behavior
 
 - `GET /health` returned `200` with environment `development`.
 - `GET /ready` returned `200` after querying the remote D1 database.
 - `GET /api/v1/invoices` without a bearer key returned the expected `401` envelope.
-- No organization, API key, plan, customer, invoice, payment attempt, provider secret, or customer
-  data was seeded remotely.
+- `GET /api/v1/events` without a bearer key returned the expected `401` envelope after migration
+  `0005` and the latest deployment.
+- No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
+  provider secret, or customer data was seeded remotely.
 
 ## Cleanup procedure
 

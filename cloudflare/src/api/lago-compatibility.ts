@@ -3,6 +3,8 @@ import { sha256Hex } from "../auth/api-key";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
 import { createAuthorizeNetPaymentUrl } from "../providers/authorize-net";
+import { nextPeriodEnd } from "../billing/periods";
+import { handleMeteredUsageRequest } from "./metered-usage";
 
 type CustomerRow = {
   id: string;
@@ -66,6 +68,9 @@ export async function handleLagoCompatibilityRequest(
   requestId: string,
 ): Promise<Response | null> {
   const url = new URL(request.url);
+
+  const meteredUsageResponse = await handleMeteredUsageRequest(request, env, auth, requestId);
+  if (meteredUsageResponse) return meteredUsageResponse;
 
   if (request.method === "POST" && url.pathname === "/api/v1/customers") {
     return upsertCustomer(request, env.BILLING_DB, auth, requestId);
@@ -185,7 +190,7 @@ async function createSubscription(
 
   const now = new Date();
   const timestamp = now.toISOString();
-  const periodEnd = endOfPeriod(now, plan.interval).toISOString();
+  const periodEnd = nextPeriodEnd(now, plan.interval).toISOString();
   const commandKey = `${auth.organizationId}:${externalId}`;
   const subscriptionId = await deterministicUuid("subscription", commandKey);
   const invoiceId = await deterministicUuid("initial-invoice", commandKey);
@@ -630,26 +635,6 @@ function normalizeEmail(email: string | null): string | null {
 function positiveInteger(value: string | null, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function endOfPeriod(start: Date, interval: string): Date {
-  const result = new Date(start);
-  if (interval === "weekly") result.setUTCDate(result.getUTCDate() + 7);
-  else if (interval === "quarterly") addUtcMonthsClamped(result, 3);
-  else if (interval === "yearly") addUtcMonthsClamped(result, 12);
-  else if (interval === "one_time") return result;
-  else addUtcMonthsClamped(result, 1);
-  return result;
-}
-
-function addUtcMonthsClamped(value: Date, months: number): void {
-  const desiredDay = value.getUTCDate();
-  value.setUTCDate(1);
-  value.setUTCMonth(value.getUTCMonth() + months);
-  const lastDay = new Date(
-    Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + 1, 0),
-  ).getUTCDate();
-  value.setUTCDate(Math.min(desiredDay, lastDay));
 }
 
 function assertSubscriptionReplay(

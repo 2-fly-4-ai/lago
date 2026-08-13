@@ -1,6 +1,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { reconcileAuthorizeNetReceipt } from "../reconciliation/authorize-net";
 import type { DomainEvent } from "../domain-events";
+import { closeBillingPeriod } from "../billing/close-period";
 
 type ReconciliationParams = {
   schedule?: {
@@ -32,6 +33,38 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
       else deferredReceipts += 1;
     }
 
+    const dueBillingPeriods = await step.do("load due billing periods", async () => {
+      const cutoff = event.payload.schedule?.triggeredAt ?? Date.now();
+      const result = await this.env.BILLING_DB.prepare(
+        `SELECT id, current_period_end FROM subscriptions
+         WHERE status IN ('active', 'past_due') AND current_period_end IS NOT NULL
+           AND current_period_end <= ?
+         ORDER BY current_period_end, id LIMIT 100`,
+      )
+        .bind(new Date(cutoff).toISOString())
+        .all<{ id: string; current_period_end: string }>();
+      return [...result.results];
+    });
+
+    let closedBillingPeriods = 0;
+    for (const period of dueBillingPeriods) {
+      await step.do(
+        `close billing period ${period.id} ${period.current_period_end}`,
+        {
+          retries: { limit: 5, delay: "10 seconds", backoff: "exponential" },
+          timeout: "2 minutes",
+        },
+        async () =>
+          closeBillingPeriod(
+            this.env,
+            period.id,
+            period.current_period_end,
+            `schedule:${event.payload.schedule?.triggeredAt ?? "manual"}`,
+          ),
+      );
+      closedBillingPeriods += 1;
+    }
+
     const publishedEvents = await step.do(
       "publish pending outbox events",
       { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" }, timeout: "1 minute" },
@@ -45,6 +78,8 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
       pendingReceipts: pendingReceiptIds.length,
       processedReceipts,
       deferredReceipts,
+      dueBillingPeriods: dueBillingPeriods.length,
+      closedBillingPeriods,
       publishedEvents,
     };
   }
