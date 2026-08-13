@@ -1,7 +1,7 @@
 import type { AuthContext } from "../auth/api-key";
 import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
-import { ApiError, json } from "../http";
+import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../http";
 import { stableJson } from "../json";
 
 type SubscriptionRow = {
@@ -20,6 +20,7 @@ type SubscriptionRow = {
   canceled_at: string | null;
   terminated_at: string | null;
   created_at: string;
+  updated_at: string;
   version: number;
 };
 
@@ -39,10 +40,89 @@ export async function handleSubscriptionLifecycleRequest(
   if (request.method === "GET") {
     return showSubscription(externalId, url, env.BILLING_DB, auth, requestId);
   }
+  if (request.method === "PUT") {
+    return updateSubscription(externalId, request, env, auth, requestId);
+  }
   if (request.method === "DELETE") {
     return terminateSubscription(externalId, url, env, auth, requestId);
   }
   return null;
+}
+
+async function updateSubscription(
+  externalId: string,
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
+  if (!subscription)
+    throw new ApiError(404, "subscription_not_found", "Subscription was not found");
+  if (subscription.status !== "active" && subscription.status !== "past_due")
+    throw new ApiError(422, "subscription_not_updatable", "Subscription is not active");
+  const input = objectAt(await parseJsonObject(request), "subscription");
+  const unsupported = Object.keys(input).find((key) => key !== "name");
+  if (unsupported)
+    throw new ApiError(
+      422,
+      "unsupported_subscription_feature",
+      `${unsupported} update is not implemented by the Cloudflare subscription lifecycle`,
+    );
+  const name = input.name === undefined ? subscription.name : optionalString(input, "name");
+  const now = new Date().toISOString();
+  const event: DomainEvent = {
+    id: `subscription-updated:${subscription.id}:v${subscription.version + 1}`,
+    type: "subscription.updated",
+    version: 1,
+    aggregateType: "subscription",
+    aggregateId: subscription.id,
+    aggregateVersion: subscription.version + 1,
+    occurredAt: now,
+    causationId: requestId,
+    correlationId: requestId,
+    payload: {
+      organizationId: auth.organizationId,
+      subscriptionId: subscription.id,
+      externalSubscriptionId: externalId,
+      name,
+    },
+  };
+  const results = await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `UPDATE subscriptions SET name = ?, version = version + 1, updated_at = ?
+       WHERE id = ? AND organization_id = ? AND version = ?
+         AND status IN ('active', 'past_due')`,
+    ).bind(name, now, subscription.id, auth.organizationId, subscription.version),
+    env.BILLING_DB.prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type,
+        aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+        occurred_at, published_at)
+       SELECT ?, ?, ?, 1, 'subscription', ?, ?, ?, ?, ?, ?, NULL
+       FROM subscriptions WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
+    ).bind(
+      event.id,
+      auth.organizationId,
+      event.type,
+      subscription.id,
+      event.aggregateVersion,
+      requestId,
+      requestId,
+      stableJson(event.payload),
+      now,
+      subscription.id,
+      auth.organizationId,
+      subscription.version + 1,
+      now,
+    ),
+  ]);
+  if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+    throw new ApiError(409, "subscription_version_conflict", "Subscription changed concurrently");
+  await env.DOMAIN_EVENTS.send(event);
+  const updated = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
+  if (!updated) throw new ApiError(500, "persistence_error", "Subscription disappeared");
+  return json({ subscription: serializeSubscription(updated) }, { requestId });
 }
 
 async function listSubscriptions(
@@ -235,7 +315,7 @@ function subscriptionSelect(): string {
                  p.code AS plan_code, p.amount_minor AS plan_amount_minor,
                  p.currency AS plan_currency, s.name, s.status, s.started_at,
                  s.current_period_start, s.current_period_end, s.canceled_at,
-                 s.terminated_at, s.created_at, s.version
+                 s.terminated_at, s.created_at, s.updated_at, s.version
           FROM subscriptions s
           JOIN customers c ON c.id = s.customer_id
           JOIN plans p ON p.id = s.plan_id`;

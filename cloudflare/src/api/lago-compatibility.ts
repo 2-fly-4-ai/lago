@@ -2,6 +2,7 @@ import type { AuthContext } from "../auth/api-key";
 import { sha256Hex } from "../auth/api-key";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
+import { stableJson } from "../json";
 import { createAuthorizeNetPaymentUrl } from "../providers/authorize-net";
 import { nextPeriodEnd } from "../billing/periods";
 import { calculateCouponCredits } from "../billing/coupon-credits";
@@ -287,6 +288,7 @@ async function createSubscription(
   const database = env.BILLING_DB;
   const body = await parseJsonObject(request);
   const input = objectAt(body, "subscription");
+  rejectUnsupportedSubscriptionCreate(input, body);
   const externalCustomerId = requiredString(input, "external_customer_id");
   const externalId = requiredString(input, "external_id");
   const planCode = requiredString(input, "plan_code");
@@ -379,6 +381,39 @@ async function createSubscription(
     prepaidCreditMinor,
   );
   const totalDueMinor = plan.amount_minor + taxMinor - creditsMinor;
+  const subscriptionEvent = {
+    id: `subscription-created:${subscriptionId}:v1`,
+    type: "subscription.created",
+    aggregateType: "subscription",
+    aggregateId: subscriptionId,
+    payload: {
+      organizationId: auth.organizationId,
+      subscriptionId,
+      externalSubscriptionId: externalId,
+      externalCustomerId,
+      planCode,
+      startedAt: timestamp,
+    },
+  };
+  const invoiceEvent = {
+    id: `invoice-finalized:${invoiceId}:v1`,
+    type: "invoice.finalized",
+    aggregateType: "invoice",
+    aggregateId: invoiceId,
+    payload: {
+      organizationId: auth.organizationId,
+      subscriptionId,
+      billingCycleId: null,
+      couponsMinor,
+      taxMinor,
+      creditNotesMinor,
+      prepaidCreditMinor,
+      totalDueMinor,
+      currency: plan.currency,
+      periodStart: timestamp,
+      periodEnd,
+    },
+  };
 
   try {
     const statements: D1PreparedStatement[] = [
@@ -524,6 +559,29 @@ async function createSubscription(
         ),
       );
     }
+    for (const event of [subscriptionEvent, invoiceEvent]) {
+      statements.push(
+        database
+          .prepare(
+            `INSERT INTO outbox_events
+             (event_id, organization_id, event_type, event_version, aggregate_type,
+              aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+              occurred_at, published_at)
+             VALUES (?, ?, ?, 1, ?, ?, 1, ?, ?, ?, ?, NULL)`,
+          )
+          .bind(
+            event.id,
+            auth.organizationId,
+            event.type,
+            event.aggregateType,
+            event.aggregateId,
+            requestId,
+            requestId,
+            stableJson(event.payload),
+            timestamp,
+          ),
+      );
+    }
     const results = await database.batch(statements);
     for (let offset = 0; offset < couponCredits.length; offset += 1) {
       const update = results[4 + offset * 2];
@@ -549,7 +607,57 @@ async function createSubscription(
   const subscription = await findSubscription(database, auth.organizationId, externalId);
   if (!subscription) throw new ApiError(500, "persistence_error", "Subscription was not persisted");
   assertSubscriptionReplay(subscription, { externalCustomerId, name, planCode, requestHash });
+  await Promise.all([
+    env.DOMAIN_EVENTS.send({
+      ...subscriptionEvent,
+      version: 1,
+      aggregateVersion: 1,
+      occurredAt: timestamp,
+      causationId: requestId,
+      correlationId: requestId,
+    }),
+    env.DOMAIN_EVENTS.send({
+      ...invoiceEvent,
+      version: 1,
+      aggregateVersion: 1,
+      occurredAt: timestamp,
+      causationId: requestId,
+      correlationId: requestId,
+    }),
+  ]);
   return json({ subscription: serializeSubscription(subscription) }, { requestId });
+}
+
+function rejectUnsupportedSubscriptionCreate(
+  input: Record<string, unknown>,
+  body: Record<string, unknown>,
+): void {
+  for (const field of [
+    "billing_entity_code",
+    "billing_entity_id",
+    "billing_time",
+    "subscription_at",
+    "ending_at",
+    "progressive_billing_disabled",
+    "invoice_custom_section",
+    "activation_rules",
+    "payment_method",
+    "usage_thresholds",
+    "plan_overrides",
+  ]) {
+    if (input[field] === undefined || input[field] === null) continue;
+    throw new ApiError(
+      422,
+      "unsupported_subscription_feature",
+      `${field} is not implemented by the Cloudflare subscription lifecycle`,
+    );
+  }
+  if (body.authorization !== undefined)
+    throw new ApiError(
+      422,
+      "unsupported_subscription_feature",
+      "Payment authorization during subscription creation is not implemented",
+    );
 }
 
 function safeAddMinor(left: number, right: number): number {

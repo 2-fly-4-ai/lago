@@ -329,6 +329,10 @@ Acceptance:
       leased, idempotent recurring period-close finalization path now produces plan and usage lines,
       and unpaid finalized invoices can be shown with lines and voided idempotently; manual
       draft/finalize, paid-invoice credit/refund voids, and broader retry transitions remain pending.
+      Subscription creation now atomically records `subscription.created` and the initial
+      `invoice.finalized` outbox events with the monetary ledger. Name-only subscription update
+      emits a versioned `subscription.updated`; scheduling, calendar billing, ending rules,
+      overrides, activation, payment-method, custom-section, and threshold inputs fail explicitly.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
 - [ ] Add deterministic replay and total reconciliation.
 
@@ -725,3 +729,8 @@ resource and mutation described.
   `fbf90a5e-4546-4c95-922d-a45321df716a`; no D1 migration was pending. Remote health/readiness
   returned `200`, unauthenticated fixed-charge list returned `401`, and the stack remains unseeded
   with no production route, provider secret, or enabled external-mutation flag.
+- 2026-08-14: Added the missing transactional `subscription.created` and initial
+  `invoice.finalized` events to checkout creation, name-only optimistic subscription updates with
+  `subscription.updated`, and explicit guards for every unported subscription creation/update
+  option. All 59 Workers-runtime tests pass across 18 files; the full local gate and 364.46 KiB
+  dry-run bundle are green.

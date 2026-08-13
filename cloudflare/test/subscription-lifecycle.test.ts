@@ -37,10 +37,43 @@ beforeEach(async () => {
                'plan-lifecycle', 'subscription-external', 'active', ?, ?,
                '2026-09-13T00:00:00.000Z', 1, ?, ?)`,
     ).bind(now, now, now, now),
+    env.BILLING_DB.prepare(
+      `UPDATE subscriptions SET name = NULL, status = 'active', started_at = ?,
+       current_period_start = ?, current_period_end = '2026-09-13T00:00:00.000Z',
+       canceled_at = NULL, terminated_at = NULL, version = 1, updated_at = ?
+       WHERE id = 'subscription-lifecycle'`,
+    ).bind(now, now, now),
+    env.BILLING_DB.prepare(
+      `DELETE FROM outbox_events WHERE aggregate_id = 'subscription-lifecycle'
+       AND event_type IN ('subscription.updated', 'subscription.terminated')`,
+    ),
   ]);
 });
 
 describe("subscription lifecycle", () => {
+  it("updates only the safe name field with an optimistic outbox event", async () => {
+    const updated = await api("/api/v1/subscriptions/subscription-external", "PUT", {
+      subscription: { name: "Renamed subscription" },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      subscription: { external_id: "subscription-external", name: "Renamed subscription" },
+    });
+    const event = await env.BILLING_DB.prepare(
+      `SELECT event_type, aggregate_version FROM outbox_events
+       WHERE event_type = 'subscription.updated' AND aggregate_id = 'subscription-lifecycle'`,
+    ).first<{ event_type: string; aggregate_version: number }>();
+    expect(event).toEqual({ event_type: "subscription.updated", aggregate_version: 2 });
+
+    const guarded = await api("/api/v1/subscriptions/subscription-external", "PUT", {
+      subscription: { ending_at: "2026-09-01T00:00:00.000Z" },
+    });
+    expect(guarded.status).toBe(422);
+    await expect(guarded.json()).resolves.toMatchObject({
+      code: "unsupported_subscription_feature",
+    });
+  });
+
   it("lists, shows, and idempotently terminates only with explicit no-invoice choices", async () => {
     await expect(
       apiJson("/api/v1/subscriptions?external_customer_id=customer-external"),
@@ -82,8 +115,12 @@ describe("subscription lifecycle", () => {
   });
 });
 
-function api(path: string, method = "GET"): Promise<Response> {
-  return SELF.fetch(`https://lago.test${path}`, { method, headers });
+function api(path: string, method = "GET", body?: Record<string, unknown>): Promise<Response> {
+  return SELF.fetch(`https://lago.test${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
 }
 
 async function apiJson(path: string): Promise<unknown> {

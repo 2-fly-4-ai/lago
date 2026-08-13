@@ -91,6 +91,15 @@ describe("store-new Lago checkout compatibility", () => {
       plan_code: "serp-1-app-plan-monthly",
       status: "active",
     });
+    const initialEvents = await env.BILLING_DB.prepare(
+      `SELECT event_type, aggregate_type FROM outbox_events
+       WHERE event_type IN ('subscription.created', 'invoice.finalized')
+       ORDER BY event_type`,
+    ).all<{ event_type: string; aggregate_type: string }>();
+    expect(initialEvents.results).toEqual([
+      { event_type: "invoice.finalized", aggregate_type: "invoice" },
+      { event_type: "subscription.created", aggregate_type: "subscription" },
+    ]);
 
     const replaySubscription = await SELF.fetch("https://lago.test/api/v1/subscriptions", {
       method: "POST",
@@ -114,6 +123,22 @@ describe("store-new Lago checkout compatibility", () => {
     expect(conflictingSubscription.status).toBe(409);
     await expect(conflictingSubscription.json()).resolves.toMatchObject({
       code: "subscription_idempotency_conflict",
+    });
+
+    const unsupportedSubscription = await SELF.fetch("https://lago.test/api/v1/subscriptions", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({
+        subscription: {
+          ...subscriptionRequest.subscription,
+          external_id: "unsupported-subscription",
+          billing_time: "calendar",
+        },
+      }),
+    });
+    expect(unsupportedSubscription.status).toBe(422);
+    await expect(unsupportedSubscription.json()).resolves.toMatchObject({
+      code: "unsupported_subscription_feature",
     });
 
     const invoiceQuery = new URLSearchParams(invoiceListQuery).toString();
