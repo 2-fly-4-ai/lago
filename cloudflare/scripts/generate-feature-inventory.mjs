@@ -61,6 +61,18 @@ function gitTimestamp(path) {
   }
 }
 
+function primaryCheckout(repository) {
+  try {
+    const commonDirectory = execFileSync("git", ["-C", repository, "rev-parse", "--git-common-dir"], {
+      encoding: "utf8",
+    }).trim();
+    const absolute = resolve(repository, commonDirectory);
+    return dirname(absolute);
+  } catch {
+    return repository;
+  }
+}
+
 function gitFilesBelow(root, pathPrefix, predicate = () => true, sourcePrefix = pathPrefix) {
   try {
     return execFileSync(
@@ -144,9 +156,13 @@ function disposition(source) {
       };
 }
 
+const primaryDirectory = primaryCheckout(repositoryDirectory);
 const apiDirectory = resolve(process.env.LAGO_API_SOURCE ?? resolve(repositoryDirectory, "api"));
 const frontDirectory = resolve(
-  process.env.LAGO_FRONT_SOURCE ?? resolve(repositoryDirectory, "front"),
+  process.env.LAGO_FRONT_SOURCE ??
+    (statSafe(resolve(repositoryDirectory, "front", ".git"))
+      ? resolve(repositoryDirectory, "front")
+      : resolve(primaryDirectory, "front")),
 );
 const ruby = (path) => path.endsWith(".rb");
 const models = gitFilesBelow(apiDirectory, "app/models", ruby, "api/app/models");
@@ -172,9 +188,8 @@ const schedules = statSafe(clockFile)
 
 const inventory = {
   schemaVersion: 1,
-  generatedAt: gitTimestamp(repositoryDirectory),
+  generatedAt: gitTimestamp(apiDirectory),
   inputs: {
-    rootRevision: gitRevision(repositoryDirectory),
     apiRevision: gitRevision(apiDirectory),
     frontRevision: gitRevision(frontDirectory),
   },
