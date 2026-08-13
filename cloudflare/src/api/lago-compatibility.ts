@@ -21,6 +21,13 @@ import { handleSubscriptionLifecycleRequest } from "./subscription-lifecycle";
 import { handleCouponLedgerRequest } from "./coupon-ledger";
 import { handleWalletLedgerRequest } from "./wallet-ledger";
 import { handleCreditNoteLedgerRequest } from "./credit-note-ledger";
+import { handleTaxLedgerRequest } from "./tax-ledger";
+import { Decimal } from "../rating/decimal";
+import {
+  calculateManualTaxes,
+  manualTaxStatements,
+  totalManualTaxMinor,
+} from "../billing/manual-taxes";
 
 type CustomerRow = {
   id: string;
@@ -106,6 +113,9 @@ export async function handleLagoCompatibilityRequest(
   const creditNoteResponse = await handleCreditNoteLedgerRequest(request, env, auth, requestId);
   if (creditNoteResponse) return creditNoteResponse;
 
+  const taxResponse = await handleTaxLedgerRequest(request, env, auth, requestId);
+  if (taxResponse) return taxResponse;
+
   if (request.method === "POST" && url.pathname === "/api/v1/customers") {
     return upsertCustomer(request, env.BILLING_DB, auth, requestId);
   }
@@ -160,6 +170,7 @@ async function upsertCustomer(
 ): Promise<Response> {
   const body = await parseJsonObject(request);
   const input = objectAt(body, "customer");
+  rejectUnsupportedTaxTarget(input, "customer");
   const externalId = requiredString(input, "external_id");
   const name = optionalString(input, "name");
   const email = normalizeEmail(optionalString(input, "email"));
@@ -323,13 +334,21 @@ async function createSubscription(
     (total, credit) => safeAddMinor(total, credit.amountMinor),
     0,
   );
+  const invoiceTaxes = await calculateManualTaxes(
+    database,
+    auth.organizationId,
+    invoiceId,
+    [{ id: invoiceLineId, amountMinor: plan.amount_minor }],
+    couponsMinor,
+  );
+  const taxMinor = totalManualTaxMinor(invoiceTaxes);
   const creditNoteAllocations = await calculateCreditNoteAllocations(
     database,
     auth.organizationId,
     customer.id,
     invoiceId,
     plan.currency,
-    plan.amount_minor - couponsMinor,
+    plan.amount_minor + taxMinor - couponsMinor,
   );
   const creditNotesMinor = creditNoteAllocations.reduce(
     (total, allocation) => safeAddMinor(total, allocation.amountMinor),
@@ -341,7 +360,7 @@ async function createSubscription(
     customer.id,
     invoiceId,
     plan.currency,
-    plan.amount_minor - couponsMinor - creditNotesMinor,
+    plan.amount_minor + taxMinor - couponsMinor - creditNotesMinor,
   );
   const prepaidCreditMinor = walletAllocations.reduce(
     (total, allocation) => safeAddMinor(total, allocation.amountMinor),
@@ -351,7 +370,7 @@ async function createSubscription(
     safeAddMinor(couponsMinor, creditNotesMinor),
     prepaidCreditMinor,
   );
-  const totalDueMinor = plan.amount_minor - creditsMinor;
+  const totalDueMinor = plan.amount_minor + taxMinor - creditsMinor;
 
   try {
     const statements: D1PreparedStatement[] = [
@@ -384,7 +403,7 @@ async function createSubscription(
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
           finalized_at, created_at, updated_at, coupons_minor, prepaid_credit_minor,
           credit_notes_minor)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           invoiceId,
@@ -394,6 +413,7 @@ async function createSubscription(
           invoiceNumber,
           plan.currency,
           plan.amount_minor,
+          taxMinor,
           creditsMinor,
           totalDueMinor,
           timestamp,
@@ -462,6 +482,16 @@ async function createSubscription(
           ),
       );
     }
+    statements.push(
+      ...manualTaxStatements(
+        database,
+        auth.organizationId,
+        invoiceId,
+        plan.currency,
+        invoiceTaxes,
+        timestamp,
+      ),
+    );
     for (const allocation of walletAllocations) {
       statements.push(
         ...walletAllocationStatements(
@@ -520,6 +550,21 @@ function safeAddMinor(left: number, right: number): number {
     throw new ApiError(422, "invalid_minor_amount", "Coupon amount exceeds supported precision");
   }
   return total;
+}
+
+function rejectUnsupportedTaxTarget(input: Record<string, unknown>, target: string) {
+  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
+    throw new ApiError(
+      422,
+      "unsupported_tax_target",
+      `${target} tax targeting is not implemented; use organization-default taxes`,
+    );
+  if (input.tax_provider_code !== undefined)
+    throw new ApiError(
+      422,
+      "unsupported_tax_provider",
+      "External tax provider configuration is not implemented",
+    );
 }
 
 async function listInvoices(
@@ -598,6 +643,7 @@ async function showInvoice(
         fees: await serializeInvoiceLines(database, invoice),
         credits: await serializeCouponCredits(database, invoice),
         wallet_transactions: await serializeInvoiceWalletTransactions(database, invoice),
+        applied_taxes: await serializeInvoiceTaxes(database, invoice),
       },
     },
     { requestId },
@@ -861,31 +907,62 @@ async function serializeInvoiceLines(
       precise_amount_minor: string | null;
       created_at: string;
     }>();
-  return result.results.map((line) => ({
-    lago_id: line.id,
-    lago_invoice_id: invoice.id,
-    lago_charge_id: line.source_type === "charge" ? line.source_id : null,
-    lago_subscription_id: null,
-    item: {
-      type: line.line_type,
-      code: line.source_id,
-      name: line.description,
-      description: line.description,
-      invoice_display_name: line.description,
-      lago_item_id: line.source_id,
-      item_type: line.source_type,
-    },
-    pay_in_advance: false,
-    invoiceable: true,
-    amount_cents: line.amount_minor,
-    amount_currency: invoice.currency,
-    precise_amount_cents: line.precise_amount_minor ?? String(line.amount_minor),
-    unit_amount_cents: line.unit_amount_decimal,
-    units: line.quantity_decimal,
-    description: line.description,
-    payment_status: invoice.payment_status,
-    created_at: line.created_at,
-  }));
+  return Promise.all(
+    result.results.map(async (line) => {
+      const appliedTaxes = await serializeInvoiceLineTaxes(database, line.id);
+      return {
+        lago_id: line.id,
+        lago_invoice_id: invoice.id,
+        lago_charge_id: line.source_type === "charge" ? line.source_id : null,
+        lago_subscription_id: null,
+        item: {
+          type: line.line_type,
+          code: line.source_id,
+          name: line.description,
+          description: line.description,
+          invoice_display_name: line.description,
+          lago_item_id: line.source_id,
+          item_type: line.source_type,
+        },
+        pay_in_advance: false,
+        invoiceable: true,
+        amount_cents: line.amount_minor,
+        amount_currency: invoice.currency,
+        precise_amount_cents: line.precise_amount_minor ?? String(line.amount_minor),
+        taxes_amount_cents: totalSnapshotTaxMinor(appliedTaxes),
+        unit_amount_cents: line.unit_amount_decimal,
+        units: line.quantity_decimal,
+        description: line.description,
+        payment_status: invoice.payment_status,
+        applied_taxes: appliedTaxes,
+        created_at: line.created_at,
+      };
+    }),
+  );
+}
+
+async function serializeInvoiceLineTaxes(database: D1Database, invoiceLineId: string) {
+  const result = await database
+    .prepare(
+      `SELECT id, tax_id, tax_name, tax_code, tax_description, tax_rate,
+              amount_minor, precise_amount_minor, taxable_base_minor, currency, created_at
+       FROM invoice_line_taxes WHERE invoice_line_id = ? ORDER BY created_at, id`,
+    )
+    .bind(invoiceLineId)
+    .all<{
+      id: string;
+      tax_id: string;
+      tax_name: string;
+      tax_code: string;
+      tax_description: string | null;
+      tax_rate: string;
+      amount_minor: number;
+      precise_amount_minor: string;
+      taxable_base_minor: number;
+      currency: string;
+      created_at: string;
+    }>();
+  return result.results.map(serializeAppliedTax);
 }
 
 async function serializeCouponCredits(
@@ -927,6 +1004,68 @@ async function serializeCouponCredits(
     },
     invoice: { lago_id: invoice.id, payment_status: invoice.payment_status },
   }));
+}
+
+async function serializeInvoiceTaxes(database: D1Database, invoice: InvoiceRow) {
+  const result = await database
+    .prepare(
+      `SELECT id, tax_id, tax_name, tax_code, tax_description, tax_rate,
+              amount_minor, precise_amount_minor, taxable_base_minor, currency, created_at
+       FROM invoice_taxes WHERE invoice_id = ? ORDER BY created_at, id`,
+    )
+    .bind(invoice.id)
+    .all<{
+      id: string;
+      tax_id: string;
+      tax_name: string;
+      tax_code: string;
+      tax_description: string | null;
+      tax_rate: string;
+      amount_minor: number;
+      precise_amount_minor: string;
+      taxable_base_minor: number;
+      currency: string;
+      created_at: string;
+    }>();
+  return result.results.map(serializeAppliedTax);
+}
+
+function serializeAppliedTax(tax: {
+  id: string;
+  tax_id: string;
+  tax_name: string;
+  tax_code: string;
+  tax_description: string | null;
+  tax_rate: string;
+  amount_minor: number;
+  precise_amount_minor: string;
+  taxable_base_minor: number;
+  currency: string;
+  created_at: string;
+}) {
+  return {
+    lago_id: tax.id,
+    lago_tax_id: tax.tax_id,
+    tax_name: tax.tax_name,
+    tax_code: tax.tax_code,
+    tax_description: tax.tax_description,
+    tax_rate: Number(tax.tax_rate),
+    amount_cents: tax.amount_minor,
+    precise_amount_cents: tax.precise_amount_minor,
+    taxable_base_amount_cents: tax.taxable_base_minor,
+    amount_currency: tax.currency,
+    created_at: tax.created_at,
+  };
+}
+
+function totalSnapshotTaxMinor(taxes: Array<{ precise_amount_cents: string }>) {
+  const precise = taxes.reduce(
+    (sum, tax) => sum.add(Decimal.parse(tax.precise_amount_cents)),
+    Decimal.zero(),
+  );
+  const rounded = Number(precise.round());
+  if (!Number.isSafeInteger(rounded) || rounded < 0) throw new Error("invalid_tax_amount");
+  return rounded;
 }
 
 async function serializeInvoiceWalletTransactions(

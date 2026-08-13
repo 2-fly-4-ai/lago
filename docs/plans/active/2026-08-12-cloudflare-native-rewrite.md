@@ -299,6 +299,10 @@ Acceptance:
       create/list/show/terminate, idempotent top-up, priority/lot-ordered initial and renewal
       invoice consumption, and auditable unpaid-void recredit; paid/recurring/threshold top-ups and
       targeted allocation remain pending.
+      Organization-default manual percentage taxes now support create/list/show/update/terminate,
+      coupon-adjusted fee taxable bases, exact rounding, and immutable invoice/fee snapshots;
+      customer/plan/charge targeting, external providers, exemptions, tax identifiers, and
+      credit-note tax adjustments remain pending.
 - [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
       leased, idempotent recurring period-close finalization path now produces plan and usage lines,
       and unpaid finalized invoices can be shown with lines and voided idempotently; manual
@@ -612,3 +616,9 @@ resource and mutation described.
   `38220f20-14ff-49c5-95e5-4c1b1ec464e6`. Follow-up migration inventory was empty; remote
   health/readiness returned `200` and unauthenticated credit-note access returned `401`. The stack
   remains unseeded, no provider secrets were added, and payment/provider mutation flags remain off.
+- 2026-08-14: Added manual tax create/list/show/update/terminate APIs, active-code reuse after
+  termination, organization-default invoice application, exact coupon-adjusted taxable-base
+  allocation, Rails-compatible per-fee rounding, immutable invoice/fee tax snapshots, and
+  versioned outbox events. Customer/plan/charge targeting and provider tax modes fail explicitly.
+  All 48 Workers-runtime tests pass across 16 files; formatting, strict lint, inventory, generated
+  bindings, TypeScript, and the 288.08 KiB dry-run bundle are green.

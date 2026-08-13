@@ -94,7 +94,13 @@ async function createPlan(
     throw new ApiError(422, "validation_error", "amount_currency must be an ISO currency code");
   }
   const metadata = optionalObject(input.metadata, "metadata");
-  rejectNonEmpty(input, ["fixed_charges", "usage_thresholds", "tax_codes", "minimum_commitment"]);
+  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
+    throw new ApiError(
+      422,
+      "unsupported_tax_target",
+      "Plan tax targeting is not implemented; use organization-default taxes",
+    );
+  rejectNonEmpty(input, ["fixed_charges", "usage_thresholds", "minimum_commitment"]);
   const normalizedRequest = {
     amountMinor,
     billChargesMonthly: optionalBooleanInteger(input.bill_charges_monthly),

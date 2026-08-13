@@ -99,7 +99,7 @@ describe("Lago-compatible plan catalog", () => {
       },
     });
     expect(response.status).toBe(422);
-    await expect(response.json()).resolves.toMatchObject({ code: "unsupported_plan_feature" });
+    await expect(response.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
   });
 });
 

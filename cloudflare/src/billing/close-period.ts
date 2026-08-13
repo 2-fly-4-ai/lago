@@ -13,6 +13,7 @@ import {
   calculateCreditNoteAllocations,
   creditNoteAllocationStatements,
 } from "./credit-note-credits";
+import { calculateManualTaxes, manualTaxStatements, totalManualTaxMinor } from "./manual-taxes";
 
 type SubscriptionRow = {
   id: string;
@@ -233,13 +234,21 @@ export async function closeBillingPeriod(
       (total, credit) => safeAdd(total, credit.amountMinor),
       0,
     );
+    const invoiceTaxes = await calculateManualTaxes(
+      env.BILLING_DB,
+      subscription.organization_id,
+      invoiceId,
+      lines.map((line) => ({ id: line.id, amountMinor: line.rounded })),
+      couponsMinor,
+    );
+    const taxMinor = totalManualTaxMinor(invoiceTaxes);
     const creditNoteAllocations = await calculateCreditNoteAllocations(
       env.BILLING_DB,
       subscription.organization_id,
       subscription.customer_id,
       invoiceId,
       subscription.currency,
-      subtotal - couponsMinor,
+      subtotal + taxMinor - couponsMinor,
     );
     const creditNotesMinor = creditNoteAllocations.reduce(
       (total, allocation) => safeAdd(total, allocation.amountMinor),
@@ -251,14 +260,14 @@ export async function closeBillingPeriod(
       subscription.customer_id,
       invoiceId,
       subscription.currency,
-      subtotal - couponsMinor - creditNotesMinor,
+      subtotal + taxMinor - couponsMinor - creditNotesMinor,
     );
     const prepaidCreditMinor = walletAllocations.reduce(
       (total, allocation) => safeAdd(total, allocation.amountMinor),
       0,
     );
     const creditsMinor = safeAdd(safeAdd(couponsMinor, creditNotesMinor), prepaidCreditMinor);
-    const totalDue = subtotal - creditsMinor;
+    const totalDue = subtotal + taxMinor - creditsMinor;
     const nextEnd = nextPeriodEnd(new Date(periodEnd), subscription.interval).toISOString();
     const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
     const domainEvent: DomainEvent = {
@@ -276,6 +285,7 @@ export async function closeBillingPeriod(
         subscriptionId: subscription.id,
         billingCycleId: cycleId,
         couponsMinor,
+        taxMinor,
         creditNotesMinor,
         prepaidCreditMinor,
         totalDueMinor: totalDue,
@@ -291,7 +301,7 @@ export async function closeBillingPeriod(
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
           finalized_at, created_at, updated_at, coupons_minor, prepaid_credit_minor,
           credit_notes_minor)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         invoiceId,
         subscription.organization_id,
@@ -300,6 +310,7 @@ export async function closeBillingPeriod(
         invoiceNumber,
         subscription.currency,
         subtotal,
+        taxMinor,
         creditsMinor,
         totalDue,
         now,
@@ -370,6 +381,14 @@ export async function closeBillingPeriod(
           credit.expectedVersion,
         ),
       ]),
+      ...manualTaxStatements(
+        env.BILLING_DB,
+        subscription.organization_id,
+        invoiceId,
+        subscription.currency,
+        invoiceTaxes,
+        now,
+      ),
       ...creditNoteAllocations.flatMap((allocation) =>
         creditNoteAllocationStatements(
           env.BILLING_DB,
