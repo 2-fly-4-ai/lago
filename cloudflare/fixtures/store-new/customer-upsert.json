@@ -1,0 +1,20 @@
+{
+  "customer": {
+    "external_id": "store_safe_email_customer_example_com",
+    "email": "CUSTOMER@EXAMPLE.COM",
+    "name": "Synthetic Customer",
+    "billing_configuration": {
+      "payment_provider": "authorize_net",
+      "payment_provider_code": "paymentcloud-authorize-net",
+      "sync": true,
+      "sync_with_provider": true
+    },
+    "metadata": [
+      {
+        "key": "source",
+        "value": "store-safe",
+        "display_in_invoice": false
+      }
+    ]
+  }
+}

@@ -10,3 +10,9 @@
 /extra/ssl/nginx*
 /traefik/certs/*
 /deploy/letsencrypt
+/cloudflare/.dev.vars
+/cloudflare/.pnpm-store
+/cloudflare/.wrangler
+/cloudflare/dist
+/cloudflare/node_modules
+/cloudflare/node_modules.*

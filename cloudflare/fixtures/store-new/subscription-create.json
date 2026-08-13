@@ -1,0 +1,8 @@
+{
+  "subscription": {
+    "external_customer_id": "store_safe_email_customer_example_com",
+    "external_id": "store_safe_serp_1_app_plan_monthly_1",
+    "plan_code": "serp-1-app-plan-monthly",
+    "name": "One App"
+  }
+}
