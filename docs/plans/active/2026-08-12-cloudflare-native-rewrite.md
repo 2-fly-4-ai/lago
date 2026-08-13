@@ -310,8 +310,11 @@ Acceptance:
       outbox events, and plans support standard/graduated/volume recurring pay-in-arrears fixed
       charges. Fixed fees enter the exact recurring invoice pipeline before minimum commitments,
       coupons, taxes, credit notes, and wallets. Pay-in-advance charges, proration, unit events,
-      inherited/overridden fixed charges, targeted taxes, and plan mutation remain pending and fail
-      explicitly.
+      inherited/overridden fixed charges and targeted taxes remain pending and fail explicitly.
+      Plan creation now emits transactional versioned outbox events, and scalar plan updates
+      support the Rails-safe mutable subset for attached plans with optimistic concurrency.
+      Charge/fixed-charge/commitment/tax/threshold graph replacement, deletion, one-time plans,
+      trials, pay-in-advance, and monthly split billing remain explicit rejections.
 - [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
       leased, idempotent recurring period-close finalization path now produces plan and usage lines,
       and unpaid finalized invoices can be shown with lines and voided idempotently; manual
@@ -673,3 +676,9 @@ resource and mutation described.
   health/readiness returned `200` and unauthenticated add-on access returned `401`. The isolated
   stack remains unseeded, has no production route or provider secret, and payment, provider-read,
   and outbound-webhook flags all remain disabled.
+- 2026-08-14: Added transactional `plan.created` and versioned `plan.updated` outbox events plus
+  optimistic scalar plan updates. Attached plans allow only the Rails-safe mutable subset: name,
+  invoice display name, description, amount, and metadata. Catalog graph replacement, deletion,
+  one-time lifecycle, trials, pay-in-advance, and monthly split billing fail explicitly. All 56
+  Workers-runtime tests pass across 18 files; the full local gate and 340.06 KiB dry-run bundle are
+  green.

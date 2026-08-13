@@ -236,9 +236,13 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
       });
     }
 
-    for (const [suffix, planFields] of [
-      ["monthly-split", { interval: "yearly", bill_fixed_charges_monthly: true }],
-      ["one-time", { interval: "one_time" }],
+    for (const [suffix, planFields, expectedCode] of [
+      [
+        "monthly-split",
+        { interval: "yearly", bill_fixed_charges_monthly: true },
+        "unsupported_fixed_charge_feature",
+      ],
+      ["one-time", { interval: "one_time" }, "unsupported_plan_feature"],
     ] as const) {
       const response = await api("/api/v1/plans", "POST", {
         plan: {
@@ -258,7 +262,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
       });
       expect(response.status).toBe(422);
       await expect(response.json()).resolves.toMatchObject({
-        code: "unsupported_fixed_charge_feature",
+        code: expectedCode,
       });
     }
   });

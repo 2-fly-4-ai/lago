@@ -1,5 +1,6 @@
 import type { AuthContext } from "../auth/api-key";
 import { sha256Hex } from "../auth/api-key";
+import type { DomainEvent } from "../domain-events";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
@@ -23,7 +24,9 @@ type PlanRow = {
   metadata_json: string;
   request_sha256: string | null;
   pending_deletion: number;
+  version: number;
   created_at: string;
+  updated_at: string;
 };
 
 type ChargeRow = {
@@ -88,30 +91,41 @@ const INTERVALS = new Set(["weekly", "monthly", "quarterly", "yearly", "one_time
 
 export async function handlePlanCatalogRequest(
   request: Request,
-  database: D1Database,
+  env: Env,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (request.method === "POST" && url.pathname === "/api/v1/plans") {
-    return createPlan(request, database, auth, requestId);
+    return createPlan(request, env, auth, requestId);
   }
   if (request.method === "GET" && url.pathname === "/api/v1/plans") {
-    return listPlans(url, database, auth, requestId);
+    return listPlans(url, env.BILLING_DB, auth, requestId);
   }
   const match = url.pathname.match(/^\/api\/v1\/plans\/([^/]+)$/);
   if (request.method === "GET" && match?.[1]) {
-    return showPlan(decodeURIComponent(match[1]), database, auth, requestId);
+    return showPlan(decodeURIComponent(match[1]), env.BILLING_DB, auth, requestId);
+  }
+  if (request.method === "PUT" && match?.[1]) {
+    return updatePlan(decodeURIComponent(match[1]), request, env, auth, requestId);
+  }
+  if (request.method === "DELETE" && match?.[1]) {
+    throw new ApiError(
+      422,
+      "unsupported_plan_deletion",
+      "Plan deletion requires the unported subscription termination and invoice finalization workflow",
+    );
   }
   return null;
 }
 
 async function createPlan(
   request: Request,
-  database: D1Database,
+  env: Env,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
+  const database = env.BILLING_DB;
   const body = await parseJsonObject(request);
   const input = objectAt(body, "plan");
   const code = requiredString(input, "code");
@@ -120,11 +134,31 @@ async function createPlan(
   if (!INTERVALS.has(interval)) {
     throw new ApiError(422, "validation_error", `Unsupported interval: ${interval}`);
   }
+  if (interval === "one_time")
+    throw new ApiError(
+      422,
+      "unsupported_plan_feature",
+      "One-time plan lifecycle is not implemented",
+    );
   const amountMinor = nonNegativeInteger(input.amount_cents, "amount_cents");
   const currency = requiredString(input, "amount_currency").toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) {
     throw new ApiError(422, "validation_error", "amount_currency must be an ISO currency code");
   }
+  if (input.pay_in_advance === true)
+    throw new ApiError(
+      422,
+      "unsupported_plan_feature",
+      "Pay-in-advance plan billing is not implemented",
+    );
+  if (input.bill_charges_monthly === true)
+    throw new ApiError(
+      422,
+      "unsupported_plan_feature",
+      "Monthly split billing for usage charges is not implemented",
+    );
+  if (input.trial_period !== undefined && input.trial_period !== null)
+    throw new ApiError(422, "unsupported_plan_feature", "Trial-period billing is not implemented");
   const metadata = optionalObject(input.metadata, "metadata");
   if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
     throw new ApiError(
@@ -193,103 +227,116 @@ async function createPlan(
     currency,
   );
   const now = new Date().toISOString();
-  await database.batch([
-    database
-      .prepare(
-        `INSERT INTO plans
+  const event = planEvent("plan.created", planId, 1, auth.organizationId, requestId, now, {
+    code,
+  });
+  try {
+    await database.batch([
+      database
+        .prepare(
+          `INSERT INTO plans
          (id, organization_id, code, name, interval, amount_minor, currency, version,
           active, created_at, updated_at, invoice_display_name, description, trial_period,
           pay_in_advance, bill_charges_monthly, bill_fixed_charges_monthly, metadata_json,
           request_sha256, pending_deletion)
          VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-      )
-      .bind(
-        planId,
-        auth.organizationId,
-        code,
-        name,
-        interval,
-        amountMinor,
-        currency,
-        now,
-        now,
-        normalizedRequest.invoiceDisplayName,
-        normalizedRequest.description,
-        normalizedRequest.trialPeriod,
-        normalizedRequest.payInAdvance,
-        normalizedRequest.billChargesMonthly,
-        normalizedRequest.billFixedChargesMonthly,
-        stableJson(metadata),
-        requestHash,
-      ),
-    ...charges.map((charge) =>
-      database
-        .prepare(
-          `INSERT INTO charges
+        )
+        .bind(
+          planId,
+          auth.organizationId,
+          code,
+          name,
+          interval,
+          amountMinor,
+          currency,
+          now,
+          now,
+          normalizedRequest.invoiceDisplayName,
+          normalizedRequest.description,
+          normalizedRequest.trialPeriod,
+          normalizedRequest.payInAdvance,
+          normalizedRequest.billChargesMonthly,
+          normalizedRequest.billFixedChargesMonthly,
+          stableJson(metadata),
+          requestHash,
+        ),
+      ...charges.map((charge) =>
+        database
+          .prepare(
+            `INSERT INTO charges
            (id, organization_id, plan_id, billable_metric_id, code, invoice_display_name,
             charge_model, properties_json, invoiceable, pay_in_advance, prorated,
             min_amount_minor, version, active, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
-        )
-        .bind(
-          charge.id,
-          auth.organizationId,
-          planId,
-          charge.metricId,
-          charge.code,
-          charge.invoiceDisplayName,
-          charge.chargeModel,
-          stableJson(charge.properties),
-          charge.invoiceable,
-          charge.payInAdvance,
-          charge.prorated,
-          charge.minAmountMinor,
-          now,
-          now,
-        ),
-    ),
-    ...fixedCharges.map((charge) =>
-      database
-        .prepare(
-          `INSERT INTO fixed_charges
+          )
+          .bind(
+            charge.id,
+            auth.organizationId,
+            planId,
+            charge.metricId,
+            charge.code,
+            charge.invoiceDisplayName,
+            charge.chargeModel,
+            stableJson(charge.properties),
+            charge.invoiceable,
+            charge.payInAdvance,
+            charge.prorated,
+            charge.minAmountMinor,
+            now,
+            now,
+          ),
+      ),
+      ...fixedCharges.map((charge) =>
+        database
+          .prepare(
+            `INSERT INTO fixed_charges
            (id, organization_id, plan_id, add_on_id, code, invoice_display_name,
             charge_model, properties_json, units, pay_in_advance, prorated, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
-        )
-        .bind(
-          charge.id,
-          auth.organizationId,
-          planId,
-          charge.addOnId,
-          charge.code,
-          charge.invoiceDisplayName,
-          charge.chargeModel,
-          stableJson(charge.properties),
-          charge.units,
-          now,
-          now,
-        ),
-    ),
-    ...(minimumCommitment
-      ? [
-          database
-            .prepare(
-              `INSERT INTO minimum_commitments
+          )
+          .bind(
+            charge.id,
+            auth.organizationId,
+            planId,
+            charge.addOnId,
+            charge.code,
+            charge.invoiceDisplayName,
+            charge.chargeModel,
+            stableJson(charge.properties),
+            charge.units,
+            now,
+            now,
+          ),
+      ),
+      ...(minimumCommitment
+        ? [
+            database
+              .prepare(
+                `INSERT INTO minimum_commitments
                (id, organization_id, plan_id, amount_minor, invoice_display_name,
                 created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            )
-            .bind(
-              minimumCommitment.id,
-              auth.organizationId,
-              planId,
-              minimumCommitment.amountMinor,
-              minimumCommitment.invoiceDisplayName,
-              now,
-              now,
-            ),
-        ]
-      : []),
-  ]);
+              )
+              .bind(
+                minimumCommitment.id,
+                auth.organizationId,
+                planId,
+                minimumCommitment.amountMinor,
+                minimumCommitment.invoiceDisplayName,
+                now,
+                now,
+              ),
+          ]
+        : []),
+      outboxStatement(database, auth.organizationId, event),
+    ]);
+  } catch (error) {
+    const concurrent = await findPlan(database, auth.organizationId, code);
+    if (concurrent?.request_sha256 === requestHash)
+      return json({ plan: await serializePlan(database, concurrent) }, { requestId });
+    if (concurrent) throw new ApiError(422, "value_already_exist", "Plan code already exists");
+    throw error;
+  }
+  await env.DOMAIN_EVENTS.send(event);
   const plan = await findPlan(database, auth.organizationId, code);
   if (!plan) throw new ApiError(500, "persistence_error", "Plan was not persisted");
   return json({ plan: await serializePlan(database, plan) }, { requestId });
@@ -333,11 +380,166 @@ async function showPlan(
   return json({ plan: await serializePlan(database, plan) }, { requestId });
 }
 
+async function updatePlan(
+  code: string,
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const plan = await findPlan(env.BILLING_DB, auth.organizationId, code);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const input = objectAt(await parseJsonObject(request), "plan");
+  rejectUpdateGraph(input);
+  if (input.pay_in_advance === true)
+    throw new ApiError(
+      422,
+      "unsupported_plan_feature",
+      "Pay-in-advance plan billing is not implemented",
+    );
+  if (input.bill_charges_monthly === true || input.bill_fixed_charges_monthly === true)
+    throw new ApiError(422, "unsupported_plan_feature", "Monthly split billing is not implemented");
+  const attached = await env.BILLING_DB.prepare(
+    "SELECT id FROM subscriptions WHERE plan_id = ? LIMIT 1",
+  )
+    .bind(plan.id)
+    .first();
+  const nextCode = input.code === undefined ? plan.code : requiredString(input, "code");
+  const nextInterval =
+    input.interval === undefined ? plan.interval : requiredString(input, "interval");
+  if (!INTERVALS.has(nextInterval))
+    throw new ApiError(422, "validation_error", `Unsupported interval: ${nextInterval}`);
+  if (nextInterval === "one_time")
+    throw new ApiError(
+      422,
+      "unsupported_plan_feature",
+      "One-time plan lifecycle is not implemented",
+    );
+  const nextCurrency =
+    input.amount_currency === undefined
+      ? plan.currency
+      : requiredString(input, "amount_currency").toUpperCase();
+  if (!/^[A-Z]{3}$/.test(nextCurrency))
+    throw new ApiError(422, "validation_error", "amount_currency must be an ISO currency code");
+  if (input.trial_period !== undefined && input.trial_period !== null)
+    throw new ApiError(422, "unsupported_plan_feature", "Trial-period billing is not implemented");
+  if (nextCode !== plan.code) {
+    const duplicate = await findPlan(env.BILLING_DB, auth.organizationId, nextCode);
+    if (duplicate) throw new ApiError(422, "value_already_exist", "Plan code already exists");
+  }
+  if (
+    attached &&
+    (nextCode !== plan.code ||
+      nextInterval !== plan.interval ||
+      nextCurrency !== plan.currency ||
+      input.trial_period !== undefined ||
+      input.pay_in_advance !== undefined ||
+      input.bill_charges_monthly !== undefined ||
+      input.bill_fixed_charges_monthly !== undefined)
+  )
+    throw new ApiError(
+      422,
+      "plan_in_use",
+      "Only name, invoice display name, description, amount, and metadata can change on an in-use plan",
+    );
+  const next = {
+    code: nextCode,
+    name: input.name === undefined ? plan.name : requiredString(input, "name"),
+    invoiceDisplayName:
+      input.invoice_display_name === undefined
+        ? plan.invoice_display_name
+        : optionalString(input, "invoice_display_name"),
+    description:
+      input.description === undefined ? plan.description : optionalString(input, "description"),
+    interval: nextInterval,
+    amountMinor:
+      input.amount_cents === undefined
+        ? plan.amount_minor
+        : nonNegativeInteger(input.amount_cents, "amount_cents"),
+    currency: nextCurrency,
+    trialPeriod:
+      input.trial_period === undefined
+        ? plan.trial_period
+        : optionalNonNegativeNumber(input.trial_period, "trial_period"),
+    payInAdvance:
+      input.pay_in_advance === undefined
+        ? plan.pay_in_advance
+        : booleanInteger(input.pay_in_advance, false),
+    billChargesMonthly:
+      input.bill_charges_monthly === undefined
+        ? plan.bill_charges_monthly
+        : optionalBooleanInteger(input.bill_charges_monthly),
+    billFixedChargesMonthly:
+      input.bill_fixed_charges_monthly === undefined
+        ? plan.bill_fixed_charges_monthly
+        : optionalBooleanInteger(input.bill_fixed_charges_monthly),
+    metadata:
+      input.metadata === undefined
+        ? parseObject(plan.metadata_json)
+        : optionalObject(input.metadata, "metadata"),
+  };
+  const now = new Date().toISOString();
+  const event = planEvent(
+    "plan.updated",
+    plan.id,
+    plan.version + 1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: next.code },
+  );
+  try {
+    const results = await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE plans SET code = ?, name = ?, invoice_display_name = ?, description = ?,
+         interval = ?, amount_minor = ?, currency = ?, trial_period = ?, pay_in_advance = ?,
+         bill_charges_monthly = ?, bill_fixed_charges_monthly = ?, metadata_json = ?,
+         version = version + 1, updated_at = ?
+         WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?`,
+      ).bind(
+        next.code,
+        next.name,
+        next.invoiceDisplayName,
+        next.description,
+        next.interval,
+        next.amountMinor,
+        next.currency,
+        next.trialPeriod,
+        next.payInAdvance,
+        next.billChargesMonthly,
+        next.billFixedChargesMonthly,
+        stableJson(next.metadata),
+        now,
+        plan.id,
+        auth.organizationId,
+        plan.version,
+      ),
+      conditionalOutboxStatement(
+        env.BILLING_DB,
+        auth.organizationId,
+        event,
+        plan.id,
+        plan.version + 1,
+        now,
+      ),
+    ]);
+    if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+      throw new ApiError(409, "plan_version_conflict", "Plan changed concurrently");
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(422, "value_already_exist", "Plan code already exists");
+  }
+  await env.DOMAIN_EVENTS.send(event);
+  const updated = await findPlan(env.BILLING_DB, auth.organizationId, next.code);
+  if (!updated) throw new ApiError(500, "persistence_error", "Plan disappeared");
+  return json({ plan: await serializePlan(env.BILLING_DB, updated) }, { requestId });
+}
+
 function planSelect(): string {
   return `SELECT id, code, name, invoice_display_name, description, interval, amount_minor,
                  currency, trial_period, pay_in_advance, bill_charges_monthly,
                  bill_fixed_charges_monthly, metadata_json, request_sha256,
-                 pending_deletion, created_at FROM plans`;
+                 pending_deletion, version, created_at, updated_at FROM plans`;
 }
 
 async function findPlan(database: D1Database, organizationId: string, code: string) {
@@ -711,6 +913,109 @@ function rejectNonEmpty(input: Record<string, unknown>, fields: string[]): void 
       `${field} is not implemented by the Cloudflare plan catalog`,
     );
   }
+}
+
+function rejectUpdateGraph(input: Record<string, unknown>): void {
+  for (const field of [
+    "charges",
+    "fixed_charges",
+    "minimum_commitment",
+    "tax_codes",
+    "usage_thresholds",
+    "cascade_updates",
+  ]) {
+    if (input[field] === undefined) continue;
+    throw new ApiError(
+      422,
+      "unsupported_plan_update",
+      `${field} mutation is not implemented by the Cloudflare plan catalog`,
+    );
+  }
+}
+
+function planEvent(
+  type: string,
+  id: string,
+  version: number,
+  organizationId: string,
+  correlationId: string,
+  occurredAt: string,
+  payload: Record<string, unknown>,
+): DomainEvent {
+  return {
+    id: `${type.replaceAll(".", "-")}:${id}:v${version}`,
+    type,
+    version: 1,
+    aggregateType: "plan",
+    aggregateId: id,
+    aggregateVersion: version,
+    occurredAt,
+    causationId: correlationId,
+    correlationId,
+    payload: { organizationId, ...payload },
+  };
+}
+
+function outboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+    );
+}
+
+function conditionalOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+  planId: string,
+  expectedVersion: number,
+  expectedUpdatedAt: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL FROM plans
+       WHERE id = ? AND organization_id = ? AND active = 1 AND version = ? AND updated_at = ?`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+      planId,
+      organizationId,
+      expectedVersion,
+      expectedUpdatedAt,
+    );
 }
 
 function hasEntries(value: unknown): boolean {

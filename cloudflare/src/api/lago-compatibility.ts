@@ -97,7 +97,7 @@ export async function handleLagoCompatibilityRequest(
 ): Promise<Response | null> {
   const url = new URL(request.url);
 
-  const planResponse = await handlePlanCatalogRequest(request, env.BILLING_DB, auth, requestId);
+  const planResponse = await handlePlanCatalogRequest(request, env, auth, requestId);
   if (planResponse) return planResponse;
 
   const addOnResponse = await handleAddOnLedgerRequest(request, env, auth, requestId);

@@ -13,6 +13,8 @@ remaining Lago feature inventory is dispositioned and ported.
   pay-in-arrears fixed charges, payment attempts, outbox state, and webhook receipt metadata;
   plan-level minimum commitments are reconciled as auditable period true-up lines after recurring
   subscription, usage, and fixed-charge fees.
+- Plan catalog: idempotent creation and optimistic scalar updates with transactional versioned
+  outbox events. Catalog graph replacement and destructive plan lifecycle remain guarded.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.

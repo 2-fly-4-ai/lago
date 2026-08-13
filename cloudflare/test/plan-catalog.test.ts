@@ -102,6 +102,110 @@ describe("Lago-compatible plan catalog", () => {
     await expect(response.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
   });
 
+  it("updates safe scalar fields with an outbox event and guards graph/deletion workflows", async () => {
+    const payload = {
+      plan: {
+        name: "Mutable",
+        code: "mutable",
+        interval: "monthly",
+        amount_cents: 100,
+        amount_currency: "USD",
+        metadata: { version: 1 },
+      },
+    };
+    const created = await api("/api/v1/plans", "POST", payload);
+    const planId = (await created.json<{ plan: { lago_id: string } }>()).plan.lago_id;
+    const updated = await api("/api/v1/plans/mutable", "PUT", {
+      plan: {
+        code: "mutable-renamed",
+        name: "Mutable renamed",
+        invoice_display_name: "Mutable invoice",
+        description: "Updated safely",
+        amount_cents: 250,
+        amount_currency: "EUR",
+        interval: "quarterly",
+        metadata: { version: 2 },
+      },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      plan: {
+        lago_id: planId,
+        code: "mutable-renamed",
+        name: "Mutable renamed",
+        invoice_display_name: "Mutable invoice",
+        description: "Updated safely",
+        amount_cents: 250,
+        amount_currency: "EUR",
+        interval: "quarterly",
+        metadata: { version: 2 },
+      },
+    });
+    expect((await api("/api/v1/plans/mutable")).status).toBe(404);
+    const events = await env.BILLING_DB.prepare(
+      `SELECT event_type, aggregate_version FROM outbox_events
+       WHERE aggregate_type = 'plan' AND aggregate_id = ? ORDER BY aggregate_version`,
+    )
+      .bind(planId)
+      .all<{ event_type: string; aggregate_version: number }>();
+    expect(events.results).toEqual([
+      { event_type: "plan.created", aggregate_version: 1 },
+      { event_type: "plan.updated", aggregate_version: 2 },
+    ]);
+
+    const graph = await api("/api/v1/plans/mutable-renamed", "PUT", {
+      plan: { charges: [] },
+    });
+    expect(graph.status).toBe(422);
+    await expect(graph.json()).resolves.toMatchObject({ code: "unsupported_plan_update" });
+    const deleted = await api("/api/v1/plans/mutable-renamed", "DELETE");
+    expect(deleted.status).toBe(422);
+    await expect(deleted.json()).resolves.toMatchObject({ code: "unsupported_plan_deletion" });
+  });
+
+  it("limits attached-plan updates to Rails-safe mutable scalar fields", async () => {
+    await expect(
+      api("/api/v1/plans", "POST", {
+        plan: {
+          name: "Attached",
+          code: "attached",
+          interval: "monthly",
+          amount_cents: 100,
+          amount_currency: "USD",
+        },
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+    const now = "2026-08-14T00:00:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, currency, metadata_json, created_at, updated_at)
+         VALUES ('customer-attached-plan', 'org-plan-catalog', 'customer-attached-plan',
+                 'USD', '{}', ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, version,
+          created_at, updated_at)
+         SELECT 'subscription-attached-plan', organization_id, 'customer-attached-plan', id,
+                'subscription-attached-plan', 'active', 1, ?, ?
+         FROM plans WHERE organization_id = 'org-plan-catalog' AND code = 'attached' AND active = 1`,
+      ).bind(now, now),
+    ]);
+    const safe = await api("/api/v1/plans/attached", "PUT", {
+      plan: { name: "Attached renamed", amount_cents: 150, metadata: { safe: true } },
+    });
+    expect(safe.status).toBe(200);
+    await expect(safe.json()).resolves.toMatchObject({
+      plan: { name: "Attached renamed", amount_cents: 150, metadata: { safe: true } },
+    });
+    const unsafe = await api("/api/v1/plans/attached", "PUT", {
+      plan: { interval: "yearly" },
+    });
+    expect(unsafe.status).toBe(422);
+    await expect(unsafe.json()).resolves.toMatchObject({ code: "plan_in_use" });
+  });
+
   it("creates and serializes a minimum commitment while rejecting commitment tax targeting", async () => {
     const payload = {
       plan: {
