@@ -292,6 +292,10 @@ Acceptance:
       versioned outbox events; attached metrics allow only name/description mutation. Recurring,
       rounding, weighted, expression, filters, and deletion inputs fail explicitly until their
       aggregation and cleanup workflows are ported.
+      Standalone plan charge create/list/show now supports idempotent, transactional creation and
+      `charge.created` events for the exact in-arrears rating models. Pay-in-advance, proration,
+      filters, targeted taxes, pricing units, wallet targeting, update, deletion, and cascades fail
+      explicitly until their billing and cleanup workflows are ported.
 - [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
       and rounding behavior according to feature disposition. Unrestricted fixed/percentage
       coupons now support once/recurring/forever application, initial and renewal invoice
@@ -700,3 +704,9 @@ resource and mutation described.
   `4e2162a2-c51e-4d9d-91d1-89b3c42502bc`; no D1 migration was pending. Remote health/readiness
   returned `200`, unauthenticated metric update returned `401`, and the stack remains unseeded with
   no production route, provider secret, or enabled external-mutation flag.
+- 2026-08-14: Added Lago-compatible standalone plan-charge list/show, idempotent transactional
+  creation, and `charge.created` outbox events. Both embedded and standalone charge creation now
+  reject pay-in-advance, proration, filters, targeted taxes, pricing units, wallet targeting, and
+  cascade behavior rather than storing semantics the invoice engine cannot honor; update and
+  deletion remain guarded. All 58 Workers-runtime tests pass across 18 files; the full local gate
+  and 355.70 KiB dry-run bundle are green.

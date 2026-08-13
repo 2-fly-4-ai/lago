@@ -709,6 +709,7 @@ async function normalizeCharges(
       throw new ApiError(422, "validation_error", `charges[${index}] must be an object`);
     }
     const input = entry as Record<string, unknown>;
+    rejectUnsupportedChargeFeatures(input);
     const metricId = requiredString(input, "billable_metric_id");
     const metric = await database
       .prepare(
@@ -725,6 +726,18 @@ async function normalizeCharges(
     const chargeModel = requiredString(input, "charge_model");
     const properties = optionalObject(input.properties, "properties");
     parseChargeModel(chargeModel, properties);
+    if (booleanInteger(input.pay_in_advance, false) === 1)
+      throw new ApiError(
+        422,
+        "unsupported_charge_feature",
+        "Pay-in-advance usage charges are not implemented",
+      );
+    if (booleanInteger(input.prorated, false) === 1)
+      throw new ApiError(
+        422,
+        "unsupported_charge_feature",
+        "Prorated usage charges are not implemented",
+      );
     charges.push({
       id: await deterministicUuid("charge", `${planId}:${code}`),
       metricId,
@@ -742,6 +755,31 @@ async function normalizeCharges(
     });
   }
   return charges;
+}
+
+function rejectUnsupportedChargeFeatures(input: Record<string, unknown>): void {
+  for (const field of [
+    "filters",
+    "applied_pricing_unit",
+    "accepts_target_wallet",
+    "regroup_paid_fees",
+    "cascade_updates",
+  ]) {
+    const value = input[field];
+    if (value === undefined || value === null || value === false) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      `${field} is not implemented by the Cloudflare charge catalog`,
+    );
+  }
+  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
+    throw new ApiError(
+      422,
+      "unsupported_tax_target",
+      "Charge-specific tax targeting is not implemented",
+    );
 }
 
 async function normalizeFixedCharges(

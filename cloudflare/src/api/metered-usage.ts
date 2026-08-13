@@ -121,13 +121,34 @@ export async function handleMeteredUsageRequest(
   }
 
   const chargesMatch = url.pathname.match(/^\/api\/v1\/plans\/([^/]+)\/charges$/);
+  if (request.method === "GET" && chargesMatch?.[1]) {
+    return listCharges(decodeURIComponent(chargesMatch[1]), url, env.BILLING_DB, auth, requestId);
+  }
   if (request.method === "POST" && chargesMatch?.[1]) {
-    return createCharge(
-      request,
-      decodeURIComponent(chargesMatch[1]),
+    return createCharge(request, decodeURIComponent(chargesMatch[1]), env, auth, requestId);
+  }
+  const chargeMatch = url.pathname.match(/^\/api\/v1\/plans\/([^/]+)\/charges\/([^/]+)$/);
+  if (request.method === "GET" && chargeMatch?.[1] && chargeMatch[2]) {
+    return showCharge(
+      decodeURIComponent(chargeMatch[1]),
+      decodeURIComponent(chargeMatch[2]),
       env.BILLING_DB,
       auth,
       requestId,
+    );
+  }
+  if (request.method === "PUT" && chargeMatch?.[1] && chargeMatch[2]) {
+    throw new ApiError(
+      422,
+      "unsupported_charge_update",
+      "Charge update requires the unported draft-invoice refresh and cascade workflow",
+    );
+  }
+  if (request.method === "DELETE" && chargeMatch?.[1] && chargeMatch[2]) {
+    throw new ApiError(
+      422,
+      "unsupported_charge_deletion",
+      "Charge deletion requires the unported filter cleanup and cascade workflow",
     );
   }
 
@@ -381,12 +402,14 @@ async function updateBillableMetric(
 async function createCharge(
   request: Request,
   planCode: string,
-  database: D1Database,
+  env: Env,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
+  const database = env.BILLING_DB;
   const body = await parseJsonObject(request);
   const input = objectAt(body, "charge");
+  rejectUnsupportedChargeInput(input);
   const code = requiredString(input, "code");
   const metricId = requiredString(input, "billable_metric_id");
   const chargeModel = requiredString(input, "charge_model");
@@ -395,6 +418,18 @@ async function createCharge(
   }
   const properties = optionalObject(input.properties, "properties");
   parseChargeModel(chargeModel, properties);
+  if (booleanInteger(input.pay_in_advance, false) === 1)
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      "Pay-in-advance usage charges are not implemented",
+    );
+  if (booleanInteger(input.prorated, false) === 1)
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      "Prorated usage charges are not implemented",
+    );
 
   const plan = await database
     .prepare(
@@ -414,62 +449,214 @@ async function createCharge(
     .first<{ id: string }>();
   if (!metric)
     throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
-  const existing = await database
-    .prepare("SELECT id FROM charges WHERE plan_id = ? AND code = ? AND active = 1")
-    .bind(plan.id, code)
-    .first();
-  if (existing) throw new ApiError(422, "value_already_exist", "Charge code already exists");
+  const normalized = {
+    invoiceDisplayName: optionalString(input, "invoice_display_name"),
+    invoiceable: booleanInteger(input.invoiceable, true),
+    minAmountMinor: optionalNonNegativeInteger(input.min_amount_cents, 0),
+  };
+  const existing = await findCatalogCharge(database, plan.id, code);
+  if (existing) {
+    if (sameCatalogCharge(existing, metric.id, chargeModel, properties, normalized))
+      return json({ charge: serializeCatalogCharge(existing) }, { requestId });
+    throw new ApiError(422, "value_already_exist", "Charge code already exists");
+  }
 
   const now = new Date().toISOString();
   const id = await deterministicUuid("charge", `${plan.id}:${code}`);
-  await database
-    .prepare(
-      `INSERT INTO charges
+  const event = catalogEvent(
+    "charge.created",
+    "charge",
+    id,
+    1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code, planCode },
+  );
+  try {
+    await database.batch([
+      database
+        .prepare(
+          `INSERT INTO charges
        (id, organization_id, plan_id, billable_metric_id, code, invoice_display_name,
         charge_model, properties_json, invoiceable, pay_in_advance, prorated,
         min_amount_minor, version, active, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
-    )
-    .bind(
-      id,
-      auth.organizationId,
-      plan.id,
-      metric.id,
-      code,
-      optionalString(input, "invoice_display_name"),
-      chargeModel,
-      stableJson(properties),
-      booleanInteger(input.invoiceable, true),
-      booleanInteger(input.pay_in_advance, false),
-      booleanInteger(input.prorated, false),
-      optionalNonNegativeInteger(input.min_amount_cents, 0),
-      now,
-      now,
-    )
-    .run();
+        )
+        .bind(
+          id,
+          auth.organizationId,
+          plan.id,
+          metric.id,
+          code,
+          normalized.invoiceDisplayName,
+          chargeModel,
+          stableJson(properties),
+          normalized.invoiceable,
+          0,
+          0,
+          normalized.minAmountMinor,
+          now,
+          now,
+        ),
+      outboxStatement(database, auth.organizationId, event),
+    ]);
+  } catch (error) {
+    const concurrent = await findCatalogCharge(database, plan.id, code);
+    if (concurrent && sameCatalogCharge(concurrent, metric.id, chargeModel, properties, normalized))
+      return json({ charge: serializeCatalogCharge(concurrent) }, { requestId });
+    if (concurrent) throw new ApiError(422, "value_already_exist", "Charge code already exists");
+    throw error;
+  }
+  await env.DOMAIN_EVENTS.send(event);
+  const created = await findCatalogCharge(database, plan.id, code);
+  if (!created) throw new ApiError(500, "persistence_error", "Charge was not persisted");
+  return json({ charge: serializeCatalogCharge(created) }, { requestId });
+}
+
+async function listCharges(
+  planCode: string,
+  url: URL,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const plan = await findPlanId(database, auth.organizationId, planCode);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const page = positiveInteger(url.searchParams.get("page"), 1);
+  const perPage = Math.min(positiveInteger(url.searchParams.get("per_page"), 20), 100);
+  const offset = (page - 1) * perPage;
+  const count = await database
+    .prepare("SELECT COUNT(*) AS total FROM charges WHERE plan_id = ? AND active = 1")
+    .bind(plan.id)
+    .first<{ total: number }>();
+  const result = await database
+    .prepare(`${chargeSelect()} WHERE ch.plan_id = ? AND ch.active = 1
+              ORDER BY ch.created_at DESC, ch.id DESC LIMIT ? OFFSET ?`)
+    .bind(plan.id, perPage, offset)
+    .all<
+      ChargeUsageRow & {
+        created_at: string;
+        invoiceable: number;
+        pay_in_advance: number;
+        prorated: number;
+      }
+    >();
   return json(
     {
-      charge: {
-        lago_id: id,
-        lago_billable_metric_id: metric.id,
-        code,
-        invoice_display_name: optionalString(input, "invoice_display_name"),
-        billable_metric_code: (await metricCode(database, metric.id)) ?? null,
-        created_at: now,
-        charge_model: chargeModel,
-        invoiceable: booleanInteger(input.invoiceable, true) === 1,
-        pay_in_advance: booleanInteger(input.pay_in_advance, false) === 1,
-        prorated: booleanInteger(input.prorated, false) === 1,
-        min_amount_cents: optionalNonNegativeInteger(input.min_amount_cents, 0),
-        properties,
-        filters: [],
-        taxes: [],
-        applied_pricing_unit: null,
-        lago_parent_id: null,
-      },
+      charges: result.results.map(serializeCatalogCharge),
+      meta: pagination(count?.total ?? 0, page, perPage),
     },
     { requestId },
   );
+}
+
+async function showCharge(
+  planCode: string,
+  chargeCode: string,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const plan = await findPlanId(database, auth.organizationId, planCode);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const charge = await database
+    .prepare(`${chargeSelect()} WHERE ch.plan_id = ? AND ch.code = ? AND ch.active = 1 LIMIT 1`)
+    .bind(plan.id, chargeCode)
+    .first<
+      ChargeUsageRow & {
+        created_at: string;
+        invoiceable: number;
+        pay_in_advance: number;
+        prorated: number;
+      }
+    >();
+  if (!charge) throw new ApiError(404, "charge_not_found", "Charge was not found");
+  return json({ charge: serializeCatalogCharge(charge) }, { requestId });
+}
+
+function findPlanId(database: D1Database, organizationId: string, code: string) {
+  return database
+    .prepare(
+      `SELECT id FROM plans WHERE organization_id = ? AND code = ? AND active = 1
+       ORDER BY version DESC LIMIT 1`,
+    )
+    .bind(organizationId, code)
+    .first<{ id: string }>();
+}
+
+function chargeSelect(): string {
+  return `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
+                 ch.properties_json, ch.min_amount_minor, ch.invoiceable,
+                 ch.pay_in_advance, ch.prorated, ch.created_at,
+                 bm.id AS metric_id, bm.code AS metric_code, bm.name AS metric_name,
+                 bm.aggregation_type, bm.field_name
+          FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id`;
+}
+
+function findCatalogCharge(database: D1Database, planId: string, code: string) {
+  return database
+    .prepare(`${chargeSelect()} WHERE ch.plan_id = ? AND ch.code = ? AND ch.active = 1 LIMIT 1`)
+    .bind(planId, code)
+    .first<
+      ChargeUsageRow & {
+        created_at: string;
+        invoiceable: number;
+        pay_in_advance: number;
+        prorated: number;
+      }
+    >();
+}
+
+function sameCatalogCharge(
+  charge: ChargeUsageRow & {
+    invoiceable: number;
+    pay_in_advance: number;
+    prorated: number;
+  },
+  metricId: string,
+  chargeModel: string,
+  properties: Record<string, unknown>,
+  normalized: { invoiceDisplayName: string | null; invoiceable: number; minAmountMinor: number },
+): boolean {
+  return (
+    charge.metric_id === metricId &&
+    charge.invoice_display_name === normalized.invoiceDisplayName &&
+    charge.charge_model === chargeModel &&
+    stableJson(parseStoredObject(charge.properties_json)) === stableJson(properties) &&
+    charge.invoiceable === normalized.invoiceable &&
+    charge.pay_in_advance === 0 &&
+    charge.prorated === 0 &&
+    charge.min_amount_minor === normalized.minAmountMinor
+  );
+}
+
+function serializeCatalogCharge(
+  charge: ChargeUsageRow & {
+    created_at: string;
+    invoiceable: number;
+    pay_in_advance: number;
+    prorated: number;
+  },
+): Record<string, unknown> {
+  return {
+    lago_id: charge.id,
+    lago_billable_metric_id: charge.metric_id,
+    code: charge.code,
+    invoice_display_name: charge.invoice_display_name,
+    billable_metric_code: charge.metric_code,
+    created_at: charge.created_at,
+    charge_model: charge.charge_model,
+    invoiceable: charge.invoiceable === 1,
+    pay_in_advance: charge.pay_in_advance === 1,
+    prorated: charge.prorated === 1,
+    min_amount_cents: charge.min_amount_minor,
+    properties: parseStoredObject(charge.properties_json),
+    filters: [],
+    taxes: [],
+    applied_pricing_unit: null,
+    lago_parent_id: null,
+  };
 }
 
 async function createUsageEvent(
@@ -1089,6 +1276,31 @@ function rejectUnsupportedMetricFeatures(input: Record<string, unknown>): void {
   }
 }
 
+function rejectUnsupportedChargeInput(input: Record<string, unknown>): void {
+  for (const field of [
+    "filters",
+    "applied_pricing_unit",
+    "accepts_target_wallet",
+    "regroup_paid_fees",
+    "cascade_updates",
+  ]) {
+    const value = input[field];
+    if (value === undefined || value === null || value === false) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      `${field} is not implemented by the Cloudflare charge catalog`,
+    );
+  }
+  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
+    throw new ApiError(
+      422,
+      "unsupported_tax_target",
+      "Charge-specific tax targeting is not implemented",
+    );
+}
+
 function sameMetric(metric: MetricRow, normalized: NormalizedMetric): boolean {
   return (
     metric.code === normalized.code &&
@@ -1222,12 +1434,4 @@ function pagination(total: number, page: number, perPage: number): Record<string
     total_pages: totalPages,
     total_count: total,
   };
-}
-
-async function metricCode(database: D1Database, id: string): Promise<string | null> {
-  const metric = await database
-    .prepare("SELECT code FROM billable_metrics WHERE id = ? LIMIT 1")
-    .bind(id)
-    .first<{ code: string }>();
-  return metric?.code ?? null;
 }

@@ -83,6 +83,40 @@ describe("Lago-compatible metered usage", () => {
       },
     });
     expect(chargeResponse.status).toBe(200);
+    const chargeReplay = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metric.billable_metric.lago_id,
+          code: "api-token-charge",
+          charge_model: "standard",
+          properties: { amount: "10" },
+        },
+      },
+    });
+    expect(chargeReplay.status).toBe(200);
+    await expect(
+      api("/api/v1/plans/metered-plan/charges").then((response) => response.json()),
+    ).resolves.toMatchObject({
+      meta: { total_count: 1 },
+      charges: [{ code: "api-token-charge", billable_metric_code: "api_tokens" }],
+    });
+    await expect(
+      api("/api/v1/plans/metered-plan/charges/api-token-charge").then((response) =>
+        response.json(),
+      ),
+    ).resolves.toMatchObject({
+      charge: {
+        code: "api-token-charge",
+        charge_model: "standard",
+        properties: { amount: "10" },
+      },
+    });
+    const chargeEvent = await env.BILLING_DB.prepare(
+      `SELECT event_type FROM outbox_events
+       WHERE aggregate_type = 'charge' AND event_type = 'charge.created'`,
+    ).first<{ event_type: string }>();
+    expect(chargeEvent?.event_type).toBe("charge.created");
 
     const safeUpdate = await api("/api/v1/billable_metrics/api_tokens", {
       method: "PUT",
@@ -245,6 +279,53 @@ describe("Lago-compatible metered usage", () => {
     await expect(deleted.json()).resolves.toMatchObject({
       code: "unsupported_billable_metric_deletion",
     });
+  });
+
+  it("rejects charge options the recurring invoice path cannot honor", async () => {
+    const metricResponse = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Guarded units",
+          code: "guarded_units",
+          aggregation_type: "sum_agg",
+          field_name: "units",
+        },
+      },
+    });
+    const metricId = (await metricResponse.json<{ billable_metric: { lago_id: string } }>())
+      .billable_metric.lago_id;
+    for (const [suffix, unsupported] of [
+      ["advance", { pay_in_advance: true }],
+      ["prorated", { prorated: true }],
+      ["filters", { filters: [{ properties: {}, values: {} }] }],
+      ["tax", { tax_codes: ["vat"] }],
+    ] as const) {
+      const response = await api("/api/v1/plans/metered-plan/charges", {
+        method: "POST",
+        body: {
+          charge: {
+            billable_metric_id: metricId,
+            code: `guarded-${suffix}`,
+            charge_model: "standard",
+            properties: { amount: "10" },
+            ...unsupported,
+          },
+        },
+      });
+      expect(response.status).toBe(422);
+    }
+    const update = await api("/api/v1/plans/metered-plan/charges/anything", {
+      method: "PUT",
+      body: { charge: { invoice_display_name: "Changed" } },
+    });
+    expect(update.status).toBe(422);
+    await expect(update.json()).resolves.toMatchObject({ code: "unsupported_charge_update" });
+    const deletion = await api("/api/v1/plans/metered-plan/charges/anything", {
+      method: "DELETE",
+    });
+    expect(deletion.status).toBe(422);
+    await expect(deletion.json()).resolves.toMatchObject({ code: "unsupported_charge_deletion" });
   });
 });
 
