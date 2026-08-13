@@ -291,8 +291,11 @@ Acceptance:
 - [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
       and rounding behavior according to feature disposition. Unrestricted fixed/percentage
       coupons now support once/recurring/forever application, initial and renewal invoice
-      consumption, exact rounding, replay, and unpaid-void recredit; targeted coupons, wallets,
-      credit notes, commitments, and taxes remain pending.
+      consumption, exact rounding, replay, and unpaid-void recredit; targeted coupons, credit
+      notes, commitments, and taxes remain pending. Granted-credit wallets now support
+      create/list/show/terminate, idempotent top-up, priority/lot-ordered initial and renewal
+      invoice consumption, and auditable unpaid-void recredit; paid/recurring/threshold top-ups and
+      targeted allocation remain pending.
 - [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
       leased, idempotent recurring period-close finalization path now produces plan and usage lines,
       and unpaid finalized invoices can be shown with lines and voided idempotently; manual
@@ -582,3 +585,16 @@ resource and mutation described.
   `de441997-65d7-4a27-9ae1-a0eeec17d75b`. Follow-up migration inventory was empty; remote
   health/readiness returned 200 and the unauthenticated coupon collection returned 401. No remote
   tenant, coupon, credit, invoice, provider, secret, or customer data was introduced.
+- 2026-08-14: Added granted-credit wallet create/list/show/terminate and transaction
+  create/list/show APIs, exact rate/exponent conversion, database-enforced optimistic balance and
+  lot consumption, invoice priority allocation after coupons, distinct prepaid-credit invoice
+  totals, immutable funding evidence, void recredit, and versioned outbox events. Paid credits,
+  provider-funded top-ups, recurring/threshold rules, fee/metric targets, and wallet payment methods
+  fail explicitly. All 44 Workers-runtime tests pass across 14 files with all ten migrations
+  replayed from empty D1 state.
+- 2026-08-14: Applied only migration `0010` to isolated development D1 and deployed Worker version
+  `45797343-c902-492d-b0e8-e9e8b9f6e60f`. The first read-only inventory attempt returned transient
+  Cloudflare code 7403; Wrangler identity still showed D1 write access to the SERP account, the
+  retry reported exactly `0010`, apply/deploy succeeded, and follow-up inventory was empty.
+  Health/readiness returned 200 and unauthenticated wallet access returned 401. No remote billing
+  data or payment mutation was introduced.

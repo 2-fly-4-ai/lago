@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `de441997-65d7-4a27-9ae1-a0eeec17d75b`
+- Latest verified version: `45797343-c902-492d-b0e8-e9e8b9f6e60f`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -32,7 +32,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron | `17 * * * *` | Worker scheduled handler | Hourly reconciliation dispatch |
 | Browser Rendering | account binding | `BROWSER` | Invoice HTML-to-PDF rendering |
 
-Applied D1 migrations: `0001_foundation.sql` through `0009_coupon_ledger.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0010_granted_wallets.sql`.
 
 ## Verified behavior
 
@@ -52,6 +52,8 @@ Applied D1 migrations: `0001_foundation.sql` through `0009_coupon_ledger.sql`.
   `200`/`200`/`401` respectively.
 - The coupon-ledger deployment added only schema and code to the unseeded isolated stack; no coupon,
   application, credit, customer, subscription, or invoice row was created remotely.
+- The granted-wallet deployment added only schema and code. The isolated stack remains unseeded;
+  paid top-ups and payment/provider mutation flags remain disabled.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

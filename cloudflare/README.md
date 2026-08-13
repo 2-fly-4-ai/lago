@@ -8,7 +8,8 @@ remaining Lago feature inventory is dispositioned and ported.
 
 - Worker: authenticated Lago-compatible HTTP API and signed provider webhooks.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
-  payment attempts, outbox state, and webhook receipt metadata.
+  granted-credit wallets and consumption lots, payment attempts, outbox state, and webhook receipt
+  metadata.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.
