@@ -268,6 +268,8 @@ Acceptance:
 ### M2: Customer, plan, subscription, and compatibility APIs
 
 - [x] Implement API-key authentication and organization scoping.
+- [x] Implement customer upsert/list/show for the retained core fields; destructive customer
+      lifecycle and advanced address/tax/provider projections remain pending.
 - [x] Implement tenant-scoped plan create/list/show and embedded core charge creation required to
       operate the metered path; plan update/deletion and advanced nested features remain pending.
 - [x] Implement idempotent customer upsert.
@@ -551,3 +553,6 @@ resource and mutation described.
 - 2026-08-13: Deployed invoice authority as Worker version
   `b29a6b1b-c39a-434c-b029-fd14f91d8121`; remote health returned 200 and unauthenticated invoice
   show returned 401. No provider mutation or remote billing data was introduced.
+- 2026-08-13: Added tenant-scoped customer list/show with pagination and escaped case-insensitive
+  search across external ID, name, and email; the existing store compatibility suite now exercises
+  these reads. Destructive customer deletion remains deferred until dependent ledgers are ported.

@@ -84,6 +84,15 @@ export async function handleLagoCompatibilityRequest(
     return upsertCustomer(request, env.BILLING_DB, auth, requestId);
   }
 
+  if (request.method === "GET" && url.pathname === "/api/v1/customers") {
+    return listCustomers(url, env.BILLING_DB, auth, requestId);
+  }
+
+  const customerMatch = url.pathname.match(/^\/api\/v1\/customers\/([^/]+)$/);
+  if (request.method === "GET" && customerMatch?.[1]) {
+    return showCustomer(decodeURIComponent(customerMatch[1]), env.BILLING_DB, auth, requestId);
+  }
+
   if (request.method === "POST" && url.pathname === "/api/v1/subscriptions") {
     return createSubscription(request, env.BILLING_DB, auth, requestId);
   }
@@ -160,6 +169,60 @@ async function upsertCustomer(
 
   const customer = await findCustomer(database, auth.organizationId, externalId);
   if (!customer) throw new ApiError(500, "persistence_error", "Customer was not persisted");
+  return json({ customer: serializeCustomer(customer) }, { requestId });
+}
+
+async function listCustomers(
+  url: URL,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const page = positiveInteger(url.searchParams.get("page"), 1);
+  const perPage = Math.min(positiveInteger(url.searchParams.get("per_page"), 20), 100);
+  const offset = (page - 1) * perPage;
+  const search = url.searchParams.get("search_term")?.trim().toLowerCase() || null;
+  const where = search
+    ? `organization_id = ? AND (
+         lower(external_id) LIKE ? ESCAPE '\\' OR
+         lower(COALESCE(name, '')) LIKE ? ESCAPE '\\' OR
+         lower(COALESCE(email, '')) LIKE ? ESCAPE '\\'
+       )`
+    : "organization_id = ?";
+  const pattern = search ? `%${escapeLike(search)}%` : null;
+  const bindings = pattern
+    ? [auth.organizationId, pattern, pattern, pattern]
+    : [auth.organizationId];
+  const count = await database
+    .prepare(`SELECT COUNT(*) AS total FROM customers WHERE ${where}`)
+    .bind(...bindings)
+    .first<{ total: number }>();
+  const result = await database
+    .prepare(
+      `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
+              payment_provider_code, created_at, updated_at
+       FROM customers WHERE ${where}
+       ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+    )
+    .bind(...bindings, perPage, offset)
+    .all<CustomerRow>();
+  return json(
+    {
+      customers: result.results.map(serializeCustomer),
+      meta: pagination(totalCount(count), page, perPage),
+    },
+    { requestId },
+  );
+}
+
+async function showCustomer(
+  externalId: string,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const customer = await findCustomer(database, auth.organizationId, externalId);
+  if (!customer) throw new ApiError(404, "customer_not_found", "Customer was not found");
   return json({ customer: serializeCustomer(customer) }, { requestId });
 }
 
@@ -881,6 +944,25 @@ function normalizeEmail(email: string | null): string | null {
 function positiveInteger(value: string | null, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function totalCount(value: { total: number } | null): number {
+  return value?.total ?? 0;
+}
+
+function pagination(total: number, page: number, perPage: number): Record<string, number | null> {
+  const totalPages = total === 0 ? 0 : Math.ceil(total / perPage);
+  return {
+    current_page: total === 0 ? 0 : page,
+    next_page: page < totalPages ? page + 1 : null,
+    prev_page: page > 1 && page <= totalPages ? page - 1 : null,
+    total_pages: totalPages,
+    total_count: total,
+  };
+}
+
+function escapeLike(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }
 
 function assertSubscriptionReplay(

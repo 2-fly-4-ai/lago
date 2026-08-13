@@ -52,6 +52,23 @@ describe("store-new Lago checkout compatibility", () => {
       billing_configuration: { payment_provider: "authorize_net" },
     });
 
+    const shownCustomer = await SELF.fetch(
+      "https://lago.test/api/v1/customers/store_safe_email_customer_example_com",
+      { headers: authorization },
+    );
+    expect(shownCustomer.status).toBe(200);
+    await expect(shownCustomer.json()).resolves.toMatchObject({
+      customer: { lago_id: firstCustomerBody.customer.lago_id },
+    });
+    const listedCustomers = await SELF.fetch(
+      "https://lago.test/api/v1/customers?search_term=customer%40example.com",
+      { headers: authorization },
+    );
+    await expect(listedCustomers.json()).resolves.toMatchObject({
+      customers: [{ lago_id: firstCustomerBody.customer.lago_id }],
+      meta: { total_count: 1 },
+    });
+
     const replayCustomer = await SELF.fetch("https://lago.test/api/v1/customers", {
       method: "POST",
       headers: authorization,
