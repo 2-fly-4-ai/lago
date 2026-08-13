@@ -11,11 +11,12 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `ba847804-a588-4cbd-a411-ad8fe2686a34`
+- Latest verified version: `887c749b-09d3-4143-932a-a41cd0fdbbd6`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
 - `PROVIDER_READS_ENABLED`: `0`
+- `OUTBOUND_WEBHOOKS_ENABLED`: `0`
 
 ## Resources
 
@@ -32,7 +33,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron | `17 * * * *` | Worker scheduled handler | Hourly reconciliation dispatch |
 | Browser Rendering | account binding | `BROWSER` | Invoice HTML-to-PDF rendering |
 
-Applied D1 migrations: `0001_foundation.sql` through `0013_minimum_commitments.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0014_outbound_webhooks.sql`.
 
 ## Verified behavior
 
@@ -65,6 +66,10 @@ Applied D1 migrations: `0001_foundation.sql` through `0013_minimum_commitments.s
 - The minimum-commitment deployment added only schema and code for plan-level in-arrears true-ups.
   Remote health/readiness returned `200`/`200`, unauthenticated plan access returned `401`, and no
   migrations remained pending. The remote database remains unseeded.
+- The outbound-webhook deployment added endpoint/delivery schema and guarded code only. Remote
+  health/readiness returned `200`/`200`, unauthenticated endpoint access returned `401`, and no
+  migrations remained pending. Delivery is disabled, no HMAC signing secret exists remotely, and
+  no endpoint or delivery row was created.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

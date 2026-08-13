@@ -651,3 +651,7 @@ resource and mutation described.
   handling, a five-attempt cap, and D1 delivery audit records. The deployed configuration keeps
   `OUTBOUND_WEBHOOKS_ENABLED=0` and has no signing secret; tests use only a synthetic binding.
   All 52 Workers-runtime tests pass across 17 files.
+- 2026-08-14: Applied only migration `0014` to isolated development D1 and deployed Worker version
+  `887c749b-09d3-4143-932a-a41cd0fdbbd6`. Follow-up migration inventory was empty; remote
+  health/readiness returned `200` and unauthenticated endpoint access returned `401`. Outbound
+  delivery remains disabled, no signing secret was configured, and the stack remains unseeded.
