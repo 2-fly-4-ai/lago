@@ -236,8 +236,8 @@ test fixture, parity status, and migration/rollback notes.
 
 - [x] Add a generated feature-disposition inventory with a checked-in generator.
 - [x] Add non-secret fixtures for the four verified `store-new` REST interactions.
-- [ ] Inventory Rails routes, GraphQL operations, jobs, schedules, models, integrations, and
-      frontend screens.
+- [x] Inventory Rails controllers, GraphQL files, jobs, schedules, models, services, migrations,
+      and frontend source files. Route/operation/screen semantic extraction remains pending.
 - [ ] Define money, time, identifier, pagination, error, and idempotency conventions.
 - [ ] Define aggregate boundaries and prove the required transaction invariants.
 - [ ] Record explicitly enabled SERP capabilities using code/config evidence only; do not inspect
@@ -536,3 +536,11 @@ resource and mutation described.
   authorization code 7403 immediately before the successful apply; follow-up verification showed
   no pending migrations, `/health` and `/ready` returned 200, and unauthenticated `/api/v1/plans`
   returned 401. No remote data was seeded.
+- 2026-08-13: Added subscription list/show and guarded idempotent termination, with versioned
+  Durable Object coordination and `subscription.terminated` outbox/Queue emission. Termination
+  requires explicit invoice/credit-note skipping until those financial paths are ported. The
+  inventory now attaches owner, consumers, target, evidence, test fixture, parity status, and
+  migration/rollback notes to all 3,972 entries.
+- 2026-08-13: Deployed the guarded lifecycle and enhanced inventory as Worker version
+  `08b8ddb7-bfc4-4765-8b24-8e05c0be978d`; remote health/readiness returned 200 and the
+  unauthenticated subscriptions collection returned 401. The remote D1 database remains unseeded.

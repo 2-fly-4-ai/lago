@@ -112,6 +112,28 @@ function topLevelCounts(files, prefix) {
 
 const portRules = [
   {
+    pattern: /billable_metric|events_controller|events\/|charge_model|charges\/calculate_price/i,
+    target: "cloudflare/src/api/metered-usage.ts",
+    evidence: [
+      "cloudflare/test/metered-usage.test.ts",
+      "cloudflare/test/usage-aggregation.test.ts",
+      "cloudflare/test/rating.test.ts",
+    ],
+  },
+  {
+    pattern: /plans_controller|plans\/|plan_serializer/i,
+    target: "cloudflare/src/api/plan-catalog.ts",
+    evidence: ["cloudflare/test/plan-catalog.test.ts"],
+  },
+  {
+    pattern: /subscriptions_controller|subscriptions\/|subscription_serializer/i,
+    target: "cloudflare/src/api/subscription-lifecycle.ts",
+    evidence: [
+      "cloudflare/test/subscription-lifecycle.test.ts",
+      "cloudflare/test/billing-cycle.test.ts",
+    ],
+  },
+  {
     pattern: /authorize_net|authorize\/net/i,
     target: "cloudflare/src/providers/authorize-net.ts",
     evidence: [
@@ -142,22 +164,53 @@ const portRules = [
 ];
 
 function disposition(source) {
+  const owner = ownerFor(source);
+  const consumers = consumersFor(source);
   const match = portRules.find((rule) => rule.pattern.test(source));
   return match
     ? {
         source,
+        owner,
+        consumers,
         disposition: "port",
         target: match.target,
         evidence: match.evidence,
+        testFixture: match.evidence[0] ?? null,
         parityStatus: "partial",
+        migrationNotes: "Port incrementally behind isolated Cloudflare development resources.",
+        rollbackNotes: "Keep the legacy Lago path authoritative until parity and cutover approval.",
       }
     : {
         source,
+        owner,
+        consumers,
         disposition: "unknown",
         target: null,
         evidence: [],
+        testFixture: null,
         parityStatus: "not-assessed",
+        migrationNotes: "Usage and required disposition are not yet proven.",
+        rollbackNotes: "Do not retire or reroute this feature without evidence and approval.",
       };
+}
+
+function ownerFor(source) {
+  if (source.includes("app/models/")) return "lago-domain";
+  if (source.includes("app/controllers/")) return "lago-api";
+  if (source.includes("app/services/")) return "lago-service";
+  if (source.includes("app/jobs/") || source.startsWith("every(")) return "lago-async";
+  if (source.includes("app/graphql/")) return "lago-graphql";
+  if (source.startsWith("front/")) return "lago-operator-ui";
+  return "lago";
+}
+
+function consumersFor(source) {
+  if (source.includes("app/controllers/api/v1/") || source.includes("app/graphql/")) {
+    return ["external-api-clients", "lago-operator-ui"];
+  }
+  if (source.startsWith("front/")) return ["lago-operators"];
+  if (source.includes("app/jobs/") || source.startsWith("every(")) return ["lago-runtime"];
+  return ["lago-internal"];
 }
 
 const primaryDirectory = primaryCheckout(repositoryDirectory);

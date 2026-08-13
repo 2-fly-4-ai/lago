@@ -6,6 +6,7 @@ import { createAuthorizeNetPaymentUrl } from "../providers/authorize-net";
 import { nextPeriodEnd } from "../billing/periods";
 import { handleMeteredUsageRequest } from "./metered-usage";
 import { handlePlanCatalogRequest } from "./plan-catalog";
+import { handleSubscriptionLifecycleRequest } from "./subscription-lifecycle";
 
 type CustomerRow = {
   id: string;
@@ -72,6 +73,9 @@ export async function handleLagoCompatibilityRequest(
 
   const planResponse = await handlePlanCatalogRequest(request, env.BILLING_DB, auth, requestId);
   if (planResponse) return planResponse;
+
+  const lifecycleResponse = await handleSubscriptionLifecycleRequest(request, env, auth, requestId);
+  if (lifecycleResponse) return lifecycleResponse;
 
   const meteredUsageResponse = await handleMeteredUsageRequest(request, env, auth, requestId);
   if (meteredUsageResponse) return meteredUsageResponse;
