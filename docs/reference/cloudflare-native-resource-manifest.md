@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `b29a6b1b-c39a-434c-b029-fd14f91d8121`
+- Latest verified version: `cb34a618-ce8b-4bdc-9829-9c7eefd3368a`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -22,16 +22,17 @@ It is not a production inventory and contains no secrets or customer data.
 | Kind | Name or ID | Binding | Purpose |
 | --- | --- | --- | --- |
 | D1 | `serp-dev-lago-native-d1` / `2f32f159-c269-46c6-a4dd-9e38477f5d25` | `BILLING_DB` | Synthetic billing state |
-| R2 | `serp-dev-lago-native-billing-artifacts` | `BILLING_ARTIFACTS` | Immutable provider webhook and usage-event artifacts |
+| R2 | `serp-dev-lago-native-billing-artifacts` | `BILLING_ARTIFACTS` | Immutable provider webhook, usage-event, and invoice PDF artifacts |
 | Queue | `serp-dev-lago-domain-events` | `DOMAIN_EVENTS` | Domain events and reconciliation dispatch |
 | DLQ | `serp-dev-lago-domain-events-dlq` | none | Poison/retry exhaustion |
 | Durable Object | `BillingAccount` | `BILLING_ACCOUNTS` | Per-invoice command reservations |
 | Workflow | `serp-dev-lago-checkout` | `CHECKOUT_WORKFLOW` | Checkout orchestration target |
 | Workflow | `serp-dev-lago-reconciliation` | `RECONCILIATION_WORKFLOW` | Provider and outbox reconciliation |
+| Workflow | `serp-dev-lago-documents` | `DOCUMENT_WORKFLOW` | Retryable invoice PDF generation and R2 archival |
 | Cron | `17 * * * *` | Worker scheduled handler | Hourly reconciliation dispatch |
-| Browser Rendering | account binding | `BROWSER` | Reserved for document milestone |
+| Browser Rendering | account binding | `BROWSER` | Invoice HTML-to-PDF rendering |
 
-Applied D1 migrations: `0001_foundation.sql` through `0007_plan_catalog.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0008_document_artifacts.sql`.
 
 ## Verified behavior
 
@@ -46,8 +47,11 @@ Applied D1 migrations: `0001_foundation.sql` through `0007_plan_catalog.sql`.
   lifecycle deployment.
 - `GET /api/v1/invoices/synthetic` without a bearer key returned the expected `401` envelope after
   the invoice-authority deployment.
+- The document deployment registered `serp-dev-lago-documents`; a follow-up remote migration query
+  reported no pending migrations, and health/readiness/authentication smoke checks returned
+  `200`/`200`/`401` respectively.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
-  provider secret, or customer data was seeded remotely.
+  document artifact, provider secret, or customer data was seeded remotely.
 
 ## Cleanup procedure
 

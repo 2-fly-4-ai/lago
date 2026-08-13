@@ -74,6 +74,11 @@
       "binding": "RECONCILIATION_WORKFLOW",
       "class_name": "ReconciliationWorkflow",
     },
+    {
+      "name": "serp-dev-lago-documents",
+      "binding": "DOCUMENT_WORKFLOW",
+      "class_name": "DocumentWorkflow",
+    },
   ],
   "triggers": {
     "crons": ["17 * * * *"],

@@ -336,11 +336,15 @@ Acceptance:
 
 ### M6: Documents and object storage
 
-- [ ] Port invoice, receipt, credit-note, quote, and export templates according to inventory.
-- [ ] Generate PDFs using Browser Rendering.
+- [ ] Port invoice, receipt, credit-note, quote, and export templates according to inventory. The
+      invoice template and authenticated generation/download boundary are implemented; all other
+      document types remain pending.
+- [x] Generate invoice PDFs using Browser Rendering through a retryable, ownership-checked
+      Document Workflow.
 - [ ] Replace `pdfcpu` attachment behavior with a Workers-compatible JavaScript or precompiled Wasm
       implementation.
-- [ ] Store immutable artifacts in R2 with checksums and generation metadata.
+- [x] Store immutable, version-addressed invoice artifacts in R2 with checksums, byte length, and
+      generation metadata; equivalent handling for other document types remains pending.
 - [ ] Add visual and structural golden-file verification.
 
 Acceptance:
@@ -556,3 +560,11 @@ resource and mutation described.
 - 2026-08-13: Added tenant-scoped customer list/show with pagination and escaped case-insensitive
   search across external ID, name, and email; the existing store compatibility suite now exercises
   these reads. Destructive customer deletion remains deferred until dependent ledgers are ported.
+- 2026-08-13: Replaced the invoice PDF container path with deterministic escaped HTML, Browser
+  Rendering, a retryable ownership-checked Document Workflow, bounded PDF streaming, immutable
+  versioned R2 artifacts, SHA-256 metadata, and replay-safe D1 state. All 38 Workers-runtime tests
+  pass, including invalid-output and oversized-stream failure cases.
+- 2026-08-13: Applied only migration `0008` to the isolated development D1 database and deployed
+  Worker version `cb34a618-ce8b-4bdc-9829-9c7eefd3368a` with workflow
+  `serp-dev-lago-documents`. Remote migration inventory is empty; health/readiness returned 200 and
+  an unauthenticated customer API read returned 401. No remote billing or artifact data was seeded.

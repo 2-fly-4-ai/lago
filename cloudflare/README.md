@@ -13,8 +13,8 @@ remaining Lago feature inventory is dispositioned and ported.
   mutations.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.
 - Workflows and Cron: provider reconciliation and outbox publication.
-- R2: immutable raw provider webhook archives.
-- Browser Rendering: reserved for the document-generation milestone.
+- R2: immutable provider webhook, usage-event, and invoice-document archives.
+- Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
 
 No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or
 OS command is required by this package.

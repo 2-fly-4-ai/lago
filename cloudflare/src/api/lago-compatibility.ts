@@ -111,6 +111,13 @@ export async function handleLagoCompatibilityRequest(
     return voidInvoice(request, decodeURIComponent(invoiceVoidMatch[1]), env, auth, requestId);
   }
 
+  const invoiceDownloadMatch = url.pathname.match(
+    /^\/api\/v1\/invoices\/([^/]+)\/(?:download|download_pdf)$/,
+  );
+  if (request.method === "POST" && invoiceDownloadMatch?.[1]) {
+    return requestInvoicePdf(decodeURIComponent(invoiceDownloadMatch[1]), env, auth, requestId);
+  }
+
   const paymentUrlMatch = url.pathname.match(/^\/api\/v1\/invoices\/([^/]+)\/payment_url$/);
   if (request.method === "POST" && paymentUrlMatch?.[1]) {
     return generateInvoicePaymentUrl(decodeURIComponent(paymentUrlMatch[1]), env, auth, requestId);
@@ -563,6 +570,57 @@ async function voidInvoice(
       },
     },
     { requestId },
+  );
+}
+
+async function requestInvoicePdf(
+  invoiceId: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const invoice = await findInvoice(env.BILLING_DB, auth.organizationId, invoiceId);
+  if (!invoice) throw new ApiError(404, "invoice_not_found", "Invoice was not found");
+  if (invoice.status !== "finalized") {
+    throw new ApiError(422, "invoice_not_finalized", "Only finalized invoices have PDFs");
+  }
+  const artifact = await env.BILLING_DB.prepare(
+    `SELECT status, object_key FROM document_artifacts
+     WHERE resource_type = 'invoice' AND resource_id = ? AND resource_version = ?
+       AND artifact_type = 'pdf' LIMIT 1`,
+  )
+    .bind(invoice.id, invoice.version)
+    .first<{ status: string; object_key: string | null }>();
+  if (artifact?.status === "ready" && artifact.object_key) {
+    const object = await env.BILLING_ARTIFACTS.get(artifact.object_key);
+    if (!object) throw new ApiError(503, "artifact_missing", "Invoice PDF artifact is unavailable");
+    const safeNumber = (invoice.number ?? invoice.id).replaceAll(/[^A-Za-z0-9._-]/g, "_");
+    return new Response(object.body, {
+      headers: {
+        "Cache-Control": "private, no-store",
+        "Content-Disposition": `attachment; filename="invoice-${safeNumber}.pdf"`,
+        "Content-Type": "application/pdf",
+        "X-Request-Id": requestId,
+      },
+    });
+  }
+  const workflowId = `invoice-pdf-${invoice.id}-v${invoice.version}`;
+  try {
+    await env.DOCUMENT_WORKFLOW.create({
+      id: workflowId,
+      params: {
+        invoiceId: invoice.id,
+        organizationId: auth.organizationId,
+        correlationId: requestId,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : "";
+    if (!message.includes("already exists")) throw error;
+  }
+  return json(
+    { invoice: { ...serializeInvoice(invoice), file_url: null }, document_status: "generating" },
+    { requestId, status: 202 },
   );
 }
 

@@ -9,6 +9,7 @@ import { reconcileAuthorizeNetReceipt } from "./reconciliation/authorize-net";
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
 export { ReconciliationWorkflow } from "./workflows/reconciliation";
+export { DocumentWorkflow } from "./workflows/documents";
 
 function jsonError(status: number, code: string, requestId: string): Response {
   return Response.json(
