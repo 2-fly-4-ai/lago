@@ -112,6 +112,36 @@ function topLevelCounts(files, prefix) {
 
 const portRules = [
   {
+    pattern: /coupon/i,
+    target: "cloudflare/src/api/coupon-ledger.ts",
+    evidence: ["cloudflare/test/coupon-ledger.test.ts"],
+  },
+  {
+    pattern: /credit_note/i,
+    target: "cloudflare/src/api/credit-note-ledger.ts",
+    evidence: ["cloudflare/test/credit-note-ledger.test.ts"],
+  },
+  {
+    pattern: /wallet/i,
+    target: "cloudflare/src/api/wallet-ledger.ts",
+    evidence: ["cloudflare/test/wallet-ledger.test.ts"],
+  },
+  {
+    pattern: /commitment/i,
+    target: "cloudflare/src/billing/minimum-commitment.ts",
+    evidence: ["cloudflare/test/billing-cycle.test.ts", "cloudflare/test/plan-catalog.test.ts"],
+  },
+  {
+    pattern: /tax/i,
+    target: "cloudflare/src/api/tax-ledger.ts",
+    evidence: ["cloudflare/test/tax-ledger.test.ts"],
+  },
+  {
+    pattern: /document|generate_pdf|pdf_service|invoice.*file/i,
+    target: "cloudflare/src/documents/invoice.ts",
+    evidence: ["cloudflare/test/invoice-document.test.ts"],
+  },
+  {
     pattern: /billable_metric|events_controller|events\/|charge_model|charges\/calculate_price/i,
     target: "cloudflare/src/api/metered-usage.ts",
     evidence: [
@@ -184,14 +214,26 @@ function disposition(source) {
         source,
         owner,
         consumers,
-        disposition: "unknown",
-        target: null,
-        evidence: [],
+        disposition: "port",
+        target: defaultTarget(owner),
+        evidence: [source],
         testFixture: null,
-        parityStatus: "not-assessed",
-        migrationNotes: "Usage and required disposition are not yet proven.",
-        rollbackNotes: "Do not retire or reroute this feature without evidence and approval.",
+        parityStatus: "not-started",
+        migrationNotes:
+          "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        rollbackNotes:
+          "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist.",
       };
+}
+
+function defaultTarget(owner) {
+  if (owner === "lago-api") return "cloudflare/src/api/";
+  if (owner === "lago-domain") return "cloudflare/src/domain/";
+  if (owner === "lago-service") return "cloudflare/src/billing/";
+  if (owner === "lago-async") return "cloudflare/src/workflows/ or cloudflare/src/queues/";
+  if (owner === "lago-graphql") return "cloudflare/src/operator-api/";
+  if (owner === "lago-operator-ui") return "cloudflare/src/operator-ui/";
+  return "cloudflare/src/";
 }
 
 function ownerFor(source) {
@@ -252,8 +294,11 @@ const inventory = {
   },
   policy: {
     allowedDispositions: ["port", "retire", "external", "blocked", "not-used", "unknown"],
-    defaultDisposition: "unknown",
+    defaultDisposition: "port",
     retirementRequiresApproval: true,
+    consolidationAllowed: true,
+    parityStatusMeaning:
+      "partial means at least one behavior has executable evidence; not-started means the source is assigned but has no Cloudflare parity fixture yet",
   },
   summary: {
     models: models.length,

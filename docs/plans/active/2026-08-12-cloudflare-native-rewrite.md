@@ -638,3 +638,8 @@ resource and mutation described.
   `ba847804-a588-4cbd-a411-ad8fe2686a34`. Follow-up migration inventory was empty; remote
   health/readiness returned `200` and unauthenticated plan access returned `401`. The stack remains
   unseeded with no production route, provider secret, or enabled provider mutation.
+- 2026-08-14: Removed the inventory's ambiguous default-unknown state. All 3,972 legacy artifacts
+  now have an explicit `port` disposition and a Cloudflare component assignment based on runtime
+  ownership; 1,653 entries map to partially implemented families with executable evidence and
+  2,319 remain explicitly `not-started`. Consolidation is allowed, but retirement still requires
+  approval and no artifact is considered complete without a contract fixture and parity evidence.
