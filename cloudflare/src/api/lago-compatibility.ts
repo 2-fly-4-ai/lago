@@ -10,11 +10,17 @@ import {
   walletAllocationStatements,
   walletRecreditStatements,
 } from "../billing/wallet-credits";
+import {
+  calculateCreditNoteAllocations,
+  creditNoteAllocationStatements,
+  creditNoteRecreditStatements,
+} from "../billing/credit-note-credits";
 import { handleMeteredUsageRequest } from "./metered-usage";
 import { handlePlanCatalogRequest } from "./plan-catalog";
 import { handleSubscriptionLifecycleRequest } from "./subscription-lifecycle";
 import { handleCouponLedgerRequest } from "./coupon-ledger";
 import { handleWalletLedgerRequest } from "./wallet-ledger";
+import { handleCreditNoteLedgerRequest } from "./credit-note-ledger";
 
 type CustomerRow = {
   id: string;
@@ -64,6 +70,7 @@ type InvoiceRow = {
   tax_minor: number;
   credits_minor: number;
   coupons_minor: number;
+  credit_notes_minor: number;
   prepaid_credit_minor: number;
   total_due_minor: number;
   version: number;
@@ -95,6 +102,9 @@ export async function handleLagoCompatibilityRequest(
 
   const walletResponse = await handleWalletLedgerRequest(request, env, auth, requestId);
   if (walletResponse) return walletResponse;
+
+  const creditNoteResponse = await handleCreditNoteLedgerRequest(request, env, auth, requestId);
+  if (creditNoteResponse) return creditNoteResponse;
 
   if (request.method === "POST" && url.pathname === "/api/v1/customers") {
     return upsertCustomer(request, env.BILLING_DB, auth, requestId);
@@ -313,7 +323,7 @@ async function createSubscription(
     (total, credit) => safeAddMinor(total, credit.amountMinor),
     0,
   );
-  const walletAllocations = await calculateWalletAllocations(
+  const creditNoteAllocations = await calculateCreditNoteAllocations(
     database,
     auth.organizationId,
     customer.id,
@@ -321,11 +331,26 @@ async function createSubscription(
     plan.currency,
     plan.amount_minor - couponsMinor,
   );
+  const creditNotesMinor = creditNoteAllocations.reduce(
+    (total, allocation) => safeAddMinor(total, allocation.amountMinor),
+    0,
+  );
+  const walletAllocations = await calculateWalletAllocations(
+    database,
+    auth.organizationId,
+    customer.id,
+    invoiceId,
+    plan.currency,
+    plan.amount_minor - couponsMinor - creditNotesMinor,
+  );
   const prepaidCreditMinor = walletAllocations.reduce(
     (total, allocation) => safeAddMinor(total, allocation.amountMinor),
     0,
   );
-  const creditsMinor = safeAddMinor(couponsMinor, prepaidCreditMinor);
+  const creditsMinor = safeAddMinor(
+    safeAddMinor(couponsMinor, creditNotesMinor),
+    prepaidCreditMinor,
+  );
   const totalDueMinor = plan.amount_minor - creditsMinor;
 
   try {
@@ -357,8 +382,9 @@ async function createSubscription(
           `INSERT INTO invoices
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
-          finalized_at, created_at, updated_at, coupons_minor, prepaid_credit_minor)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?)`,
+          finalized_at, created_at, updated_at, coupons_minor, prepaid_credit_minor,
+          credit_notes_minor)
+         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           invoiceId,
@@ -375,6 +401,7 @@ async function createSubscription(
           timestamp,
           couponsMinor,
           prepaidCreditMinor,
+          creditNotesMinor,
         ),
       database
         .prepare(
@@ -438,6 +465,18 @@ async function createSubscription(
     for (const allocation of walletAllocations) {
       statements.push(
         ...walletAllocationStatements(
+          database,
+          auth.organizationId,
+          invoiceId,
+          allocation,
+          timestamp,
+          requestId,
+        ),
+      );
+    }
+    for (const allocation of creditNoteAllocations) {
+      statements.push(
+        ...creditNoteAllocationStatements(
           database,
           auth.organizationId,
           invoiceId,
@@ -516,7 +555,7 @@ async function listInvoices(
       `SELECT i.id, i.customer_id, c.external_id AS customer_external_id,
               c.payment_provider, c.payment_provider_code, i.number, i.status,
               i.payment_status, i.currency, i.subtotal_minor, i.tax_minor,
-              i.credits_minor, i.coupons_minor, i.prepaid_credit_minor,
+              i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
               i.total_due_minor, i.version, i.finalized_at,
               i.voided_at, i.created_at, i.updated_at
        FROM invoices i JOIN customers c ON c.id = i.customer_id
@@ -641,6 +680,13 @@ async function voidInvoice(
         voidedAt,
         requestId,
       );
+      const creditNoteRecredits = await creditNoteRecreditStatements(
+        env.BILLING_DB,
+        auth.organizationId,
+        invoice.id,
+        voidedAt,
+        requestId,
+      );
       const results = await env.BILLING_DB.batch([
         env.BILLING_DB.prepare(
           `UPDATE invoices SET status = 'voided', voided_at = ?, version = version + 1,
@@ -685,6 +731,7 @@ async function voidInvoice(
            WHERE id IN (SELECT applied_coupon_id FROM coupon_credits WHERE invoice_id = ?)`,
         ).bind(voidedAt, invoice.id),
         ...walletRecredits,
+        ...creditNoteRecredits,
       ]);
       if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1) {
         throw new Error("invoice_version_conflict");
@@ -781,7 +828,7 @@ async function findInvoice(
       `SELECT i.id, i.customer_id, c.external_id AS customer_external_id,
               c.email AS customer_email, c.payment_provider, c.payment_provider_code,
               i.number, i.status, i.payment_status, i.currency, i.subtotal_minor,
-              i.tax_minor, i.credits_minor, i.coupons_minor, i.prepaid_credit_minor,
+              i.tax_minor, i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
               i.total_due_minor, i.version,
               i.finalized_at, i.voided_at, i.created_at, i.updated_at
        FROM invoices i JOIN customers c ON c.id = i.customer_id
@@ -940,7 +987,7 @@ async function generateInvoicePaymentUrl(
             c.email AS customer_email,
             c.payment_provider, c.payment_provider_code, i.number, i.status,
             i.payment_status, i.currency, i.subtotal_minor, i.tax_minor,
-            i.credits_minor, i.coupons_minor, i.prepaid_credit_minor,
+            i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
             i.total_due_minor, i.version, i.finalized_at,
             i.voided_at, i.created_at, i.updated_at
      FROM invoices i JOIN customers c ON c.id = i.customer_id
@@ -1181,7 +1228,7 @@ function serializeInvoice(invoice: InvoiceRow): Record<string, unknown> {
     fees_amount_cents: invoice.subtotal_minor,
     taxes_amount_cents: invoice.tax_minor,
     coupons_amount_cents: invoice.coupons_minor,
-    credit_notes_amount_cents: 0,
+    credit_notes_amount_cents: invoice.credit_notes_minor,
     prepaid_credit_amount_cents: invoice.prepaid_credit_minor,
     prepaid_granted_credit_amount_cents: invoice.prepaid_credit_minor,
     prepaid_purchased_credit_amount_cents: 0,

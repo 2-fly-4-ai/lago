@@ -9,6 +9,10 @@ import { parseChargeModel } from "../usage/charge-properties";
 import { nextPeriodEnd } from "./periods";
 import { calculateCouponCredits } from "./coupon-credits";
 import { calculateWalletAllocations, walletAllocationStatements } from "./wallet-credits";
+import {
+  calculateCreditNoteAllocations,
+  creditNoteAllocationStatements,
+} from "./credit-note-credits";
 
 type SubscriptionRow = {
   id: string;
@@ -229,7 +233,7 @@ export async function closeBillingPeriod(
       (total, credit) => safeAdd(total, credit.amountMinor),
       0,
     );
-    const walletAllocations = await calculateWalletAllocations(
+    const creditNoteAllocations = await calculateCreditNoteAllocations(
       env.BILLING_DB,
       subscription.organization_id,
       subscription.customer_id,
@@ -237,11 +241,23 @@ export async function closeBillingPeriod(
       subscription.currency,
       subtotal - couponsMinor,
     );
+    const creditNotesMinor = creditNoteAllocations.reduce(
+      (total, allocation) => safeAdd(total, allocation.amountMinor),
+      0,
+    );
+    const walletAllocations = await calculateWalletAllocations(
+      env.BILLING_DB,
+      subscription.organization_id,
+      subscription.customer_id,
+      invoiceId,
+      subscription.currency,
+      subtotal - couponsMinor - creditNotesMinor,
+    );
     const prepaidCreditMinor = walletAllocations.reduce(
       (total, allocation) => safeAdd(total, allocation.amountMinor),
       0,
     );
-    const creditsMinor = safeAdd(couponsMinor, prepaidCreditMinor);
+    const creditsMinor = safeAdd(safeAdd(couponsMinor, creditNotesMinor), prepaidCreditMinor);
     const totalDue = subtotal - creditsMinor;
     const nextEnd = nextPeriodEnd(new Date(periodEnd), subscription.interval).toISOString();
     const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
@@ -260,6 +276,7 @@ export async function closeBillingPeriod(
         subscriptionId: subscription.id,
         billingCycleId: cycleId,
         couponsMinor,
+        creditNotesMinor,
         prepaidCreditMinor,
         totalDueMinor: totalDue,
         currency: subscription.currency,
@@ -272,8 +289,9 @@ export async function closeBillingPeriod(
         `INSERT INTO invoices
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
-          finalized_at, created_at, updated_at, coupons_minor, prepaid_credit_minor)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?)`,
+          finalized_at, created_at, updated_at, coupons_minor, prepaid_credit_minor,
+          credit_notes_minor)
+         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         invoiceId,
         subscription.organization_id,
@@ -289,6 +307,7 @@ export async function closeBillingPeriod(
         now,
         couponsMinor,
         prepaidCreditMinor,
+        creditNotesMinor,
       ),
       ...lines.map((line) =>
         env.BILLING_DB.prepare(
@@ -351,6 +370,16 @@ export async function closeBillingPeriod(
           credit.expectedVersion,
         ),
       ]),
+      ...creditNoteAllocations.flatMap((allocation) =>
+        creditNoteAllocationStatements(
+          env.BILLING_DB,
+          subscription.organization_id,
+          invoiceId,
+          allocation,
+          now,
+          correlationId,
+        ),
+      ),
       ...walletAllocations.flatMap((allocation) =>
         walletAllocationStatements(
           env.BILLING_DB,

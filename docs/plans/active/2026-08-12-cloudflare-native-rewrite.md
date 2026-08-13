@@ -292,7 +292,10 @@ Acceptance:
       and rounding behavior according to feature disposition. Unrestricted fixed/percentage
       coupons now support once/recurring/forever application, initial and renewal invoice
       consumption, exact rounding, replay, and unpaid-void recredit; targeted coupons, credit
-      notes, commitments, and taxes remain pending. Granted-credit wallets now support
+      note refunds/offsets/taxes, commitments, and taxes remain pending. Credit-only finalized
+      notes now support fee-bounded issuance, idempotent replay, customer balance application to
+      later invoices, and auditable unpaid-void recredit; provider refunds, invoice offsets,
+      tax-adjusted notes, documents, email, and external reporting remain pending. Granted-credit wallets now support
       create/list/show/terminate, idempotent top-up, priority/lot-ordered initial and renewal
       invoice consumption, and auditable unpaid-void recredit; paid/recurring/threshold top-ups and
       targeted allocation remain pending.
@@ -598,3 +601,10 @@ resource and mutation described.
   retry reported exactly `0010`, apply/deploy succeeded, and follow-up inventory was empty.
   Health/readiness returned 200 and unauthenticated wallet access returned 401. No remote billing
   data or payment mutation was introduced.
+- 2026-08-14: Added tenant-scoped credit-note create/list/show/void APIs for credit-only finalized
+  notes; explicit idempotency keys and request hashes; invoice- and fee-bounded issuance; immutable
+  application and recredit records; version-checked D1 triggers; application after coupons and
+  before wallets on initial and renewal invoices; invoice credit-note totals; and exactly-once
+  unpaid-void recredit. Refunds, offsets, taxes, metadata, documents, email, and provider reporting
+  fail explicitly. All 46 Workers-runtime tests pass across 15 files, generated inventory and
+  Worker bindings are current, and the dry-run bundle is 265.86 KiB.
