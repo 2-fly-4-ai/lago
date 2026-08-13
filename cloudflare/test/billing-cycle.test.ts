@@ -199,6 +199,73 @@ describe("billing period close", () => {
       ).first(),
     ).resolves.toEqual({ status: "active", termination_reason: null, consumed: 0 });
   });
+
+  it("adds only the minimum-commitment shortfall as an auditable fee", async () => {
+    const now = "2026-08-13T00:00:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO plans
+         (id, organization_id, code, name, interval, amount_minor, currency, version,
+          active, created_at, updated_at)
+         VALUES ('plan-commitment-cycle', 'org-cycle', 'commitment-cycle-plan',
+                 'Commitment Cycle Plan', 'monthly', 1000, 'USD', 1, 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, version, created_at, updated_at)
+         VALUES ('subscription-commitment-cycle', 'org-cycle', 'customer-cycle',
+                 'plan-commitment-cycle', 'subscription-commitment-cycle-external', 'active',
+                 '2026-07-31T00:00:00.000Z', '2026-07-31T00:00:00.000Z',
+                 '2026-08-31T00:00:00.000Z', 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO minimum_commitments
+         (id, organization_id, plan_id, amount_minor, invoice_display_name, created_at, updated_at)
+         VALUES ('commitment-cycle', 'org-cycle', 'plan-commitment-cycle', 1500,
+                 'Monthly minimum', ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO charges
+         (id, organization_id, plan_id, billable_metric_id, code, charge_model,
+          properties_json, invoiceable, pay_in_advance, prorated, min_amount_minor,
+          version, active, created_at, updated_at)
+         VALUES ('charge-commitment-cycle', 'org-cycle', 'plan-commitment-cycle',
+                 'metric-cycle', 'commitment-unit-charge', 'standard', '{"amount":"2.5"}',
+                 1, 0, 0, 0, 1, 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO usage_events
+         (id, organization_id, subscription_id, customer_id, billable_metric_id,
+          transaction_id, code, timestamp, timestamp_ms, properties_json, request_sha256,
+          archive_key, created_at)
+         VALUES ('event-commitment-cycle', 'org-cycle', 'subscription-commitment-cycle',
+                 'customer-cycle', 'metric-cycle', 'commitment-usage', 'units',
+                 '2026-08-13T00:00:00.000Z', ?, '{"quantity":"0.3"}',
+                 'commitment-event-hash', 'commitment-event-archive', ?)`,
+      ).bind(Date.parse("2026-08-13T00:00:00.000Z"), now),
+    ]);
+    const result = await closeBillingPeriod(
+      env,
+      "subscription-commitment-cycle",
+      "2026-08-31T00:00:00.000Z",
+      "cycle-commitment",
+    );
+    expect(result).toMatchObject({ totalDueMinor: 1400, lineCount: 3 });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT amount_minor, precise_amount_minor, description, source_type
+         FROM invoice_lines WHERE invoice_id = ? AND line_type = 'commitment'`,
+      )
+        .bind(result.invoiceId)
+        .first(),
+    ).resolves.toEqual({
+      amount_minor: 499,
+      precise_amount_minor: "499.25",
+      description: "Monthly minimum",
+      source_type: "commitment",
+    });
+  });
 });
 
 function invoiceRequest(path: string, method = "GET"): Promise<Response> {

@@ -14,6 +14,7 @@ import {
   creditNoteAllocationStatements,
 } from "./credit-note-credits";
 import { calculateManualTaxes, manualTaxStatements, totalManualTaxMinor } from "./manual-taxes";
+import { calculateMinimumCommitmentLine } from "./minimum-commitment";
 
 type SubscriptionRow = {
   id: string;
@@ -222,6 +223,30 @@ export async function closeBillingPeriod(
       });
     }
 
+    const preciseFees = lines.reduce(
+      (total, line) => total.add(Decimal.parse(line.precise)),
+      Decimal.zero(),
+    );
+    const commitmentLine = await calculateMinimumCommitmentLine(
+      env.BILLING_DB,
+      subscription.plan_id,
+      invoiceId,
+      subtotal,
+      preciseFees,
+    );
+    if (commitmentLine) {
+      subtotal = safeAdd(subtotal, commitmentLine.amountMinor);
+      lines.push({
+        id: commitmentLine.id,
+        description: commitmentLine.description,
+        units: "1",
+        precise: commitmentLine.preciseAmountMinor,
+        rounded: commitmentLine.amountMinor,
+        sourceId: commitmentLine.commitmentId,
+        metadataJson: stableJson({ billingCycleId: cycleId, periodStart, periodEnd }),
+      });
+    }
+
     const couponCredits = await calculateCouponCredits(
       env.BILLING_DB,
       subscription.organization_id,
@@ -330,14 +355,22 @@ export async function closeBillingPeriod(
         ).bind(
           line.id,
           invoiceId,
-          line.sourceId === subscription.plan_id ? "subscription" : "usage",
+          line.sourceId === subscription.plan_id
+            ? "subscription"
+            : line.sourceId === commitmentLine?.commitmentId
+              ? "commitment"
+              : "usage",
           line.description,
           line.units,
           line.units === "0"
             ? "0"
             : Decimal.parse(line.precise).divide(Decimal.parse(line.units)).toString(),
           line.rounded,
-          line.sourceId === subscription.plan_id ? "plan" : "charge",
+          line.sourceId === subscription.plan_id
+            ? "plan"
+            : line.sourceId === commitmentLine?.commitmentId
+              ? "commitment"
+              : "charge",
           line.sourceId,
           line.metadataJson,
           now,

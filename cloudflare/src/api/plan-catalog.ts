@@ -52,6 +52,12 @@ type NormalizedCharge = {
   minAmountMinor: number;
 };
 
+type NormalizedCommitment = {
+  id: string;
+  amountMinor: number;
+  invoiceDisplayName: string | null;
+};
+
 const INTERVALS = new Set(["weekly", "monthly", "quarterly", "yearly", "one_time"]);
 
 export async function handlePlanCatalogRequest(
@@ -100,7 +106,12 @@ async function createPlan(
       "unsupported_tax_target",
       "Plan tax targeting is not implemented; use organization-default taxes",
     );
-  rejectNonEmpty(input, ["fixed_charges", "usage_thresholds", "minimum_commitment"]);
+  rejectNonEmpty(input, ["fixed_charges", "usage_thresholds"]);
+  const minimumCommitment = await normalizeMinimumCommitment(
+    input.minimum_commitment,
+    auth.organizationId,
+    code,
+  );
   const normalizedRequest = {
     amountMinor,
     billChargesMonthly: optionalBooleanInteger(input.bill_charges_monthly),
@@ -112,6 +123,7 @@ async function createPlan(
     interval,
     invoiceDisplayName: optionalString(input, "invoice_display_name"),
     metadata,
+    minimumCommitment,
     name,
     payInAdvance: booleanInteger(input.pay_in_advance, false),
     trialPeriod: optionalNonNegativeNumber(input.trial_period, "trial_period"),
@@ -189,6 +201,25 @@ async function createPlan(
           now,
         ),
     ),
+    ...(minimumCommitment
+      ? [
+          database
+            .prepare(
+              `INSERT INTO minimum_commitments
+               (id, organization_id, plan_id, amount_minor, invoice_display_name,
+                created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .bind(
+              minimumCommitment.id,
+              auth.organizationId,
+              planId,
+              minimumCommitment.amountMinor,
+              minimumCommitment.invoiceDisplayName,
+              now,
+              now,
+            ),
+        ]
+      : []),
   ]);
   const plan = await findPlan(database, auth.organizationId, code);
   if (!plan) throw new ApiError(500, "persistence_error", "Plan was not persisted");
@@ -262,6 +293,19 @@ async function serializePlan(
     )
     .bind(plan.id)
     .all<ChargeRow>();
+  const commitment = await database
+    .prepare(
+      `SELECT id, amount_minor, invoice_display_name, created_at, updated_at
+       FROM minimum_commitments WHERE plan_id = ? LIMIT 1`,
+    )
+    .bind(plan.id)
+    .first<{
+      id: string;
+      amount_minor: number;
+      invoice_display_name: string | null;
+      created_at: string;
+      updated_at: string;
+    }>();
   return {
     lago_id: plan.id,
     name: plan.name,
@@ -290,6 +334,41 @@ async function serializePlan(
     applicable_usage_thresholds: [],
     taxes: [],
     metadata: parseObject(plan.metadata_json),
+    minimum_commitment: commitment
+      ? {
+          lago_id: commitment.id,
+          plan_code: plan.code,
+          invoice_display_name: commitment.invoice_display_name,
+          amount_cents: commitment.amount_minor,
+          interval: plan.interval,
+          created_at: commitment.created_at,
+          updated_at: commitment.updated_at,
+          taxes: [],
+        }
+      : null,
+  };
+}
+
+async function normalizeMinimumCommitment(
+  value: unknown,
+  organizationId: string,
+  planCode: string,
+): Promise<NormalizedCommitment | null> {
+  if (value === undefined || value === null) return null;
+  const input = optionalObject(value, "minimum_commitment");
+  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
+    throw new ApiError(
+      422,
+      "unsupported_tax_target",
+      "Commitment-specific tax targeting is not implemented",
+    );
+  const amountMinor = nonNegativeInteger(input.amount_cents, "minimum_commitment.amount_cents");
+  if (amountMinor === 0)
+    throw new ApiError(422, "validation_error", "minimum_commitment.amount_cents must be positive");
+  return {
+    id: await deterministicUuid("minimum-commitment", `${organizationId}:${planCode}`),
+    amountMinor,
+    invoiceDisplayName: optionalString(input, "invoice_display_name"),
   };
 }
 

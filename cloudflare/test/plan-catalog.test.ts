@@ -101,6 +101,45 @@ describe("Lago-compatible plan catalog", () => {
     expect(response.status).toBe(422);
     await expect(response.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
   });
+
+  it("creates and serializes a minimum commitment while rejecting commitment tax targeting", async () => {
+    const payload = {
+      plan: {
+        name: "Committed",
+        code: "committed",
+        interval: "monthly",
+        amount_cents: 100,
+        amount_currency: "USD",
+        minimum_commitment: {
+          amount_cents: 1000,
+          invoice_display_name: "Monthly minimum",
+        },
+      },
+    };
+    const created = await api("/api/v1/plans", "POST", payload);
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      plan: {
+        code: "committed",
+        minimum_commitment: {
+          amount_cents: 1000,
+          invoice_display_name: "Monthly minimum",
+          interval: "monthly",
+        },
+      },
+    });
+    expect((await api("/api/v1/plans", "POST", payload)).status).toBe(200);
+
+    const targeted = await api("/api/v1/plans", "POST", {
+      plan: {
+        ...payload.plan,
+        code: "committed-tax",
+        minimum_commitment: { amount_cents: 1000, tax_codes: ["tax"] },
+      },
+    });
+    expect(targeted.status).toBe(422);
+    await expect(targeted.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
+  });
 });
 
 function api(path: string, method = "GET", body?: Record<string, unknown>): Promise<Response> {

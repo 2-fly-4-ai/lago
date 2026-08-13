@@ -303,6 +303,9 @@ Acceptance:
       coupon-adjusted fee taxable bases, exact rounding, and immutable invoice/fee snapshots;
       customer/plan/charge targeting, external providers, exemptions, tax identifiers, and
       credit-note tax adjustments remain pending.
+      Plan-level in-arrears minimum commitments now create only the rounded billing-period
+      shortfall while retaining the precise fee value; commitment-specific taxes, pay-in-advance
+      reconciliation, partial-period proration, and subscription overrides remain pending.
 - [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
       leased, idempotent recurring period-close finalization path now produces plan and usage lines,
       and unpaid finalized invoices can be shown with lines and voided idempotently; manual
@@ -626,3 +629,8 @@ resource and mutation described.
   `751ef348-beca-4228-bd3c-90d08fb32940`. Follow-up migration inventory was empty; remote
   health/readiness returned `200` and unauthenticated tax access returned `401`. The stack remains
   unseeded, has no provider secrets or production routes, and all provider mutation flags remain off.
+- 2026-08-14: Added plan-level minimum commitment persistence and serialization plus recurring
+  in-arrears true-up lines covering subscription and invoiceable usage fees. Tests preserve both
+  rounded and precise shortfalls and verify coupon application occurs after the threshold is met.
+  Commitment-specific tax targeting fails explicitly. All 50 Workers-runtime tests pass; the full
+  local gate and 291.85 KiB deployment dry run are green.
