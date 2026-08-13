@@ -63,9 +63,13 @@ function gitTimestamp(path) {
 
 function primaryCheckout(repository) {
   try {
-    const commonDirectory = execFileSync("git", ["-C", repository, "rev-parse", "--git-common-dir"], {
-      encoding: "utf8",
-    }).trim();
+    const commonDirectory = execFileSync(
+      "git",
+      ["-C", repository, "rev-parse", "--git-common-dir"],
+      {
+        encoding: "utf8",
+      },
+    ).trim();
     const absolute = resolve(repository, commonDirectory);
     return dirname(absolute);
   } catch {

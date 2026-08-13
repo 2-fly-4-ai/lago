@@ -268,7 +268,8 @@ Acceptance:
 ### M2: Customer, plan, subscription, and compatibility APIs
 
 - [x] Implement API-key authentication and organization scoping.
-- [x] Implement plans and provider mappings required by the verified store contract.
+- [x] Implement tenant-scoped plan create/list/show and embedded core charge creation required to
+      operate the metered path; plan update/deletion and advanced nested features remain pending.
 - [x] Implement idempotent customer upsert.
 - [ ] Implement subscription creation and lifecycle state machine.
 - [x] Implement invoice listing required by the current store flow.
@@ -523,3 +524,15 @@ resource and mutation described.
   Workers-runtime tests and the full local gate, applied only migration `0006` to isolated
   development D1, deployed version `f1dbf691-bce3-4e0f-80ca-cfc4d0ca954c`, and reverified health,
   readiness, and authentication. The remote database remains unseeded.
+- 2026-08-13: Fixed the feature inventory generator to resolve the primary checkout from Git's
+  common directory when the worktree's frontend submodule is uninitialized, restored all 1,792
+  frontend entries, and removed the circular dependency on the root commit timestamp/revision.
+- 2026-08-13: Added atomic, idempotent Lago-compatible plan create/list/show APIs with embedded
+  supported charges, stable conflict detection, ISO currency and interval validation, and explicit
+  rejection of unimplemented nested features. All 33 Workers-runtime tests pass, and all seven D1
+  migrations replay successfully from an empty local database.
+- 2026-08-13: Applied only migration `0007` to isolated development D1 and deployed Worker version
+  `cc3bd495-bb81-4c6a-bc19-79e6bc0437d4`. A transient read-only D1 API query returned account
+  authorization code 7403 immediately before the successful apply; follow-up verification showed
+  no pending migrations, `/health` and `/ready` returned 200, and unauthenticated `/api/v1/plans`
+  returned 401. No remote data was seeded.

@@ -5,6 +5,7 @@ import { deterministicUuid } from "../identifiers";
 import { createAuthorizeNetPaymentUrl } from "../providers/authorize-net";
 import { nextPeriodEnd } from "../billing/periods";
 import { handleMeteredUsageRequest } from "./metered-usage";
+import { handlePlanCatalogRequest } from "./plan-catalog";
 
 type CustomerRow = {
   id: string;
@@ -68,6 +69,9 @@ export async function handleLagoCompatibilityRequest(
   requestId: string,
 ): Promise<Response | null> {
   const url = new URL(request.url);
+
+  const planResponse = await handlePlanCatalogRequest(request, env.BILLING_DB, auth, requestId);
+  if (planResponse) return planResponse;
 
   const meteredUsageResponse = await handleMeteredUsageRequest(request, env, auth, requestId);
   if (meteredUsageResponse) return meteredUsageResponse;

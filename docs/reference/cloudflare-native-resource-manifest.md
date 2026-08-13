@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `f1dbf691-bce3-4e0f-80ca-cfc4d0ca954c`
+- Latest verified version: `cc3bd495-bb81-4c6a-bc19-79e6bc0437d4`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -31,7 +31,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron | `17 * * * *` | Worker scheduled handler | Hourly reconciliation dispatch |
 | Browser Rendering | account binding | `BROWSER` | Reserved for document milestone |
 
-Applied D1 migrations: `0001_foundation.sql` through `0006_billing_cycles.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0007_plan_catalog.sql`.
 
 ## Verified behavior
 
@@ -40,6 +40,8 @@ Applied D1 migrations: `0001_foundation.sql` through `0006_billing_cycles.sql`.
 - `GET /api/v1/invoices` without a bearer key returned the expected `401` envelope.
 - `GET /api/v1/events` without a bearer key returned the expected `401` envelope after migration
   `0005` and the latest deployment.
+- `GET /api/v1/plans` without a bearer key returned the expected `401` envelope after migration
+  `0007`; a follow-up remote migration query reported no pending migrations.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   provider secret, or customer data was seeded remotely.
 
