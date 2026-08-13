@@ -7,6 +7,7 @@ import { Decimal } from "../rating/decimal";
 import { aggregateUsage, type SupportedAggregationType } from "../usage/aggregation";
 import { parseChargeModel } from "../usage/charge-properties";
 import { nextPeriodEnd } from "./periods";
+import { calculateCouponCredits } from "./coupon-credits";
 
 type SubscriptionRow = {
   id: string;
@@ -84,8 +85,8 @@ export async function closeBillingPeriod(
     return cycleResult(env.BILLING_DB, existing.id, existing.invoice_id, true, periodEnd);
   }
 
-  const reservationKey = `billing-cycle:${periodStart}:${periodEnd}`;
-  const billingAccount = env.BILLING_ACCOUNTS.getByName(`subscription:${subscription.id}`);
+  const reservationKey = `billing-cycle:${subscription.id}:${periodStart}:${periodEnd}`;
+  const billingAccount = env.BILLING_ACCOUNTS.getByName(`customer:${subscription.customer_id}`);
   let reservation = await billingAccount.reserveCommand({
     idempotencyKey: reservationKey,
     commandType: "subscription.period.close",
@@ -215,6 +216,19 @@ export async function closeBillingPeriod(
       });
     }
 
+    const couponCredits = await calculateCouponCredits(
+      env.BILLING_DB,
+      subscription.organization_id,
+      subscription.customer_id,
+      invoiceId,
+      subscription.currency,
+      subtotal,
+    );
+    const creditsMinor = couponCredits.reduce(
+      (total, credit) => safeAdd(total, credit.amountMinor),
+      0,
+    );
+    const totalDue = subtotal - creditsMinor;
     const nextEnd = nextPeriodEnd(new Date(periodEnd), subscription.interval).toISOString();
     const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
     const domainEvent: DomainEvent = {
@@ -231,7 +245,8 @@ export async function closeBillingPeriod(
         organizationId: subscription.organization_id,
         subscriptionId: subscription.id,
         billingCycleId: cycleId,
-        totalDueMinor: subtotal,
+        creditsMinor,
+        totalDueMinor: totalDue,
         currency: subscription.currency,
         periodStart,
         periodEnd,
@@ -243,7 +258,7 @@ export async function closeBillingPeriod(
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
           finalized_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, 0, 0, ?, 1, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, 0, ?, ?, 1, ?, ?, ?)`,
       ).bind(
         invoiceId,
         subscription.organization_id,
@@ -252,7 +267,8 @@ export async function closeBillingPeriod(
         invoiceNumber,
         subscription.currency,
         subtotal,
-        subtotal,
+        creditsMinor,
+        totalDue,
         now,
         now,
         now,
@@ -282,6 +298,42 @@ export async function closeBillingPeriod(
           cycleId,
         ),
       ),
+      ...couponCredits.flatMap((credit) => [
+        env.BILLING_DB.prepare(
+          `INSERT INTO coupon_credits
+           (id, organization_id, invoice_id, applied_coupon_id, applied_coupon_version,
+            amount_minor, currency, before_taxes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        ).bind(
+          credit.id,
+          subscription.organization_id,
+          invoiceId,
+          credit.appliedCouponId,
+          credit.expectedVersion,
+          credit.amountMinor,
+          subscription.currency,
+          now,
+        ),
+        env.BILLING_DB.prepare(
+          `UPDATE applied_coupons
+           SET frequency_duration_remaining = ?,
+               status = CASE WHEN ? = 1 THEN 'terminated' ELSE status END,
+               termination_reason = CASE WHEN ? = 1 THEN 'consumed' ELSE termination_reason END,
+               terminated_at = CASE WHEN ? = 1 THEN ? ELSE terminated_at END,
+               version = version + 1, updated_at = ?
+           WHERE id = ? AND organization_id = ? AND status = 'active' AND version = ?`,
+        ).bind(
+          credit.nextRemaining,
+          credit.terminates ? 1 : 0,
+          credit.terminates ? 1 : 0,
+          credit.terminates ? 1 : 0,
+          now,
+          now,
+          credit.appliedCouponId,
+          subscription.organization_id,
+          credit.expectedVersion,
+        ),
+      ]),
       env.BILLING_DB.prepare(
         `UPDATE subscriptions
          SET current_period_start = ?, current_period_end = ?, version = version + 1, updated_at = ?
@@ -310,6 +362,11 @@ export async function closeBillingPeriod(
       ),
     ];
     const results = await env.BILLING_DB.batch(statements);
+    const firstCouponUpdate = 2 + lines.length;
+    for (let offset = 0; offset < couponCredits.length; offset += 1) {
+      const update = results[firstCouponUpdate + offset * 2];
+      if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
+    }
     const subscriptionUpdate = results[results.length - 3];
     if (!subscriptionUpdate || subscriptionUpdate.meta.changes !== 1) {
       throw new Error("billing_period_changed");
@@ -319,7 +376,7 @@ export async function closeBillingPeriod(
       billingCycleId: cycleId,
       invoiceId,
       replayed: false,
-      totalDueMinor: subtotal,
+      totalDueMinor: totalDue,
       lineCount: lines.length,
       nextPeriodEnd: nextEnd,
     };

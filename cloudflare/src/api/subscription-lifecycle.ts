@@ -132,8 +132,8 @@ async function terminateSubscription(
   const requestHash = await sha256Hex(
     stableJson({ externalId, onTerminationCreditNote, onTerminationInvoice }),
   );
-  const reservationKey = `subscription-terminate:v${subscription.version}`;
-  const account = env.BILLING_ACCOUNTS.getByName(`subscription:${subscription.id}`);
+  const reservationKey = `subscription-terminate:${subscription.id}:v${subscription.version}`;
+  const account = env.BILLING_ACCOUNTS.getByName(`customer:${subscription.customer_id}`);
   const reservation = await account.reserveCommand({
     idempotencyKey: reservationKey,
     commandType: "subscription.terminate",

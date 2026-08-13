@@ -52,6 +52,23 @@ beforeEach(async () => {
        VALUES ('charge-cycle', 'org-cycle', 'plan-cycle', 'metric-cycle', 'unit-charge',
                'standard', '{"amount":"2.5"}', 1, 0, 0, 0, 1, 1, ?, ?)`,
     ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO coupons
+       (id, organization_id, code, name, coupon_type, amount_minor, currency,
+        percentage_rate, frequency, frequency_duration, expiration, expiration_at,
+        reusable, status, request_sha256, created_at, updated_at)
+       VALUES ('coupon-cycle', 'org-cycle', 'cycle-credit', 'Cycle credit', 'fixed_amount',
+               100, 'USD', NULL, 'once', NULL, 'no_expiration', NULL, 1, 'active',
+               'coupon-cycle-hash', ?, ?)`,
+    ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO applied_coupons
+       (id, organization_id, customer_id, coupon_id, amount_minor, currency,
+        percentage_rate, frequency, frequency_duration, frequency_duration_remaining,
+        status, termination_reason, reuse_slot, request_sha256, version, created_at, updated_at)
+       VALUES ('applied-cycle', 'org-cycle', 'customer-cycle', 'coupon-cycle', 100, 'USD',
+               NULL, 'once', NULL, NULL, 'active', NULL, NULL, 'applied-cycle-hash', 1, ?, ?)`,
+    ).bind(now, now),
     eventStatement("event-cycle-1", "inside-1", "2026-08-13T00:00:00.000Z", "0.1", now),
     eventStatement("event-cycle-2", "inside-2", "2026-08-20T00:00:00.000Z", "0.2", now),
     eventStatement("event-boundary", "boundary", "2026-08-31T00:00:00.000Z", "99", now),
@@ -66,7 +83,7 @@ describe("billing period close", () => {
       "2026-08-31T00:00:00.000Z",
       "cycle-test-1",
     );
-    expect(first).toMatchObject({ replayed: false, totalDueMinor: 1001, lineCount: 2 });
+    expect(first).toMatchObject({ replayed: false, totalDueMinor: 901, lineCount: 2 });
     expect(first.nextPeriodEnd).toBe("2026-09-30T00:00:00.000Z");
 
     const replay = await closeBillingPeriod(
@@ -78,7 +95,7 @@ describe("billing period close", () => {
     expect(replay).toMatchObject({
       replayed: true,
       invoiceId: first.invoiceId,
-      totalDueMinor: 1001,
+      totalDueMinor: 901,
       lineCount: 2,
     });
 
@@ -92,6 +109,21 @@ describe("billing period close", () => {
       .bind(first.invoiceId)
       .first<{ cycles: number; invoices: number; events: number }>();
     expect(counts).toEqual({ cycles: 1, invoices: 1, events: 1 });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT i.credits_minor, i.total_due_minor, ac.status,
+                (SELECT COUNT(*) FROM coupon_credits WHERE invoice_id = i.id) AS credit_count
+         FROM invoices i JOIN applied_coupons ac ON ac.id = 'applied-cycle'
+         WHERE i.id = ?`,
+      )
+        .bind(first.invoiceId)
+        .first(),
+    ).resolves.toEqual({
+      credits_minor: 100,
+      total_due_minor: 901,
+      status: "terminated",
+      credit_count: 1,
+    });
 
     const lines = await env.BILLING_DB.prepare(
       `SELECT line_type, amount_minor, precise_amount_minor, quantity_decimal
@@ -125,6 +157,17 @@ describe("billing period close", () => {
       invoice: {
         lago_id: first.invoiceId,
         status: "finalized",
+        coupons_amount_cents: 100,
+        credit_notes_amount_cents: 0,
+        total_amount_cents: 901,
+        credits: [
+          {
+            amount_cents: 100,
+            amount_currency: "USD",
+            before_taxes: true,
+            item: { type: "coupon", code: "cycle-credit", name: "Cycle credit" },
+          },
+        ],
         fees: [
           { item: { type: "subscription" }, amount_cents: 1000 },
           { item: { type: "usage" }, amount_cents: 1, precise_amount_cents: "0.75" },
@@ -146,6 +189,15 @@ describe("billing period close", () => {
       .bind(first.invoiceId)
       .first<{ total: number }>();
     expect(voidCount?.total).toBe(1);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT ac.status, ac.termination_reason,
+                COALESCE(SUM(CASE WHEN i.status <> 'voided' THEN cc.amount_minor ELSE 0 END), 0) AS consumed
+         FROM applied_coupons ac LEFT JOIN coupon_credits cc ON cc.applied_coupon_id = ac.id
+         LEFT JOIN invoices i ON i.id = cc.invoice_id WHERE ac.id = 'applied-cycle'
+         GROUP BY ac.id`,
+      ).first(),
+    ).resolves.toEqual({ status: "active", termination_reason: null, consumed: 0 });
   });
 });
 

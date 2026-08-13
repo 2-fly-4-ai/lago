@@ -4,9 +4,11 @@ import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredStri
 import { deterministicUuid } from "../identifiers";
 import { createAuthorizeNetPaymentUrl } from "../providers/authorize-net";
 import { nextPeriodEnd } from "../billing/periods";
+import { calculateCouponCredits } from "../billing/coupon-credits";
 import { handleMeteredUsageRequest } from "./metered-usage";
 import { handlePlanCatalogRequest } from "./plan-catalog";
 import { handleSubscriptionLifecycleRequest } from "./subscription-lifecycle";
+import { handleCouponLedgerRequest } from "./coupon-ledger";
 
 type CustomerRow = {
   id: string;
@@ -80,6 +82,9 @@ export async function handleLagoCompatibilityRequest(
   const meteredUsageResponse = await handleMeteredUsageRequest(request, env, auth, requestId);
   if (meteredUsageResponse) return meteredUsageResponse;
 
+  const couponResponse = await handleCouponLedgerRequest(request, env, auth, requestId);
+  if (couponResponse) return couponResponse;
+
   if (request.method === "POST" && url.pathname === "/api/v1/customers") {
     return upsertCustomer(request, env.BILLING_DB, auth, requestId);
   }
@@ -94,7 +99,7 @@ export async function handleLagoCompatibilityRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/api/v1/subscriptions") {
-    return createSubscription(request, env.BILLING_DB, auth, requestId);
+    return createSubscription(request, env, auth, requestId);
   }
 
   if (request.method === "GET" && url.pathname === "/api/v1/invoices") {
@@ -235,10 +240,11 @@ async function showCustomer(
 
 async function createSubscription(
   request: Request,
-  database: D1Database,
+  env: Env,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
+  const database = env.BILLING_DB;
   const body = await parseJsonObject(request);
   const input = objectAt(body, "subscription");
   const externalCustomerId = requiredString(input, "external_customer_id");
@@ -284,9 +290,22 @@ async function createSubscription(
   const invoiceId = await deterministicUuid("initial-invoice", commandKey);
   const invoiceLineId = await deterministicUuid("initial-invoice-line", commandKey);
   const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
+  const couponCredits = await calculateCouponCredits(
+    database,
+    auth.organizationId,
+    customer.id,
+    invoiceId,
+    plan.currency,
+    plan.amount_minor,
+  );
+  const creditsMinor = couponCredits.reduce(
+    (total, credit) => safeAddMinor(total, credit.amountMinor),
+    0,
+  );
+  const totalDueMinor = plan.amount_minor - creditsMinor;
 
   try {
-    await database.batch([
+    const statements: D1PreparedStatement[] = [
       database
         .prepare(
           `INSERT INTO subscriptions
@@ -315,7 +334,7 @@ async function createSubscription(
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
           finalized_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, 0, 0, ?, 1, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, 0, ?, ?, 1, ?, ?, ?)`,
         )
         .bind(
           invoiceId,
@@ -325,7 +344,8 @@ async function createSubscription(
           invoiceNumber,
           plan.currency,
           plan.amount_minor,
-          plan.amount_minor,
+          creditsMinor,
+          totalDueMinor,
           timestamp,
           timestamp,
           timestamp,
@@ -346,10 +366,67 @@ async function createSubscription(
           plan.id,
           timestamp,
         ),
-    ]);
+    ];
+    for (const credit of couponCredits) {
+      statements.push(
+        database
+          .prepare(
+            `INSERT INTO coupon_credits
+             (id, organization_id, invoice_id, applied_coupon_id, applied_coupon_version,
+              amount_minor, currency, before_taxes, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+          )
+          .bind(
+            credit.id,
+            auth.organizationId,
+            invoiceId,
+            credit.appliedCouponId,
+            credit.expectedVersion,
+            credit.amountMinor,
+            plan.currency,
+            timestamp,
+          ),
+        database
+          .prepare(
+            `UPDATE applied_coupons
+             SET frequency_duration_remaining = ?,
+                 status = CASE WHEN ? = 1 THEN 'terminated' ELSE status END,
+                 termination_reason = CASE WHEN ? = 1 THEN 'consumed' ELSE termination_reason END,
+                 terminated_at = CASE WHEN ? = 1 THEN ? ELSE terminated_at END,
+                 version = version + 1, updated_at = ?
+             WHERE id = ? AND organization_id = ? AND status = 'active' AND version = ?`,
+          )
+          .bind(
+            credit.nextRemaining,
+            credit.terminates ? 1 : 0,
+            credit.terminates ? 1 : 0,
+            credit.terminates ? 1 : 0,
+            timestamp,
+            timestamp,
+            credit.appliedCouponId,
+            auth.organizationId,
+            credit.expectedVersion,
+          ),
+      );
+    }
+    const results = await database.batch(statements);
+    for (let offset = 0; offset < couponCredits.length; offset += 1) {
+      const update = results[4 + offset * 2];
+      if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
+    }
   } catch (error) {
     const concurrent = await findSubscription(database, auth.organizationId, externalId);
-    if (!concurrent) throw error;
+    if (!concurrent) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("coupon_version_conflict")) {
+        throw new ApiError(
+          409,
+          "coupon_version_conflict",
+          "Coupon changed during subscription creation; retry the request",
+        );
+      }
+      throw error;
+    }
     assertSubscriptionReplay(concurrent, { externalCustomerId, name, planCode, requestHash });
     return json({ subscription: serializeSubscription(concurrent) }, { requestId });
   }
@@ -358,6 +435,14 @@ async function createSubscription(
   if (!subscription) throw new ApiError(500, "persistence_error", "Subscription was not persisted");
   assertSubscriptionReplay(subscription, { externalCustomerId, name, planCode, requestHash });
   return json({ subscription: serializeSubscription(subscription) }, { requestId });
+}
+
+function safeAddMinor(left: number, right: number): number {
+  const total = left + right;
+  if (!Number.isSafeInteger(total) || total < 0) {
+    throw new ApiError(422, "invalid_minor_amount", "Coupon amount exceeds supported precision");
+  }
+  return total;
 }
 
 async function listInvoices(
@@ -433,6 +518,7 @@ async function showInvoice(
       invoice: {
         ...serializeInvoice(invoice),
         fees: await serializeInvoiceLines(database, invoice),
+        credits: await serializeCouponCredits(database, invoice),
       },
     },
     { requestId },
@@ -484,8 +570,8 @@ async function voidInvoice(
   const requestHash = await sha256Hex(
     JSON.stringify({ invoiceId, version: invoice.version, operation: "void" }),
   );
-  const reservationKey = `invoice-void:v${invoice.version}`;
-  const account = env.BILLING_ACCOUNTS.getByName(`invoice:${invoice.id}`);
+  const reservationKey = `invoice-void:${invoice.id}:v${invoice.version}`;
+  const account = env.BILLING_ACCOUNTS.getByName(`customer:${invoice.customer_id}`);
   const reservation = await account.reserveCommand({
     idempotencyKey: reservationKey,
     commandType: "invoice.void",
@@ -538,6 +624,19 @@ async function voidInvoice(
           invoice.version + 1,
           voidedAt,
         ),
+        env.BILLING_DB.prepare(
+          `UPDATE applied_coupons
+           SET frequency_duration_remaining = CASE
+                 WHEN frequency = 'recurring' THEN MIN(frequency_duration,
+                   frequency_duration_remaining + 1)
+                 ELSE frequency_duration_remaining
+               END,
+               status = CASE WHEN termination_reason = 'consumed' THEN 'active' ELSE status END,
+               termination_reason = CASE WHEN termination_reason = 'consumed' THEN NULL ELSE termination_reason END,
+               terminated_at = CASE WHEN termination_reason = 'consumed' THEN NULL ELSE terminated_at END,
+               version = version + 1, updated_at = ?
+           WHERE id IN (SELECT applied_coupon_id FROM coupon_credits WHERE invoice_id = ?)`,
+        ).bind(voidedAt, invoice.id),
       ]);
       if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1) {
         throw new Error("invoice_version_conflict");
@@ -690,6 +789,47 @@ async function serializeInvoiceLines(
     description: line.description,
     payment_status: invoice.payment_status,
     created_at: line.created_at,
+  }));
+}
+
+async function serializeCouponCredits(
+  database: D1Database,
+  invoice: InvoiceRow,
+): Promise<Array<Record<string, unknown>>> {
+  const result = await database
+    .prepare(
+      `SELECT cc.id, cc.amount_minor, cc.currency, cc.before_taxes,
+              ac.id AS applied_coupon_id, cp.id AS coupon_id, cp.code, cp.name, cp.description
+       FROM coupon_credits cc JOIN applied_coupons ac ON ac.id = cc.applied_coupon_id
+       JOIN coupons cp ON cp.id = ac.coupon_id
+       WHERE cc.invoice_id = ? ORDER BY cc.created_at, cc.id`,
+    )
+    .bind(invoice.id)
+    .all<{
+      id: string;
+      amount_minor: number;
+      currency: string;
+      before_taxes: number;
+      applied_coupon_id: string;
+      coupon_id: string;
+      code: string;
+      name: string;
+      description: string | null;
+    }>();
+  return result.results.map((credit) => ({
+    lago_id: credit.id,
+    amount_cents: credit.amount_minor,
+    amount_currency: credit.currency,
+    before_taxes: credit.before_taxes === 1,
+    lago_applied_coupon_id: credit.applied_coupon_id,
+    item: {
+      lago_item_id: credit.coupon_id,
+      type: "coupon",
+      code: credit.code,
+      name: credit.name,
+      description: credit.description,
+    },
+    invoice: { lago_id: invoice.id, payment_status: invoice.payment_status },
   }));
 }
 
@@ -949,8 +1089,8 @@ function serializeInvoice(invoice: InvoiceRow): Record<string, unknown> {
     currency: invoice.currency,
     fees_amount_cents: invoice.subtotal_minor,
     taxes_amount_cents: invoice.tax_minor,
-    coupons_amount_cents: 0,
-    credit_notes_amount_cents: invoice.credits_minor,
+    coupons_amount_cents: invoice.credits_minor,
+    credit_notes_amount_cents: 0,
     sub_total_excluding_taxes_amount_cents: invoice.subtotal_minor,
     sub_total_including_taxes_amount_cents: invoice.subtotal_minor + invoice.tax_minor,
     total_amount_cents: invoice.total_due_minor,

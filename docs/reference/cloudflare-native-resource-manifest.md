@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `cb34a618-ce8b-4bdc-9829-9c7eefd3368a`
+- Latest verified version: `de441997-65d7-4a27-9ae1-a0eeec17d75b`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -32,7 +32,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron | `17 * * * *` | Worker scheduled handler | Hourly reconciliation dispatch |
 | Browser Rendering | account binding | `BROWSER` | Invoice HTML-to-PDF rendering |
 
-Applied D1 migrations: `0001_foundation.sql` through `0008_document_artifacts.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0009_coupon_ledger.sql`.
 
 ## Verified behavior
 
@@ -50,6 +50,8 @@ Applied D1 migrations: `0001_foundation.sql` through `0008_document_artifacts.sq
 - The document deployment registered `serp-dev-lago-documents`; a follow-up remote migration query
   reported no pending migrations, and health/readiness/authentication smoke checks returned
   `200`/`200`/`401` respectively.
+- The coupon-ledger deployment added only schema and code to the unseeded isolated stack; no coupon,
+  application, credit, customer, subscription, or invoice row was created remotely.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

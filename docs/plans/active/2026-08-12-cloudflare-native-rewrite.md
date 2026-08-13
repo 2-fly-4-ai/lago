@@ -289,7 +289,10 @@ Acceptance:
       percentage charge-model interfaces; dynamic/custom, filters, and advanced percentage
       adjustments remain pending.
 - [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
-      and rounding behavior according to feature disposition.
+      and rounding behavior according to feature disposition. Unrestricted fixed/percentage
+      coupons now support once/recurring/forever application, initial and renewal invoice
+      consumption, exact rounding, replay, and unpaid-void recredit; targeted coupons, wallets,
+      credit notes, commitments, and taxes remain pending.
 - [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
       leased, idempotent recurring period-close finalization path now produces plan and usage lines,
       and unpaid finalized invoices can be shown with lines and voided idempotently; manual
@@ -568,3 +571,14 @@ resource and mutation described.
   Worker version `cb34a618-ce8b-4bdc-9829-9c7eefd3368a` with workflow
   `serp-dev-lago-documents`. Remote migration inventory is empty; health/readiness returned 200 and
   an unauthenticated customer API read returned 401. No remote billing or artifact data was seeded.
+- 2026-08-13: Added tenant-scoped coupon create/list/show and applied-coupon
+  create/list/customer-list/terminate APIs, immutable coupon-credit records, exact fixed and
+  percentage calculations, once/recurring/forever lifecycle, database-enforced non-reuse and
+  version-checked consumption, versioned outbox events, initial and renewal invoice integration,
+  invoice credit evidence, and unpaid-void recredit. Plan/billable-metric targets are rejected
+  explicitly until line-allocation parity is proven. All 42 Workers-runtime tests pass across 13
+  files with all nine migrations replayed from empty D1 state.
+- 2026-08-13: Applied only migration `0009` to isolated development D1 and deployed Worker version
+  `de441997-65d7-4a27-9ae1-a0eeec17d75b`. Follow-up migration inventory was empty; remote
+  health/readiness returned 200 and the unauthenticated coupon collection returned 401. No remote
+  tenant, coupon, credit, invoice, provider, secret, or customer data was introduced.
