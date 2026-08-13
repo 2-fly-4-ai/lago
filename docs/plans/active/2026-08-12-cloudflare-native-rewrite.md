@@ -721,3 +721,7 @@ resource and mutation described.
   bypassing required subscription unit-event and immediate-rebilling behavior. All 58
   Workers-runtime tests pass across 18 files; the full local gate and 358.54 KiB dry-run bundle are
   green.
+- 2026-08-14: Deployed the code-only fixed-charge route revision as isolated Worker version
+  `fbf90a5e-4546-4c95-922d-a45321df716a`; no D1 migration was pending. Remote health/readiness
+  returned `200`, unauthenticated fixed-charge list returned `401`, and the stack remains unseeded
+  with no production route, provider secret, or enabled external-mutation flag.
