@@ -288,6 +288,10 @@ Acceptance:
 - [x] Implement exact-decimal standard, graduated, package, volume, percentage, and graduated
       percentage charge-model interfaces; dynamic/custom, filters, and advanced percentage
       adjustments remain pending.
+      Billable-metric create/list/show and Rails-safe scalar update now emit transactional,
+      versioned outbox events; attached metrics allow only name/description mutation. Recurring,
+      rounding, weighted, expression, filters, and deletion inputs fail explicitly until their
+      aggregation and cleanup workflows are ported.
 - [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
       and rounding behavior according to feature disposition. Unrestricted fixed/percentage
       coupons now support once/recurring/forever application, initial and renewal invoice
@@ -686,3 +690,9 @@ resource and mutation described.
   `317c844a-836d-457b-81da-6b072bf0a190`; no D1 migration was pending. Remote health/readiness
   returned `200`, unauthenticated plan update returned `401`, and all payment, provider-read, and
   outbound-webhook flags remain disabled with no production route or secret.
+- 2026-08-14: Made billable-metric creation idempotent, added optimistic scalar updates with the
+  Rails-safe attached-plan restriction, and added transactional `billable_metric.created` and
+  `billable_metric.updated` outbox events. Recurring, rounding, weighted, expression, filters, and
+  destructive deletion now fail explicitly instead of being stored without effect. All 57
+  Workers-runtime tests pass across 18 files; the full local gate and 348.51 KiB dry-run bundle are
+  green.

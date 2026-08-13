@@ -21,7 +21,9 @@ type MetricRow = {
   rounding_precision: number | null;
   weighted_interval: string | null;
   expression: string | null;
+  version: number;
   created_at: string;
+  updated_at: string;
 };
 
 type EventRow = {
@@ -98,7 +100,7 @@ export async function handleMeteredUsageRequest(
   const url = new URL(request.url);
 
   if (request.method === "POST" && url.pathname === "/api/v1/billable_metrics") {
-    return createBillableMetric(request, env.BILLING_DB, auth, requestId);
+    return createBillableMetric(request, env, auth, requestId);
   }
   if (request.method === "GET" && url.pathname === "/api/v1/billable_metrics") {
     return listBillableMetrics(url, env.BILLING_DB, auth, requestId);
@@ -106,6 +108,16 @@ export async function handleMeteredUsageRequest(
   const metricMatch = url.pathname.match(/^\/api\/v1\/billable_metrics\/([^/]+)$/);
   if (request.method === "GET" && metricMatch?.[1]) {
     return showBillableMetric(decodeURIComponent(metricMatch[1]), env.BILLING_DB, auth, requestId);
+  }
+  if (request.method === "PUT" && metricMatch?.[1]) {
+    return updateBillableMetric(decodeURIComponent(metricMatch[1]), request, env, auth, requestId);
+  }
+  if (request.method === "DELETE" && metricMatch?.[1]) {
+    throw new ApiError(
+      422,
+      "unsupported_billable_metric_deletion",
+      "Billable metric deletion requires the unported event, charge, and draft-invoice cleanup workflow",
+    );
   }
 
   const chargesMatch = url.pathname.match(/^\/api\/v1\/plans\/([^/]+)\/charges$/);
@@ -140,59 +152,69 @@ export async function handleMeteredUsageRequest(
 
 async function createBillableMetric(
   request: Request,
-  database: D1Database,
+  env: Env,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
+  const database = env.BILLING_DB;
   const body = await parseJsonObject(request);
   const input = objectAt(body, "billable_metric");
-  const code = requiredString(input, "code");
-  const name = requiredString(input, "name");
-  const aggregationType = requiredString(input, "aggregation_type");
-  if (!SUPPORTED_AGGREGATIONS.has(aggregationType as SupportedAggregationType)) {
-    throw new ApiError(
-      422,
-      "unsupported_aggregation_type",
-      `Unsupported aggregation type: ${aggregationType}`,
-    );
-  }
-  const fieldName = optionalString(input, "field_name");
-  if (aggregationType !== "count_agg" && !fieldName) {
-    throw new ApiError(422, "validation_error", "field_name is required");
-  }
-  const existing = await findMetric(database, auth.organizationId, code);
+  const normalized = normalizeMetricInput(input);
+  const existing = await findMetric(database, auth.organizationId, normalized.code);
   if (existing) {
+    if (sameMetric(existing, normalized))
+      return json({ billable_metric: serializeMetric(existing) }, { requestId });
     throw new ApiError(422, "value_already_exist", "Billable metric code already exists");
   }
 
   const now = new Date().toISOString();
-  const id = await deterministicUuid("billable-metric", `${auth.organizationId}:${code}`);
-  await database
-    .prepare(
-      `INSERT INTO billable_metrics
+  const id = await deterministicUuid(
+    "billable-metric",
+    `${auth.organizationId}:${normalized.code}`,
+  );
+  const event = catalogEvent(
+    "billable_metric.created",
+    "billable_metric",
+    id,
+    1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: normalized.code },
+  );
+  try {
+    await database.batch([
+      database
+        .prepare(
+          `INSERT INTO billable_metrics
        (id, organization_id, code, name, description, aggregation_type, field_name,
         recurring, rounding_function, rounding_precision, weighted_interval, expression,
         properties_json, version, active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 1, 1, ?, ?)`,
-    )
-    .bind(
-      id,
-      auth.organizationId,
-      code,
-      name,
-      optionalString(input, "description"),
-      aggregationType,
-      fieldName,
-      booleanInteger(input.recurring, false),
-      optionalString(input, "rounding_function"),
-      optionalInteger(input.rounding_precision),
-      optionalString(input, "weighted_interval"),
-      optionalString(input, "expression"),
-      now,
-      now,
-    )
-    .run();
-  const metric = await findMetric(database, auth.organizationId, code);
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, NULL, '{}', 1, 1, ?, ?)`,
+        )
+        .bind(
+          id,
+          auth.organizationId,
+          normalized.code,
+          normalized.name,
+          normalized.description,
+          normalized.aggregationType,
+          normalized.fieldName,
+          now,
+          now,
+        ),
+      outboxStatement(database, auth.organizationId, event),
+    ]);
+  } catch (error) {
+    const concurrent = await findMetric(database, auth.organizationId, normalized.code);
+    if (concurrent && sameMetric(concurrent, normalized))
+      return json({ billable_metric: serializeMetric(concurrent) }, { requestId });
+    if (concurrent)
+      throw new ApiError(422, "value_already_exist", "Billable metric code already exists");
+    throw error;
+  }
+  await env.DOMAIN_EVENTS.send(event);
+  const metric = await findMetric(database, auth.organizationId, normalized.code);
   if (!metric) throw new ApiError(500, "persistence_error", "Billable metric was not persisted");
   return json({ billable_metric: serializeMetric(metric) }, { requestId });
 }
@@ -215,7 +237,8 @@ async function listBillableMetrics(
   const result = await database
     .prepare(
       `SELECT id, code, name, description, aggregation_type, field_name, recurring,
-              rounding_function, rounding_precision, weighted_interval, expression, created_at
+              rounding_function, rounding_precision, weighted_interval, expression, version,
+              created_at, updated_at
        FROM billable_metrics WHERE organization_id = ? AND active = 1
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     )
@@ -240,6 +263,119 @@ async function showBillableMetric(
   if (!metric)
     throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
   return json({ billable_metric: serializeMetric(metric) }, { requestId });
+}
+
+async function updateBillableMetric(
+  code: string,
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const metric = await findMetric(env.BILLING_DB, auth.organizationId, code);
+  if (!metric)
+    throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
+  const input = objectAt(await parseJsonObject(request), "billable_metric");
+  rejectUnsupportedMetricFeatures(input);
+  if (input.filters !== undefined)
+    throw new ApiError(
+      422,
+      "unsupported_billable_metric_feature",
+      "Billable metric filters are not implemented",
+    );
+  const attached = await env.BILLING_DB.prepare(
+    "SELECT id FROM charges WHERE billable_metric_id = ? AND active = 1 LIMIT 1",
+  )
+    .bind(metric.id)
+    .first();
+  const nextCode = input.code === undefined ? metric.code : requiredString(input, "code");
+  const nextAggregation =
+    input.aggregation_type === undefined
+      ? supportedMetricAggregation(metric.aggregation_type)
+      : supportedMetricAggregation(input.aggregation_type);
+  const nextFieldName =
+    input.field_name === undefined ? metric.field_name : optionalString(input, "field_name");
+  validateMetricField(nextAggregation, nextFieldName);
+  if (
+    attached &&
+    (nextCode !== metric.code ||
+      nextAggregation !== metric.aggregation_type ||
+      nextFieldName !== metric.field_name ||
+      input.recurring !== undefined ||
+      input.rounding_function !== undefined ||
+      input.rounding_precision !== undefined ||
+      input.weighted_interval !== undefined ||
+      input.expression !== undefined)
+  )
+    throw new ApiError(
+      422,
+      "billable_metric_in_use",
+      "Only name and description can change on a billable metric attached to a plan",
+    );
+  if (nextCode !== metric.code) {
+    const duplicate = await findMetric(env.BILLING_DB, auth.organizationId, nextCode);
+    if (duplicate)
+      throw new ApiError(422, "value_already_exist", "Billable metric code already exists");
+  }
+  const next = {
+    code: nextCode,
+    name: input.name === undefined ? metric.name : requiredString(input, "name"),
+    description:
+      input.description === undefined ? metric.description : optionalString(input, "description"),
+    aggregationType: nextAggregation,
+    fieldName: nextFieldName,
+  };
+  const now = new Date().toISOString();
+  const event = catalogEvent(
+    "billable_metric.updated",
+    "billable_metric",
+    metric.id,
+    metric.version + 1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: next.code },
+  );
+  try {
+    const results = await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE billable_metrics SET code = ?, name = ?, description = ?,
+         aggregation_type = ?, field_name = ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?`,
+      ).bind(
+        next.code,
+        next.name,
+        next.description,
+        next.aggregationType,
+        next.fieldName,
+        now,
+        metric.id,
+        auth.organizationId,
+        metric.version,
+      ),
+      conditionalMetricOutboxStatement(
+        env.BILLING_DB,
+        auth.organizationId,
+        event,
+        metric.id,
+        metric.version + 1,
+        now,
+      ),
+    ]);
+    if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+      throw new ApiError(
+        409,
+        "billable_metric_version_conflict",
+        "Billable metric changed concurrently",
+      );
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(422, "value_already_exist", "Billable metric code already exists");
+  }
+  await env.DOMAIN_EVENTS.send(event);
+  const updated = await findMetric(env.BILLING_DB, auth.organizationId, next.code);
+  if (!updated) throw new ApiError(500, "persistence_error", "Billable metric disappeared");
+  return json({ billable_metric: serializeMetric(updated) }, { requestId });
 }
 
 async function createCharge(
@@ -723,7 +859,8 @@ async function findMetric(
   return database
     .prepare(
       `SELECT id, code, name, description, aggregation_type, field_name, recurring,
-              rounding_function, rounding_precision, weighted_interval, expression, created_at
+              rounding_function, rounding_precision, weighted_interval, expression, version,
+              created_at, updated_at
        FROM billable_metrics
        WHERE organization_id = ? AND code = ? AND active = 1 LIMIT 1`,
     )
@@ -888,11 +1025,169 @@ function booleanInteger(value: unknown, fallback: boolean): 0 | 1 {
   return value ? 1 : 0;
 }
 
-function optionalInteger(value: unknown): number | null {
-  if (value === undefined || value === null) return null;
-  if (!Number.isSafeInteger(value))
-    throw new ApiError(422, "validation_error", "must be an integer");
-  return value as number;
+type NormalizedMetric = {
+  code: string;
+  name: string;
+  description: string | null;
+  aggregationType: SupportedAggregationType;
+  fieldName: string | null;
+};
+
+function normalizeMetricInput(input: Record<string, unknown>): NormalizedMetric {
+  rejectUnsupportedMetricFeatures(input);
+  if (input.filters !== undefined)
+    throw new ApiError(
+      422,
+      "unsupported_billable_metric_feature",
+      "Billable metric filters are not implemented",
+    );
+  const aggregationType = supportedMetricAggregation(input.aggregation_type);
+  const fieldName = optionalString(input, "field_name");
+  validateMetricField(aggregationType, fieldName);
+  return {
+    code: requiredString(input, "code"),
+    name: requiredString(input, "name"),
+    description: optionalString(input, "description"),
+    aggregationType,
+    fieldName,
+  };
+}
+
+function supportedMetricAggregation(value: unknown): SupportedAggregationType {
+  if (typeof value !== "string" || !SUPPORTED_AGGREGATIONS.has(value as SupportedAggregationType))
+    throw new ApiError(
+      422,
+      "unsupported_aggregation_type",
+      `Unsupported aggregation type: ${String(value)}`,
+    );
+  return value as SupportedAggregationType;
+}
+
+function validateMetricField(
+  aggregationType: SupportedAggregationType,
+  fieldName: string | null,
+): void {
+  if (aggregationType !== "count_agg" && !fieldName)
+    throw new ApiError(422, "validation_error", "field_name is required");
+}
+
+function rejectUnsupportedMetricFeatures(input: Record<string, unknown>): void {
+  for (const field of [
+    "recurring",
+    "rounding_function",
+    "rounding_precision",
+    "weighted_interval",
+    "expression",
+  ]) {
+    const value = input[field];
+    if (value === undefined || value === null || value === false) continue;
+    throw new ApiError(
+      422,
+      "unsupported_billable_metric_feature",
+      `${field} is not implemented by the Cloudflare usage engine`,
+    );
+  }
+}
+
+function sameMetric(metric: MetricRow, normalized: NormalizedMetric): boolean {
+  return (
+    metric.code === normalized.code &&
+    metric.name === normalized.name &&
+    metric.description === normalized.description &&
+    metric.aggregation_type === normalized.aggregationType &&
+    metric.field_name === normalized.fieldName &&
+    metric.recurring === 0 &&
+    metric.rounding_function === null &&
+    metric.rounding_precision === null &&
+    metric.weighted_interval === null &&
+    metric.expression === null
+  );
+}
+
+function catalogEvent(
+  type: string,
+  aggregateType: string,
+  id: string,
+  version: number,
+  organizationId: string,
+  correlationId: string,
+  occurredAt: string,
+  payload: Record<string, unknown>,
+): DomainEvent {
+  return {
+    id: `${type.replaceAll(".", "-")}:${id}:v${version}`,
+    type,
+    version: 1,
+    aggregateType,
+    aggregateId: id,
+    aggregateVersion: version,
+    occurredAt,
+    causationId: correlationId,
+    correlationId,
+    payload: { organizationId, ...payload },
+  };
+}
+
+function outboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+    );
+}
+
+function conditionalMetricOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+  metricId: string,
+  expectedVersion: number,
+  expectedUpdatedAt: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL FROM billable_metrics
+       WHERE id = ? AND organization_id = ? AND active = 1 AND version = ? AND updated_at = ?`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+      metricId,
+      organizationId,
+      expectedVersion,
+      expectedUpdatedAt,
+    );
 }
 
 function optionalNonNegativeInteger(value: unknown, fallback: number): number {

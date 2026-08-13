@@ -56,6 +56,20 @@ describe("Lago-compatible metered usage", () => {
     });
     expect(metricResponse.status).toBe(200);
     const metric = await metricResponse.json<{ billable_metric: { lago_id: string } }>();
+    const metricReplay = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "API tokens",
+          code: "api_tokens",
+          aggregation_type: "sum_agg",
+          field_name: "tokens",
+        },
+      },
+    });
+    await expect(metricReplay.json()).resolves.toMatchObject({
+      billable_metric: { lago_id: metric.billable_metric.lago_id },
+    });
 
     const chargeResponse = await api("/api/v1/plans/metered-plan/charges", {
       method: "POST",
@@ -69,6 +83,26 @@ describe("Lago-compatible metered usage", () => {
       },
     });
     expect(chargeResponse.status).toBe(200);
+
+    const safeUpdate = await api("/api/v1/billable_metrics/api_tokens", {
+      method: "PUT",
+      body: { billable_metric: { name: "API tokens renamed", description: "Attached safely" } },
+    });
+    expect(safeUpdate.status).toBe(200);
+    await expect(safeUpdate.json()).resolves.toMatchObject({
+      billable_metric: {
+        lago_id: metric.billable_metric.lago_id,
+        code: "api_tokens",
+        name: "API tokens renamed",
+        description: "Attached safely",
+      },
+    });
+    const unsafeUpdate = await api("/api/v1/billable_metrics/api_tokens", {
+      method: "PUT",
+      body: { billable_metric: { code: "api_tokens_changed" } },
+    });
+    expect(unsafeUpdate.status).toBe(422);
+    await expect(unsafeUpdate.json()).resolves.toMatchObject({ code: "billable_metric_in_use" });
 
     const first = await createEvent("event-one", "0.1");
     expect(first.status).toBe(200);
@@ -117,6 +151,16 @@ describe("Lago-compatible metered usage", () => {
     );
     expect(listed.status).toBe(200);
     await expect(listed.json()).resolves.toMatchObject({ meta: { total_count: 2 } });
+    const catalogEvents = await env.BILLING_DB.prepare(
+      `SELECT event_type, aggregate_version FROM outbox_events
+       WHERE aggregate_type = 'billable_metric' AND aggregate_id = ? ORDER BY aggregate_version`,
+    )
+      .bind(metric.billable_metric.lago_id)
+      .all<{ event_type: string; aggregate_version: number }>();
+    expect(catalogEvents.results).toEqual([
+      { event_type: "billable_metric.created", aggregate_version: 1 },
+      { event_type: "billable_metric.updated", aggregate_version: 2 },
+    ]);
   });
 
   it("rejects unknown subscriptions, metrics, and malformed aggregation properties", async () => {
@@ -168,6 +212,38 @@ describe("Lago-compatible metered usage", () => {
     expect(unknownSubscription.status).toBe(404);
     await expect(unknownSubscription.json()).resolves.toMatchObject({
       code: "subscription_not_found",
+    });
+  });
+
+  it("rejects metric options the current usage engine cannot honor", async () => {
+    for (const [suffix, unsupported] of [
+      ["recurring", { recurring: true }],
+      ["rounding", { rounding_function: "round", rounding_precision: 2 }],
+      ["weighted", { weighted_interval: "seconds" }],
+      ["expression", { expression: "event.properties.tokens" }],
+      ["filters", { filters: [{ key: "region", values: ["us"] }] }],
+    ] as const) {
+      const response = await api("/api/v1/billable_metrics", {
+        method: "POST",
+        body: {
+          billable_metric: {
+            name: `Unsupported ${suffix}`,
+            code: `unsupported_${suffix}`,
+            aggregation_type: "sum_agg",
+            field_name: "tokens",
+            ...unsupported,
+          },
+        },
+      });
+      expect(response.status).toBe(422);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "unsupported_billable_metric_feature",
+      });
+    }
+    const deleted = await api("/api/v1/billable_metrics/anything", { method: "DELETE" });
+    expect(deleted.status).toBe(422);
+    await expect(deleted.json()).resolves.toMatchObject({
+      code: "unsupported_billable_metric_deletion",
     });
   });
 });
