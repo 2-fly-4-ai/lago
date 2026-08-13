@@ -738,3 +738,16 @@ resource and mutation described.
   `7bf943c2-663b-477e-85d2-549dd83bfdee`; no D1 migration was pending. Remote health/readiness
   returned `200`, unauthenticated subscription update returned `401`, and the stack remains
   unseeded with no production route, provider secret, or enabled external-mutation flag.
+- 2026-08-14: Added a versioned customer aggregate, idempotent Lago-compatible POST upserts,
+  transactional `customer.created` and `customer.updated` outbox events, strict customer metadata
+  validation, an explicit guard for unsupported payment providers and unported customer fields,
+  and a guarded deletion route. The verified `store-new` Authorize.Net payload remains unchanged;
+  its synchronization flags are accepted as compatibility intent while provider mutations remain
+  disabled. All 60 Workers-runtime tests pass across 18 files; the full local gate and 373.18 KiB
+  dry-run bundle are green.
+- 2026-08-14: Applied only migration `0016_customer_versions.sql` to the isolated development D1
+  and deployed Worker version `2abf3cf9-e415-43a2-9931-0274313dbb94`. Follow-up migration inventory
+  was empty; remote health/readiness returned `200`, unauthenticated customer creation returned
+  `401`, and direct read-only counts confirmed zero organizations and zero customers. The stack has
+  no production route or provider secret, and payment, provider-read, and outbound-webhook flags
+  all remain disabled.
