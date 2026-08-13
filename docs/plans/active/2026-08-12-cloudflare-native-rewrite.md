@@ -682,3 +682,7 @@ resource and mutation described.
   one-time lifecycle, trials, pay-in-advance, and monthly split billing fail explicitly. All 56
   Workers-runtime tests pass across 18 files; the full local gate and 340.06 KiB dry-run bundle are
   green.
+- 2026-08-14: Deployed the code-only plan-catalog revision as isolated Worker version
+  `317c844a-836d-457b-81da-6b072bf0a190`; no D1 migration was pending. Remote health/readiness
+  returned `200`, unauthenticated plan update returned `401`, and all payment, provider-read, and
+  outbound-webhook flags remain disabled with no production route or secret.
