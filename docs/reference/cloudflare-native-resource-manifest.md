@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `38220f20-14ff-49c5-95e5-4c1b1ec464e6`
+- Latest verified version: `751ef348-beca-4228-bd3c-90d08fb32940`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -32,7 +32,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron | `17 * * * *` | Worker scheduled handler | Hourly reconciliation dispatch |
 | Browser Rendering | account binding | `BROWSER` | Invoice HTML-to-PDF rendering |
 
-Applied D1 migrations: `0001_foundation.sql` through `0011_credit_notes.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0012_manual_taxes.sql`.
 
 ## Verified behavior
 
@@ -58,6 +58,10 @@ Applied D1 migrations: `0001_foundation.sql` through `0011_credit_notes.sql`.
   health/readiness returned `200`/`200`, unauthenticated credit-note access returned `401`, and a
   follow-up migration inventory reported no pending migrations. Refund, offset, tax, document,
   email, and provider-reporting paths remain explicitly disabled.
+- The manual-tax deployment added only schema and code for organization-default definitions and
+  immutable invoice snapshots. Remote health/readiness returned `200`/`200`, unauthenticated tax
+  access returned `401`, and no migrations remained pending. No remote tax, invoice, or tenant row
+  was created; provider-tax modes remain explicitly disabled.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

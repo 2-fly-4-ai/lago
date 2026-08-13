@@ -622,3 +622,7 @@ resource and mutation described.
   versioned outbox events. Customer/plan/charge targeting and provider tax modes fail explicitly.
   All 48 Workers-runtime tests pass across 16 files; formatting, strict lint, inventory, generated
   bindings, TypeScript, and the 288.08 KiB dry-run bundle are green.
+- 2026-08-14: Applied only migration `0012` to isolated development D1 and deployed Worker version
+  `751ef348-beca-4228-bd3c-90d08fb32940`. Follow-up migration inventory was empty; remote
+  health/readiness returned `200` and unauthenticated tax access returned `401`. The stack remains
+  unseeded, has no provider secrets or production routes, and all provider mutation flags remain off.
