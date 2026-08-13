@@ -608,3 +608,7 @@ resource and mutation described.
   unpaid-void recredit. Refunds, offsets, taxes, metadata, documents, email, and provider reporting
   fail explicitly. All 46 Workers-runtime tests pass across 15 files, generated inventory and
   Worker bindings are current, and the dry-run bundle is 265.86 KiB.
+- 2026-08-14: Applied only migration `0011` to isolated development D1 and deployed Worker version
+  `38220f20-14ff-49c5-95e5-4c1b1ec464e6`. Follow-up migration inventory was empty; remote
+  health/readiness returned `200` and unauthenticated credit-note access returned `401`. The stack
+  remains unseeded, no provider secrets were added, and payment/provider mutation flags remain off.
