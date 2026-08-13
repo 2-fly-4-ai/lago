@@ -668,3 +668,8 @@ resource and mutation described.
   do not include in-arrears fixed charges. Pay-in-advance, proration, unit-event mutation,
   inheritance/overrides, targeted taxes, and plan mutation fail explicitly. All 54 Workers-runtime
   tests pass across 18 files; the full local gate and 330.49 KiB dry-run bundle are green.
+- 2026-08-14: Applied only migration `0015` to isolated development D1 and deployed Worker version
+  `0224f1a8-9af9-4424-a39a-efef5c9bd808`. Follow-up migration inventory was empty; remote
+  health/readiness returned `200` and unauthenticated add-on access returned `401`. The isolated
+  stack remains unseeded, has no production route or provider secret, and payment, provider-read,
+  and outbound-webhook flags all remain disabled.
