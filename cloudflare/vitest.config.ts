@@ -14,6 +14,8 @@ export default defineConfig({
           AUTHORIZE_NET_TRANSACTION_KEY: "synthetic-transaction-key",
           AUTHORIZE_NET_SIGNATURE_KEY: "0123456789abcdef".repeat(8),
           PROVIDER_READS_ENABLED: "1",
+          OUTBOUND_WEBHOOKS_ENABLED: "1",
+          OUTBOUND_WEBHOOK_HMAC_KEY: "synthetic-outbound-webhook-master-key",
         },
       },
     }),

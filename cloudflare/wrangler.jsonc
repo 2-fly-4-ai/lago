@@ -13,6 +13,7 @@
     "APP_ENV": "development",
     "PAYMENT_MUTATIONS_ENABLED": "0",
     "PROVIDER_READS_ENABLED": "0",
+    "OUTBOUND_WEBHOOKS_ENABLED": "0",
   },
   "d1_databases": [
     {

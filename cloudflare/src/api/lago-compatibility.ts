@@ -23,6 +23,7 @@ import { handleWalletLedgerRequest } from "./wallet-ledger";
 import { handleCreditNoteLedgerRequest } from "./credit-note-ledger";
 import { handleTaxLedgerRequest } from "./tax-ledger";
 import { Decimal } from "../rating/decimal";
+import { handleWebhookEndpointRequest } from "./webhook-endpoints";
 import {
   calculateManualTaxes,
   manualTaxStatements,
@@ -115,6 +116,9 @@ export async function handleLagoCompatibilityRequest(
 
   const taxResponse = await handleTaxLedgerRequest(request, env, auth, requestId);
   if (taxResponse) return taxResponse;
+
+  const webhookEndpointResponse = await handleWebhookEndpointRequest(request, env, auth, requestId);
+  if (webhookEndpointResponse) return webhookEndpointResponse;
 
   if (request.method === "POST" && url.pathname === "/api/v1/customers") {
     return upsertCustomer(request, env.BILLING_DB, auth, requestId);

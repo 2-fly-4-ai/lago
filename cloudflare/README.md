@@ -26,6 +26,8 @@ OS command is required by this package.
 
 - `PAYMENT_MUTATIONS_ENABLED=0` prevents hosted-payment token creation.
 - `PROVIDER_READS_ENABLED=0` defers provider reconciliation.
+- `OUTBOUND_WEBHOOKS_ENABLED=0` prevents endpoint creation/update and outbound delivery until an
+  approved HMAC signing secret is configured. No signing key is committed or deployed.
 - Provider credentials are secrets and are never stored in `wrangler.jsonc`.
 - The checked-in config has no production route or custom domain.
 - All fixtures are synthetic and contain no customer or production data.

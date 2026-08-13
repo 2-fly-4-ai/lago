@@ -5,6 +5,7 @@ import { ApiError, apiErrorResponse } from "./http";
 import { authorizeNetPaymentForm } from "./providers/authorize-net";
 import { handleAuthorizeNetWebhook } from "./webhooks/authorize-net";
 import { reconcileAuthorizeNetReceipt } from "./reconciliation/authorize-net";
+import { deliverOutboundWebhooks } from "./webhooks/outbound";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -119,6 +120,12 @@ export default {
             message.ack();
             continue;
           }
+        }
+
+        const outboundOutcome = await deliverOutboundWebhooks(env, event);
+        if (outboundOutcome === "retry") {
+          message.retry();
+          continue;
         }
 
         const processedAt = new Date().toISOString();

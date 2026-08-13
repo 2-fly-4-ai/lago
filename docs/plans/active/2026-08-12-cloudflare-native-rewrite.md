@@ -340,7 +340,9 @@ Acceptance:
 - [ ] Replace enabled Active Jobs with domain commands, Queue consumers, or Workflow steps.
 - [ ] Replace enabled Clockwork entries with deterministic Cron-to-Workflow dispatch.
 - [x] Add outbox publication and dead-letter handling for the implemented payment events.
-- [ ] Add outbound webhook signing, idempotency, retry, and delivery audit state.
+- [x] Add outbound HMAC webhook signing, endpoint filters, idempotency, bounded retry, URL safety,
+      and delivery audit state. Deployment remains disabled until a signing secret is separately
+      approved; legacy JWT signing remains pending.
 - [x] Add Authorize.Net receipt-to-invoice reconciliation; broader subscription, queue, and
       entitlement reconciliation remains pending.
 
@@ -643,3 +645,9 @@ resource and mutation described.
   ownership; 1,653 entries map to partially implemented families with executable evidence and
   2,319 remain explicitly `not-started`. Consolidation is allowed, but retirement still requires
   approval and no artifact is considered complete without a contract fixture and parity evidence.
+- 2026-08-14: Added HMAC-only webhook endpoint create/list/show/update/delete APIs, HTTPS/private-
+  target validation, event filtering, deterministic endpoint/event delivery IDs, stable signed
+  payloads, no-redirect delivery, bounded response capture, 2xx/terminal-4xx/retryable outcome
+  handling, a five-attempt cap, and D1 delivery audit records. The deployed configuration keeps
+  `OUTBOUND_WEBHOOKS_ENABLED=0` and has no signing secret; tests use only a synthetic binding.
+  All 52 Workers-runtime tests pass across 17 files.
