@@ -9,9 +9,10 @@ remaining Lago feature inventory is dispositioned and ported.
 - Worker: authenticated Lago-compatible HTTP API and signed provider webhooks.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
-  manual tax definitions and immutable invoice tax snapshots, payment attempts, outbox state, and
-  webhook receipt metadata; plan-level minimum commitments are reconciled as auditable period
-  true-up lines.
+  manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
+  pay-in-arrears fixed charges, payment attempts, outbox state, and webhook receipt metadata;
+  plan-level minimum commitments are reconciled as auditable period true-up lines after recurring
+  subscription, usage, and fixed-charge fees.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.

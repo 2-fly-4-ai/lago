@@ -24,6 +24,7 @@ import { handleCreditNoteLedgerRequest } from "./credit-note-ledger";
 import { handleTaxLedgerRequest } from "./tax-ledger";
 import { Decimal } from "../rating/decimal";
 import { handleWebhookEndpointRequest } from "./webhook-endpoints";
+import { handleAddOnLedgerRequest } from "./add-on-ledger";
 import {
   calculateManualTaxes,
   manualTaxStatements,
@@ -98,6 +99,9 @@ export async function handleLagoCompatibilityRequest(
 
   const planResponse = await handlePlanCatalogRequest(request, env.BILLING_DB, auth, requestId);
   if (planResponse) return planResponse;
+
+  const addOnResponse = await handleAddOnLedgerRequest(request, env, auth, requestId);
+  if (addOnResponse) return addOnResponse;
 
   const lifecycleResponse = await handleSubscriptionLifecycleRequest(request, env, auth, requestId);
   if (lifecycleResponse) return lifecycleResponse;

@@ -161,14 +161,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/models/add_on.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/add_on/applied_tax.rb",
@@ -177,11 +177,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/tax-ledger.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/tax-ledger.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/tax-ledger.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -369,14 +369,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/models/applied_add_on.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/applied_coupon.rb",
@@ -1563,14 +1563,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/models/fixed_charge.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/fixed_charge/applied_tax.rb",
@@ -1579,11 +1579,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/tax-ledger.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/tax-ledger.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/tax-ledger.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -1595,14 +1595,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/models/fixed_charge_event.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/group.rb",
@@ -3575,14 +3575,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/controllers/api/v1/add_ons_controller.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/controllers/api/v1/analytics/base_controller.rb",
@@ -4362,11 +4362,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/plan-catalog.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/plan-catalog.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/plan-catalog.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -4538,12 +4538,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/subscription-lifecycle.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/subscription-lifecycle.test.ts",
-          "cloudflare/test/billing-cycle.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/subscription-lifecycle.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -5129,11 +5128,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/tax-ledger.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/tax-ledger.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/tax-ledger.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -5145,14 +5144,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/add_ons/create_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/add_ons/destroy_service.rb",
@@ -5161,14 +5160,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/add_ons/destroy_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/add_ons/update_service.rb",
@@ -5177,14 +5176,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/add_ons/update_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/adjusted_fees/create_service.rb",
@@ -6745,13 +6744,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/metered-usage.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/metered-usage.test.ts",
-          "cloudflare/test/usage-aggregation.test.ts",
-          "cloudflare/test/rating.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/metered-usage.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -9966,14 +9963,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fees/build_pay_in_advance_fixed_charge_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fees/charge_service.rb",
@@ -10127,14 +10124,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fees/fixed_charge_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fees/init_from_adjusted_charge_fee_service.rb",
@@ -10159,14 +10156,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fees/init_from_adjusted_fixed_charge_fee_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fees/one_off_service.rb",
@@ -10255,13 +10252,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/metered-usage.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/metered-usage.test.ts",
-          "cloudflare/test/usage-aggregation.test.ts",
-          "cloudflare/test/rating.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/metered-usage.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -10273,13 +10268,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/metered-usage.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/metered-usage.test.ts",
-          "cloudflare/test/usage-aggregation.test.ts",
-          "cloudflare/test/rating.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/metered-usage.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -10291,13 +10284,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/metered-usage.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/metered-usage.test.ts",
-          "cloudflare/test/usage-aggregation.test.ts",
-          "cloudflare/test/rating.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/metered-usage.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -10309,13 +10300,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/metered-usage.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/metered-usage.test.ts",
-          "cloudflare/test/usage-aggregation.test.ts",
-          "cloudflare/test/rating.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/metered-usage.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -10327,13 +10316,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/metered-usage.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/metered-usage.test.ts",
-          "cloudflare/test/usage-aggregation.test.ts",
-          "cloudflare/test/rating.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/metered-usage.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -10345,11 +10332,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/tax-ledger.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/tax-ledger.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/tax-ledger.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -10361,14 +10348,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fixed_charges/cascade_child_plan_update_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fixed_charges/cascade_updatable.rb",
@@ -10377,14 +10364,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fixed_charges/cascade_updatable.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fixed_charges/create_children_service.rb",
@@ -10393,14 +10380,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fixed_charges/create_children_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fixed_charges/create_service.rb",
@@ -10409,14 +10396,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fixed_charges/create_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fixed_charges/destroy_children_service.rb",
@@ -10425,14 +10412,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fixed_charges/destroy_children_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fixed_charges/destroy_service.rb",
@@ -10441,14 +10428,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fixed_charges/destroy_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fixed_charges/emit_events_service.rb",
@@ -10457,14 +10444,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fixed_charges/emit_events_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fixed_charges/generate_code_service.rb",
@@ -10473,14 +10460,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fixed_charges/generate_code_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fixed_charges/override_service.rb",
@@ -10489,14 +10476,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fixed_charges/override_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fixed_charges/update_children_service.rb",
@@ -10505,14 +10492,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fixed_charges/update_children_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/fixed_charges/update_service.rb",
@@ -10521,14 +10508,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/services/fixed_charges/update_service.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/idempotency_records/create_service.rb",
@@ -12931,11 +12918,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/fixtures/store-new/invoice-list-query.json"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -16548,12 +16535,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/subscription-lifecycle.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/subscription-lifecycle.test.ts",
-          "cloudflare/test/billing-cycle.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/subscription-lifecycle.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -16701,12 +16687,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/subscription-lifecycle.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/subscription-lifecycle.test.ts",
-          "cloudflare/test/billing-cycle.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/subscription-lifecycle.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -20005,14 +19990,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/jobs/database_migrations/backfill_fixed_charges_code_job.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/database_migrations/backfill_gocardless_payment_methods_job.rb",
@@ -20117,11 +20102,11 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/tax-ledger.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/tax-ledger.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/tax-ledger.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -21113,14 +21098,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/jobs/fixed_charges/cascade_child_plan_update_job.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/fixed_charges/cascade_plan_update_job.rb",
@@ -21129,14 +21114,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/jobs/fixed_charges/cascade_plan_update_job.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/fixed_charges/create_children_batch_job.rb",
@@ -21145,14 +21130,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/jobs/fixed_charges/create_children_batch_job.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/fixed_charges/create_children_job.rb",
@@ -21161,14 +21146,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/jobs/fixed_charges/create_children_job.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/fixed_charges/destroy_children_job.rb",
@@ -21177,14 +21162,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/jobs/fixed_charges/destroy_children_job.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/fixed_charges/update_children_batch_job.rb",
@@ -21193,14 +21178,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/jobs/fixed_charges/update_children_batch_job.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/fixed_charges/update_children_job.rb",
@@ -21209,14 +21194,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/jobs/fixed_charges/update_children_job.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/inbound_webhooks/process_job.rb",
@@ -21597,11 +21582,11 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/fixtures/store-new/invoice-list-query.json"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -23005,14 +22990,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/mutations/add_ons/create.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/add_ons/destroy.rb",
@@ -23022,14 +23007,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/mutations/add_ons/destroy.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/add_ons/update.rb",
@@ -23039,14 +23024,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/mutations/add_ons/update.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/adjusted_fees/create.rb",
@@ -24099,14 +24084,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/mutations/fixed_charges/create.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/fixed_charges/destroy.rb",
@@ -24116,14 +24101,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/mutations/fixed_charges/destroy.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/fixed_charges/update.rb",
@@ -24133,14 +24118,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/mutations/fixed_charges/update.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/integration_collection_mappings/create.rb",
@@ -26084,12 +26069,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/subscription-lifecycle.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/subscription-lifecycle.test.ts",
-          "cloudflare/test/billing-cycle.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/subscription-lifecycle.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -26374,14 +26358,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/resolvers/add_on_resolver.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/resolvers/add_ons_resolver.rb",
@@ -26391,14 +26375,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/resolvers/add_ons_resolver.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/resolvers/ai_conversation_resolver.rb",
@@ -28437,14 +28421,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/types/add_ons/create_input.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/add_ons/object.rb",
@@ -28454,14 +28438,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/types/add_ons/object.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/add_ons/update_input.rb",
@@ -28471,14 +28455,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/types/add_ons/update_input.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/adjusted_fees/adjusted_fee_type_enum.rb",
@@ -28794,14 +28778,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/types/applied_add_ons/object.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/applied_coupons/object.rb",
@@ -31719,13 +31703,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/metered-usage.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/metered-usage.test.ts",
-          "cloudflare/test/usage-aggregation.test.ts",
-          "cloudflare/test/rating.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/metered-usage.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -31738,14 +31720,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/types/fixed_charges/create_input.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/fixed_charges/input.rb",
@@ -31755,14 +31737,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/types/fixed_charges/input.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/fixed_charges/object.rb",
@@ -31772,14 +31754,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/types/fixed_charges/object.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/fixed_charges/properties.rb",
@@ -31789,14 +31771,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/types/fixed_charges/properties.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/fixed_charges/properties_input.rb",
@@ -31806,14 +31788,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/types/fixed_charges/properties_input.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/fixed_charges/update_input.rb",
@@ -31823,14 +31805,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "api/app/graphql/types/fixed_charges/update_input.rb"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/graphql_subscription_type.rb",
@@ -34727,12 +34709,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/subscription-lifecycle.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/subscription-lifecycle.test.ts",
-          "cloudflare/test/billing-cycle.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/subscription-lifecycle.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -34924,12 +34905,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/subscription-lifecycle.ts",
+        "target": "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/test/subscription-lifecycle.test.ts",
-          "cloudflare/test/billing-cycle.test.ts"
+          "cloudflare/test/add-on-fixed-charge.test.ts"
         ],
-        "testFixture": "cloudflare/test/subscription-lifecycle.test.ts",
+        "testFixture": "cloudflare/test/add-on-fixed-charge.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."

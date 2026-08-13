@@ -306,6 +306,12 @@ Acceptance:
       Plan-level in-arrears minimum commitments now create only the rounded billing-period
       shortfall while retaining the precise fee value; commitment-specific taxes, pay-in-advance
       reconciliation, partial-period proration, and subscription overrides remain pending.
+      Tenant-scoped add-ons now support idempotent create/list/show/update/terminate with versioned
+      outbox events, and plans support standard/graduated/volume recurring pay-in-arrears fixed
+      charges. Fixed fees enter the exact recurring invoice pipeline before minimum commitments,
+      coupons, taxes, credit notes, and wallets. Pay-in-advance charges, proration, unit events,
+      inherited/overridden fixed charges, targeted taxes, and plan mutation remain pending and fail
+      explicitly.
 - [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
       leased, idempotent recurring period-close finalization path now produces plan and usage lines,
       and unpaid finalized invoices can be shown with lines and voided idempotently; manual
@@ -655,3 +661,10 @@ resource and mutation described.
   `887c749b-09d3-4143-932a-a41cd0fdbbd6`. Follow-up migration inventory was empty; remote
   health/readiness returned `200` and unauthenticated endpoint access returned `401`. Outbound
   delivery remains disabled, no signing secret was configured, and the stack remains unseeded.
+- 2026-08-14: Added tenant-scoped, idempotent add-on create/list/show/update/terminate APIs with
+  optimistic concurrency and transactional outbox events; embedded plan fixed charges for the
+  standard, graduated, and volume models; exact decimal units; recurring pay-in-arrears invoice
+  lines; and minimum-commitment ordering over subscription, usage, and fixed fees. Initial invoices
+  do not include in-arrears fixed charges. Pay-in-advance, proration, unit-event mutation,
+  inheritance/overrides, targeted taxes, and plan mutation fail explicitly. All 54 Workers-runtime
+  tests pass across 18 files; the full local gate and 330.49 KiB dry-run bundle are green.

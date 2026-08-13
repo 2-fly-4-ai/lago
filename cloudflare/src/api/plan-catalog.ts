@@ -3,6 +3,8 @@ import { sha256Hex } from "../auth/api-key";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import { rateCharge } from "../rating/charge-models";
+import { Decimal } from "../rating/decimal";
 import { parseChargeModel } from "../usage/charge-properties";
 
 type PlanRow = {
@@ -39,6 +41,20 @@ type ChargeRow = {
   created_at: string;
 };
 
+type FixedChargeRow = {
+  id: string;
+  add_on_id: string;
+  add_on_code: string;
+  code: string;
+  invoice_display_name: string | null;
+  charge_model: string;
+  properties_json: string;
+  units: string;
+  pay_in_advance: number;
+  prorated: number;
+  created_at: string;
+};
+
 type NormalizedCharge = {
   id: string;
   metricId: string;
@@ -56,6 +72,16 @@ type NormalizedCommitment = {
   id: string;
   amountMinor: number;
   invoiceDisplayName: string | null;
+};
+
+type NormalizedFixedCharge = {
+  id: string;
+  addOnId: string;
+  code: string;
+  invoiceDisplayName: string | null;
+  chargeModel: "standard" | "graduated" | "volume";
+  properties: Record<string, unknown>;
+  units: string;
 };
 
 const INTERVALS = new Set(["weekly", "monthly", "quarterly", "yearly", "one_time"]);
@@ -106,17 +132,31 @@ async function createPlan(
       "unsupported_tax_target",
       "Plan tax targeting is not implemented; use organization-default taxes",
     );
-  rejectNonEmpty(input, ["fixed_charges", "usage_thresholds"]);
+  rejectNonEmpty(input, ["usage_thresholds"]);
   const minimumCommitment = await normalizeMinimumCommitment(
     input.minimum_commitment,
     auth.organizationId,
     code,
   );
+  const billFixedChargesMonthly = optionalBooleanInteger(input.bill_fixed_charges_monthly);
+  if (hasEntries(input.fixed_charges) && billFixedChargesMonthly === 1)
+    throw new ApiError(
+      422,
+      "unsupported_fixed_charge_feature",
+      "Monthly split billing for fixed charges is not implemented",
+    );
+  if (hasEntries(input.fixed_charges) && interval === "one_time")
+    throw new ApiError(
+      422,
+      "unsupported_fixed_charge_feature",
+      "Recurring fixed charges cannot be attached to a one-time plan",
+    );
   const normalizedRequest = {
     amountMinor,
     billChargesMonthly: optionalBooleanInteger(input.bill_charges_monthly),
-    billFixedChargesMonthly: optionalBooleanInteger(input.bill_fixed_charges_monthly),
+    billFixedChargesMonthly,
     charges: input.charges ?? [],
+    fixedCharges: input.fixed_charges ?? [],
     code,
     currency,
     description: optionalString(input, "description"),
@@ -144,6 +184,13 @@ async function createPlan(
     auth.organizationId,
     planId,
     code,
+  );
+  const fixedCharges = await normalizeFixedCharges(
+    input.fixed_charges,
+    database,
+    auth.organizationId,
+    planId,
+    currency,
   );
   const now = new Date().toISOString();
   await database.batch([
@@ -197,6 +244,28 @@ async function createPlan(
           charge.payInAdvance,
           charge.prorated,
           charge.minAmountMinor,
+          now,
+          now,
+        ),
+    ),
+    ...fixedCharges.map((charge) =>
+      database
+        .prepare(
+          `INSERT INTO fixed_charges
+           (id, organization_id, plan_id, add_on_id, code, invoice_display_name,
+            charge_model, properties_json, units, pay_in_advance, prorated, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+        )
+        .bind(
+          charge.id,
+          auth.organizationId,
+          planId,
+          charge.addOnId,
+          charge.code,
+          charge.invoiceDisplayName,
+          charge.chargeModel,
+          stableJson(charge.properties),
+          charge.units,
           now,
           now,
         ),
@@ -306,6 +375,16 @@ async function serializePlan(
       created_at: string;
       updated_at: string;
     }>();
+  const fixedCharges = await database
+    .prepare(
+      `SELECT fc.id, fc.add_on_id, ao.code AS add_on_code, fc.code,
+              fc.invoice_display_name, fc.charge_model, fc.properties_json, fc.units,
+              fc.pay_in_advance, fc.prorated, fc.created_at
+       FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id
+       WHERE fc.plan_id = ? ORDER BY fc.created_at, fc.id`,
+    )
+    .bind(plan.id)
+    .all<FixedChargeRow>();
   return {
     lago_id: plan.id,
     name: plan.name,
@@ -328,7 +407,7 @@ async function serializePlan(
     parent_id: null,
     pending_deletion: plan.pending_deletion === 1,
     charges: charges.results.map(serializeCharge),
-    fixed_charges: [],
+    fixed_charges: fixedCharges.results.map(serializeFixedCharge),
     entitlements: [],
     usage_thresholds: [],
     applicable_usage_thresholds: [],
@@ -346,6 +425,24 @@ async function serializePlan(
           taxes: [],
         }
       : null,
+  };
+}
+
+function serializeFixedCharge(charge: FixedChargeRow): Record<string, unknown> {
+  return {
+    lago_id: charge.id,
+    lago_add_on_id: charge.add_on_id,
+    code: charge.code,
+    invoice_display_name: charge.invoice_display_name,
+    add_on_code: charge.add_on_code,
+    created_at: charge.created_at,
+    charge_model: charge.charge_model,
+    pay_in_advance: charge.pay_in_advance === 1,
+    prorated: charge.prorated === 1,
+    properties: parseObject(charge.properties_json),
+    units: charge.units,
+    lago_parent_id: null,
+    taxes: [],
   };
 }
 
@@ -445,6 +542,106 @@ async function normalizeCharges(
   return charges;
 }
 
+async function normalizeFixedCharges(
+  value: unknown,
+  database: D1Database,
+  organizationId: string,
+  planId: string,
+  planCurrency: string,
+): Promise<NormalizedFixedCharge[]> {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value))
+    throw new ApiError(422, "validation_error", "fixed_charges must be an array");
+  const fixedCharges: NormalizedFixedCharge[] = [];
+  const seen = new Set<string>();
+  for (const [index, entry] of value.entries()) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+      throw new ApiError(422, "validation_error", `fixed_charges[${index}] must be an object`);
+    const input = entry as Record<string, unknown>;
+    if (input.id !== undefined || input.parent_id !== undefined)
+      throw new ApiError(
+        422,
+        "unsupported_fixed_charge_feature",
+        "Fixed-charge overrides and parent inheritance are not implemented",
+      );
+    if (booleanInteger(input.pay_in_advance, false) === 1)
+      throw new ApiError(
+        422,
+        "unsupported_fixed_charge_feature",
+        "Pay-in-advance fixed charges are not implemented",
+      );
+    if (booleanInteger(input.prorated, false) === 1)
+      throw new ApiError(
+        422,
+        "unsupported_fixed_charge_feature",
+        "Prorated fixed charges are not implemented",
+      );
+    if (input.apply_units_immediately === true)
+      throw new ApiError(
+        422,
+        "unsupported_fixed_charge_feature",
+        "Immediate fixed-charge unit events are not implemented",
+      );
+    if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
+      throw new ApiError(
+        422,
+        "unsupported_tax_target",
+        "Fixed-charge tax targeting is not implemented; use organization-default taxes",
+      );
+    const addOnId = requiredString(input, "add_on_id");
+    const addOn = await database
+      .prepare(
+        `SELECT id, code, currency FROM add_ons
+         WHERE id = ? AND organization_id = ? AND status = 'active' LIMIT 1`,
+      )
+      .bind(addOnId, organizationId)
+      .first<{ id: string; code: string; currency: string }>();
+    if (!addOn) throw new ApiError(404, "add_on_not_found", "Add-on was not found");
+    if (addOn.currency !== planCurrency)
+      throw new ApiError(
+        422,
+        "currency_mismatch",
+        "Fixed-charge add-on currency must match the plan currency",
+      );
+    const code = optionalString(input, "code") ?? addOn.code;
+    if (seen.has(code))
+      throw new ApiError(422, "value_already_exist", "Fixed-charge code is duplicated");
+    seen.add(code);
+    const chargeModel = requiredString(input, "charge_model");
+    if (chargeModel !== "standard" && chargeModel !== "graduated" && chargeModel !== "volume")
+      throw new ApiError(
+        422,
+        "unsupported_charge_model",
+        `Unsupported fixed-charge model: ${chargeModel}`,
+      );
+    const properties = optionalObject(input.properties, "properties");
+    const units = nonNegativeDecimal(input.units ?? 1, `fixed_charges[${index}].units`);
+    try {
+      const rated = Decimal.parse(
+        rateCharge(units, parseChargeModel(chargeModel, properties)).amountCents,
+      );
+      if (rated.isNegative()) throw new Error("negative");
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(
+        422,
+        "validation_error",
+        `fixed_charges[${index}] has invalid rating properties`,
+      );
+    }
+    fixedCharges.push({
+      id: await deterministicUuid("fixed-charge", `${planId}:${code}`),
+      addOnId,
+      code,
+      invoiceDisplayName: optionalString(input, "invoice_display_name"),
+      chargeModel,
+      properties,
+      units,
+    });
+  }
+  return fixedCharges;
+}
+
 function optionalObject(value: unknown, field: string): Record<string, unknown> {
   if (value === undefined || value === null) return {};
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -489,6 +686,18 @@ function optionalNonNegativeNumber(value: unknown, field: string): number | null
   return number;
 }
 
+function nonNegativeDecimal(value: unknown, field: string): string {
+  if (typeof value !== "string" && typeof value !== "number")
+    throw new ApiError(422, "validation_error", `${field} must be a non-negative decimal`);
+  try {
+    const decimal = Decimal.parse(value);
+    if (decimal.isNegative()) throw new Error("negative");
+    return decimal.toString();
+  } catch {
+    throw new ApiError(422, "validation_error", `${field} must be a non-negative decimal`);
+  }
+}
+
 function rejectNonEmpty(input: Record<string, unknown>, fields: string[]): void {
   for (const field of fields) {
     const value = input[field];
@@ -502,6 +711,10 @@ function rejectNonEmpty(input: Record<string, unknown>, fields: string[]): void 
       `${field} is not implemented by the Cloudflare plan catalog`,
     );
   }
+}
+
+function hasEntries(value: unknown): boolean {
+  return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null;
 }
 
 function positiveInteger(value: string | null, fallback: number): number {

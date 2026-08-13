@@ -44,6 +44,18 @@ type ChargeRow = {
   field_name: string | null;
 };
 
+type FixedChargeRow = {
+  id: string;
+  code: string;
+  invoice_display_name: string | null;
+  charge_model: string;
+  properties_json: string;
+  units: string;
+  add_on_code: string;
+  add_on_name: string;
+  add_on_invoice_display_name: string | null;
+};
+
 export type CloseBillingPeriodResult = {
   billingCycleId: string;
   invoiceId: string;
@@ -166,6 +178,8 @@ export async function closeBillingPeriod(
       precise: string;
       rounded: number;
       sourceId: string;
+      lineType: "subscription" | "usage" | "fixed_charge" | "commitment";
+      sourceType: "plan" | "charge" | "fixed_charge" | "commitment";
       metadataJson: string;
     }> = [];
     let subtotal = subscription.plan_amount_minor;
@@ -176,6 +190,8 @@ export async function closeBillingPeriod(
       precise: String(subscription.plan_amount_minor),
       rounded: subscription.plan_amount_minor,
       sourceId: subscription.plan_id,
+      lineType: "subscription",
+      sourceType: "plan",
       metadataJson: stableJson({ billingCycleId: cycleId, periodStart, periodEnd }),
     });
     for (const charge of charges) {
@@ -211,12 +227,45 @@ export async function closeBillingPeriod(
         precise: precise.toString(),
         rounded,
         sourceId: charge.id,
+        lineType: "usage",
+        sourceType: "charge",
         metadataJson: stableJson({
           billingCycleId: cycleId,
           billableMetricCode: charge.metric_code,
           chargeCode: charge.code,
           chargeModel: charge.charge_model,
           eventCount: events.length,
+          periodStart,
+          periodEnd,
+        }),
+      });
+    }
+
+    const fixedCharges = await loadFixedCharges(env.BILLING_DB, subscription);
+    for (const charge of fixedCharges) {
+      const precise = Decimal.parse(
+        rateCharge(
+          charge.units,
+          parseChargeModel(charge.charge_model, parseObject(charge.properties_json)),
+        ).amountCents,
+      );
+      const rounded = safeMinorInteger(precise);
+      subtotal = safeAdd(subtotal, rounded);
+      lines.push({
+        id: await deterministicUuid("billing-cycle-fixed-charge-line", `${cycleKey}:${charge.id}`),
+        description:
+          charge.invoice_display_name ?? charge.add_on_invoice_display_name ?? charge.add_on_name,
+        units: charge.units,
+        precise: precise.toString(),
+        rounded,
+        sourceId: charge.id,
+        lineType: "fixed_charge",
+        sourceType: "fixed_charge",
+        metadataJson: stableJson({
+          billingCycleId: cycleId,
+          fixedChargeCode: charge.code,
+          addOnCode: charge.add_on_code,
+          chargeModel: charge.charge_model,
           periodStart,
           periodEnd,
         }),
@@ -243,6 +292,8 @@ export async function closeBillingPeriod(
         precise: commitmentLine.preciseAmountMinor,
         rounded: commitmentLine.amountMinor,
         sourceId: commitmentLine.commitmentId,
+        lineType: "commitment",
+        sourceType: "commitment",
         metadataJson: stableJson({ billingCycleId: cycleId, periodStart, periodEnd }),
       });
     }
@@ -355,22 +406,14 @@ export async function closeBillingPeriod(
         ).bind(
           line.id,
           invoiceId,
-          line.sourceId === subscription.plan_id
-            ? "subscription"
-            : line.sourceId === commitmentLine?.commitmentId
-              ? "commitment"
-              : "usage",
+          line.lineType,
           line.description,
           line.units,
           line.units === "0"
             ? "0"
             : Decimal.parse(line.precise).divide(Decimal.parse(line.units)).toString(),
           line.rounded,
-          line.sourceId === subscription.plan_id
-            ? "plan"
-            : line.sourceId === commitmentLine?.commitmentId
-              ? "commitment"
-              : "charge",
+          line.sourceType,
           line.sourceId,
           line.metadataJson,
           now,
@@ -534,6 +577,25 @@ async function loadCharges(
     )
     .bind(subscription.organization_id, subscription.plan_id)
     .all<ChargeRow>();
+  return [...result.results];
+}
+
+async function loadFixedCharges(
+  database: D1Database,
+  subscription: SubscriptionRow,
+): Promise<FixedChargeRow[]> {
+  const result = await database
+    .prepare(
+      `SELECT fc.id, fc.code, fc.invoice_display_name, fc.charge_model,
+              fc.properties_json, fc.units, ao.code AS add_on_code, ao.name AS add_on_name,
+              ao.invoice_display_name AS add_on_invoice_display_name
+       FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id
+       WHERE fc.organization_id = ? AND fc.plan_id = ? AND fc.pay_in_advance = 0
+         AND fc.prorated = 0
+       ORDER BY fc.created_at, fc.id`,
+    )
+    .bind(subscription.organization_id, subscription.plan_id)
+    .all<FixedChargeRow>();
   return [...result.results];
 }
 

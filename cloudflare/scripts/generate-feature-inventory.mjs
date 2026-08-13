@@ -112,6 +112,11 @@ function topLevelCounts(files, prefix) {
 
 const portRules = [
   {
+    pattern: /add_on|fixed_charge/i,
+    target: "cloudflare/src/api/add-on-ledger.ts and cloudflare/src/billing/close-period.ts",
+    evidence: ["cloudflare/test/add-on-fixed-charge.test.ts"],
+  },
+  {
     pattern: /coupon/i,
     target: "cloudflare/src/api/coupon-ledger.ts",
     evidence: ["cloudflare/test/coupon-ledger.test.ts"],
