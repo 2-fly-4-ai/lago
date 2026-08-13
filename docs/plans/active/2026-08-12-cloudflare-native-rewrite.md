@@ -696,3 +696,7 @@ resource and mutation described.
   destructive deletion now fail explicitly instead of being stored without effect. All 57
   Workers-runtime tests pass across 18 files; the full local gate and 348.51 KiB dry-run bundle are
   green.
+- 2026-08-14: Deployed the code-only billable-metric revision as isolated Worker version
+  `4e2162a2-c51e-4d9d-91d1-89b3c42502bc`; no D1 migration was pending. Remote health/readiness
+  returned `200`, unauthenticated metric update returned `401`, and the stack remains unseeded with
+  no production route, provider secret, or enabled external-mutation flag.
