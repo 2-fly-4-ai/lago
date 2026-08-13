@@ -76,6 +76,15 @@ describe("store-new Lago checkout compatibility", () => {
     });
     const replayCustomerBody = await replayCustomer.json<{ customer: { lago_id: string } }>();
     expect(replayCustomerBody.customer.lago_id).toBe(firstCustomerBody.customer.lago_id);
+    const customerCreatedEvents = await env.BILLING_DB.prepare(
+      `SELECT event_type, aggregate_type, aggregate_version FROM outbox_events
+       WHERE event_type = 'customer.created' AND aggregate_id = ?`,
+    )
+      .bind(firstCustomerBody.customer.lago_id)
+      .all();
+    expect(customerCreatedEvents.results).toEqual([
+      { event_type: "customer.created", aggregate_type: "customer", aggregate_version: 1 },
+    ]);
 
     const firstSubscription = await SELF.fetch("https://lago.test/api/v1/subscriptions", {
       method: "POST",
@@ -193,6 +202,53 @@ describe("store-new Lago checkout compatibility", () => {
           "https://lago.test/authorize_net/payment_form?token=synthetic&environment=sandbox",
       },
     });
+
+    const updatedCustomer = await SELF.fetch("https://lago.test/api/v1/customers", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({
+        ...customerRequest,
+        customer: { ...customerRequest.customer, name: "Updated Synthetic Customer" },
+      }),
+    });
+    expect(updatedCustomer.status).toBe(200);
+    await expect(updatedCustomer.json()).resolves.toMatchObject({
+      customer: {
+        lago_id: firstCustomerBody.customer.lago_id,
+        name: "Updated Synthetic Customer",
+        email: "customer@example.com",
+        version_number: 2,
+        billing_configuration: { payment_provider: "authorize_net" },
+      },
+    });
+    const customerEvents = await env.BILLING_DB.prepare(
+      `SELECT event_type, aggregate_version FROM outbox_events
+       WHERE aggregate_type = 'customer' AND aggregate_id = ? ORDER BY aggregate_version`,
+    )
+      .bind(firstCustomerBody.customer.lago_id)
+      .all();
+    expect(customerEvents.results).toEqual([
+      { event_type: "customer.created", aggregate_version: 1 },
+      { event_type: "customer.updated", aggregate_version: 2 },
+    ]);
+  });
+
+  it("rejects customer provider modes the Cloudflare checkout path cannot honor", async () => {
+    const response = await SELF.fetch("https://lago.test/api/v1/customers", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({
+        customer: {
+          external_id: "unsupported-provider-customer",
+          billing_configuration: {
+            payment_provider: "stripe",
+            payment_provider_code: "stripe-default",
+          },
+        },
+      }),
+    });
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ code: "unsupported_payment_provider" });
   });
 
   it("rejects an invalid API key without revealing whether resources exist", async () => {

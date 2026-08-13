@@ -3,6 +3,7 @@ import { sha256Hex } from "../auth/api-key";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import type { DomainEvent } from "../domain-events";
 import { createAuthorizeNetPaymentUrl } from "../providers/authorize-net";
 import { nextPeriodEnd } from "../billing/periods";
 import { calculateCouponCredits } from "../billing/coupon-credits";
@@ -41,6 +42,7 @@ type CustomerRow = {
   metadata_json: string;
   payment_provider: string | null;
   payment_provider_code: string | null;
+  version: number;
   created_at: string;
   updated_at: string;
 };
@@ -126,7 +128,7 @@ export async function handleLagoCompatibilityRequest(
   if (webhookEndpointResponse) return webhookEndpointResponse;
 
   if (request.method === "POST" && url.pathname === "/api/v1/customers") {
-    return upsertCustomer(request, env.BILLING_DB, auth, requestId);
+    return upsertCustomer(request, null, env, auth, requestId);
   }
 
   if (request.method === "GET" && url.pathname === "/api/v1/customers") {
@@ -136,6 +138,13 @@ export async function handleLagoCompatibilityRequest(
   const customerMatch = url.pathname.match(/^\/api\/v1\/customers\/([^/]+)$/);
   if (request.method === "GET" && customerMatch?.[1]) {
     return showCustomer(decodeURIComponent(customerMatch[1]), env.BILLING_DB, auth, requestId);
+  }
+  if (request.method === "DELETE" && customerMatch?.[1]) {
+    throw new ApiError(
+      422,
+      "unsupported_customer_deletion",
+      "Customer deletion is not implemented until anonymization and dependency cleanup are ported",
+    );
   }
 
   if (request.method === "POST" && url.pathname === "/api/v1/subscriptions") {
@@ -173,56 +182,184 @@ export async function handleLagoCompatibilityRequest(
 
 async function upsertCustomer(
   request: Request,
-  database: D1Database,
+  pathExternalId: string | null,
+  env: Env,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
+  const database = env.BILLING_DB;
   const body = await parseJsonObject(request);
   const input = objectAt(body, "customer");
   rejectUnsupportedTaxTarget(input, "customer");
-  const externalId = requiredString(input, "external_id");
-  const name = optionalString(input, "name");
-  const email = normalizeEmail(optionalString(input, "email"));
-  const currency = optionalString(input, "currency")?.toUpperCase() ?? null;
-  const billingConfiguration = readOptionalObject(input.billing_configuration);
-  const paymentProvider = optionalString(billingConfiguration, "payment_provider");
-  const paymentProviderCode = optionalString(billingConfiguration, "payment_provider_code");
-  const metadata = normalizeMetadata(input.metadata);
-  const now = new Date().toISOString();
+  rejectUnsupportedCustomerFields(input);
+  const bodyExternalId =
+    input.external_id === undefined ? null : requiredString(input, "external_id");
+  const externalId = pathExternalId ?? bodyExternalId;
+  if (!externalId) throw new ApiError(422, "validation_error", "external_id is required");
+  if (pathExternalId && bodyExternalId && pathExternalId !== bodyExternalId)
+    throw new ApiError(
+      422,
+      "customer_external_id_mismatch",
+      "Customer external_id must match the request path",
+    );
+  const existing = await findCustomer(database, auth.organizationId, externalId);
+  const billingConfiguration = readCustomerBillingConfiguration(input.billing_configuration);
+  const normalized = {
+    name: input.name === undefined ? (existing?.name ?? null) : optionalString(input, "name"),
+    email:
+      input.email === undefined
+        ? (existing?.email ?? null)
+        : normalizeEmail(optionalString(input, "email")),
+    currency:
+      input.currency === undefined
+        ? (existing?.currency ?? null)
+        : (optionalString(input, "currency")?.toUpperCase() ?? existing?.currency ?? null),
+    metadata:
+      input.metadata === undefined
+        ? parseCustomerMetadata(existing?.metadata_json)
+        : normalizeMetadata(input.metadata),
+    paymentProvider:
+      billingConfiguration === null
+        ? (existing?.payment_provider ?? null)
+        : optionalString(billingConfiguration, "payment_provider"),
+    paymentProviderCode:
+      billingConfiguration === null
+        ? (existing?.payment_provider_code ?? null)
+        : optionalString(billingConfiguration, "payment_provider_code"),
+  };
+  validateCustomerProvider(normalized.paymentProvider, normalized.paymentProviderCode);
 
-  await database
-    .prepare(
-      `INSERT INTO customers
-       (id, organization_id, external_id, email, name, currency, metadata_json,
-        payment_provider, payment_provider_code, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (organization_id, external_id) DO UPDATE SET
-         email = excluded.email,
-         name = excluded.name,
-         currency = COALESCE(excluded.currency, customers.currency),
-         metadata_json = excluded.metadata_json,
-         payment_provider = excluded.payment_provider,
-         payment_provider_code = excluded.payment_provider_code,
-         updated_at = excluded.updated_at`,
-    )
-    .bind(
-      await deterministicUuid("customer", `${auth.organizationId}:${externalId}`),
-      auth.organizationId,
-      externalId,
-      email,
-      name,
-      currency,
-      JSON.stringify(metadata),
-      paymentProvider,
-      paymentProviderCode,
-      now,
-      now,
-    )
-    .run();
+  if (existing) {
+    if (customerMatches(existing, normalized))
+      return json({ customer: serializeCustomer(existing) }, { requestId });
+    return updateCustomer(existing, normalized, env, auth, requestId);
+  }
+
+  const now = new Date().toISOString();
+  const id = await deterministicUuid("customer", `${auth.organizationId}:${externalId}`);
+  const event = customerEvent(
+    "customer.created",
+    id,
+    externalId,
+    1,
+    normalized,
+    auth.organizationId,
+    requestId,
+    now,
+  );
+  try {
+    await database.batch([
+      database
+        .prepare(
+          `INSERT INTO customers
+           (id, organization_id, external_id, email, name, currency, metadata_json,
+            payment_provider, payment_provider_code, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+        )
+        .bind(
+          id,
+          auth.organizationId,
+          externalId,
+          normalized.email,
+          normalized.name,
+          normalized.currency,
+          stableJson(normalized.metadata),
+          normalized.paymentProvider,
+          normalized.paymentProviderCode,
+          now,
+          now,
+        ),
+      customerOutboxStatement(database, auth.organizationId, event),
+    ]);
+  } catch (error) {
+    const concurrent = await findCustomer(database, auth.organizationId, externalId);
+    if (concurrent && customerMatches(concurrent, normalized))
+      return json({ customer: serializeCustomer(concurrent) }, { requestId });
+    if (!concurrent) throw error;
+    throw new ApiError(409, "customer_version_conflict", "Customer changed concurrently");
+  }
 
   const customer = await findCustomer(database, auth.organizationId, externalId);
   if (!customer) throw new ApiError(500, "persistence_error", "Customer was not persisted");
+  await env.DOMAIN_EVENTS.send(event);
   return json({ customer: serializeCustomer(customer) }, { requestId });
+}
+
+type NormalizedCustomer = {
+  name: string | null;
+  email: string | null;
+  currency: string | null;
+  metadata: Array<{ key: string; value: string; display_in_invoice: boolean }>;
+  paymentProvider: string | null;
+  paymentProviderCode: string | null;
+};
+
+async function updateCustomer(
+  customer: CustomerRow,
+  normalized: NormalizedCustomer,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const now = new Date().toISOString();
+  const nextVersion = customer.version + 1;
+  const event = customerEvent(
+    "customer.updated",
+    customer.id,
+    customer.external_id,
+    nextVersion,
+    normalized,
+    auth.organizationId,
+    requestId,
+    now,
+  );
+  const results = await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `UPDATE customers
+       SET email = ?, name = ?, currency = ?, metadata_json = ?, payment_provider = ?,
+           payment_provider_code = ?, version = version + 1, updated_at = ?
+       WHERE id = ? AND organization_id = ? AND version = ?`,
+    ).bind(
+      normalized.email,
+      normalized.name,
+      normalized.currency,
+      stableJson(normalized.metadata),
+      normalized.paymentProvider,
+      normalized.paymentProviderCode,
+      now,
+      customer.id,
+      auth.organizationId,
+      customer.version,
+    ),
+    env.BILLING_DB.prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type,
+        aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+        occurred_at, published_at)
+       SELECT ?, ?, ?, 1, 'customer', ?, ?, ?, ?, ?, ?, NULL
+       FROM customers WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
+    ).bind(
+      event.id,
+      auth.organizationId,
+      event.type,
+      customer.id,
+      nextVersion,
+      requestId,
+      requestId,
+      stableJson(event.payload),
+      now,
+      customer.id,
+      auth.organizationId,
+      nextVersion,
+      now,
+    ),
+  ]);
+  if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+    throw new ApiError(409, "customer_version_conflict", "Customer changed concurrently");
+  await env.DOMAIN_EVENTS.send(event);
+  const updated = await findCustomer(env.BILLING_DB, auth.organizationId, customer.external_id);
+  if (!updated) throw new ApiError(500, "persistence_error", "Customer disappeared");
+  return json({ customer: serializeCustomer(updated) }, { requestId });
 }
 
 async function listCustomers(
@@ -253,7 +390,7 @@ async function listCustomers(
   const result = await database
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
-              payment_provider_code, created_at, updated_at
+              payment_provider_code, version, created_at, updated_at
        FROM customers WHERE ${where}
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     )
@@ -1400,7 +1537,7 @@ async function findCustomer(
   return database
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
-              payment_provider_code, created_at, updated_at
+              payment_provider_code, version, created_at, updated_at
        FROM customers WHERE organization_id = ? AND external_id = ? LIMIT 1`,
     )
     .bind(organizationId, externalId)
@@ -1430,13 +1567,14 @@ async function findSubscription(
 }
 
 function serializeCustomer(customer: CustomerRow): Record<string, unknown> {
-  const metadata = JSON.parse(customer.metadata_json) as Array<Record<string, unknown>>;
+  const metadata = parseCustomerMetadata(customer.metadata_json);
   return {
     lago_id: customer.id,
     external_id: customer.external_id,
     name: customer.name,
     email: customer.email,
     currency: customer.currency,
+    version_number: customer.version,
     created_at: customer.created_at,
     updated_at: customer.updated_at,
     billing_configuration: {
@@ -1507,27 +1645,177 @@ function serializeInvoice(invoice: InvoiceRow): Record<string, unknown> {
   };
 }
 
-function readOptionalObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+function readCustomerBillingConfiguration(value: unknown): Record<string, unknown> | null {
+  if (value === undefined) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new ApiError(422, "validation_error", "billing_configuration must be an object");
+  const configuration = value as Record<string, unknown>;
+  const supported = new Set([
+    "payment_provider",
+    "payment_provider_code",
+    "sync",
+    "sync_with_provider",
+  ]);
+  const unsupported = Object.keys(configuration).find((key) => !supported.has(key));
+  if (unsupported)
+    throw new ApiError(
+      422,
+      "unsupported_customer_feature",
+      `billing_configuration.${unsupported} is not implemented by the Cloudflare customer ledger`,
+    );
+  for (const flag of ["sync", "sync_with_provider"]) {
+    if (configuration[flag] !== undefined && typeof configuration[flag] !== "boolean")
+      throw new ApiError(422, "validation_error", `billing_configuration.${flag} must be boolean`);
+  }
+  return configuration;
+}
+
+function rejectUnsupportedCustomerFields(input: Record<string, unknown>): void {
+  const supported = new Set([
+    "external_id",
+    "name",
+    "email",
+    "currency",
+    "metadata",
+    "billing_configuration",
+    "tax_codes",
+    "tax_provider_code",
+  ]);
+  const unsupported = Object.keys(input).find((key) => !supported.has(key));
+  if (unsupported)
+    throw new ApiError(
+      422,
+      "unsupported_customer_feature",
+      `${unsupported} is not implemented by the Cloudflare customer ledger`,
+    );
+}
+
+function validateCustomerProvider(provider: string | null, code: string | null): void {
+  if (provider !== null && provider !== "authorize_net")
+    throw new ApiError(
+      422,
+      "unsupported_payment_provider",
+      "Only authorize_net is implemented by the Cloudflare checkout path",
+    );
+  if ((provider === null) !== (code === null))
+    throw new ApiError(
+      422,
+      "invalid_payment_provider_configuration",
+      "payment_provider and payment_provider_code must be configured together",
+    );
+}
+
+function customerMatches(customer: CustomerRow, normalized: NormalizedCustomer): boolean {
+  return (
+    customer.name === normalized.name &&
+    customer.email === normalized.email &&
+    customer.currency === normalized.currency &&
+    customer.payment_provider === normalized.paymentProvider &&
+    customer.payment_provider_code === normalized.paymentProviderCode &&
+    stableJson(parseCustomerMetadata(customer.metadata_json)) === stableJson(normalized.metadata)
+  );
+}
+
+function parseCustomerMetadata(
+  value: string | undefined,
+): Array<{ key: string; value: string; display_in_invoice: boolean }> {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? (parsed as Array<{ key: string; value: string; display_in_invoice: boolean }>)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function customerEvent(
+  type: "customer.created" | "customer.updated",
+  customerId: string,
+  externalId: string,
+  aggregateVersion: number,
+  normalized: NormalizedCustomer,
+  organizationId: string,
+  requestId: string,
+  occurredAt: string,
+): DomainEvent {
+  return {
+    id: `${type.replace(".", "-")}:${customerId}:v${aggregateVersion}`,
+    type,
+    version: 1,
+    aggregateType: "customer",
+    aggregateId: customerId,
+    aggregateVersion,
+    occurredAt,
+    causationId: requestId,
+    correlationId: requestId,
+    payload: {
+      organizationId,
+      customerId,
+      externalCustomerId: externalId,
+      email: normalized.email,
+      name: normalized.name,
+      currency: normalized.currency,
+      paymentProvider: normalized.paymentProvider,
+      paymentProviderCode: normalized.paymentProviderCode,
+      metadata: normalized.metadata,
+    },
+  };
+}
+
+function customerOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type,
+        aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+        occurred_at, published_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+    );
 }
 
 function normalizeMetadata(
   value: unknown,
 ): Array<{ key: string; value: string; display_in_invoice: boolean }> {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+  if (!Array.isArray(value))
+    throw new ApiError(422, "validation_error", "metadata must be an array");
+  if (value.length > 20)
+    throw new ApiError(422, "validation_error", "metadata cannot contain more than 20 entries");
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+      throw new ApiError(422, "validation_error", "metadata entries must be objects");
     const object = entry as Record<string, unknown>;
-    if (typeof object.key !== "string" || typeof object.value !== "string") return [];
-    return [
-      {
-        key: object.key,
-        value: object.value,
-        display_in_invoice: object.display_in_invoice === true,
-      },
-    ];
+    if (typeof object.key !== "string" || !object.key.trim() || typeof object.value !== "string")
+      throw new ApiError(
+        422,
+        "validation_error",
+        "metadata entries require string key and value fields",
+      );
+    if (object.display_in_invoice !== undefined && typeof object.display_in_invoice !== "boolean")
+      throw new ApiError(422, "validation_error", "display_in_invoice must be boolean");
+    return {
+      key: object.key,
+      value: object.value,
+      display_in_invoice: object.display_in_invoice === true,
+    };
   });
 }
 
