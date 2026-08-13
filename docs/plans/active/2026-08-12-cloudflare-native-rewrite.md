@@ -710,3 +710,7 @@ resource and mutation described.
   cascade behavior rather than storing semantics the invoice engine cannot honor; update and
   deletion remain guarded. All 58 Workers-runtime tests pass across 18 files; the full local gate
   and 355.70 KiB dry-run bundle are green.
+- 2026-08-14: Deployed the code-only plan-charge revision as isolated Worker version
+  `2dfd5a73-70d2-49ef-a16a-5c89fa995fea`; no D1 migration was pending. Remote health/readiness
+  returned `200`, unauthenticated charge list returned `401`, and the stack remains unseeded with
+  no production route, provider secret, or enabled external-mutation flag.
