@@ -1,6 +1,9 @@
-import { env } from "cloudflare:test";
+import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { closeBillingPeriod } from "../src/billing/close-period";
+import { sha256Hex } from "../src/auth/api-key";
+
+const apiKey = "billing-cycle-key";
 
 beforeEach(async () => {
   const now = "2026-08-13T00:00:00.000Z";
@@ -9,6 +12,11 @@ beforeEach(async () => {
       `INSERT OR IGNORE INTO organizations (id, external_id, name, created_at, updated_at)
        VALUES ('org-cycle', 'cycle-test', 'Cycle Test', ?, ?)`,
     ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO api_keys
+       (id, organization_id, key_prefix, key_hash, created_at, revoked_at)
+       VALUES ('key-cycle', 'org-cycle', 'billing-', ?, ?, NULL)`,
+    ).bind(await sha256Hex(apiKey), now),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO customers
        (id, organization_id, external_id, currency, metadata_json, created_at, updated_at)
@@ -110,8 +118,43 @@ describe("billing period close", () => {
         quantity_decimal: "0.3",
       },
     ]);
+
+    const shown = await invoiceRequest(`/api/v1/invoices/${first.invoiceId}`);
+    expect(shown.status).toBe(200);
+    await expect(shown.json()).resolves.toMatchObject({
+      invoice: {
+        lago_id: first.invoiceId,
+        status: "finalized",
+        fees: [
+          { item: { type: "subscription" }, amount_cents: 1000 },
+          { item: { type: "usage" }, amount_cents: 1, precise_amount_cents: "0.75" },
+        ],
+      },
+    });
+
+    const voided = await invoiceRequest(`/api/v1/invoices/${first.invoiceId}/void`, "POST");
+    expect(voided.status).toBe(200);
+    const voidedBody = await voided.json<{ invoice: { voided_at: string } }>();
+    expect(voidedBody.invoice.voided_at).toBeTruthy();
+    const voidReplay = await invoiceRequest(`/api/v1/invoices/${first.invoiceId}/void`, "POST");
+    await expect(voidReplay.json()).resolves.toMatchObject({
+      invoice: { status: "voided", voided_at: voidedBody.invoice.voided_at },
+    });
+    const voidCount = await env.BILLING_DB.prepare(
+      "SELECT COUNT(*) AS total FROM outbox_events WHERE event_type = 'invoice.voided' AND aggregate_id = ?",
+    )
+      .bind(first.invoiceId)
+      .first<{ total: number }>();
+    expect(voidCount?.total).toBe(1);
   });
 });
+
+function invoiceRequest(path: string, method = "GET"): Promise<Response> {
+  return SELF.fetch(`https://lago.test${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+  });
+}
 
 function eventStatement(
   id: string,

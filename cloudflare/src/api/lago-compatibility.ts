@@ -92,6 +92,16 @@ export async function handleLagoCompatibilityRequest(
     return listInvoices(url, env.BILLING_DB, auth, requestId);
   }
 
+  const invoiceMatch = url.pathname.match(/^\/api\/v1\/invoices\/([^/]+)$/);
+  if (request.method === "GET" && invoiceMatch?.[1]) {
+    return showInvoice(decodeURIComponent(invoiceMatch[1]), env.BILLING_DB, auth, requestId);
+  }
+
+  const invoiceVoidMatch = url.pathname.match(/^\/api\/v1\/invoices\/([^/]+)\/void$/);
+  if (request.method === "POST" && invoiceVoidMatch?.[1]) {
+    return voidInvoice(request, decodeURIComponent(invoiceVoidMatch[1]), env, auth, requestId);
+  }
+
   const paymentUrlMatch = url.pathname.match(/^\/api\/v1\/invoices\/([^/]+)\/payment_url$/);
   if (request.method === "POST" && paymentUrlMatch?.[1]) {
     return generateInvoicePaymentUrl(decodeURIComponent(paymentUrlMatch[1]), env, auth, requestId);
@@ -338,6 +348,234 @@ async function listInvoices(
     },
     { requestId },
   );
+}
+
+async function showInvoice(
+  invoiceId: string,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const invoice = await findInvoice(database, auth.organizationId, invoiceId);
+  if (!invoice) throw new ApiError(404, "invoice_not_found", "Invoice was not found");
+  return json(
+    {
+      invoice: {
+        ...serializeInvoice(invoice),
+        fees: await serializeInvoiceLines(database, invoice),
+      },
+    },
+    { requestId },
+  );
+}
+
+async function voidInvoice(
+  request: Request,
+  invoiceId: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const body = await parseJsonObjectOrEmpty(request);
+  if (
+    body.generate_credit_note === true ||
+    body.refund_amount !== undefined ||
+    body.credit_amount !== undefined
+  ) {
+    throw new ApiError(
+      422,
+      "unsupported_void_credit_note",
+      "Credit-note and refund generation during void is not implemented",
+    );
+  }
+  let invoice = await findInvoice(env.BILLING_DB, auth.organizationId, invoiceId);
+  if (!invoice) throw new ApiError(404, "invoice_not_found", "Invoice was not found");
+  if (invoice.status === "voided") {
+    return json(
+      {
+        invoice: {
+          ...serializeInvoice(invoice),
+          fees: await serializeInvoiceLines(env.BILLING_DB, invoice),
+        },
+      },
+      { requestId },
+    );
+  }
+  if (invoice.status !== "finalized") {
+    throw new ApiError(422, "not_voidable", "Only finalized invoices can be voided");
+  }
+  if (invoice.payment_status === "succeeded") {
+    throw new ApiError(
+      422,
+      "unsupported_paid_invoice_void",
+      "Paid invoice void requires credit-note/refund ledger support",
+    );
+  }
+  const requestHash = await sha256Hex(
+    JSON.stringify({ invoiceId, version: invoice.version, operation: "void" }),
+  );
+  const reservationKey = `invoice-void:v${invoice.version}`;
+  const account = env.BILLING_ACCOUNTS.getByName(`invoice:${invoice.id}`);
+  const reservation = await account.reserveCommand({
+    idempotencyKey: reservationKey,
+    commandType: "invoice.void",
+    requestHash,
+  });
+  if (!reservation.ok) {
+    throw new ApiError(409, reservation.error, "Invoice void conflicts with another command");
+  }
+  if (reservation.replayed && reservation.reservation.status !== "completed") {
+    throw new ApiError(409, "invoice_void_in_progress", "Invoice void is in progress");
+  }
+  if (!reservation.replayed) {
+    const voidedAt = new Date().toISOString();
+    const eventId = `invoice-voided:${invoice.id}:v${invoice.version + 1}`;
+    const payload = {
+      organizationId: auth.organizationId,
+      invoiceId: invoice.id,
+      voidedAt,
+      totalDueMinor: invoice.total_due_minor,
+      paymentStatus: invoice.payment_status,
+    };
+    try {
+      const results = await env.BILLING_DB.batch([
+        env.BILLING_DB.prepare(
+          `UPDATE invoices SET status = 'voided', voided_at = ?, version = version + 1,
+             updated_at = ?
+           WHERE id = ? AND organization_id = ? AND status = 'finalized'
+             AND payment_status <> 'succeeded' AND version = ?`,
+        ).bind(voidedAt, voidedAt, invoice.id, auth.organizationId, invoice.version),
+        env.BILLING_DB.prepare(
+          `INSERT INTO outbox_events
+           (event_id, organization_id, event_type, event_version, aggregate_type,
+            aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+            occurred_at, published_at)
+           SELECT ?, ?, 'invoice.voided', 1, 'invoice', ?, ?, ?, ?, ?, ?, NULL
+           FROM invoices
+           WHERE id = ? AND organization_id = ? AND status = 'voided'
+             AND version = ? AND voided_at = ?`,
+        ).bind(
+          eventId,
+          auth.organizationId,
+          invoice.id,
+          invoice.version + 1,
+          requestId,
+          requestId,
+          JSON.stringify(payload),
+          voidedAt,
+          invoice.id,
+          auth.organizationId,
+          invoice.version + 1,
+          voidedAt,
+        ),
+      ]);
+      if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1) {
+        throw new Error("invoice_version_conflict");
+      }
+      await env.DOMAIN_EVENTS.send({
+        id: eventId,
+        type: "invoice.voided",
+        version: 1,
+        aggregateType: "invoice",
+        aggregateId: invoice.id,
+        aggregateVersion: invoice.version + 1,
+        occurredAt: voidedAt,
+        causationId: requestId,
+        correlationId: requestId,
+        payload,
+      });
+      await account.completeCommand(reservationKey, { voidedAt, eventId });
+    } catch (error) {
+      await account.releaseCommand(reservationKey, requestHash);
+      throw error;
+    }
+  }
+  invoice = await findInvoice(env.BILLING_DB, auth.organizationId, invoiceId);
+  if (!invoice) throw new ApiError(500, "persistence_error", "Invoice disappeared");
+  return json(
+    {
+      invoice: {
+        ...serializeInvoice(invoice),
+        fees: await serializeInvoiceLines(env.BILLING_DB, invoice),
+      },
+    },
+    { requestId },
+  );
+}
+
+async function findInvoice(
+  database: D1Database,
+  organizationId: string,
+  invoiceId: string,
+): Promise<InvoiceRow | null> {
+  return database
+    .prepare(
+      `SELECT i.id, i.customer_id, c.external_id AS customer_external_id,
+              c.email AS customer_email, c.payment_provider, c.payment_provider_code,
+              i.number, i.status, i.payment_status, i.currency, i.subtotal_minor,
+              i.tax_minor, i.credits_minor, i.total_due_minor, i.version,
+              i.finalized_at, i.voided_at, i.created_at, i.updated_at
+       FROM invoices i JOIN customers c ON c.id = i.customer_id
+       WHERE i.organization_id = ? AND i.id = ? LIMIT 1`,
+    )
+    .bind(organizationId, invoiceId)
+    .first<InvoiceRow>();
+}
+
+async function serializeInvoiceLines(
+  database: D1Database,
+  invoice: InvoiceRow,
+): Promise<Array<Record<string, unknown>>> {
+  const result = await database
+    .prepare(
+      `SELECT id, line_type, description, quantity_decimal, unit_amount_decimal,
+              amount_minor, source_type, source_id, precise_amount_minor, created_at
+       FROM invoice_lines WHERE invoice_id = ? ORDER BY created_at, id`,
+    )
+    .bind(invoice.id)
+    .all<{
+      id: string;
+      line_type: string;
+      description: string;
+      quantity_decimal: string;
+      unit_amount_decimal: string;
+      amount_minor: number;
+      source_type: string;
+      source_id: string;
+      precise_amount_minor: string | null;
+      created_at: string;
+    }>();
+  return result.results.map((line) => ({
+    lago_id: line.id,
+    lago_invoice_id: invoice.id,
+    lago_charge_id: line.source_type === "charge" ? line.source_id : null,
+    lago_subscription_id: null,
+    item: {
+      type: line.line_type,
+      code: line.source_id,
+      name: line.description,
+      description: line.description,
+      invoice_display_name: line.description,
+      lago_item_id: line.source_id,
+      item_type: line.source_type,
+    },
+    pay_in_advance: false,
+    invoiceable: true,
+    amount_cents: line.amount_minor,
+    amount_currency: invoice.currency,
+    precise_amount_cents: line.precise_amount_minor ?? String(line.amount_minor),
+    unit_amount_cents: line.unit_amount_decimal,
+    units: line.quantity_decimal,
+    description: line.description,
+    payment_status: invoice.payment_status,
+    created_at: line.created_at,
+  }));
+}
+
+async function parseJsonObjectOrEmpty(request: Request): Promise<Record<string, unknown>> {
+  const contentLength = request.headers.get("Content-Length");
+  if (contentLength === "0" || (!contentLength && !request.body)) return {};
+  return parseJsonObject(request);
 }
 
 async function generateInvoicePaymentUrl(

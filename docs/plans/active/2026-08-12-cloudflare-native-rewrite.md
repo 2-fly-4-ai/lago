@@ -289,8 +289,9 @@ Acceptance:
 - [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
       and rounding behavior according to feature disposition.
 - [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
-      leased, idempotent recurring period-close finalization path now produces plan and usage lines;
-      manual draft/finalize, void, and broader retry transitions remain pending.
+      leased, idempotent recurring period-close finalization path now produces plan and usage lines,
+      and unpaid finalized invoices can be shown with lines and voided idempotently; manual
+      draft/finalize, paid-invoice credit/refund voids, and broader retry transitions remain pending.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
 - [ ] Add deterministic replay and total reconciliation.
 
@@ -544,3 +545,9 @@ resource and mutation described.
 - 2026-08-13: Deployed the guarded lifecycle and enhanced inventory as Worker version
   `08b8ddb7-bfc4-4765-8b24-8e05c0be978d`; remote health/readiness returned 200 and the
   unauthenticated subscriptions collection returned 401. The remote D1 database remains unseeded.
+- 2026-08-13: Added tenant-scoped invoice show with line-level precise amounts and idempotent unpaid
+  invoice void guarded by Durable Object reservations and versioned outbox/Queue events. Paid or
+  refund/credit-note-bearing voids fail explicitly until those ledgers are ported. All 34 tests pass.
+- 2026-08-13: Deployed invoice authority as Worker version
+  `b29a6b1b-c39a-434c-b029-fd14f91d8121`; remote health returned 200 and unauthenticated invoice
+  show returned 401. No provider mutation or remote billing data was introduced.
