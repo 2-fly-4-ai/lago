@@ -2036,3 +2036,11 @@ resource and mutation described.
   draft-termination-credit case exceeded its 10-second harness limit; that file passed 2/2 alone,
   and bounded groups passed all 192 tests as 45 + 69 + 71 + 7. The dry-run bundle is 947.30 KiB
   (163.83 KiB gzip). No migration is required. Feature checkpoint: `3b7fa34`.
+- 2026-08-15: Code-only remote preflight found no pending migration and zero organizations,
+  customers, plans, subscriptions, invoices, billable metrics, charges, fixed charges, usage
+  events, outbox rows, and plan-deletion tasks. Deployed only the isolated Worker as version
+  `163d0504-99f3-4424-aeb4-db12b0fc9e59` with an 8 ms startup. Health/readiness returned
+  `200`/`200`, unauthenticated standalone fixed-charge access returned `401`, no migrations remain,
+  and post-deploy aggregate-only verification stayed empty apart from 210 schedule audits. All
+  three external-action flags remain `0`; no migration, resource provisioning, production
+  route/domain, secret, provider action, customer data, or billing row changed.
