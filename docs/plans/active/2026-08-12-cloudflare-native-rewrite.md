@@ -295,15 +295,16 @@ Acceptance:
       versioned outbox events; attached metrics allow only name/description mutation. Expression,
       rounding, recurring weighted-sum, nested metric filters, and deletion workflows are now
       ported. Generic recurring, custom aggregation, subscription-level filter overrides, and
-      grouped weighted baselines remain explicit gaps. Standalone plan charge
+      weighted target-wallet baselines remain explicit gaps. Standalone plan charge
       create/list/show/update/delete supports the exact in-arrears rating models, nested
       filter-specific price overrides, and standalone filter list/show/create/update/delete.
       Pay-in-advance, proration, targeted taxes, pricing units, and cascades fail explicitly until
-      their billing and cleanup workflows are ported; combining filters with weighted usage
-      remains guarded. Filter/base partitions can combine with target-wallet grouping as exact
-      two-dimensional current-usage and invoice cells with deterministic identities and wallet
-      allocations. Charge minimums create one charge-wide, termination-prorated true-up line after
-      every cell is rated.
+      their billing and cleanup workflows are ported. Weighted filters reconstruct independent
+      recurring baselines per filter/base partition across periods and subscription generations.
+      Filter/base partitions can also combine with target-wallet grouping as exact two-dimensional
+      current-usage and invoice cells with deterministic identities and wallet allocations.
+      Weighted target-wallet grouping remains guarded. Charge minimums create one charge-wide,
+      termination-prorated true-up line after every cell is rated.
 - [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
       and rounding behavior according to feature disposition. Unrestricted fixed/percentage
       coupons now support once/recurring/forever application, initial and renewal invoice
@@ -503,13 +504,15 @@ Acceptance:
       reconstructed across subscription generations. Nested metric/charge filters use bounded D1
       documents, strict allowed-value validation, wildcard key-presence semantics, and first
       most-specific event assignment for current usage and invoice lines. Weighted target-wallet
-      grouping, custom aggregation, filter/weighted combinations, and advanced adjustments remain
-      pending. Filter partitions may combine with target-wallet groups; every event enters one
-      filter/base and one wallet cell, and current usage, invoice lines, and wallet allocations
-      reconcile exactly. Optional round/ceil/floor metric configuration applies to aggregate units
-      before current-usage and recurring-invoice rating, including negative precision. Filtered and
-      unfiltered charge minimums are excluded from current usage and emit a separate charge-wide
-      invoice true-up, matching the legacy fee contract.
+      grouping, custom aggregation, and advanced adjustments remain pending. Recurring weighted
+      filters reconstruct separate historical cumulative baselines for every filter/base partition,
+      including across subscription generations. Filter partitions may also combine with
+      target-wallet groups; every event enters one filter/base and one wallet cell, and current
+      usage, invoice lines, and wallet allocations reconcile exactly. Optional round/ceil/floor
+      metric configuration applies to aggregate units before current-usage and recurring-invoice
+      rating, including negative precision. Filtered and unfiltered charge minimums are excluded
+      from current usage and emit a separate charge-wide invoice true-up, matching the legacy fee
+      contract.
 - [x] Replace the Ruby subprocess and Go/Rust native library with a restricted TypeScript parser or
       a supported precompiled Wasm module. The pinned `lago-expression` Rust extension is now
       replaced by a bounded TypeScript parser/evaluator with no dynamic evaluation; the separately
@@ -1902,5 +1905,24 @@ resource and mutation described.
   `c3281312-ae2f-425f-bc3c-07ca186f3e8b` with a 6 ms startup. Health/readiness returned `200`/`200`,
   unauthenticated standalone filter access returned `401`, and post-deploy aggregate-only
   verification remained empty apart from 187 schedule audits. All three external-action flags
+  remain `0`; no migration, resource provisioning, production route/domain, secret, provider
+  action, customer data, or billing row changed.
+- 2026-08-15: Ported recurring weighted-sum charge filters. One capped historical D1 read per
+  charge replays retained events across subscription generations through the same most-specific
+  filter partitioner used for current events, producing an independent cumulative starting value
+  for every persisted filter and the unmatched base. Current usage and recurring/termination
+  invoices then integrate and rate each partition separately while reconciling total units and
+  end-of-period state. No mutable cache table or migration is required. Evidence carries prior
+  generation EU/base values of 10/20 into current values of 12/23, verifies 35 aggregate units and
+  47 cents of current usage, and persists exact 24/23-cent filter/base lines with distinct source
+  identities. Formatting, strict lint, inventory, generated types, and TypeScript are green;
+  bounded Worker groups pass all 183 tests as 51 + 69 + 63. The dry-run bundle is 879.15 KiB
+  (153.22 KiB gzip). Feature checkpoint: `be68e09`.
+- 2026-08-15: Remote preflight on the explicit SERP account found no pending migration and zero
+  organizations, customers, plans, subscriptions, invoices, billable metrics, charges, usage
+  events, wallets, wallet targets, and outbox rows. Deployed only the isolated Worker as version
+  `d07da457-b615-4b65-afbd-b038cecc8382` with a 7 ms startup. Health/readiness returned `200`/`200`,
+  unauthenticated billable-metric access returned `401`, and post-deploy aggregate-only
+  verification remained empty apart from 190 schedule audits. All three external-action flags
   remain `0`; no migration, resource provisioning, production route/domain, secret, provider
   action, customer data, or billing row changed.

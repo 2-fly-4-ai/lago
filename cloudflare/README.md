@@ -132,8 +132,9 @@ remaining Lago feature inventory is dispositioned and ported.
   termination-prorated true-up line across all filter/base fees. Target-wallet-enabled charges
   partition each filter/base fee again by wallet code, preserving deterministic line identities,
   combined filter/wallet metadata, exact current-usage totals, and exact wallet allocations.
-  Filters combined with weighted sums fail explicitly until per-filter recurring baselines are
-  ported.
+  Recurring weighted-sum filters reconstruct an independent historical cumulative baseline for
+  every filter/base partition across subscription generations. Weighted sums combined with target
+  wallets remain explicitly guarded until per-wallet recurring baselines are ported.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,
