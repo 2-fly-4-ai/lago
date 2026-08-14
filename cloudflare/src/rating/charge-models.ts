@@ -98,6 +98,55 @@ export function rateCharge(
   }
 }
 
+export function rateProratedFixedCharge(
+  fullUnitsInput: string | number,
+  proratedUnitsInput: string | number,
+  charge: ChargeModel,
+): RatingResult {
+  const fullUnits = Decimal.parse(fullUnitsInput);
+  const proratedUnits = Decimal.parse(proratedUnitsInput);
+  if (fullUnits.isNegative() || proratedUnits.isNegative()) {
+    throw new Error("units_must_be_non_negative");
+  }
+  if (charge.model === "standard" || charge.model === "volume") {
+    return rateCharge(proratedUnits.toString(), charge);
+  }
+  if (charge.model !== "graduated") throw new Error("invalid_fixed_charge_model");
+  if (proratedUnits.isZero())
+    return result(charge.model, proratedUnits, Decimal.zero(), { ranges: [] });
+
+  const ranges = validateRanges(charge.ranges);
+  const coefficient = fullUnits.isZero() ? null : proratedUnits.divide(fullUnits, 24);
+  let amount = Decimal.zero();
+  const details: Array<Record<string, string | null>> = [];
+  for (const [index, range] of ranges.entries()) {
+    const fullTierUnits = fullUnits.isZero()
+      ? Decimal.zero()
+      : unitsInRange(fullUnits, range.from, range.to);
+    if (!fullUnits.isZero() && fullTierUnits.isZero()) continue;
+    if (fullUnits.isZero() && index > 0) break;
+    const proratedTierUnits = coefficient ? fullTierUnits.multiply(coefficient) : proratedUnits;
+    const perUnitAmount = Decimal.parse(range.source.perUnitAmount);
+    const flatAmount = Decimal.parse(range.source.flatAmount);
+    const total = proratedTierUnits.multiply(perUnitAmount).add(flatAmount);
+    amount = amount.add(total);
+    details.push({
+      fromValue: range.from.toString(),
+      toValue: range.to?.toString() ?? null,
+      fullUnits: fullTierUnits.toString(),
+      proratedUnits: proratedTierUnits.toString(),
+      perUnitAmount: perUnitAmount.toString(),
+      flatAmount: flatAmount.toString(),
+      total: total.toString(),
+    });
+    if (fullUnits.isZero() || !range.to || fullUnits.compare(range.to) <= 0) break;
+  }
+  return result(charge.model, proratedUnits, amount, {
+    fullUnits: fullUnits.toString(),
+    ranges: details,
+  });
+}
+
 function rateGraduated(
   units: Decimal,
   charge: Extract<ChargeModel, { model: "graduated" }>,

@@ -642,13 +642,15 @@ describe("subscription charge-filter overrides", () => {
         charge_model: "standard",
         properties: { amount: "800" },
         units: "4",
+        prorated: true,
         cascade_updates: true,
       },
     });
     expect(created.status).toBe(200);
     const createdBody = await created.json<{ fixed_charge: { lago_id: string } }>();
     const rows = await env.BILLING_DB.prepare(
-      `SELECT id, parent_id, plan_id, invoice_display_name, properties_json, units, version, active
+      `SELECT id, parent_id, plan_id, invoice_display_name, properties_json, units, prorated,
+              version, active
        FROM fixed_charges WHERE code = 'priority-support' ORDER BY parent_id IS NOT NULL`,
     ).all<{
       id: string;
@@ -657,6 +659,7 @@ describe("subscription charge-filter overrides", () => {
       invoice_display_name: string | null;
       properties_json: string;
       units: string;
+      prorated: number;
       version: number;
       active: number;
     }>();
@@ -671,6 +674,7 @@ describe("subscription charge-filter overrides", () => {
       invoice_display_name: "Priority support",
       properties_json: '{"amount":"800"}',
       units: "4",
+      prorated: 1,
       version: 1,
       active: 1,
     });

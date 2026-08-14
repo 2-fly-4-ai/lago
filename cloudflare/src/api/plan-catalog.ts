@@ -108,6 +108,7 @@ type NormalizedFixedCharge = {
   chargeModel: "standard" | "graduated" | "volume";
   properties: Record<string, unknown>;
   units: string;
+  prorated: 0 | 1;
   applyUnitsImmediately: boolean;
 };
 
@@ -168,6 +169,7 @@ type PreparedFixedChargeCascadeCreate = {
   chargeModel: "standard" | "graduated" | "volume";
   propertiesJson: string;
   units: string;
+  prorated: 0 | 1;
 };
 
 type PreparedFixedChargeCascadeDelete = {
@@ -439,7 +441,7 @@ async function createPlan(
            (id, organization_id, plan_id, add_on_id, code, invoice_display_name,
             charge_model, properties_json, units, pay_in_advance, prorated, version, active,
             created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, 1, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, 1, ?, ?)`,
           )
           .bind(
             charge.id,
@@ -451,6 +453,7 @@ async function createPlan(
             charge.chargeModel,
             stableJson(charge.properties),
             charge.units,
+            charge.prorated,
             now,
             now,
           ),
@@ -640,7 +643,7 @@ async function createFixedCharge(
            (id, organization_id, plan_id, add_on_id, code, invoice_display_name,
             charge_model, properties_json, units, pay_in_advance, prorated, version, active,
             created_at, updated_at)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, 1, ?, ?
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, 1, ?, ?
            WHERE (
              ? = 0 OR (
                ? = (
@@ -696,6 +699,7 @@ async function createFixedCharge(
           normalized.chargeModel,
           stableJson(normalized.properties),
           normalized.units,
+          normalized.prorated,
           now,
           now,
           cascadeEnabled,
@@ -725,7 +729,8 @@ async function createFixedCharge(
                   json_extract(row.value, '$.invoiceDisplayName'),
                   json_extract(row.value, '$.chargeModel'),
                   json_extract(row.value, '$.propertiesJson'),
-                  json_extract(row.value, '$.units'), 0, 0, 1, 1, ?, ?
+                  json_extract(row.value, '$.units'), 0,
+                  json_extract(row.value, '$.prorated'), 1, 1, ?, ?
            FROM json_each(?) row
            WHERE EXISTS (
              SELECT 1 FROM fixed_charges parent
@@ -836,6 +841,7 @@ async function updateFixedCharge(
       input.units === undefined
         ? fixedCharge.units
         : nonNegativeDecimal(input.units, "fixed_charge.units"),
+    prorated: fixedCharge.prorated === 1 ? 1 : 0,
     applyUnitsImmediately: input.apply_units_immediately === true,
   } satisfies NormalizedFixedCharge;
   validateFixedChargeRating(next.units, next.chargeModel, next.properties, "fixed_charge");
@@ -1789,7 +1795,7 @@ function sameFixedCharge(charge: FixedChargeRow, normalized: NormalizedFixedChar
     stableJson(parseObject(charge.properties_json)) === stableJson(normalized.properties) &&
     Decimal.parse(charge.units).compare(Decimal.parse(normalized.units)) === 0 &&
     charge.pay_in_advance === 0 &&
-    charge.prorated === 0
+    charge.prorated === normalized.prorated
   );
 }
 
@@ -1838,6 +1844,7 @@ async function prepareFixedChargeCreateCascade(
       chargeModel: fixedCharge.chargeModel,
       propertiesJson: stableJson(fixedCharge.properties),
       units: fixedCharge.units,
+      prorated: fixedCharge.prorated,
     });
   }
   assertFixedChargeCascadeSize(creates);
@@ -2270,12 +2277,7 @@ async function normalizeFixedCharges(
         "unsupported_fixed_charge_feature",
         "Pay-in-advance fixed charges are not implemented",
       );
-    if (booleanInteger(input.prorated, false) === 1)
-      throw new ApiError(
-        422,
-        "unsupported_fixed_charge_feature",
-        "Prorated fixed charges are not implemented",
-      );
+    const prorated = booleanInteger(input.prorated, false);
     if (
       input.apply_units_immediately !== undefined &&
       typeof input.apply_units_immediately !== "boolean"
@@ -2318,6 +2320,7 @@ async function normalizeFixedCharges(
       chargeModel,
       properties,
       units,
+      prorated,
       applyUnitsImmediately: input.apply_units_immediately === true,
     });
   }
@@ -2369,12 +2372,7 @@ function rejectUnsupportedFixedChargeMutation(
       "unsupported_fixed_charge_feature",
       "Pay-in-advance fixed charges are not implemented",
     );
-  if (booleanInteger(input.prorated, current?.prorated === 1) === 1)
-    throw new ApiError(
-      422,
-      "unsupported_fixed_charge_feature",
-      "Prorated fixed charges are not implemented",
-    );
+  if (input.prorated !== undefined) booleanInteger(input.prorated, current?.prorated === 1);
   if (
     input.apply_units_immediately !== undefined &&
     typeof input.apply_units_immediately !== "boolean"

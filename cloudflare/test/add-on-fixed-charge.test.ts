@@ -379,10 +379,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
       amount_cents: 100,
       amount_currency: "USD",
     };
-    for (const [suffix, unsafe] of [
-      ["advance", { pay_in_advance: true }],
-      ["prorated", { prorated: true }],
-    ] as const) {
+    for (const [suffix, unsafe] of [["advance", { pay_in_advance: true }]] as const) {
       const response = await api("/api/v1/plans", "POST", {
         plan: {
           ...planBase,

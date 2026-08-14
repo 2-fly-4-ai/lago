@@ -1,6 +1,6 @@
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
-import { rateCharge } from "../rating/charge-models";
+import { rateCharge, rateProratedFixedCharge } from "../rating/charge-models";
 import { Decimal } from "../rating/decimal";
 import {
   aggregateUsageResult,
@@ -17,6 +17,7 @@ import {
 } from "../usage/charge-filters";
 import { calculateCouponCredits, type CouponCredit } from "./coupon-credits";
 import { calculateCreditNoteAllocations, type CreditNoteAllocation } from "./credit-note-credits";
+import { fixedChargePeriodUnits, type FixedChargeUnitEvent } from "./fixed-charge-units";
 import { calculateManualTaxes, totalManualTaxMinor, type InvoiceTax } from "./manual-taxes";
 import { calculateMinimumCommitmentLine } from "./minimum-commitment";
 import {
@@ -80,6 +81,8 @@ type FixedChargeRow = {
   charge_model: string;
   properties_json: string;
   units: string;
+  prorated_units: string;
+  prorated: number;
   add_on_code: string;
   add_on_name: string;
   add_on_invoice_display_name: string | null;
@@ -682,11 +685,25 @@ export async function calculateSubscriptionInvoice(
     }
   }
 
-  for (const charge of await loadFixedCharges(database, subscription, calculationPeriodEnd)) {
+  const fixedChargeFullPeriodDays = billingPeriodDurationDays(
+    new Date(periodStartMs),
+    new Date(periodEndMs),
+    subscription.billing_time,
+    subscription.interval,
+    subscription.billing_timezone,
+  );
+  for (const charge of await loadFixedCharges(
+    database,
+    subscription,
+    periodStart,
+    calculationPeriodEnd,
+    fixedChargeFullPeriodDays,
+  )) {
+    const model = parseChargeModel(charge.charge_model, parseObject(charge.properties_json));
     const precise = Decimal.parse(
-      rateCharge(
-        charge.units,
-        parseChargeModel(charge.charge_model, parseObject(charge.properties_json)),
+      (charge.prorated === 1
+        ? rateProratedFixedCharge(charge.units, charge.prorated_units, model)
+        : rateCharge(charge.units, model)
       ).amountCents,
     );
     const rounded = safeMinorInteger(precise);
@@ -706,6 +723,7 @@ export async function calculateSubscriptionInvoice(
         fixedChargeCode: charge.code,
         addOnCode: charge.add_on_code,
         chargeModel: charge.charge_model,
+        ...(charge.prorated === 1 ? { prorated: true, proratedUnits: charge.prorated_units } : {}),
         periodStart,
         periodEnd: calculationPeriodEnd,
         ...(options.context === "termination" ? { contextType: "termination" } : {}),
@@ -948,40 +966,101 @@ async function loadCharges(
 async function loadFixedCharges(
   database: D1Database,
   subscription: BillableSubscription,
+  periodStart: string,
   calculationPeriodEnd: string,
+  fullPeriodDays: number,
 ): Promise<FixedChargeRow[]> {
   const result = await database
     .prepare(
       `SELECT fc.id, fc.code, fc.invoice_display_name, fc.charge_model,
-              fc.properties_json,
-              CASE WHEN EXISTS (
+              fc.properties_json, fc.units, fc.prorated,
+              EXISTS (
                 SELECT 1 FROM fixed_charge_unit_events any_event
                 WHERE any_event.subscription_id = ? AND any_event.fixed_charge_id = fc.id
-              ) THEN COALESCE((
-                SELECT event.units FROM fixed_charge_unit_events event
-                WHERE event.subscription_id = ? AND event.fixed_charge_id = fc.id
-                  AND event.effective_at < ?
-                ORDER BY event.fixed_charge_version DESC, event.effective_at DESC, event.id DESC
-                LIMIT 1
-              ), '0') ELSE fc.units END AS units,
+              ) AS has_unit_events,
               ao.code AS add_on_code, ao.name AS add_on_name,
               ao.invoice_display_name AS add_on_invoice_display_name
        FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id
        WHERE fc.organization_id = ? AND fc.plan_id = ? AND fc.active = 1
          AND fc.pay_in_advance = 0
-         AND fc.prorated = 0
        ORDER BY fc.created_at, fc.id`,
     )
+    .bind(subscription.id, subscription.organization_id, subscription.plan_id)
+    .all<
+      Omit<FixedChargeRow, "prorated_units"> & {
+        has_unit_events: number;
+      }
+    >();
+  if (result.results.length === 0) return [];
+
+  const eventResult = await database
+    .prepare(
+      `SELECT event.fixed_charge_id, event.fixed_charge_version, event.units, event.effective_at
+       FROM fixed_charge_unit_events event
+       JOIN fixed_charges fixed ON fixed.id = event.fixed_charge_id
+       WHERE fixed.organization_id = ? AND fixed.plan_id = ? AND fixed.active = 1
+         AND event.subscription_id = ? AND event.effective_at < ?
+         AND (
+           event.effective_at >= ? OR event.id = (
+             SELECT prior.id FROM fixed_charge_unit_events prior
+             WHERE prior.subscription_id = event.subscription_id
+               AND prior.fixed_charge_id = event.fixed_charge_id
+               AND prior.effective_at < ?
+             ORDER BY prior.fixed_charge_version DESC, prior.effective_at DESC, prior.id DESC
+             LIMIT 1
+           )
+         )
+       ORDER BY event.fixed_charge_id, event.fixed_charge_version, event.id
+       LIMIT ?`,
+    )
     .bind(
-      subscription.id,
-      subscription.id,
-      calculationPeriodEnd,
       subscription.organization_id,
       subscription.plan_id,
+      subscription.id,
+      calculationPeriodEnd,
+      periodStart,
+      periodStart,
+      MAX_FIXED_CHARGE_PERIOD_EVENTS + 1,
     )
-    .all<FixedChargeRow>();
-  return [...result.results];
+    .all<{
+      fixed_charge_id: string;
+      fixed_charge_version: number;
+      units: string;
+      effective_at: string;
+    }>();
+  if (eventResult.results.length > MAX_FIXED_CHARGE_PERIOD_EVENTS) {
+    throw new Error("fixed_charge_period_event_limit_exceeded");
+  }
+  const eventsByFixedCharge = new Map<string, FixedChargeUnitEvent[]>();
+  for (const event of eventResult.results) {
+    const events = eventsByFixedCharge.get(event.fixed_charge_id) ?? [];
+    events.push({
+      fixedChargeVersion: event.fixed_charge_version,
+      units: event.units,
+      effectiveAt: event.effective_at,
+    });
+    eventsByFixedCharge.set(event.fixed_charge_id, events);
+  }
+
+  return result.results.map((charge) => {
+    const periodUnits = fixedChargePeriodUnits(
+      charge.units,
+      charge.has_unit_events === 1,
+      eventsByFixedCharge.get(charge.id) ?? [],
+      periodStart,
+      calculationPeriodEnd,
+      fullPeriodDays,
+      subscription.billing_timezone,
+    );
+    return {
+      ...charge,
+      units: periodUnits.fullUnits,
+      prorated_units: periodUnits.proratedUnits,
+    };
+  });
 }
+
+const MAX_FIXED_CHARGE_PERIOD_EVENTS = 1_000;
 
 async function minimumCommitmentAmount(database: D1Database, planId: string): Promise<number> {
   const commitment = await database
