@@ -42,6 +42,7 @@ import {
 import { paymentDueDate } from "../billing/payment-terms";
 import { finalizeInvoice } from "../billing/finalize-invoice";
 import { refreshSubscriptionDraft } from "../billing/refresh-draft-invoice";
+import { changeSubscriptionPlan } from "../billing/change-subscription-plan";
 import {
   assertEndingAtAfterStart,
   assertFutureSubscriptionAt,
@@ -71,6 +72,7 @@ type SubscriptionRow = {
   external_id: string;
   customer_id: string;
   customer_external_id: string;
+  plan_id: string;
   plan_code: string;
   plan_amount_minor: number;
   plan_currency: string;
@@ -93,6 +95,11 @@ type SubscriptionRow = {
   trial_started_at: string | null;
   trial_end_at: string | null;
   trial_ended_at: string | null;
+  previous_subscription_id: string | null;
+  generation: number;
+  previous_plan_code: string | null;
+  next_plan_code: string | null;
+  downgrade_plan_date: string | null;
 };
 
 type InvoiceRow = {
@@ -573,21 +580,8 @@ async function createSubscription(
   const requestHash = await sha256Hex(JSON.stringify(requestIdentity));
 
   const existing = await findSubscription(database, auth.organizationId, externalId);
-  if (existing) {
-    assertSubscriptionReplay(existing, {
-      externalCustomerId,
-      name,
-      planCode,
-      requestHash,
-      subscriptionAt,
-      endingAt,
-      onTerminationCreditNote,
-      onTerminationInvoice,
-    });
-    return json({ subscription: serializeSubscription(existing) }, { requestId });
-  }
-  if (subscriptionAt) assertFutureSubscriptionAt(subscriptionAt, now);
-  if (endingAt) assertEndingAtAfterStart(endingAt, subscriptionAt ?? timestamp);
+  if (!existing && subscriptionAt) assertFutureSubscriptionAt(subscriptionAt, now);
+  if (!existing && endingAt) assertEndingAtAfterStart(endingAt, subscriptionAt ?? timestamp);
 
   const customer = await findCustomer(database, auth.organizationId, externalCustomerId);
   if (!customer) throw new ApiError(404, "customer_not_found", "Customer was not found");
@@ -620,7 +614,80 @@ async function createSubscription(
       pay_in_advance: number;
       trial_period: number | null;
     }>();
+  if (!plan && existing) {
+    throw new ApiError(
+      409,
+      "subscription_idempotency_conflict",
+      "Subscription external_id was reused with different attributes",
+    );
+  }
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  if (existing) {
+    if (existing.customer_external_id !== externalCustomerId) {
+      throw new ApiError(
+        409,
+        "subscription_customer_conflict",
+        "Subscription external_id belongs to another customer",
+      );
+    }
+    if (existing.plan_id === plan.id) {
+      assertSubscriptionReplay(existing, {
+        externalCustomerId,
+        name,
+        planCode,
+        requestHash,
+        subscriptionAt,
+        endingAt,
+        onTerminationCreditNote,
+        onTerminationInvoice,
+      });
+      return json({ subscription: serializeSubscription(existing) }, { requestId });
+    }
+    try {
+      const changed = await changeSubscriptionPlan(env, {
+        organizationId: auth.organizationId,
+        externalSubscriptionId: externalId,
+        externalCustomerId,
+        planCode,
+        name,
+        endingAt,
+        requestHash,
+        requestId,
+      });
+      const responseSubscription = await findSubscriptionById(
+        database,
+        auth.organizationId,
+        changed.responseSubscriptionId,
+      );
+      if (!responseSubscription) {
+        throw new ApiError(500, "persistence_error", "Subscription generation disappeared");
+      }
+      return json({ subscription: serializeSubscription(responseSubscription) }, { requestId });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      if (error instanceof Error) {
+        const mapped: Record<string, [number, string]> = {
+          plan_currency_mismatch: [422, "Plan currency must match the current subscription"],
+          subscription_version_conflict: [409, "Subscription changed concurrently"],
+          unsupported_subscription_plan_interval: [
+            422,
+            "Plan changes require weekly, monthly, quarterly, or yearly plans",
+          ],
+          unsupported_pay_in_advance_termination_credit: [
+            422,
+            "The current prepaid generation has no creditable finalized base invoice",
+          ],
+          unsupported_plan_change_draft_prepaid_credit: [
+            422,
+            "Prepaid upgrades with invoice grace require source-credit draft coordination",
+          ],
+        };
+        const detail = mapped[error.message];
+        if (detail) throw new ApiError(detail[0], error.message, detail[1]);
+      }
+      throw error;
+    }
+  }
   assertSupportedTerminationActions(plan.pay_in_advance, onTerminationCreditNote);
   if (endingAt) {
     assertScheduledTerminationPlanSupported(
@@ -2477,7 +2544,8 @@ async function findSubscription(
 ): Promise<SubscriptionRow | null> {
   return database
     .prepare(
-      `SELECT s.id, s.external_id, s.customer_id, c.external_id AS customer_external_id,
+      `SELECT s.id, s.external_id, s.customer_id, s.plan_id,
+              c.external_id AS customer_external_id,
               p.code AS plan_code, p.amount_minor AS plan_amount_minor,
               p.currency AS plan_currency, p.interval AS plan_interval,
               s.name, s.request_sha256,
@@ -2485,13 +2553,62 @@ async function findSubscription(
               s.current_period_end, s.ending_at, s.on_termination_credit_note,
               s.on_termination_invoice,
               s.canceled_at, s.terminated_at, s.created_at, s.billing_time,
-              s.billing_timezone, s.trial_started_at, s.trial_end_at, s.trial_ended_at
+              s.billing_timezone, s.trial_started_at, s.trial_end_at, s.trial_ended_at,
+              s.previous_subscription_id, s.generation
+              ,(SELECT pp.code FROM subscriptions ps JOIN plans pp ON pp.id = ps.plan_id
+                WHERE ps.id = s.previous_subscription_id LIMIT 1) AS previous_plan_code
+              ,(SELECT np.code FROM subscriptions ns JOIN plans np ON np.id = ns.plan_id
+                WHERE ns.previous_subscription_id = s.id AND ns.status = 'pending'
+                ORDER BY ns.generation DESC LIMIT 1) AS next_plan_code
+              ,(SELECT ns.transition_at FROM subscriptions ns
+                WHERE ns.previous_subscription_id = s.id AND ns.status = 'pending'
+                ORDER BY ns.generation DESC LIMIT 1) AS downgrade_plan_date
        FROM subscriptions s
        JOIN customers c ON c.id = s.customer_id
        JOIN plans p ON p.id = s.plan_id
-       WHERE s.organization_id = ? AND s.external_id = ? LIMIT 1`,
+       WHERE s.organization_id = ? AND s.external_id = ?
+       ORDER BY CASE
+         WHEN s.status IN ('active', 'past_due') THEN 0
+         WHEN s.status = 'pending' AND s.previous_subscription_id IS NULL THEN 1
+         WHEN s.status = 'pending' THEN 2
+         ELSE 3
+       END, s.generation DESC LIMIT 1`,
     )
     .bind(organizationId, externalId)
+    .first<SubscriptionRow>();
+}
+
+async function findSubscriptionById(
+  database: D1Database,
+  organizationId: string,
+  id: string,
+): Promise<SubscriptionRow | null> {
+  return database
+    .prepare(
+      `SELECT s.id, s.external_id, s.customer_id, s.plan_id,
+              c.external_id AS customer_external_id,
+              p.code AS plan_code, p.amount_minor AS plan_amount_minor,
+              p.currency AS plan_currency, p.interval AS plan_interval,
+              s.name, s.request_sha256, s.status, s.subscription_at, s.started_at,
+              s.current_period_start, s.current_period_end, s.ending_at,
+              s.on_termination_credit_note, s.on_termination_invoice,
+              s.canceled_at, s.terminated_at, s.created_at, s.billing_time,
+              s.billing_timezone, s.trial_started_at, s.trial_end_at, s.trial_ended_at,
+              s.previous_subscription_id, s.generation,
+              (SELECT pp.code FROM subscriptions ps JOIN plans pp ON pp.id = ps.plan_id
+               WHERE ps.id = s.previous_subscription_id LIMIT 1) AS previous_plan_code,
+              (SELECT np.code FROM subscriptions ns JOIN plans np ON np.id = ns.plan_id
+               WHERE ns.previous_subscription_id = s.id AND ns.status = 'pending'
+               ORDER BY ns.generation DESC LIMIT 1) AS next_plan_code,
+              (SELECT ns.transition_at FROM subscriptions ns
+               WHERE ns.previous_subscription_id = s.id AND ns.status = 'pending'
+               ORDER BY ns.generation DESC LIMIT 1) AS downgrade_plan_date
+       FROM subscriptions s
+       JOIN customers c ON c.id = s.customer_id
+       JOIN plans p ON p.id = s.plan_id
+       WHERE s.organization_id = ? AND s.id = ? LIMIT 1`,
+    )
+    .bind(organizationId, id)
     .first<SubscriptionRow>();
 }
 
@@ -2542,6 +2659,9 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     current_billing_period_ending_at: subscription.current_period_end,
     trial_started_at: subscription.trial_started_at,
     trial_ended_at: subscription.trial_ended_at,
+    previous_plan_code: subscription.previous_plan_code,
+    next_plan_code: subscription.next_plan_code,
+    downgrade_plan_date: subscription.downgrade_plan_date?.slice(0, 10) ?? null,
     payment_method: { payment_method_id: null, payment_method_type: null },
   };
 }
@@ -2858,7 +2978,9 @@ function assertSubscriptionReplay(
 ): void {
   const matchesSubscriptionAt =
     input.subscriptionAt === null
-      ? subscription.subscription_at === subscription.started_at
+      ? subscription.previous_subscription_id !== null ||
+        subscription.status === "pending" ||
+        subscription.subscription_at === subscription.started_at
       : subscription.subscription_at === input.subscriptionAt;
   const matchesLegacyFields =
     subscription.customer_external_id === input.externalCustomerId &&
@@ -2868,10 +2990,10 @@ function assertSubscriptionReplay(
     subscription.ending_at === input.endingAt &&
     subscription.on_termination_credit_note === input.onTerminationCreditNote &&
     subscription.on_termination_invoice === input.onTerminationInvoice;
-  if (
-    (subscription.request_sha256 && subscription.request_sha256 !== input.requestHash) ||
-    !matchesLegacyFields
-  ) {
+  const conflicts = subscription.request_sha256
+    ? subscription.request_sha256 !== input.requestHash
+    : !matchesLegacyFields;
+  if (conflicts) {
     throw new ApiError(
       409,
       "subscription_idempotency_conflict",

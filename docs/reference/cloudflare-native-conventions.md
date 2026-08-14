@@ -56,6 +56,16 @@ this document does not silently redefine that behavior.
   end. A base already issued for that window wins, including the exact `:10` boundary case. Trial
   drafts reuse an immutable initial context, remain non-consuming during refresh, and allocate
   credits only at finalization.
+- A subscription external ID is a logical chain, not a single mutable row. Each plan change creates
+  an immutable generation with a tenant/external/generation key and a `previous_subscription_id`.
+  D1 partial unique indexes permit exactly one active/past-due generation and one pending successor.
+  Equal or higher annualized price is an immediate upgrade; lower annualized price is a downgrade at
+  the current period boundary. One `invoice_subscriptions` graph links the combined invoice to both
+  generations, and `plan_change_invoice_contexts` retains both periods for draft replay. Usage
+  instants resolve against half-open `[started_at, terminated_at)` generation windows. The external
+  transaction ID remains unique across the whole chain, so a transition cannot admit a duplicate
+  event merely because the internal subscription ID changed. Trials on later generations retain the
+  earliest started generation as their anchor.
 - The retained termination-invoice subset uses UTC civil dates. Its in-arrears base line includes
   both the period-start date and termination date, caps the result at the full period, and uses
   exact `Decimal` division before minor-unit rounding. Usage remains half-open and is bounded by the
@@ -136,7 +146,7 @@ concurrent request, or replay converge on one valid result.
 | Organization and API keys | authenticated admin/bootstrap boundary                               | organization and key rows                                                                       | unique external ID/key hash; all child reads require organization scope                                   |
 | Customer billing account  | `BillingAccount` Durable Object plus customer API                    | customer version and outbox                                                                     | per-customer command reservation; unique external ID; optimistic version; replay hash                     |
 | Plan catalog              | plan, charge, fixed-charge, add-on, metric, and tax APIs             | one catalog mutation and outbox                                                                 | tenant/code/version uniqueness; attached-plan restrictions; optimistic version                            |
-| Subscription              | compatibility API, lifecycle API, and trial-ending owner             | subscription/trial transition, billing-cycle seed, initial/final invoice event rows, and outbox | unique tenant external ID; request hash; immutable trial trigger; customer DO reservation; version guards |
+| Subscription              | compatibility API, lifecycle API, billing-close owner, and trial-ending owner | immutable generation transition, combined invoice ownership/context, trial state, and outbox | one active plus one pending partial uniqueness; generation/previous link; request hash; version guards; atomic D1 batch |
 | Usage event               | metered-usage API                                                    | one event/outbox or an atomic batch; R2 archives are content-addressed                          | tenant transaction ID uniqueness; canonical request hash; replay/conflict and batch rollback tests        |
 | Billing cycle             | `closeBillingPeriod`                                                 | cycle lease/result, invoice graph, credits, next period, and outbox                             | deterministic cycle key; cycle request hash; customer DO reservation; D1 batch; version predicates        |
 | Invoice                   | one-off, billing-cycle, refresh/finalize, void, and payment services | invoice header/version, lines/taxes/credits, linked ledgers, and outbox                         | immutable source IDs; line uniqueness; total `CHECK`; optimistic version; deterministic event IDs         |

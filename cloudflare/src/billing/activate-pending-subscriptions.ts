@@ -37,7 +37,8 @@ export async function activatePendingSubscriptions(
      JOIN plans p ON p.id = s.plan_id
      JOIN customers c ON c.id = s.customer_id
      JOIN organizations o ON o.id = s.organization_id
-     WHERE s.status = 'pending' AND s.subscription_at IS NOT NULL AND s.subscription_at <= ?
+     WHERE s.status = 'pending' AND s.previous_subscription_id IS NULL
+       AND s.subscription_at IS NOT NULL AND s.subscription_at <= ?
      ORDER BY s.subscription_at, s.id LIMIT 100`,
   )
     .bind(activatedAt)

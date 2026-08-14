@@ -48,6 +48,9 @@ type SubscriptionRow = {
   trial_started_at: string | null;
   trial_end_at: string | null;
   trial_ended_at: string | null;
+  previous_plan_code: string | null;
+  next_plan_code: string | null;
+  downgrade_plan_date: string | null;
 };
 
 export async function handleSubscriptionLifecycleRequest(
@@ -536,7 +539,15 @@ function subscriptionSelect(): string {
                  s.ending_at, s.on_termination_credit_note, s.on_termination_invoice,
                  s.terminated_at, s.created_at, s.updated_at, s.version,
                  s.billing_time, s.billing_timezone, s.trial_started_at, s.trial_end_at,
-                 s.trial_ended_at
+                 s.trial_ended_at,
+                 (SELECT pp.code FROM subscriptions ps JOIN plans pp ON pp.id = ps.plan_id
+                  WHERE ps.id = s.previous_subscription_id LIMIT 1) AS previous_plan_code,
+                 (SELECT np.code FROM subscriptions ns JOIN plans np ON np.id = ns.plan_id
+                  WHERE ns.previous_subscription_id = s.id AND ns.status = 'pending'
+                  ORDER BY ns.generation DESC LIMIT 1) AS next_plan_code,
+                 (SELECT ns.transition_at FROM subscriptions ns
+                  WHERE ns.previous_subscription_id = s.id AND ns.status = 'pending'
+                  ORDER BY ns.generation DESC LIMIT 1) AS downgrade_plan_date
           FROM subscriptions s
           JOIN customers c ON c.id = s.customer_id
           JOIN plans p ON p.id = s.plan_id
@@ -563,7 +574,12 @@ async function findAnySubscription(
 ): Promise<SubscriptionRow | null> {
   return database
     .prepare(`${subscriptionSelect()} WHERE s.organization_id = ? AND s.external_id = ?
-              ORDER BY s.created_at DESC LIMIT 1`)
+              ORDER BY CASE
+                WHEN s.status IN ('active', 'past_due') THEN 0
+                WHEN s.status = 'pending' AND s.previous_subscription_id IS NULL THEN 1
+                WHEN s.status = 'pending' THEN 2
+                ELSE 3
+              END, s.created_at DESC LIMIT 1`)
     .bind(organizationId, externalId)
     .first<SubscriptionRow>();
 }
@@ -593,6 +609,9 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     current_billing_period_ending_at: subscription.current_period_end,
     trial_started_at: subscription.trial_started_at,
     trial_ended_at: subscription.trial_ended_at,
+    previous_plan_code: subscription.previous_plan_code,
+    next_plan_code: subscription.next_plan_code,
+    downgrade_plan_date: subscription.downgrade_plan_date?.slice(0, 10) ?? null,
     payment_method: { payment_method_id: null, payment_method_type: null },
   };
 }

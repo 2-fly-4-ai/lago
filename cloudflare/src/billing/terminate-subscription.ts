@@ -256,6 +256,23 @@ export async function terminateSubscriptionWithInvoice(
       : []),
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
+       SET status = 'canceled', canceled_at = ?, version = version + 1, updated_at = ?
+       WHERE previous_subscription_id = ? AND status = 'pending'
+         AND EXISTS (
+           SELECT 1 FROM subscriptions current
+           WHERE current.id = ? AND current.organization_id = ? AND current.version = ?
+             AND current.status IN ('active', 'past_due')
+         )`,
+    ).bind(
+      now,
+      now,
+      subscription.id,
+      subscription.id,
+      subscription.organization_id,
+      expectedVersion,
+    ),
+    env.BILLING_DB.prepare(
+      `UPDATE subscriptions
        SET status = 'terminated', terminated_at = ?, current_period_end = ?,
            on_termination_credit_note = ?, on_termination_invoice = ?,
            version = version + 1, updated_at = ?
@@ -357,6 +374,23 @@ export async function terminateSubscriptionWithoutInvoice(
   const results = await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
+       SET status = 'canceled', canceled_at = ?, version = version + 1, updated_at = ?
+       WHERE previous_subscription_id = ? AND status = 'pending'
+         AND EXISTS (
+           SELECT 1 FROM subscriptions current
+           WHERE current.id = ? AND current.organization_id = ? AND current.version = ?
+             AND current.status IN ('active', 'past_due')
+         )`,
+    ).bind(
+      terminatedAt,
+      terminatedAt,
+      subscription.id,
+      subscription.id,
+      subscription.organization_id,
+      expectedVersion,
+    ),
+    env.BILLING_DB.prepare(
+      `UPDATE subscriptions
        SET status = 'terminated', terminated_at = ?, current_period_end = ?,
            on_termination_credit_note = ?, on_termination_invoice = ?,
            version = version + 1, updated_at = ?
@@ -380,7 +414,7 @@ export async function terminateSubscriptionWithoutInvoice(
       terminatedAt,
     ),
   ]);
-  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
+  if ((results[1]?.meta.changes ?? 0) < 1 || results[2]?.meta.changes !== 1) {
     throw new Error("subscription_version_conflict");
   }
   if (publishImmediately) await env.DOMAIN_EVENTS.send(event);

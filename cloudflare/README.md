@@ -60,6 +60,17 @@ remaining Lago feature inventory is dispositioned and ported.
   owner at exact boundaries, emits one trial-ended transition, and creates one locally prorated
   pay-in-advance base (or leaves in-arrears base proration to period close). Grace-period trial
   invoices refresh and finalize from the same immutable initial context without adding charges.
+  Posting the same external subscription with a different same-currency plan now preserves Lago's
+  immutable generation chain. Annualized price determines an immediate upgrade or boundary
+  downgrade. An upgrade terminates the old generation, starts a distinct generation, reconciles
+  old in-arrears fees, a new prepaid base, and any unused prepaid credit into one invoice, and links
+  that invoice to both generations atomically. A downgrade remains pending until the old period
+  closes, when the same cycle command bills the old plan, starts the new generation, and records one
+  replay-safe combined invoice. Grace drafts retain both immutable period snapshots; termination
+  cancels a queued downgrade in the same D1 batch. Usage-event ownership uses half-open generation
+  timestamps, while transaction IDs remain unique across the shared external subscription. A
+  prepaid upgrade whose source invoice is still draft fails explicitly until cross-draft source
+  credit coordination is ported.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.

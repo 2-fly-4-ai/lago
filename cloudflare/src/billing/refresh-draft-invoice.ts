@@ -8,12 +8,14 @@ import { prepareDraftTerminationCreditChanges } from "./pay-in-advance-terminati
 import { paymentDueDate } from "./payment-terms";
 import {
   calculateInitialSubscriptionInvoice,
+  calculateInvoiceAllocations,
   calculateSubscriptionInvoice,
   calculateTerminationSubscriptionInvoice,
   findRefreshableSubscription,
   subscriptionInvoiceLineStatements,
 } from "./subscription-invoice-calculation";
 import { walletAllocationStatements } from "./wallet-credits";
+import { adjustUpgradeTerminationDay } from "./change-subscription-plan";
 
 type DraftInvoiceRow = {
   id: string;
@@ -26,10 +28,16 @@ type DraftInvoiceRow = {
   net_payment_term: number;
   version: number;
   billing_cycle_id: string | null;
-  context_type: "initial" | "renewal" | "termination";
+  context_type: "initial" | "renewal" | "termination" | "plan_change";
   period_start: string;
   period_end: string;
   terminated_at: string | null;
+  previous_subscription_id: string | null;
+  next_subscription_id: string | null;
+  transition_kind: "upgrade" | "downgrade" | null;
+  transitioned_at: string | null;
+  next_period_start: string | null;
+  next_period_end: string | null;
 };
 
 export type RefreshDraftResult = {
@@ -90,32 +98,34 @@ export async function refreshSubscriptionDraft(
 
   try {
     const calculation =
-      invoice.context_type === "initial"
-        ? await calculateInitialSubscriptionInvoice(
-            env.BILLING_DB,
-            subscription,
-            invoice.id,
-            invoice.period_start,
-            invoice.period_end,
-          )
-        : invoice.context_type === "termination"
-          ? await calculateTerminationSubscriptionInvoice(
+      invoice.context_type === "plan_change"
+        ? await calculatePlanChangeDraft(env.BILLING_DB, invoice)
+        : invoice.context_type === "initial"
+          ? await calculateInitialSubscriptionInvoice(
               env.BILLING_DB,
               subscription,
               invoice.id,
-              `termination-draft:${invoice.id}`,
-              requireTerminatedAt(invoice.terminated_at),
-              undefined,
-              { periodStart: invoice.period_start, periodEnd: invoice.period_end },
-            )
-          : await calculateSubscriptionInvoice(
-              env.BILLING_DB,
-              subscription,
-              invoice.id,
-              requireBillingCycleId(invoice.billing_cycle_id),
               invoice.period_start,
               invoice.period_end,
-            );
+            )
+          : invoice.context_type === "termination"
+            ? await calculateTerminationSubscriptionInvoice(
+                env.BILLING_DB,
+                subscription,
+                invoice.id,
+                `termination-draft:${invoice.id}`,
+                requireTerminatedAt(invoice.terminated_at),
+                undefined,
+                { periodStart: invoice.period_start, periodEnd: invoice.period_end },
+              )
+            : await calculateSubscriptionInvoice(
+                env.BILLING_DB,
+                subscription,
+                invoice.id,
+                requireBillingCycleId(invoice.billing_cycle_id),
+                invoice.period_start,
+                invoice.period_end,
+              );
     const nextVersion = invoice.version + 1;
     const draftTerminationCredits = await prepareDraftTerminationCreditChanges(
       env.BILLING_DB,
@@ -349,19 +359,95 @@ async function findDraftInvoice(
       `SELECT i.id, i.organization_id, i.customer_id, i.subscription_id, i.status,
               i.currency, i.issuing_date, i.net_payment_term, i.version,
               bc.id AS billing_cycle_id,
-              CASE WHEN bc.id IS NOT NULL THEN 'renewal' ELSE sic.context_type END AS context_type,
-              COALESCE(bc.period_start, sic.period_start) AS period_start,
-              COALESCE(bc.period_end, sic.period_end) AS period_end,
-              sic.terminated_at
+              CASE
+                WHEN pc.invoice_id IS NOT NULL THEN 'plan_change'
+                WHEN bc.id IS NOT NULL THEN 'renewal'
+                ELSE sic.context_type
+              END AS context_type,
+              COALESCE(pc.previous_period_start, bc.period_start, sic.period_start) AS period_start,
+              COALESCE(pc.previous_period_end, bc.period_end, sic.period_end) AS period_end,
+              sic.terminated_at, pc.previous_subscription_id, pc.next_subscription_id,
+              pc.transition_kind, pc.transitioned_at, pc.next_period_start, pc.next_period_end
        FROM invoices i
        LEFT JOIN billing_cycles bc ON bc.invoice_id = i.id
        LEFT JOIN subscription_invoice_contexts sic ON sic.invoice_id = i.id
+       LEFT JOIN plan_change_invoice_contexts pc ON pc.invoice_id = i.id
        WHERE i.id = ?${organizationFilter} AND i.subscription_id IS NOT NULL
-         AND (bc.id IS NOT NULL OR sic.invoice_id IS NOT NULL)
+         AND (bc.id IS NOT NULL OR sic.invoice_id IS NOT NULL OR pc.invoice_id IS NOT NULL)
        LIMIT 1`,
     )
     .bind(...(organizationId ? [invoiceId, organizationId] : [invoiceId]))
     .first<DraftInvoiceRow>();
+}
+
+async function calculatePlanChangeDraft(database: D1Database, invoice: DraftInvoiceRow) {
+  if (
+    !invoice.previous_subscription_id ||
+    !invoice.next_subscription_id ||
+    !invoice.transition_kind ||
+    !invoice.transitioned_at ||
+    !invoice.next_period_start ||
+    !invoice.next_period_end
+  ) {
+    throw new Error("draft_plan_change_context_missing");
+  }
+  const previous = await findRefreshableSubscription(database, invoice.previous_subscription_id);
+  const next = await findRefreshableSubscription(database, invoice.next_subscription_id);
+  if (!previous || !next || previous.organization_id !== next.organization_id) {
+    throw new Error("draft_plan_change_subscription_not_found");
+  }
+  const previousCalculation =
+    invoice.transition_kind === "downgrade"
+      ? await calculateSubscriptionInvoice(
+          database,
+          previous,
+          invoice.id,
+          requireBillingCycleId(invoice.billing_cycle_id),
+          invoice.period_start,
+          invoice.period_end,
+        )
+      : await calculateTerminationSubscriptionInvoice(
+          database,
+          previous,
+          invoice.id,
+          `plan-change-draft:${invoice.id}`,
+          invoice.transitioned_at,
+          undefined,
+          { periodStart: invoice.period_start, periodEnd: invoice.period_end },
+        );
+  const previousLines =
+    invoice.transition_kind === "upgrade"
+      ? adjustUpgradeTerminationDay(
+          previousCalculation.lines,
+          previous.plan_amount_minor,
+          previous.trial_end_at,
+        )
+      : previous.plan_pay_in_advance === 1
+        ? previousCalculation.lines.filter((line) => line.lineType !== "subscription")
+        : previousCalculation.lines;
+  const targetTrialActive =
+    next.trial_end_at !== null &&
+    next.trial_ended_at === null &&
+    Date.parse(next.trial_end_at) > Date.parse(invoice.transitioned_at);
+  const startingLines =
+    next.plan_pay_in_advance === 1 && !targetTrialActive
+      ? (
+          await calculateInitialSubscriptionInvoice(
+            database,
+            {
+              ...next,
+              trial_end_at: invoice.transitioned_at,
+              trial_ended_at: invoice.transitioned_at,
+            },
+            invoice.id,
+            invoice.next_period_start,
+            invoice.next_period_end,
+          )
+        ).lines
+      : [];
+  const lines = [...previousLines, ...startingLines];
+  const allocations = await calculateInvoiceAllocations(database, next, invoice.id, lines);
+  return { lines, ...allocations, nextPeriodEnd: invoice.next_period_end };
 }
 
 function requireBillingCycleId(value: string | null): string {

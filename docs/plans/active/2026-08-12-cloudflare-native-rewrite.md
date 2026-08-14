@@ -377,8 +377,15 @@ Acceptance:
       activated. Active/past-due name updates emit the same versioned `subscription.updated`.
       Recurring close snapshots the pay-in-advance base line against the next billing period while
       keeping in-arrears base, usage, fixed-charge, and commitment evidence on the closed period.
-      Backdating, subscription upgrades/downgrades, payment-method, custom-section, and threshold
-      inputs fail explicitly. Calendar billing and trial dates use a snapshotted customer IANA
+      Same-currency subscription plan changes now preserve immutable previous/next generations.
+      Annualized upgrades transition immediately and reconcile the old partial service, the new
+      prepaid base, and finalized unused prepaid credit in one multi-generation invoice. Downgrades
+      transition at period close through the same replay-safe billing-cycle owner. Both paths retain
+      immutable draft contexts, queued downgrades cancel with their current generation, and usage
+      events resolve against half-open generation windows with external-chain transaction
+      uniqueness. Prepaid upgrades whose source invoice is still draft remain explicitly guarded.
+      Backdating, payment-method, custom-section, and threshold inputs fail explicitly. Calendar
+      billing and trial dates use a snapshotted customer IANA
       timezone; the retained termination subset remains UTC-specific.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
 - [ ] Add deterministic replay and total reconciliation.
@@ -1271,3 +1278,21 @@ resource and mutation described.
   the aggregate inventory remained empty. The deployed version retained the three disabled
   external-action flags and only the existing isolated bindings/triggers. No route, secret, or
   billing data changed.
+- 2026-08-14: Ported immutable subscription plan generations and their monetary transition owner.
+  Migration `0033_subscription_generations.sql` replaces the single-row external-ID constraint with
+  one-active/one-pending partial uniqueness, previous/generation history, multi-subscription invoice
+  ownership, immutable plan-change draft contexts, and external-chain usage-event deduplication.
+  Same-currency annualized upgrades transition immediately; downgrades transition at the exact old
+  period boundary. The invoice calculation now allocates coupons, taxes, credit-note balances, and
+  wallets once across combined old/new fee lines. Finalized unused prepaid credit is created and
+  applied before wallet credit in the same batch. Draft refresh/finalization reproduces both
+  generation windows, termination cancels a queued downgrade atomically, and usage events resolve
+  half-open generation timestamps. Prepaid upgrades backed by a still-draft source remain an
+  explicit `422` guard. Evidence covers replay, concurrent convergence, late failure rollback,
+  prepaid credit, grace refresh/finalization, downgrade rotation/replay, queued cancellation, and
+  initial-future in-place plan replacement, and the unchanged `store-new` conflict contract. All
+  117 tests pass across 27 files; formatting,
+  strict lint, generated inventory/types, TypeScript, and a 614.98 KiB (108.37 KiB gzip) dry-run
+  bundle are green. All 33 migrations replayed from empty D1 with no foreign-key violations. This
+  is a local pre-deployment checkpoint: isolated remote D1 and Worker remain on migration `0032`
+  and version `074a28d2-6d22-48e0-aad7-6c27a04e5b8c`.

@@ -7,11 +7,14 @@ import { walletAllocationStatements } from "./wallet-credits";
 import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
 import { paymentDueDate } from "./payment-terms";
-import { localDateString } from "./periods";
+import { firstPeriodEnd, localDateString } from "./periods";
 import {
+  calculateInitialSubscriptionInvoice,
+  calculateInvoiceAllocations,
   calculateSubscriptionInvoice,
   findBillableSubscription,
   subscriptionInvoiceLineStatements,
+  type BillableSubscription,
 } from "./subscription-invoice-calculation";
 
 export type CloseBillingPeriodResult = {
@@ -30,7 +33,11 @@ export async function closeBillingPeriod(
   correlationId: string,
 ): Promise<CloseBillingPeriodResult> {
   const subscription = await findBillableSubscription(env.BILLING_DB, subscriptionId);
-  if (!subscription) throw new Error("subscription_not_found");
+  if (!subscription) {
+    const replay = await findClosedCycleByEnd(env.BILLING_DB, subscriptionId, expectedPeriodEnd);
+    if (replay) return replay;
+    throw new Error("subscription_not_found");
+  }
   if (subscription.current_period_end !== expectedPeriodEnd) {
     const replay = await findClosedCycle(
       env.BILLING_DB,
@@ -44,6 +51,7 @@ export async function closeBillingPeriod(
 
   const periodStart = subscription.current_period_start;
   const periodEnd = subscription.current_period_end;
+  const pendingDowngrade = await findPendingDowngrade(env.BILLING_DB, subscription, periodEnd);
   const periodStartMs = Date.parse(periodStart);
   const periodEndMs = Date.parse(periodEnd);
   if (
@@ -128,7 +136,7 @@ export async function closeBillingPeriod(
   }
 
   try {
-    const calculation = await calculateSubscriptionInvoice(
+    let calculation = await calculateSubscriptionInvoice(
       env.BILLING_DB,
       subscription,
       invoiceId,
@@ -136,6 +144,40 @@ export async function closeBillingPeriod(
       periodStart,
       periodEnd,
     );
+    if (pendingDowngrade) {
+      const targetTrialActive =
+        pendingDowngrade.trial_end_at !== null &&
+        pendingDowngrade.trial_ended_at === null &&
+        Date.parse(pendingDowngrade.trial_end_at) > Date.parse(periodEnd);
+      const startingLines =
+        pendingDowngrade.plan_pay_in_advance === 1 && !targetTrialActive
+          ? (
+              await calculateInitialSubscriptionInvoice(
+                env.BILLING_DB,
+                { ...pendingDowngrade, trial_end_at: periodEnd, trial_ended_at: periodEnd },
+                invoiceId,
+                periodEnd,
+                pendingDowngrade.current_period_end,
+              )
+            ).lines
+          : [];
+      const previousLines =
+        subscription.plan_pay_in_advance === 1
+          ? calculation.lines.filter((line) => line.lineType !== "subscription")
+          : calculation.lines;
+      const lines = [...previousLines, ...startingLines];
+      const allocations = await calculateInvoiceAllocations(
+        env.BILLING_DB,
+        pendingDowngrade,
+        invoiceId,
+        lines,
+      );
+      calculation = {
+        lines,
+        ...allocations,
+        nextPeriodEnd: pendingDowngrade.current_period_end,
+      };
+    }
     const {
       lines,
       subtotalMinor: subtotal,
@@ -188,6 +230,48 @@ export async function closeBillingPeriod(
         appliedGracePeriod: subscription.invoice_grace_period,
       },
     };
+    const terminatedEvent: DomainEvent | null = pendingDowngrade
+      ? {
+          id: `subscription-terminated:${subscription.id}:v${pendingDowngrade.previous_version + 1}`,
+          type: "subscription.terminated",
+          version: 1,
+          aggregateType: "subscription",
+          aggregateId: subscription.id,
+          aggregateVersion: pendingDowngrade.previous_version + 1,
+          occurredAt: periodEnd,
+          causationId: cycleId,
+          correlationId,
+          payload: {
+            organizationId: subscription.organization_id,
+            subscriptionId: subscription.id,
+            externalSubscriptionId: subscription.external_id,
+            terminatedAt: periodEnd,
+            downgrade: true,
+            nextSubscriptionId: pendingDowngrade.id,
+          },
+        }
+      : null;
+    const startedEvent: DomainEvent | null = pendingDowngrade
+      ? {
+          id: `subscription-started:${pendingDowngrade.id}:v${pendingDowngrade.version + 1}`,
+          type: "subscription.started",
+          version: 1,
+          aggregateType: "subscription",
+          aggregateId: pendingDowngrade.id,
+          aggregateVersion: pendingDowngrade.version + 1,
+          occurredAt: periodEnd,
+          causationId: cycleId,
+          correlationId,
+          payload: {
+            organizationId: subscription.organization_id,
+            subscriptionId: pendingDowngrade.id,
+            externalSubscriptionId: subscription.external_id,
+            previousSubscriptionId: subscription.id,
+            startedAt: periodEnd,
+            downgrade: true,
+          },
+        }
+      : null;
     const couponStatements = draft
       ? []
       : couponCreditStatements(
@@ -271,11 +355,111 @@ export async function closeBillingPeriod(
       ),
       ...creditNoteStatements,
       ...walletStatements,
-      env.BILLING_DB.prepare(
-        `UPDATE subscriptions
-         SET current_period_start = ?, current_period_end = ?, version = version + 1, updated_at = ?
-         WHERE id = ? AND current_period_start = ? AND current_period_end = ?`,
-      ).bind(periodEnd, nextEnd, now, subscription.id, periodStart, periodEnd),
+      ...(pendingDowngrade
+        ? [
+            env.BILLING_DB.prepare(
+              `UPDATE subscriptions
+               SET status = 'terminated', terminated_at = ?, current_period_end = ?,
+                   version = version + 1, updated_at = ?
+               WHERE id = ? AND version = ? AND status IN ('active', 'past_due')
+                 AND current_period_start = ? AND current_period_end = ?`,
+            ).bind(
+              periodEnd,
+              periodEnd,
+              now,
+              subscription.id,
+              pendingDowngrade.previous_version,
+              periodStart,
+              periodEnd,
+            ),
+            env.BILLING_DB.prepare(
+              `UPDATE subscriptions
+               SET status = 'active', started_at = ?, current_period_start = ?,
+                   current_period_end = ?, trial_ended_at = CASE
+                     WHEN trial_end_at IS NOT NULL AND trial_end_at <= ? THEN trial_end_at
+                     ELSE trial_ended_at END,
+                   version = version + 1, updated_at = ?
+               WHERE id = ? AND version = ? AND status = 'pending'
+                 AND previous_subscription_id = ? AND transition_kind = 'downgrade'
+                 AND transition_at = ?`,
+            ).bind(
+              periodEnd,
+              periodEnd,
+              pendingDowngrade.current_period_end,
+              periodEnd,
+              now,
+              pendingDowngrade.id,
+              pendingDowngrade.version,
+              subscription.id,
+              periodEnd,
+            ),
+          ]
+        : [
+            env.BILLING_DB.prepare(
+              `UPDATE subscriptions
+               SET current_period_start = ?, current_period_end = ?,
+                   version = version + 1, updated_at = ?
+               WHERE id = ? AND current_period_start = ? AND current_period_end = ?`,
+            ).bind(periodEnd, nextEnd, now, subscription.id, periodStart, periodEnd),
+          ]),
+      ...(pendingDowngrade
+        ? [
+            env.BILLING_DB.prepare(
+              `INSERT INTO invoice_subscriptions
+               (invoice_id, subscription_id, organization_id, invoicing_reason,
+                period_start, period_end, created_at)
+               VALUES (?, ?, ?, 'upgrading', ?, ?, ?),
+                      (?, ?, ?, 'upgrading', ?, ?, ?)`,
+            ).bind(
+              invoiceId,
+              subscription.id,
+              subscription.organization_id,
+              periodStart,
+              periodEnd,
+              now,
+              invoiceId,
+              pendingDowngrade.id,
+              subscription.organization_id,
+              periodEnd,
+              pendingDowngrade.current_period_end,
+              now,
+            ),
+            env.BILLING_DB.prepare(
+              `INSERT INTO plan_change_invoice_contexts
+               (invoice_id, organization_id, previous_subscription_id, next_subscription_id,
+                transition_kind, transitioned_at, previous_period_start, previous_period_end,
+                next_period_start, next_period_end, created_at)
+               VALUES (?, ?, ?, ?, 'downgrade', ?, ?, ?, ?, ?, ?)`,
+            ).bind(
+              invoiceId,
+              subscription.organization_id,
+              subscription.id,
+              pendingDowngrade.id,
+              periodEnd,
+              periodStart,
+              periodEnd,
+              periodEnd,
+              pendingDowngrade.current_period_end,
+              now,
+            ),
+            outboxStatement(env.BILLING_DB, subscription.organization_id, terminatedEvent!),
+            outboxStatement(env.BILLING_DB, subscription.organization_id, startedEvent!),
+          ]
+        : [
+            env.BILLING_DB.prepare(
+              `INSERT INTO invoice_subscriptions
+               (invoice_id, subscription_id, organization_id, invoicing_reason,
+                period_start, period_end, created_at)
+               VALUES (?, ?, ?, 'subscription_periodic', ?, ?, ?)`,
+            ).bind(
+              invoiceId,
+              subscription.id,
+              subscription.organization_id,
+              periodStart,
+              periodEnd,
+              now,
+            ),
+          ]),
       env.BILLING_DB.prepare(
         `UPDATE billing_cycles
          SET status = 'closed', invoice_id = ?, lease_expires_at = NULL, closed_at = ?, updated_at = ?
@@ -306,11 +490,28 @@ export async function closeBillingPeriod(
         if (!update || update.meta.changes < 1) throw new Error("coupon_version_conflict");
       }
     }
-    const subscriptionUpdate = results[results.length - 3];
-    if (!subscriptionUpdate || subscriptionUpdate.meta.changes !== 1) {
+    const state = pendingDowngrade
+      ? await env.BILLING_DB.prepare(
+          `SELECT
+             (SELECT status FROM subscriptions WHERE id = ?) AS previous_status,
+             (SELECT status FROM subscriptions WHERE id = ?) AS next_status`,
+        )
+          .bind(subscription.id, pendingDowngrade.id)
+          .first<{ previous_status: string; next_status: string }>()
+      : null;
+    const subscriptionUpdate = pendingDowngrade ? null : results[results.length - 4];
+    if (
+      pendingDowngrade
+        ? state?.previous_status !== "terminated" || state.next_status !== "active"
+        : !subscriptionUpdate || subscriptionUpdate.meta.changes !== 1
+    ) {
       throw new Error("billing_period_changed");
     }
-    await env.DOMAIN_EVENTS.send(domainEvent);
+    await Promise.all([
+      env.DOMAIN_EVENTS.send(domainEvent),
+      ...(terminatedEvent ? [env.DOMAIN_EVENTS.send(terminatedEvent)] : []),
+      ...(startedEvent ? [env.DOMAIN_EVENTS.send(startedEvent)] : []),
+    ]);
     const result: CloseBillingPeriodResult = {
       billingCycleId: cycleId,
       invoiceId,
@@ -340,6 +541,65 @@ function shiftCalendarDate(value: string, days: number): string {
   if (!Number.isFinite(date.getTime())) throw new Error("invalid_billing_date");
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+type PendingDowngrade = BillableSubscription & {
+  version: number;
+  previous_version: number;
+  transition_at: string;
+};
+
+async function findPendingDowngrade(
+  database: D1Database,
+  previous: BillableSubscription,
+  periodEnd: string,
+): Promise<PendingDowngrade | null> {
+  const pending = await database
+    .prepare(
+      `SELECT s.id, s.organization_id, s.customer_id, s.plan_id, s.external_id,
+              ? AS current_period_start, ? AS current_period_end,
+              p.interval, p.currency, p.name AS plan_name, s.name AS subscription_name,
+              p.amount_minor AS plan_amount_minor, p.pay_in_advance AS plan_pay_in_advance,
+              COALESCE(c.net_payment_term, o.net_payment_term) AS net_payment_term,
+              COALESCE(c.invoice_grace_period, o.invoice_grace_period) AS invoice_grace_period,
+              s.billing_time, s.billing_timezone, s.trial_started_at, s.trial_end_at,
+              s.trial_ended_at, s.version, previous.version AS previous_version,
+              s.transition_at
+       FROM subscriptions s JOIN subscriptions previous ON previous.id = s.previous_subscription_id
+       JOIN plans p ON p.id = s.plan_id
+       JOIN customers c ON c.id = s.customer_id
+       JOIN organizations o ON o.id = s.organization_id
+       WHERE s.previous_subscription_id = ? AND s.status = 'pending'
+         AND s.transition_kind = 'downgrade' AND s.transition_at = ?
+         AND previous.status IN ('active', 'past_due')
+       ORDER BY s.generation DESC LIMIT 1`,
+    )
+    .bind(periodEnd, periodEnd, previous.id, periodEnd)
+    .first<PendingDowngrade>();
+  if (!pending) return null;
+  pending.current_period_end = firstPeriodEnd(
+    new Date(periodEnd),
+    pending.interval,
+    pending.billing_time,
+    pending.billing_timezone,
+  ).toISOString();
+  return pending;
+}
+
+async function findClosedCycleByEnd(
+  database: D1Database,
+  subscriptionId: string,
+  periodEnd: string,
+): Promise<CloseBillingPeriodResult | null> {
+  const cycle = await database
+    .prepare(
+      `SELECT id, invoice_id FROM billing_cycles
+       WHERE subscription_id = ? AND period_end = ? AND status = 'closed'
+         AND invoice_id IS NOT NULL ORDER BY closed_at DESC LIMIT 1`,
+    )
+    .bind(subscriptionId, periodEnd)
+    .first<{ id: string; invoice_id: string }>();
+  return cycle ? cycleResult(database, cycle.id, cycle.invoice_id, true, periodEnd) : null;
 }
 
 async function findCycle(
@@ -398,8 +658,12 @@ async function cycleResult(
     .first<{ total: number }>();
   const subscription = await database
     .prepare(
-      `SELECT subscriptions.current_period_end FROM billing_cycles
+      `SELECT COALESCE(next_subscription.current_period_end, subscriptions.current_period_end)
+              AS current_period_end
+       FROM billing_cycles
        JOIN subscriptions ON subscriptions.id = billing_cycles.subscription_id
+       LEFT JOIN plan_change_invoice_contexts pc ON pc.invoice_id = billing_cycles.invoice_id
+       LEFT JOIN subscriptions next_subscription ON next_subscription.id = pc.next_subscription_id
        WHERE billing_cycles.id = ?`,
     )
     .bind(billingCycleId)
@@ -413,6 +677,34 @@ async function cycleResult(
     lineCount: count?.total ?? 0,
     nextPeriodEnd: subscription.current_period_end || periodEnd,
   };
+}
+
+function outboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type,
+        aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+        occurred_at, published_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+    );
 }
 
 function parseCompletedReservation(value: string | null): CloseBillingPeriodResult | null {

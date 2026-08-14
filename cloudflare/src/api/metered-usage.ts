@@ -767,7 +767,7 @@ async function createUsageEventBatch(
         findEvent(
           env.BILLING_DB,
           auth.organizationId,
-          event.context.subscription_id,
+          event.input.externalSubscriptionId,
           event.input.transactionId,
         ),
       ),
@@ -806,7 +806,7 @@ async function prepareBatchEvent(
   const existing = await findEvent(
     env.BILLING_DB,
     auth.organizationId,
-    context.subscription_id,
+    input.externalSubscriptionId,
     input.transactionId,
   );
   if (existing) {
@@ -858,8 +858,8 @@ function batchEventStatements(
         `INSERT INTO usage_events
          (id, organization_id, subscription_id, customer_id, billable_metric_id,
           transaction_id, code, timestamp, timestamp_ms, precise_total_amount_minor,
-          properties_json, request_sha256, archive_key, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          properties_json, request_sha256, archive_key, created_at, external_subscription_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         event.row.id,
@@ -876,6 +876,7 @@ function batchEventStatements(
         event.requestHash,
         event.archiveKey,
         event.row.created_at,
+        event.input.externalSubscriptionId,
       ),
     database
       .prepare(
@@ -942,7 +943,7 @@ async function createUsageEvent(
   const existing = await findEvent(
     env.BILLING_DB,
     auth.organizationId,
-    context.subscription_id,
+    input.externalSubscriptionId,
     input.transactionId,
   );
   if (existing) {
@@ -982,8 +983,8 @@ async function createUsageEvent(
         `INSERT INTO usage_events
          (id, organization_id, subscription_id, customer_id, billable_metric_id,
           transaction_id, code, timestamp, timestamp_ms, precise_total_amount_minor,
-          properties_json, request_sha256, archive_key, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          properties_json, request_sha256, archive_key, created_at, external_subscription_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
         auth.organizationId,
@@ -999,6 +1000,7 @@ async function createUsageEvent(
         requestHash,
         archiveKey,
         createdAt,
+        input.externalSubscriptionId,
       ),
       env.BILLING_DB.prepare(
         `INSERT INTO outbox_events
@@ -1037,7 +1039,7 @@ async function createUsageEvent(
     const concurrent = await findEvent(
       env.BILLING_DB,
       auth.organizationId,
-      context.subscription_id,
+      input.externalSubscriptionId,
       input.transactionId,
     );
     if (!concurrent) throw error;
@@ -1261,10 +1263,10 @@ async function findEventContext(
        JOIN billable_metrics bm
          ON bm.organization_id = s.organization_id AND bm.code = ? AND bm.active = 1
        WHERE s.organization_id = ? AND s.external_id = ?
-         AND s.status IN ('active', 'past_due')
+         AND s.status IN ('active', 'past_due', 'terminated')
          AND (s.started_at IS NULL OR s.started_at <= ?)
-         AND (s.terminated_at IS NULL OR s.terminated_at >= ?)
-       LIMIT 1`,
+         AND (s.terminated_at IS NULL OR s.terminated_at > ?)
+       ORDER BY s.generation DESC LIMIT 1`,
     )
     .bind(
       input.code,
@@ -1342,19 +1344,22 @@ async function findMetric(
 async function findEvent(
   database: D1Database,
   organizationId: string,
-  subscriptionId: string,
+  externalSubscriptionId: string,
   transactionId: string,
 ): Promise<EventRow | null> {
   return database
     .prepare(
       `SELECT ue.id, ue.transaction_id, ue.customer_id, ue.subscription_id,
-              s.external_id AS external_subscription_id, ue.code, ue.timestamp,
+              COALESCE(ue.external_subscription_id, s.external_id) AS external_subscription_id,
+              ue.code, ue.timestamp,
               ue.timestamp_ms, ue.precise_total_amount_minor, ue.properties_json,
               ue.request_sha256, ue.created_at
        FROM usage_events ue JOIN subscriptions s ON s.id = ue.subscription_id
-       WHERE ue.organization_id = ? AND ue.subscription_id = ? AND ue.transaction_id = ? LIMIT 1`,
+       WHERE ue.organization_id = ?
+         AND COALESCE(ue.external_subscription_id, s.external_id) = ?
+         AND ue.transaction_id = ? LIMIT 1`,
     )
-    .bind(organizationId, subscriptionId, transactionId)
+    .bind(organizationId, externalSubscriptionId, transactionId)
     .first<EventRow>();
 }
 

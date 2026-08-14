@@ -93,6 +93,16 @@ export type SubscriptionInvoiceCalculation = {
   nextPeriodEnd: string;
 };
 
+export type InvoiceAllocationOwner = Pick<
+  BillableSubscription,
+  "organization_id" | "customer_id" | "currency"
+>;
+
+export type InvoiceAllocationCalculation = Omit<
+  SubscriptionInvoiceCalculation,
+  "lines" | "nextPeriodEnd"
+>;
+
 export type TerminationBillingWindow = {
   billableDays: number;
   fullPeriodDays: number;
@@ -196,13 +206,24 @@ export async function calculateInitialSubscriptionInvoice(
     }),
   };
   const lines = [line];
-  const subtotalMinor = roundedAmount;
+  const allocations = await calculateInvoiceAllocations(database, subscription, invoiceId, lines);
+  return { lines, ...allocations, nextPeriodEnd: periodEnd };
+}
+
+export async function calculateInvoiceAllocations(
+  database: D1Database,
+  owner: InvoiceAllocationOwner,
+  invoiceId: string,
+  lines: SubscriptionInvoiceLine[],
+  additionalCreditNote?: { creditNoteId: string; amountMinor: number },
+): Promise<InvoiceAllocationCalculation> {
+  const subtotalMinor = lines.reduce((total, line) => safeAdd(total, line.rounded), 0);
   const couponCredits = await calculateCouponCredits(
     database,
-    subscription.organization_id,
-    subscription.customer_id,
+    owner.organization_id,
+    owner.customer_id,
     invoiceId,
-    subscription.currency,
+    owner.currency,
     subtotalMinor,
   );
   const couponsMinor = couponCredits.reduce(
@@ -211,30 +232,47 @@ export async function calculateInitialSubscriptionInvoice(
   );
   const invoiceTaxes = await calculateManualTaxes(
     database,
-    subscription.organization_id,
+    owner.organization_id,
     invoiceId,
-    [{ id: line.id, amountMinor: line.rounded }],
+    lines.map((candidate) => ({ id: candidate.id, amountMinor: candidate.rounded })),
     couponsMinor,
   );
   const taxMinor = totalManualTaxMinor(invoiceTaxes);
   const creditNoteAllocations = await calculateCreditNoteAllocations(
     database,
-    subscription.organization_id,
-    subscription.customer_id,
+    owner.organization_id,
+    owner.customer_id,
     invoiceId,
-    subscription.currency,
+    owner.currency,
     subtotalMinor + taxMinor - couponsMinor,
   );
-  const creditNotesMinor = creditNoteAllocations.reduce(
+  let creditNotesMinor = creditNoteAllocations.reduce(
     (total, allocation) => safeAdd(total, allocation.amountMinor),
     0,
   );
+  if (additionalCreditNote) {
+    const remainingDue = subtotalMinor + taxMinor - couponsMinor - creditNotesMinor;
+    const amountMinor = Math.min(additionalCreditNote.amountMinor, remainingDue);
+    if (amountMinor > 0) {
+      creditNoteAllocations.push({
+        creditNoteId: additionalCreditNote.creditNoteId,
+        creditNoteVersion: 1,
+        amountMinor,
+        applicationId: await deterministicUuid(
+          "credit-note-application",
+          `${invoiceId}:${additionalCreditNote.creditNoteId}`,
+        ),
+        consumed: amountMinor === additionalCreditNote.amountMinor,
+      });
+      creditNotesMinor = safeAdd(creditNotesMinor, amountMinor);
+    }
+  }
   const walletAllocations = await calculateWalletAllocations(
     database,
-    subscription.organization_id,
-    subscription.customer_id,
+    owner.organization_id,
+    owner.customer_id,
     invoiceId,
-    subscription.currency,
+    owner.currency,
     subtotalMinor + taxMinor - couponsMinor - creditNotesMinor,
   );
   const prepaidCreditMinor = walletAllocations.reduce(
@@ -243,7 +281,6 @@ export async function calculateInitialSubscriptionInvoice(
   );
   const creditsMinor = safeAdd(safeAdd(couponsMinor, creditNotesMinor), prepaidCreditMinor);
   return {
-    lines,
     subtotalMinor,
     couponCredits,
     couponsMinor,
@@ -255,7 +292,6 @@ export async function calculateInitialSubscriptionInvoice(
     prepaidCreditMinor,
     creditsMinor,
     totalDueMinor: subtotalMinor + taxMinor - creditsMinor,
-    nextPeriodEnd: periodEnd,
   };
 }
 
@@ -507,81 +543,16 @@ export async function calculateSubscriptionInvoice(
     });
   }
 
-  const couponCredits = await calculateCouponCredits(
+  const allocations = await calculateInvoiceAllocations(
     database,
-    subscription.organization_id,
-    subscription.customer_id,
+    subscription,
     invoiceId,
-    subscription.currency,
-    subtotalMinor,
+    lines,
+    options.context === "termination" ? options.additionalCreditNote : undefined,
   );
-  const couponsMinor = couponCredits.reduce(
-    (total, credit) => safeAdd(total, credit.amountMinor),
-    0,
-  );
-  const invoiceTaxes = await calculateManualTaxes(
-    database,
-    subscription.organization_id,
-    invoiceId,
-    lines.map((line) => ({ id: line.id, amountMinor: line.rounded })),
-    couponsMinor,
-  );
-  const taxMinor = totalManualTaxMinor(invoiceTaxes);
-  const creditNoteAllocations = await calculateCreditNoteAllocations(
-    database,
-    subscription.organization_id,
-    subscription.customer_id,
-    invoiceId,
-    subscription.currency,
-    subtotalMinor + taxMinor - couponsMinor,
-  );
-  let creditNotesMinor = creditNoteAllocations.reduce(
-    (total, allocation) => safeAdd(total, allocation.amountMinor),
-    0,
-  );
-  if (options.context === "termination" && options.additionalCreditNote) {
-    const remainingDue = subtotalMinor + taxMinor - couponsMinor - creditNotesMinor;
-    const amountMinor = Math.min(options.additionalCreditNote.amountMinor, remainingDue);
-    if (amountMinor > 0) {
-      creditNoteAllocations.push({
-        creditNoteId: options.additionalCreditNote.creditNoteId,
-        creditNoteVersion: 1,
-        amountMinor,
-        applicationId: await deterministicUuid(
-          "credit-note-application",
-          `${invoiceId}:${options.additionalCreditNote.creditNoteId}`,
-        ),
-        consumed: amountMinor === options.additionalCreditNote.amountMinor,
-      });
-      creditNotesMinor = safeAdd(creditNotesMinor, amountMinor);
-    }
-  }
-  const walletAllocations = await calculateWalletAllocations(
-    database,
-    subscription.organization_id,
-    subscription.customer_id,
-    invoiceId,
-    subscription.currency,
-    subtotalMinor + taxMinor - couponsMinor - creditNotesMinor,
-  );
-  const prepaidCreditMinor = walletAllocations.reduce(
-    (total, allocation) => safeAdd(total, allocation.amountMinor),
-    0,
-  );
-  const creditsMinor = safeAdd(safeAdd(couponsMinor, creditNotesMinor), prepaidCreditMinor);
   return {
     lines,
-    subtotalMinor,
-    couponCredits,
-    couponsMinor,
-    invoiceTaxes,
-    taxMinor,
-    creditNoteAllocations,
-    creditNotesMinor,
-    walletAllocations,
-    prepaidCreditMinor,
-    creditsMinor,
-    totalDueMinor: subtotalMinor + taxMinor - creditsMinor,
+    ...allocations,
     nextPeriodEnd: options.context === "renewal" ? nextEnd : calculationPeriodEnd,
   };
 }
