@@ -794,7 +794,8 @@ async function loadFixedCharges(
               fc.properties_json, fc.units, ao.code AS add_on_code, ao.name AS add_on_name,
               ao.invoice_display_name AS add_on_invoice_display_name
        FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id
-       WHERE fc.organization_id = ? AND fc.plan_id = ? AND fc.pay_in_advance = 0
+       WHERE fc.organization_id = ? AND fc.plan_id = ? AND fc.active = 1
+         AND fc.pay_in_advance = 0
          AND fc.prorated = 0
        ORDER BY fc.created_at, fc.id`,
     )

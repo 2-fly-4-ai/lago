@@ -168,7 +168,7 @@ async function updateAddOn(
   if (next.currency !== addOn.currency) {
     const mismatch = await env.BILLING_DB.prepare(
       `SELECT fc.id FROM fixed_charges fc JOIN plans p ON p.id = fc.plan_id
-       WHERE fc.add_on_id = ? AND p.currency <> ? LIMIT 1`,
+       WHERE fc.add_on_id = ? AND fc.active = 1 AND p.currency <> ? LIMIT 1`,
     )
       .bind(addOn.id, next.currency)
       .first();
@@ -232,7 +232,7 @@ async function terminateAddOn(code: string, env: Env, auth: AuthContext, request
   const addOn = await findActive(env.BILLING_DB, auth.organizationId, code);
   if (!addOn) throw new ApiError(404, "add_on_not_found", "Add-on was not found");
   const used = await env.BILLING_DB.prepare(
-    "SELECT id FROM fixed_charges WHERE add_on_id = ? LIMIT 1",
+    "SELECT id FROM fixed_charges WHERE add_on_id = ? AND active = 1 LIMIT 1",
   )
     .bind(addOn.id)
     .first();

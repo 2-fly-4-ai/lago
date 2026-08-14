@@ -56,7 +56,10 @@ type FixedChargeRow = {
   units: string;
   pay_in_advance: number;
   prorated: number;
+  version: number;
+  active: number;
   created_at: string;
+  updated_at: string;
 };
 
 type NormalizedCharge = {
@@ -109,10 +112,12 @@ export async function handlePlanCatalogRequest(
     );
   }
   if (request.method === "POST" && fixedChargesMatch?.[1]) {
-    throw new ApiError(
-      422,
-      "unsupported_fixed_charge_mutation",
-      "Standalone fixed-charge creation requires the unported subscription unit-event workflow",
+    return createFixedCharge(
+      request,
+      decodeURIComponent(fixedChargesMatch[1]),
+      env,
+      auth,
+      requestId,
     );
   }
   const fixedChargeMatch = url.pathname.match(
@@ -127,15 +132,24 @@ export async function handlePlanCatalogRequest(
       requestId,
     );
   }
-  if (
-    (request.method === "PUT" || request.method === "DELETE") &&
-    fixedChargeMatch?.[1] &&
-    fixedChargeMatch[2]
-  ) {
-    throw new ApiError(
-      422,
-      "unsupported_fixed_charge_mutation",
-      "Fixed-charge update and deletion require the unported unit-event and billing workflow",
+  if (request.method === "PUT" && fixedChargeMatch?.[1] && fixedChargeMatch[2]) {
+    return updateFixedCharge(
+      request,
+      decodeURIComponent(fixedChargeMatch[1]),
+      decodeURIComponent(fixedChargeMatch[2]),
+      env,
+      auth,
+      requestId,
+    );
+  }
+  if (request.method === "DELETE" && fixedChargeMatch?.[1] && fixedChargeMatch[2]) {
+    return deleteFixedCharge(
+      request,
+      decodeURIComponent(fixedChargeMatch[1]),
+      decodeURIComponent(fixedChargeMatch[2]),
+      env,
+      auth,
+      requestId,
     );
   }
   if (request.method === "POST" && url.pathname === "/api/v1/plans") {
@@ -326,8 +340,9 @@ async function createPlan(
           .prepare(
             `INSERT INTO fixed_charges
            (id, organization_id, plan_id, add_on_id, code, invoice_display_name,
-            charge_model, properties_json, units, pay_in_advance, prorated, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+            charge_model, properties_json, units, pay_in_advance, prorated, version, active,
+            created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, 1, ?, ?)`,
           )
           .bind(
             charge.id,
@@ -417,11 +432,11 @@ async function listFixedCharges(
   const perPage = Math.min(positiveInteger(url.searchParams.get("per_page"), 20), 100);
   const offset = (page - 1) * perPage;
   const count = await database
-    .prepare("SELECT COUNT(*) AS total FROM fixed_charges WHERE plan_id = ?")
+    .prepare("SELECT COUNT(*) AS total FROM fixed_charges WHERE plan_id = ? AND active = 1")
     .bind(plan.id)
     .first<{ total: number }>();
   const result = await database
-    .prepare(`${fixedChargeSelect()} WHERE fc.plan_id = ?
+    .prepare(`${fixedChargeSelect()} WHERE fc.plan_id = ? AND fc.active = 1
               ORDER BY fc.created_at DESC, fc.id DESC LIMIT ? OFFSET ?`)
     .bind(plan.id, perPage, offset)
     .all<FixedChargeRow>();
@@ -434,6 +449,240 @@ async function listFixedCharges(
   );
 }
 
+async function createFixedCharge(
+  request: Request,
+  planCode: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const database = env.BILLING_DB;
+  const plan = await findPlan(database, auth.organizationId, planCode);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const input = objectAt(await parseJsonObject(request), "fixed_charge");
+  const normalized = (
+    await normalizeFixedCharges([input], database, auth.organizationId, plan.id, plan.currency)
+  )[0];
+  if (!normalized) throw new ApiError(422, "validation_error", "Fixed charge is invalid");
+  const existing = await findFixedCharge(database, plan.id, normalized.code);
+  if (existing) {
+    if (sameFixedCharge(existing, normalized))
+      return json({ fixed_charge: serializeFixedCharge(existing) }, { requestId });
+    throw new ApiError(422, "value_already_exist", "Fixed-charge code already exists");
+  }
+  const historical = await database
+    .prepare("SELECT id FROM fixed_charges WHERE plan_id = ? AND code = ? LIMIT 1")
+    .bind(plan.id, normalized.code)
+    .first();
+  if (historical)
+    throw new ApiError(
+      422,
+      "fixed_charge_code_unavailable",
+      "A deleted fixed-charge code cannot be reused yet",
+    );
+  const now = new Date().toISOString();
+  const event = fixedChargeEvent(
+    "fixed_charge.created",
+    normalized.id,
+    1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: normalized.code, planCode },
+  );
+  try {
+    await database.batch([
+      database
+        .prepare(
+          `INSERT INTO fixed_charges
+           (id, organization_id, plan_id, add_on_id, code, invoice_display_name,
+            charge_model, properties_json, units, pay_in_advance, prorated, version, active,
+            created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, 1, ?, ?)`,
+        )
+        .bind(
+          normalized.id,
+          auth.organizationId,
+          plan.id,
+          normalized.addOnId,
+          normalized.code,
+          normalized.invoiceDisplayName,
+          normalized.chargeModel,
+          stableJson(normalized.properties),
+          normalized.units,
+          now,
+          now,
+        ),
+      outboxStatement(database, auth.organizationId, event),
+    ]);
+  } catch (error) {
+    const concurrent = await findFixedCharge(database, plan.id, normalized.code);
+    if (concurrent && sameFixedCharge(concurrent, normalized))
+      return json({ fixed_charge: serializeFixedCharge(concurrent) }, { requestId });
+    if (concurrent)
+      throw new ApiError(422, "value_already_exist", "Fixed-charge code already exists");
+    throw error;
+  }
+  await env.DOMAIN_EVENTS.send(event);
+  const created = await findFixedCharge(database, plan.id, normalized.code);
+  if (!created) throw new ApiError(500, "persistence_error", "Fixed charge was not persisted");
+  return json({ fixed_charge: serializeFixedCharge(created) }, { requestId });
+}
+
+async function updateFixedCharge(
+  request: Request,
+  planCode: string,
+  fixedChargeCode: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const database = env.BILLING_DB;
+  const plan = await findPlan(database, auth.organizationId, planCode);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const fixedCharge = await findFixedCharge(database, plan.id, fixedChargeCode);
+  if (!fixedCharge) throw new ApiError(404, "fixed_charge_not_found", "Fixed charge was not found");
+  const input = objectAt(await parseJsonObject(request), "fixed_charge");
+  rejectUnsupportedFixedChargeMutation(input, fixedCharge);
+  const attached = await database
+    .prepare("SELECT id FROM subscriptions WHERE plan_id = ? LIMIT 1")
+    .bind(plan.id)
+    .first();
+  const nextCode =
+    attached || input.code === undefined ? fixedCharge.code : requiredString(input, "code");
+  const nextModel =
+    attached || input.charge_model === undefined
+      ? supportedFixedChargeModel(fixedCharge.charge_model)
+      : supportedFixedChargeModel(input.charge_model);
+  const nextProperties =
+    input.properties === undefined
+      ? parseObject(fixedCharge.properties_json)
+      : optionalObject(input.properties, "properties");
+  const next = {
+    id: fixedCharge.id,
+    addOnId: fixedCharge.add_on_id,
+    code: nextCode,
+    invoiceDisplayName:
+      input.invoice_display_name === undefined
+        ? fixedCharge.invoice_display_name
+        : optionalString(input, "invoice_display_name"),
+    chargeModel: nextModel,
+    properties: nextProperties,
+    units:
+      input.units === undefined
+        ? fixedCharge.units
+        : nonNegativeDecimal(input.units, "fixed_charge.units"),
+  } satisfies NormalizedFixedCharge;
+  validateFixedChargeRating(next.units, next.chargeModel, next.properties, "fixed_charge");
+  if (next.code !== fixedCharge.code) {
+    const duplicate = await findFixedCharge(database, plan.id, next.code);
+    if (duplicate)
+      throw new ApiError(422, "value_already_exist", "Fixed-charge code already exists");
+  }
+  if (sameFixedCharge(fixedCharge, next))
+    return json({ fixed_charge: serializeFixedCharge(fixedCharge) }, { requestId });
+  const now = new Date().toISOString();
+  const event = fixedChargeEvent(
+    "fixed_charge.updated",
+    fixedCharge.id,
+    fixedCharge.version + 1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: next.code, planCode },
+  );
+  try {
+    const results = await database.batch([
+      database
+        .prepare(
+          `UPDATE fixed_charges SET code = ?, invoice_display_name = ?, charge_model = ?,
+           properties_json = ?, units = ?, version = version + 1, updated_at = ?
+           WHERE id = ? AND organization_id = ? AND plan_id = ? AND active = 1 AND version = ?`,
+        )
+        .bind(
+          next.code,
+          next.invoiceDisplayName,
+          next.chargeModel,
+          stableJson(next.properties),
+          next.units,
+          now,
+          fixedCharge.id,
+          auth.organizationId,
+          plan.id,
+          fixedCharge.version,
+        ),
+      conditionalFixedChargeOutboxStatement(
+        database,
+        auth.organizationId,
+        event,
+        fixedCharge.id,
+        fixedCharge.version + 1,
+        now,
+        1,
+      ),
+    ]);
+    if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
+      throw new ApiError(409, "fixed_charge_version_conflict", "Fixed charge changed concurrently");
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(422, "value_already_exist", "Fixed-charge code already exists");
+  }
+  await env.DOMAIN_EVENTS.send(event);
+  const updated = await findFixedCharge(database, plan.id, next.code);
+  if (!updated) throw new ApiError(500, "persistence_error", "Fixed charge disappeared");
+  return json({ fixed_charge: serializeFixedCharge(updated) }, { requestId });
+}
+
+async function deleteFixedCharge(
+  request: Request,
+  planCode: string,
+  fixedChargeCode: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const database = env.BILLING_DB;
+  const plan = await findPlan(database, auth.organizationId, planCode);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const fixedCharge = await findFixedCharge(database, plan.id, fixedChargeCode);
+  if (!fixedCharge) throw new ApiError(404, "fixed_charge_not_found", "Fixed charge was not found");
+  if (request.body !== null) {
+    const input = objectAt(await parseJsonObject(request), "fixed_charge");
+    rejectUnsupportedFixedChargeMutation(input, fixedCharge);
+  }
+  const now = new Date().toISOString();
+  const event = fixedChargeEvent(
+    "fixed_charge.deleted",
+    fixedCharge.id,
+    fixedCharge.version + 1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: fixedCharge.code, planCode },
+  );
+  const results = await database.batch([
+    database
+      .prepare(
+        `UPDATE fixed_charges SET active = 0, version = version + 1, updated_at = ?
+         WHERE id = ? AND organization_id = ? AND plan_id = ? AND active = 1 AND version = ?`,
+      )
+      .bind(now, fixedCharge.id, auth.organizationId, plan.id, fixedCharge.version),
+    conditionalFixedChargeOutboxStatement(
+      database,
+      auth.organizationId,
+      event,
+      fixedCharge.id,
+      fixedCharge.version + 1,
+      now,
+      0,
+    ),
+  ]);
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
+    throw new ApiError(409, "fixed_charge_version_conflict", "Fixed charge changed concurrently");
+  await env.DOMAIN_EVENTS.send(event);
+  return json({ fixed_charge: serializeFixedCharge(fixedCharge) }, { requestId });
+}
+
 async function showFixedCharge(
   planCode: string,
   fixedChargeCode: string,
@@ -444,7 +693,9 @@ async function showFixedCharge(
   const plan = await findPlan(database, auth.organizationId, planCode);
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
   const charge = await database
-    .prepare(`${fixedChargeSelect()} WHERE fc.plan_id = ? AND fc.code = ? LIMIT 1`)
+    .prepare(
+      `${fixedChargeSelect()} WHERE fc.plan_id = ? AND fc.code = ? AND fc.active = 1 LIMIT 1`,
+    )
     .bind(plan.id, fixedChargeCode)
     .first<FixedChargeRow>();
   if (!charge) throw new ApiError(404, "fixed_charge_not_found", "Fixed charge was not found");
@@ -454,8 +705,18 @@ async function showFixedCharge(
 function fixedChargeSelect(): string {
   return `SELECT fc.id, fc.add_on_id, ao.code AS add_on_code, fc.code,
                  fc.invoice_display_name, fc.charge_model, fc.properties_json, fc.units,
-                 fc.pay_in_advance, fc.prorated, fc.created_at
+                 fc.pay_in_advance, fc.prorated, fc.version, fc.active,
+                 fc.created_at, fc.updated_at
           FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id`;
+}
+
+function findFixedCharge(database: D1Database, planId: string, code: string) {
+  return database
+    .prepare(
+      `${fixedChargeSelect()} WHERE fc.plan_id = ? AND fc.code = ? AND fc.active = 1 LIMIT 1`,
+    )
+    .bind(planId, code)
+    .first<FixedChargeRow>();
 }
 
 async function showPlan(
@@ -660,7 +921,8 @@ async function serializePlan(
       updated_at: string;
     }>();
   const fixedCharges = await database
-    .prepare(`${fixedChargeSelect()} WHERE fc.plan_id = ? ORDER BY fc.created_at, fc.id`)
+    .prepare(`${fixedChargeSelect()} WHERE fc.plan_id = ? AND fc.active = 1
+              ORDER BY fc.created_at, fc.id`)
     .bind(plan.id)
     .all<FixedChargeRow>();
   return {
@@ -722,6 +984,19 @@ function serializeFixedCharge(charge: FixedChargeRow): Record<string, unknown> {
     lago_parent_id: null,
     taxes: [],
   };
+}
+
+function sameFixedCharge(charge: FixedChargeRow, normalized: NormalizedFixedCharge): boolean {
+  return (
+    charge.add_on_id === normalized.addOnId &&
+    charge.code === normalized.code &&
+    charge.invoice_display_name === normalized.invoiceDisplayName &&
+    charge.charge_model === normalized.chargeModel &&
+    stableJson(parseObject(charge.properties_json)) === stableJson(normalized.properties) &&
+    Decimal.parse(charge.units).compare(Decimal.parse(normalized.units)) === 0 &&
+    charge.pay_in_advance === 0 &&
+    charge.prorated === 0
+  );
 }
 
 async function normalizeMinimumCommitment(
@@ -876,6 +1151,12 @@ async function normalizeFixedCharges(
         "unsupported_fixed_charge_feature",
         "Fixed-charge overrides and parent inheritance are not implemented",
       );
+    if (input.cascade_updates === true)
+      throw new ApiError(
+        422,
+        "unsupported_fixed_charge_feature",
+        "Fixed-charge child-plan cascades are not implemented",
+      );
     if (booleanInteger(input.pay_in_advance, false) === 1)
       throw new ApiError(
         422,
@@ -919,28 +1200,10 @@ async function normalizeFixedCharges(
     if (seen.has(code))
       throw new ApiError(422, "value_already_exist", "Fixed-charge code is duplicated");
     seen.add(code);
-    const chargeModel = requiredString(input, "charge_model");
-    if (chargeModel !== "standard" && chargeModel !== "graduated" && chargeModel !== "volume")
-      throw new ApiError(
-        422,
-        "unsupported_charge_model",
-        `Unsupported fixed-charge model: ${chargeModel}`,
-      );
+    const chargeModel = supportedFixedChargeModel(input.charge_model);
     const properties = optionalObject(input.properties, "properties");
     const units = nonNegativeDecimal(input.units ?? 1, `fixed_charges[${index}].units`);
-    try {
-      const rated = Decimal.parse(
-        rateCharge(units, parseChargeModel(chargeModel, properties)).amountCents,
-      );
-      if (rated.isNegative()) throw new Error("negative");
-    } catch (error) {
-      if (error instanceof ApiError) throw error;
-      throw new ApiError(
-        422,
-        "validation_error",
-        `fixed_charges[${index}] has invalid rating properties`,
-      );
-    }
+    validateFixedChargeRating(units, chargeModel, properties, `fixed_charges[${index}]`);
     fixedCharges.push({
       id: await deterministicUuid("fixed-charge", `${planId}:${code}`),
       addOnId,
@@ -952,6 +1215,79 @@ async function normalizeFixedCharges(
     });
   }
   return fixedCharges;
+}
+
+function supportedFixedChargeModel(value: unknown): "standard" | "graduated" | "volume" {
+  if (value === "standard" || value === "graduated" || value === "volume") return value;
+  throw new ApiError(
+    422,
+    "unsupported_charge_model",
+    `Unsupported fixed-charge model: ${String(value)}`,
+  );
+}
+
+function validateFixedChargeRating(
+  units: string,
+  chargeModel: "standard" | "graduated" | "volume",
+  properties: Record<string, unknown>,
+  field: string,
+): void {
+  try {
+    const rated = Decimal.parse(
+      rateCharge(units, parseChargeModel(chargeModel, properties)).amountCents,
+    );
+    if (rated.isNegative()) throw new Error("negative");
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(422, "validation_error", `${field} has invalid rating properties`);
+  }
+}
+
+function rejectUnsupportedFixedChargeMutation(
+  input: Record<string, unknown>,
+  current?: FixedChargeRow,
+): void {
+  for (const field of ["id", "parent_id", "cascade_updates"]) {
+    const value = input[field];
+    if (value === undefined || value === null || value === false) continue;
+    throw new ApiError(
+      422,
+      "unsupported_fixed_charge_feature",
+      `${field} is not implemented for fixed-charge mutations`,
+    );
+  }
+  if (booleanInteger(input.pay_in_advance, current?.pay_in_advance === 1) === 1)
+    throw new ApiError(
+      422,
+      "unsupported_fixed_charge_feature",
+      "Pay-in-advance fixed charges are not implemented",
+    );
+  if (booleanInteger(input.prorated, current?.prorated === 1) === 1)
+    throw new ApiError(
+      422,
+      "unsupported_fixed_charge_feature",
+      "Prorated fixed charges are not implemented",
+    );
+  if (input.apply_units_immediately === true)
+    throw new ApiError(
+      422,
+      "unsupported_fixed_charge_feature",
+      "Immediate fixed-charge unit events are not implemented",
+    );
+  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
+    throw new ApiError(
+      422,
+      "unsupported_tax_target",
+      "Fixed-charge tax targeting is not implemented; use organization-default taxes",
+    );
+  for (const field of ["add_on_id", "add_on_code"]) {
+    if (input[field] !== undefined)
+      throw new ApiError(
+        422,
+        "unsupported_fixed_charge_feature",
+        "A fixed charge cannot change its add-on",
+      );
+  }
 }
 
 function optionalObject(value: unknown, field: string): Record<string, unknown> {
@@ -1066,6 +1402,29 @@ function planEvent(
   };
 }
 
+function fixedChargeEvent(
+  type: string,
+  id: string,
+  version: number,
+  organizationId: string,
+  correlationId: string,
+  occurredAt: string,
+  payload: Record<string, unknown>,
+): DomainEvent {
+  return {
+    id: `${type.replaceAll(".", "-")}:${id}:v${version}`,
+    type,
+    version: 1,
+    aggregateType: "fixed_charge",
+    aggregateId: id,
+    aggregateVersion: version,
+    occurredAt,
+    causationId: correlationId,
+    correlationId,
+    payload: { organizationId, ...payload },
+  };
+}
+
 function outboxStatement(
   database: D1Database,
   organizationId: string,
@@ -1123,6 +1482,43 @@ function conditionalOutboxStatement(
       event.occurredAt,
       planId,
       organizationId,
+      expectedVersion,
+      expectedUpdatedAt,
+    );
+}
+
+function conditionalFixedChargeOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+  fixedChargeId: string,
+  expectedVersion: number,
+  expectedUpdatedAt: string,
+  expectedActive: 0 | 1,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL FROM fixed_charges
+       WHERE id = ? AND organization_id = ? AND active = ? AND version = ? AND updated_at = ?`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+      fixedChargeId,
+      organizationId,
+      expectedActive,
       expectedVersion,
       expectedUpdatedAt,
     );
