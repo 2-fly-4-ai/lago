@@ -47,7 +47,8 @@ this document does not silently redefine that behavior.
   both the period-start date and termination date, caps the result at the full period, and uses
   exact `Decimal` division before minor-unit rounding. Usage remains half-open and is bounded by the
   start of the next UTC day, capped at the original period end. This is not tenant-local timezone
-  parity and must not be reused for a scheduled `ending_at` transition without timezone evidence.
+  parity. A persisted `ending_at` uses this exact UTC subset and is executed by the hourly `:05`
+  owner; customer-local dates require separate timezone evidence.
 - Tenant-local time zones, daylight-saving behavior, and Rails time-zone parity are not implemented
   unless a feature's executable evidence says otherwise. A port that depends on local civil time
   must add the time-zone field, transition tests, and migration notes before it can be called parity.
@@ -144,9 +145,11 @@ Required evidence for a new aggregate or a boundary change:
   tax, credit-note, wallet, and usage mutations flag affected drafts through D1 triggers.
   Explicit skip-invoice/skip-credit termination keeps an existing draft refreshable from its
   immutable context. Final termination invoices currently cover only zero-grace in-arrears plans
-  without fixed charges or minimum commitments, using explicit UTC civil-day semantics. Positive-
-  grace termination drafts, tenant-local termination dates, fixed-charge/commitment proration,
-  pay-in-advance final invoicing, and termination credit notes still need explicit lifecycle rules.
+  without fixed charges or minimum commitments, using explicit UTC civil-day semantics. Those plans
+  may also persist a future UTC `ending_at`, which the hourly owner executes before billing close.
+  Positive-grace termination drafts, tenant-local termination dates, fixed-charge/commitment
+  proration, pay-in-advance final invoicing, and termination credit notes still need explicit
+  lifecycle rules.
 - A base subscription creates an initial invoice only when its plan snapshots
   `pay_in_advance = 1`; in-arrears starts seed the billing period without an invoice. Recurring
   pay-in-advance base lines snapshot the next period, while in-arrears base lines, usage, fixed

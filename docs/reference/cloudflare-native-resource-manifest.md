@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `616df085-3589-4f49-906e-34d3c4f66405`
+- Latest verified version: `bdd3b5db-bae8-4765-9482-1eeb01068ce3`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -33,7 +33,8 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `*/5 * * * *`                                                      | Worker scheduled handler  | Deterministic legacy-schedule dispatch                             |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
-Applied D1 migrations: `0001_foundation.sql` through `0027_pending_subscription_activation.sql`.
+Applied D1 migrations: `0001_foundation.sql` through
+`0028_scheduled_subscription_termination.sql`.
 
 ## Verified behavior
 
@@ -154,6 +155,15 @@ Applied D1 migrations: `0001_foundation.sql` through `0027_pending_subscription_
   audits. Pay-in-advance termination credits, positive-grace drafts, fixed charges, commitments,
   and tenant-local scheduling remain guarded; all external-action flags remain disabled, with no
   route, secret, or billing data added.
+- The scheduled-termination deployment applied only
+  `0028_scheduled_subscription_termination.sql`, adding the nullable UTC `ending_at` field and its
+  active-subscription index, then registered the legacy hourly `:05` executor. Creation replay and
+  conflict identity now include a supplied ending instant without changing hashes for requests that
+  omit it; billing close excludes due endings so it cannot advance ahead of termination. Remote
+  health/readiness returned `200`/`200`, unauthenticated ending creation returned `401`, and no
+  migration remained pending. Aggregate-only verification found the expected index, zero
+  organizations, subscriptions, scheduled endings, and invoices plus 39 Cron audits. The stack
+  remains unseeded and all external-action flags remain disabled, with no route or secret added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

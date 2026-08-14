@@ -1040,3 +1040,20 @@ resource and mutation described.
   returned `401`, and aggregate-only verification confirmed zero organizations, subscriptions,
   invoices, and invoice lines plus 37 Cron audits. No route, secret, seeded billing data, or
   disabled external flag changed.
+- 2026-08-14: Added the constrained UTC `ending_at` lifecycle for the same zero-grace in-arrears
+  plans supported by final termination invoicing. Subscription creation normalizes and validates a
+  later UTC civil date, includes it in replay/conflict identity without changing legacy hashes when
+  omitted, and rejects pay-in-advance, one-time, fixed-charge, commitment, and positive-grace
+  variants. The legacy hourly `:05` registry slot now terminates due rows exactly once, while
+  recurring close excludes due endings so an outage or overlap cannot advance their billing period
+  first. Pending rescheduling cannot move a start on or after its ending date. All 85
+  Workers-runtime tests pass across 22 files; all 28 migrations replay from empty D1 state, and
+  formatting, lint, generated bindings, TypeScript, inventory, and the dry-run bundle are green at
+  505.36 KiB (90.48 KiB gzip).
+- 2026-08-14: Remote inventory showed exactly
+  `0028_scheduled_subscription_termination.sql`; applied only that migration, confirmed the
+  inventory was empty, and deployed isolated Worker version
+  `bdd3b5db-bae8-4765-9482-1eeb01068ce3`. Remote health/readiness returned `200`, unauthenticated
+  ending creation returned `401`, and aggregate-only verification confirmed the ending index, zero
+  organizations, subscriptions, scheduled endings, and invoices plus 39 Cron audits. No route,
+  secret, seeded billing data, or disabled external flag changed.
