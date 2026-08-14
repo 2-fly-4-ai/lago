@@ -289,16 +289,17 @@ Acceptance:
 ### M3: Invoice and rating engine
 
 - [x] Implement exact-decimal standard, graduated, package, volume, percentage, and graduated
-      percentage charge-model interfaces; dynamic/custom, filters, and advanced percentage
-      adjustments remain pending.
+      percentage charge-model interfaces; dynamic/custom and advanced percentage adjustments
+      remain pending.
       Billable-metric create/list/show and Rails-safe scalar update now emit transactional,
       versioned outbox events; attached metrics allow only name/description mutation. Expression,
-      rounding, recurring weighted-sum, and deletion workflows are now ported. Generic recurring,
-      custom aggregation, filters, and grouped weighted baselines remain explicit gaps.
-      Standalone plan charge create/list/show now supports idempotent, transactional creation and
-      `charge.created` events for the exact in-arrears rating models. Pay-in-advance, proration,
-      filters, targeted taxes, pricing units, wallet targeting, update, deletion, and cascades fail
-      explicitly until their billing and cleanup workflows are ported.
+      rounding, recurring weighted-sum, nested metric filters, and deletion workflows are now
+      ported. Generic recurring, custom aggregation, standalone filter endpoints, and grouped
+      weighted baselines remain explicit gaps. Standalone plan charge create/list/show/update/delete
+      supports the exact in-arrears rating models and nested filter-specific price overrides.
+      Pay-in-advance, proration, targeted taxes, pricing units, and cascades fail explicitly until
+      their billing and cleanup workflows are ported; combining filters with weighted usage,
+      target-wallet grouping, or charge minimums remains guarded.
 - [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
       and rounding behavior according to feature disposition. Unrestricted fixed/percentage
       coupons now support once/recurring/forever application, initial and renewal invoice
@@ -495,8 +496,11 @@ Acceptance:
 - [x] Port count, sum, maximum, latest, add/remove unique-count, and seconds-based weighted-sum
       aggregations plus six core charge models. Weighted sums use cumulative deltas, full civil-day
       charge-period normalization, exact 20-place Lago ceiling precision, and recurring baselines
-      reconstructed across subscription generations. Weighted target-wallet grouping, custom
-      aggregation, filters, and advanced adjustments remain pending. Optional round/ceil/floor
+      reconstructed across subscription generations. Nested metric/charge filters use bounded D1
+      documents, strict allowed-value validation, wildcard key-presence semantics, and first
+      most-specific event assignment for current usage and invoice lines. Weighted target-wallet
+      grouping, custom aggregation, filter/weighted or filter/wallet combinations, charge-wide
+      filtered minimum true-ups, and advanced adjustments remain pending. Optional round/ceil/floor
       metric configuration applies to aggregate units before current-usage and recurring-invoice
       rating, including negative precision.
 - [x] Replace the Ruby subprocess and Go/Rust native library with a restricted TypeScript parser or
@@ -1818,3 +1822,25 @@ resource and mutation described.
   `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`;
   no migration, resource provisioning, production route/domain, secret, provider action, customer
   data, or billing row changed.
+- 2026-08-15: Ported bounded billable-metric and charge filters for nested metric, plan, and
+  standalone-charge APIs, current usage, and persisted invoice calculation. D1 stores validated
+  filter documents with deterministic charge-filter IDs. Rating assigns each event exactly once to
+  the first most-specific matching filter or the base charge; wildcard values still require the
+  property key, per-filter rating properties override the base charge, and filter invoice lines use
+  distinct persistence identities while retaining the owning charge in metadata. Weighted-sum,
+  target-wallet, and nonzero-minimum combinations fail explicitly pending per-filter baselines,
+  multidimensional grouping, and charge-wide true-up allocation. Evidence covers overlap,
+  wildcard/missing-key behavior, invalid values, embedded and standalone catalogs, live usage, and
+  three persisted partition lines. All 46 migrations replay from empty local D1. Formatting,
+  strict lint, inventory, generated types, and TypeScript are green; bounded Worker groups pass all
+  180 tests as 49 + 68 + 63. The dry-run bundle is 866.72 KiB (151.52 KiB gzip). Feature checkpoint:
+  `60b599b`.
+- 2026-08-15: Remote preflight on the explicit SERP account found only migration
+  `0046_charge_filters.sql` pending and zero organizations, customers, plans, subscriptions,
+  invoices, and usage events. Applied that migration only to the isolated non-production D1 and
+  deployed only the isolated Worker as version `69399fec-da3b-4fc5-aa64-212b5e99d8df` with a 4 ms
+  startup. Health/readiness returned `200`/`200`, unauthenticated billable-metric access returned
+  `401`, no migrations remain, and post-deploy aggregate-only verification remained empty apart
+  from 180 schedule audits. `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and
+  `OUTBOUND_WEBHOOKS_ENABLED` remain `0`; no resource provisioning, production route/domain,
+  secret, provider action, customer data, or billing row changed.

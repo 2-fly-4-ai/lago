@@ -123,6 +123,13 @@ remaining Lago feature inventory is dispositioned and ported.
   weighted state is reconstructed from retained events across subscription generations and is
   recorded separately from billed weighted units. Weighted target-wallet grouping fails explicitly
   until per-group historical baselines are ported.
+  Billable metrics and charges also support bounded nested filters. Metric filter catalogs and
+  charge-specific price overrides are validated and stored atomically in D1; each event is assigned
+  to the first most-specific matching filter or the unmatched base charge, with wildcard values
+  still requiring the event property to exist. Current usage and invoice lines preserve the same
+  exact partition, and filter invoice lines use deterministic source identities. Filters combined
+  with weighted sums, target-wallet grouping, or a charge minimum fail explicitly until per-filter
+  baselines and charge-wide true-up allocation are ported.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,
