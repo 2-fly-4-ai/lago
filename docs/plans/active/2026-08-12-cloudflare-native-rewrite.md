@@ -2081,3 +2081,12 @@ resource and mutation described.
   precise not-found errors. Strict format/lint, inventory, generated types, TypeScript, and the
   complete Worker suite pass at 196 tests across 35 files. Wrangler's dry-run bundle is 967.78 KiB
   (166.75 KiB gzip). No migration is required. Feature checkpoint: `f5447c6`.
+- 2026-08-15: Code-only remote preflight found no pending migration and zero organizations,
+  customers, plans, subscriptions, invoices, billable metrics, charges, fixed charges, usage
+  events, outbox rows, and plan-deletion tasks, with zero foreign-key violations. Deployed only the
+  isolated Worker as version `bf78b018-adf9-4858-9613-45a4ce4873a8` with a 7 ms startup.
+  Health/readiness returned `200`/`200`, unauthenticated subscription fixed-charge access returned
+  `401`, no migrations remain, and post-deploy aggregate-only verification stayed empty apart from
+  218 schedule audits. All three external-action flags remain `0`; no migration, resource
+  provisioning, production route/domain, secret, provider action, customer data, or billing row
+  changed.
