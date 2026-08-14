@@ -1399,3 +1399,13 @@ resource and mutation described.
   and the remaining operator UI are still pending. This is a local pre-deployment checkpoint;
   isolated remote D1 remains on migration `0034` and Worker version
   `943b9159-4f62-4f52-9061-a3424f578e0c`.
+- 2026-08-14: Remote preflight showed exactly `0035_invoice_custom_sections.sql` pending, no
+  foreign-key violations, and zero organizations, customers, plans, subscriptions, invoices,
+  catalog sections, snapshots, and outbox events plus 107 Cron audits. Applied only that migration
+  in 6.87 ms, confirmed the follow-up inventory was empty, and verified 35 migrations, all three
+  section tables, the subscription skip column, and 11 guards/triggers before deploying isolated
+  Worker version `ce135113-31fc-4078-981f-d439a03db5ae`. Remote health/readiness returned
+  `200`/`200`, unauthenticated catalog access returned `401`, and post-deploy aggregate-only
+  verification remained empty with no FK violations. The deployed version retains all three
+  external-action flags at `0` and only the existing isolated bindings/triggers. No production
+  route, domain, secret, provider action, or billing/catalog record changed.
