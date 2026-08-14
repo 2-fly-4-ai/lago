@@ -1766,6 +1766,23 @@ async function finalizeDraftInvoice(
     if (error instanceof Error && error.message === "invoice_refresh_in_progress") {
       throw new ApiError(409, "invoice_refresh_in_progress", "Invoice refresh is in progress");
     }
+    if (error instanceof Error && error.message === "termination_credit_note_not_finalized") {
+      throw new ApiError(
+        422,
+        "termination_credit_note_not_finalized",
+        "Finalize the pay-in-advance source invoice before its termination invoice",
+      );
+    }
+    if (
+      error instanceof Error &&
+      error.message === "unsupported_draft_termination_credit_adjustment"
+    ) {
+      throw new ApiError(
+        422,
+        "unsupported_draft_termination_credit_adjustment",
+        "Draft termination credits require an undiscounted, untaxed source invoice without wallet or credit-note allocations",
+      );
+    }
     throw error;
   }
   return showInvoice(invoice.id, env.BILLING_DB, auth, requestId);
@@ -1803,6 +1820,16 @@ async function refreshDraftInvoice(
         422,
         "draft_subscription_not_found",
         "Draft invoice no longer has an active billable subscription",
+      );
+    }
+    if (
+      error instanceof Error &&
+      error.message === "unsupported_draft_termination_credit_adjustment"
+    ) {
+      throw new ApiError(
+        422,
+        "unsupported_draft_termination_credit_adjustment",
+        "Draft termination credits require an undiscounted, untaxed source invoice without wallet or credit-note allocations",
       );
     }
     throw error;

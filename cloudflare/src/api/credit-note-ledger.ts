@@ -280,6 +280,8 @@ async function voidCreditNote(
 ): Promise<Response> {
   let note = await findCreditNote(env.BILLING_DB, auth.organizationId, id);
   if (!note) throw new ApiError(404, "credit_note_not_found", "Credit note was not found");
+  if (note.status === "draft")
+    throw new ApiError(422, "credit_note_not_finalized", "Draft credit notes cannot be voided");
   if (note.credit_status === "voided")
     return json({ credit_note: await serializeCreditNote(env.BILLING_DB, note) }, { requestId });
   if (note.credit_status !== "available" || note.balance_amount_minor !== note.credit_amount_minor)
@@ -385,7 +387,7 @@ async function validateItems(
 }
 
 function creditNoteSelect() {
-  return `SELECT cn.id, cn.invoice_id, i.number AS invoice_number, cn.customer_id, c.external_id AS customer_external_id, cn.sequential_id, cn.number, cn.status, cn.credit_status, cn.reason, cn.description, cn.currency, cn.total_amount_minor, cn.credit_amount_minor, cn.balance_amount_minor, cn.refund_amount_minor, cn.offset_amount_minor, cn.taxes_amount_minor, cn.coupons_adjustment_minor, cn.version, cn.idempotency_key, cn.request_sha256, cn.issuing_date, cn.created_at, cn.updated_at, cn.voided_at FROM credit_notes cn JOIN invoices i ON i.id = cn.invoice_id JOIN customers c ON c.id = cn.customer_id`;
+  return `SELECT cn.id, cn.invoice_id, i.number AS invoice_number, cn.customer_id, c.external_id AS customer_external_id, cn.sequential_id, cn.number, CASE WHEN cn.allocation_state = 'draft' THEN 'draft' ELSE cn.status END AS status, cn.credit_status, cn.reason, cn.description, cn.currency, cn.total_amount_minor, cn.credit_amount_minor, cn.balance_amount_minor, cn.refund_amount_minor, cn.offset_amount_minor, cn.taxes_amount_minor, cn.coupons_adjustment_minor, cn.version, cn.idempotency_key, cn.request_sha256, cn.issuing_date, cn.created_at, cn.updated_at, cn.voided_at FROM credit_notes cn JOIN invoices i ON i.id = cn.invoice_id JOIN customers c ON c.id = cn.customer_id`;
 }
 async function findCreditNote(db: D1Database, org: string, id: string) {
   return db

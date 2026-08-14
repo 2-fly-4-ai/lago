@@ -4,6 +4,7 @@ import { stableJson } from "../json";
 import { couponCreditStatements } from "./coupon-credits";
 import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
+import { prepareDraftTerminationCreditChanges } from "./pay-in-advance-termination-credit";
 import { paymentDueDate } from "./payment-terms";
 import {
   calculateInitialSubscriptionInvoice,
@@ -58,6 +59,9 @@ export async function refreshSubscriptionDraft(
   if (invoice.status !== "draft") throw new Error("invoice_not_draft");
   if (!invoice.issuing_date) throw new Error("invoice_issuing_date_missing");
   await assertDraftHasNoCommittedAllocations(env.BILLING_DB, invoice.id);
+  if (finalize && invoice.context_type === "termination") {
+    await assertTerminationCreditsFinalized(env.BILLING_DB, invoice.subscription_id);
+  }
 
   const subscription = await findRefreshableSubscription(env.BILLING_DB, invoice.subscription_id);
   if (!subscription || subscription.organization_id !== invoice.organization_id) {
@@ -113,6 +117,14 @@ export async function refreshSubscriptionDraft(
               invoice.period_end,
             );
     const nextVersion = invoice.version + 1;
+    const draftTerminationCredits = await prepareDraftTerminationCreditChanges(
+      env.BILLING_DB,
+      invoice.id,
+      calculation,
+      refreshedAt,
+      correlationId,
+      finalize,
+    );
     const paymentDue = paymentDueDate(invoice.issuing_date, invoice.net_payment_term);
     const eventType = finalize ? "invoice.finalized" : "invoice.refreshed";
     const event: DomainEvent = {
@@ -222,6 +234,7 @@ export async function refreshSubscriptionDraft(
         invoice.id,
       ),
       env.BILLING_DB.prepare("DELETE FROM invoice_taxes WHERE invoice_id = ?").bind(invoice.id),
+      ...draftTerminationCredits.beforeLineReplacement,
       env.BILLING_DB.prepare("DELETE FROM invoice_lines WHERE invoice_id = ?").bind(invoice.id),
       ...subscriptionInvoiceLineStatements(
         env.BILLING_DB,
@@ -241,6 +254,10 @@ export async function refreshSubscriptionDraft(
       ),
       ...creditNoteStatements,
       ...walletStatements,
+      ...draftTerminationCredits.afterLineReplacement,
+    ];
+    const invoiceOutboxIndex = statements.length;
+    statements.push(
       env.BILLING_DB.prepare(
         `INSERT INTO outbox_events
          (event_id, organization_id, event_type, event_version, aggregate_type,
@@ -263,15 +280,17 @@ export async function refreshSubscriptionDraft(
         nextVersion,
         finalize ? "finalized" : "draft",
       ),
-    ];
+      ...draftTerminationCredits.eventStatements,
+    );
     const results = await env.BILLING_DB.batch(statements);
     if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1) {
       throw new Error("invoice_version_conflict");
     }
-    const outbox = results.at(-1);
+    const outbox = results[invoiceOutboxIndex];
     if (outbox?.meta.changes !== 1) throw new Error("invoice_outbox_conflict");
     if (finalize) {
-      const firstCouponUpdate = 6 + calculation.lines.length;
+      const firstCouponUpdate =
+        6 + draftTerminationCredits.beforeLineReplacement.length + calculation.lines.length;
       for (let offset = 0; offset < calculation.couponCredits.length; offset += 1) {
         const couponUpdate = results[firstCouponUpdate + offset * 3];
         if (!couponUpdate || couponUpdate.meta.changes < 1) {
@@ -280,6 +299,9 @@ export async function refreshSubscriptionDraft(
       }
     }
     await env.DOMAIN_EVENTS.send(event);
+    for (const creditNoteEvent of draftTerminationCredits.events) {
+      await env.DOMAIN_EVENTS.send(creditNoteEvent);
+    }
     const result: RefreshDraftResult = {
       changed: true,
       finalized: finalize,
@@ -297,6 +319,23 @@ export async function refreshSubscriptionDraft(
     }
     throw error;
   }
+}
+
+async function assertTerminationCreditsFinalized(
+  database: D1Database,
+  subscriptionId: string,
+): Promise<void> {
+  const pending = await database
+    .prepare(
+      `SELECT EXISTS(
+         SELECT 1 FROM termination_credit_note_contexts tc
+         JOIN credit_notes cn ON cn.id = tc.credit_note_id
+         WHERE tc.subscription_id = ? AND cn.allocation_state = 'draft'
+       ) AS pending`,
+    )
+    .bind(subscriptionId)
+    .first<{ pending: number }>();
+  if (pending?.pending === 1) throw new Error("termination_credit_note_not_finalized");
 }
 
 async function findDraftInvoice(

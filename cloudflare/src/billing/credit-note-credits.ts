@@ -27,7 +27,8 @@ export async function calculateCreditNoteAllocations(
     .prepare(
       `SELECT id, balance_amount_minor, version FROM credit_notes
        WHERE organization_id = ? AND customer_id = ? AND currency = ?
-         AND status = 'finalized' AND credit_status = 'available'
+         AND status = 'finalized' AND allocation_state = 'finalized'
+         AND credit_status = 'available'
          AND balance_amount_minor > 0
        ORDER BY created_at, id`,
     )

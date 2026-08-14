@@ -36,9 +36,6 @@ export async function terminateSubscriptionWithInvoice(
   const subscription = await findBillableSubscription(env.BILLING_DB, subscriptionId);
   if (!subscription) throw new Error("subscription_not_found");
   const draft = subscription.invoice_grace_period > 0;
-  if (draft && subscription.plan_pay_in_advance === 1) {
-    throw new Error("unsupported_pay_in_advance_termination_grace_period");
-  }
   const terminationId = await deterministicUuid(
     "subscription-termination",
     `${subscription.id}:v${expectedVersion + 1}:${subscription.current_period_start}`,
@@ -59,7 +56,7 @@ export async function terminateSubscriptionWithInvoice(
     invoiceId,
     terminationId,
     terminatedAt,
-    unusedCredit?.creditNoteId
+    unusedCredit?.creditNoteId && unusedCredit.allocationState === "finalized"
       ? {
           creditNoteId: unusedCredit.creditNoteId,
           amountMinor: unusedCredit.creditAmountMinor,

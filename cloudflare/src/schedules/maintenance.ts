@@ -196,9 +196,13 @@ export async function finalizeDueInvoices(
 ): Promise<number> {
   const cutoffDate = cutoff.slice(0, 10);
   const rows = await env.BILLING_DB.prepare(
-    `SELECT id FROM invoices WHERE status = 'draft'
+    `SELECT i.id FROM invoices i WHERE i.status = 'draft'
        AND COALESCE(expected_finalization_date, issuing_date) <= ?
-     ORDER BY COALESCE(expected_finalization_date, issuing_date), id LIMIT 100`,
+     ORDER BY COALESCE(expected_finalization_date, issuing_date),
+              CASE (SELECT context_type FROM subscription_invoice_contexts sic
+                    WHERE sic.invoice_id = i.id)
+                WHEN 'initial' THEN 0 WHEN 'termination' THEN 2 ELSE 1 END,
+              i.id LIMIT 100`,
   )
     .bind(cutoffDate)
     .all<{ id: string }>();
