@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `07c31a20-04ea-46ea-bb2e-e3662f032ff7`
+- Latest verified version: `4bc789fe-9d60-4469-9187-56090ddab77e`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -33,7 +33,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `*/5 * * * *`                                                      | Worker scheduled handler  | Deterministic legacy-schedule dispatch                             |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
-Applied D1 migrations: `0001_foundation.sql` through `0041_event_targeted_wallets.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0042_fixed_charge_lifecycle.sql`.
 
 ## Verified behavior
 
@@ -352,6 +352,21 @@ Applied D1 migrations: `0001_foundation.sql` through `0041_event_targeted_wallet
   charges, usage events, wallets, wallet targets, wallet transactions, and outbox events plus 143
   schedule audits. All three external-action flags remain disabled, with no route, secret,
   provider action, customer data, or billing data added.
+- The fixed-charge lifecycle deployment applied only `0042_fixed_charge_lifecycle.sql`; remote
+  schema verification found 42 migrations, zero foreign-key violations, the checked `version` and
+  `active` columns, and the active plan index. Standalone supported fixed charges now create,
+  replay, update, and soft-delete with transactional versioned outbox events; attached plans retain
+  the Lago-safe mutable subset, affected drafts invalidate, finalized lines remain immutable, and
+  inactive rows no longer block add-on termination or enter future rating. The retained hard code
+  uniqueness constraint returns an explicit guard for deleted-code reuse. Isolated Worker version
+  `4bc789fe-9d60-4469-9187-56090ddab77e` retained only the existing workers.dev URL, `*/5` Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow bindings. The deployed bundle was
+  780.89 KiB (136.02 KiB gzip) with a 5 ms startup. Health/readiness returned `200`/`200`, and
+  unauthenticated fixed-charge access returned `401`. Aggregate-only verification found zero
+  organizations, customers, plans, subscriptions, invoices, usage charges, fixed charges, usage
+  events, wallets, wallet targets, wallet transactions, and outbox events plus 146 schedule audits.
+  All three external-action flags remain disabled, with no route, secret, provider action, customer
+  data, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

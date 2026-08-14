@@ -146,6 +146,10 @@ this document does not silently redefine that behavior.
   deletes share the optimistic version/outbox batch; deletion sets `active = 0`, the dependency
   trigger invalidates affected drafts, and finalized invoice lines never re-read mutable charge
   pricing.
+- Supported fixed charges use the same active/version/outbox and draft/finalized invariants, and
+  inactive rows are excluded from add-on usage checks and future invoice calculation. The original
+  hard `(plan_id, code)` uniqueness constraint remains authoritative, so soft-deleted fixed-charge
+  codes return `fixed_charge_code_unavailable` instead of being silently reused.
 - Any R2 operation that cannot share a D1 transaction uses a durable intent row. For deletion, write
   the cleanup task transactionally before deleting the object, then retry until both are absent.
 

@@ -1620,3 +1620,28 @@ resource and mutation described.
   verification remained empty apart from 143 schedule audits. All three external-action flags
   remain `0`; no production route, domain, secret, provider action, customer data, or billing row
   was added.
+- 2026-08-15: Ported the provider-free standalone fixed-charge lifecycle for supported
+  pay-in-arrears, non-prorated charges. Migration `0042_fixed_charge_lifecycle.sql` adds checked
+  optimistic `version` and `active` state plus the active plan index. Create replay, partial update,
+  and soft deletion emit transactional versioned outbox events; attached plans retain only the
+  Lago-safe mutable display/units/properties subset. All catalog, invoice-calculation, add-on
+  currency, and add-on termination readers exclude inactive rows. Existing mutation triggers flag
+  affected drafts for refresh, while finalized invoice lines retain their persisted amounts and
+  source IDs. The table's original hard `(plan_id, code)` uniqueness remains authoritative, so
+  deleted-code reuse returns the explicit `fixed_charge_code_unavailable` guard rather than a
+  database error. Evidence covers create/update replay, attached restrictions, draft invalidation,
+  recurring billing, soft deletion, immutable finalized lines, add-on release, unsafe modes, and
+  guarded code reuse. All 156 tests across 31 files pass in bounded Workers-runtime batches. All 42
+  migrations replay from empty local D1 with no foreign-key violations. Formatting, strict lint,
+  generated inventory/types, TypeScript, and a 780.70 KiB (135.97 KiB gzip) dry-run bundle are
+  green. Feature checkpoint: `c5fc0eb`.
+- 2026-08-15: Remote preflight on the explicit SERP account showed only
+  `0042_fixed_charge_lifecycle.sql` pending and zero organizations, customers, plans,
+  subscriptions, invoices, usage charges, fixed charges, usage events, wallets, targets,
+  transactions, and outbox rows. Applied only that migration, then verified 42 migrations, zero
+  foreign-key violations, both checked columns, and the active plan index. Deployed isolated Worker
+  version `4bc789fe-9d60-4469-9187-56090ddab77e` with a 5 ms startup; health/readiness returned
+  `200`/`200`, and unauthenticated fixed-charge access returned `401`. Post-deploy aggregate-only
+  verification remained empty apart from 146 schedule audits. All three external-action flags
+  remain `0`; no production route, domain, secret, provider action, customer data, or billing row
+  was added.
