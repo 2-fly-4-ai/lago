@@ -290,6 +290,7 @@ export async function handleMeteredUsageRequest(
       decodeURIComponent(chargeFilterMatch[1]),
       decodeURIComponent(chargeFilterMatch[2]),
       decodeURIComponent(chargeFilterMatch[3]),
+      request,
       env,
       auth,
       requestId,
@@ -1170,7 +1171,7 @@ async function createChargeFilter(
     chargeCode,
   );
   const input = objectAt(await parseJsonObject(request), "filter");
-  rejectChargeFilterCascade(input);
+  const cascade = cascadeRequested(input);
   const filters = catalogChargeFilters(charge);
   const created = (
     await normalizeChargeFilters(
@@ -1184,7 +1185,20 @@ async function createChargeFilter(
   if (filters.some((filter) => stableJson(filter.values) === stableJson(created.values))) {
     throw new ApiError(422, "value_already_exist", "Charge filter values already exist");
   }
-  await persistChargeFilters(charge, [...filters, created], planCode, env, auth, requestId);
+  await persistChargeFilters(
+    charge,
+    [...filters, created],
+    planCode,
+    env,
+    auth,
+    requestId,
+    cascade
+      ? await prepareFilterCascade(env.BILLING_DB, charge, {
+          kind: "create",
+          filter: created,
+        })
+      : emptyFilterCascade(),
+  );
   return json({ filter: serializeChargeFilter(created, charge.code) }, { requestId });
 }
 
@@ -1206,7 +1220,7 @@ async function updateChargeFilter(
   const filters = catalogChargeFilters(charge);
   const current = requireChargeFilter(charge, filterId);
   const input = objectAt(await parseJsonObject(request), "filter");
-  rejectChargeFilterCascade(input);
+  const cascade = cascadeRequested(input);
   const normalized = (
     await normalizeChargeFilters(
       [
@@ -1226,8 +1240,22 @@ async function updateChargeFilter(
   )[0]!;
   const updated = { ...normalized, lagoId: current.lagoId };
   const next = filters.map((filter) => (filter.lagoId === filterId ? updated : filter));
-  if (stableJson(filters) !== stableJson(next)) {
-    await persistChargeFilters(charge, next, planCode, env, auth, requestId);
+  if (stableJson(filters) !== stableJson(next) || cascade) {
+    await persistChargeFilters(
+      charge,
+      next,
+      planCode,
+      env,
+      auth,
+      requestId,
+      cascade
+        ? await prepareFilterCascade(env.BILLING_DB, charge, {
+            kind: "update",
+            oldFilter: current,
+            newFilter: updated,
+          })
+        : emptyFilterCascade(),
+    );
   }
   return json({ filter: serializeChargeFilter(updated, charge.code) }, { requestId });
 }
@@ -1236,6 +1264,7 @@ async function deleteChargeFilter(
   planCode: string,
   chargeCode: string,
   filterId: string,
+  request: Request,
   env: Env,
   auth: AuthContext,
   requestId: string,
@@ -1248,6 +1277,7 @@ async function deleteChargeFilter(
   );
   const filters = catalogChargeFilters(charge);
   const deleted = requireChargeFilter(charge, filterId);
+  const cascade = await deleteCascadeRequested(request);
   await persistChargeFilters(
     charge,
     filters.filter((filter) => filter.lagoId !== filterId),
@@ -1255,6 +1285,12 @@ async function deleteChargeFilter(
     env,
     auth,
     requestId,
+    cascade
+      ? await prepareFilterCascade(env.BILLING_DB, charge, {
+          kind: "delete",
+          filter: deleted,
+        })
+      : emptyFilterCascade(),
   );
   return json({ filter: serializeChargeFilter(deleted, charge.code) }, { requestId });
 }
@@ -1308,6 +1344,7 @@ async function persistChargeFilters(
   env: Env,
   auth: AuthContext,
   requestId: string,
+  cascade: PreparedFilterCascade = emptyFilterCascade(),
 ): Promise<void> {
   const now = new Date().toISOString();
   const event = catalogEvent(
@@ -1320,11 +1357,95 @@ async function persistChargeFilters(
     now,
     { code: charge.code, planCode },
   );
+  const cascadeJson = stableJson(cascade.updates);
+  const cascadeGuardJson = stableJson(cascade.guards);
+  const cascadeCount = cascade.updates.length;
+  const cascadeGuardCount = cascade.guards.length;
+  const cascadeEnabled = cascade.enabled ? 1 : 0;
+  const childEvents = cascade.updates.map((cascade) =>
+    catalogEvent(
+      "charge.updated",
+      "charge",
+      cascade.id,
+      cascade.version + 1,
+      auth.organizationId,
+      requestId,
+      now,
+      { code: cascade.code, planCode, cascadedFromChargeId: charge.id },
+    ),
+  );
   const results = await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
       `UPDATE charges SET filters_json = ?, version = version + 1, updated_at = ?
-       WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?`,
-    ).bind(stableJson(filters), now, charge.id, auth.organizationId, charge.version),
+       WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?
+         AND (
+           ? = 0 OR (
+             ? = (
+               SELECT COUNT(*) FROM json_each(?) expected
+               JOIN charges child ON child.id = json_extract(expected.value, '$.id')
+               WHERE child.organization_id = ? AND child.active = 1
+                 AND child.parent_id = ?
+                 AND child.version = json_extract(expected.value, '$.version')
+             )
+             AND ? = (
+               SELECT COUNT(*) FROM charges child
+               WHERE child.organization_id = ? AND child.active = 1 AND child.parent_id = ?
+                 AND EXISTS (
+                   SELECT 1 FROM subscriptions subscription
+                   WHERE subscription.plan_id = child.plan_id
+                     AND subscription.status IN ('active', 'pending')
+                 )
+             )
+           )
+         )`,
+    ).bind(
+      stableJson(filters),
+      now,
+      charge.id,
+      auth.organizationId,
+      charge.version,
+      cascadeEnabled,
+      cascadeGuardCount,
+      cascadeGuardJson,
+      auth.organizationId,
+      charge.id,
+      cascadeGuardCount,
+      auth.organizationId,
+      charge.id,
+    ),
+    env.BILLING_DB.prepare(
+      `UPDATE charges AS child
+       SET filters_json = (
+             SELECT json_extract(update_row.value, '$.filtersJson')
+             FROM json_each(?) update_row
+             WHERE json_extract(update_row.value, '$.id') = child.id
+           ),
+           version = version + 1,
+           updated_at = ?
+       WHERE child.id IN (SELECT json_extract(value, '$.id') FROM json_each(?))
+         AND child.organization_id = ? AND child.active = 1 AND child.parent_id = ?
+         AND child.version = (
+           SELECT json_extract(update_row.value, '$.version')
+           FROM json_each(?) update_row
+           WHERE json_extract(update_row.value, '$.id') = child.id
+         )
+         AND EXISTS (
+           SELECT 1 FROM charges parent
+           WHERE parent.id = ? AND parent.organization_id = ? AND parent.active = 1
+             AND parent.version = ? AND parent.updated_at = ?
+         )`,
+    ).bind(
+      cascadeJson,
+      now,
+      cascadeJson,
+      auth.organizationId,
+      charge.id,
+      cascadeJson,
+      charge.id,
+      auth.organizationId,
+      charge.version + 1,
+      now,
+    ),
     conditionalChargeOutboxStatement(
       env.BILLING_DB,
       auth.organizationId,
@@ -1334,21 +1455,163 @@ async function persistChargeFilters(
       now,
       1,
     ),
+    bulkCascadeOutboxStatement(
+      env.BILLING_DB,
+      auth.organizationId,
+      childEvents,
+      cascade.updates,
+      now,
+    ),
   ]);
-  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
+  if (
+    results[0]?.meta.changes !== 1 ||
+    results[1]?.meta.changes !== cascadeCount ||
+    results[2]?.meta.changes !== 1 ||
+    results[3]?.meta.changes !== cascadeCount
+  ) {
     throw new ApiError(409, "charge_version_conflict", "Charge changed concurrently");
   }
   await env.DOMAIN_EVENTS.send(event);
+  for (const childEvent of childEvents) await env.DOMAIN_EVENTS.send(childEvent);
 }
 
-function rejectChargeFilterCascade(input: Record<string, unknown>): void {
-  if (input.cascade_updates === true) {
+type FilterCascadeAction =
+  | { kind: "create"; filter: ChargeFilter }
+  | { kind: "update"; oldFilter: ChargeFilter; newFilter: ChargeFilter }
+  | { kind: "delete"; filter: ChargeFilter };
+
+type PreparedFilterCascadeUpdate = {
+  id: string;
+  code: string;
+  version: number;
+  filtersJson: string;
+};
+
+type PreparedFilterCascade = {
+  enabled: boolean;
+  guards: Array<{ id: string; version: number }>;
+  updates: PreparedFilterCascadeUpdate[];
+};
+
+const MAX_FILTER_CASCADE_CHARGES = 100;
+
+async function prepareFilterCascade(
+  database: D1Database,
+  parent: CatalogChargeRow,
+  action: FilterCascadeAction,
+): Promise<PreparedFilterCascade> {
+  const result = await database
+    .prepare(
+      `${chargeSelect()} WHERE ch.parent_id = ? AND ch.active = 1
+       AND EXISTS (
+         SELECT 1 FROM subscriptions subscription
+         WHERE subscription.plan_id = ch.plan_id
+           AND subscription.status IN ('active', 'pending')
+       )
+       ORDER BY ch.created_at, ch.id LIMIT ?`,
+    )
+    .bind(parent.id, MAX_FILTER_CASCADE_CHARGES + 1)
+    .all<CatalogChargeRow>();
+  if (result.results.length > MAX_FILTER_CASCADE_CHARGES) {
     throw new ApiError(
       422,
-      "unsupported_charge_feature",
-      "Charge filter cascade updates are not implemented",
+      "charge_filter_cascade_too_large",
+      `Charge filter cascades support at most ${MAX_FILTER_CASCADE_CHARGES} active child charges`,
     );
   }
+  const guards = result.results.map(({ id, version }) => ({ id, version }));
+  const updates: PreparedFilterCascadeUpdate[] = [];
+  for (const child of result.results) {
+    const filters = catalogChargeFilters(child);
+    const values = action.kind === "update" ? action.oldFilter.values : action.filter.values;
+    const index = filters.findIndex((filter) => stableJson(filter.values) === stableJson(values));
+    let next = filters;
+    if (action.kind === "create") {
+      if (index >= 0) continue;
+      next = [
+        ...filters,
+        {
+          ...action.filter,
+          lagoId: await deterministicUuid(
+            "charge-filter-cascade",
+            `${child.id}:${action.filter.lagoId}`,
+          ),
+        },
+      ];
+    } else if (action.kind === "delete") {
+      if (index < 0) continue;
+      next = filters.filter((_, filterIndex) => filterIndex !== index);
+    } else {
+      if (index < 0) continue;
+      const childFilter = filters[index]!;
+      if (filterPropertiesCustomized(action.oldFilter.properties, childFilter.properties)) {
+        continue;
+      }
+      next = filters.map((filter, filterIndex) =>
+        filterIndex === index
+          ? {
+              ...filter,
+              invoiceDisplayName: action.newFilter.invoiceDisplayName,
+              properties: action.newFilter.properties,
+            }
+          : filter,
+      );
+    }
+    if (stableJson(filters) !== stableJson(next)) {
+      updates.push({
+        id: child.id,
+        code: child.code,
+        version: child.version,
+        filtersJson: stableJson(next),
+      });
+    }
+  }
+  return { enabled: true, guards, updates };
+}
+
+function emptyFilterCascade(): PreparedFilterCascade {
+  return { enabled: false, guards: [], updates: [] };
+}
+
+function filterPropertiesCustomized(
+  oldProperties: Record<string, unknown>,
+  childProperties: Record<string, unknown>,
+): boolean {
+  return (
+    stableJson(normalizeNumericProperties(oldProperties)) !==
+    stableJson(normalizeNumericProperties(childProperties))
+  );
+}
+
+function normalizeNumericProperties(properties: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(properties).map(([key, value]) => [
+      key,
+      typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value) ? Number(value) : value,
+    ]),
+  );
+}
+
+function cascadeRequested(input: Record<string, unknown>): boolean {
+  const value = input.cascade_updates;
+  return value === true || value === 1 || value === "1" || value === "true" || value === "on";
+}
+
+async function deleteCascadeRequested(request: Request): Promise<boolean> {
+  const text = await request.text();
+  if (!text.trim()) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new ApiError(400, "invalid_json", "Request body must be valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new ApiError(422, "validation_error", "Request body must be an object");
+  }
+  const filter = (parsed as Record<string, unknown>).filter;
+  if (!filter || typeof filter !== "object" || Array.isArray(filter)) return false;
+  return cascadeRequested(filter as Record<string, unknown>);
 }
 
 function findPlanId(database: D1Database, organizationId: string, code: string) {
@@ -3000,6 +3263,50 @@ function conditionalChargeOutboxStatement(
       expectedVersion,
       expectedUpdatedAt,
     );
+}
+
+function bulkCascadeOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  events: DomainEvent[],
+  cascades: PreparedFilterCascadeUpdate[],
+  updatedAt: string,
+): D1PreparedStatement {
+  const rows = events.map((event, index) => ({
+    eventId: event.id,
+    eventType: event.type,
+    eventVersion: event.version,
+    aggregateType: event.aggregateType,
+    aggregateId: event.aggregateId,
+    aggregateVersion: event.aggregateVersion,
+    causationId: event.causationId,
+    correlationId: event.correlationId,
+    payloadJson: stableJson(event.payload),
+    occurredAt: event.occurredAt,
+    expectedVersion: cascades[index]!.version + 1,
+  }));
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       SELECT json_extract(row.value, '$.eventId'), ?,
+              json_extract(row.value, '$.eventType'),
+              json_extract(row.value, '$.eventVersion'),
+              json_extract(row.value, '$.aggregateType'),
+              json_extract(row.value, '$.aggregateId'),
+              json_extract(row.value, '$.aggregateVersion'),
+              json_extract(row.value, '$.causationId'),
+              json_extract(row.value, '$.correlationId'),
+              json_extract(row.value, '$.payloadJson'),
+              json_extract(row.value, '$.occurredAt'), NULL
+       FROM json_each(?) row
+       JOIN charges child ON child.id = json_extract(row.value, '$.aggregateId')
+       WHERE child.organization_id = ? AND child.active = 1
+         AND child.version = json_extract(row.value, '$.expectedVersion')
+         AND child.updated_at = ?`,
+    )
+    .bind(organizationId, stableJson(rows), organizationId, updatedAt);
 }
 
 function optionalNonNegativeInteger(value: unknown, fallback: number): number {

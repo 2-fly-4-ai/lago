@@ -804,15 +804,8 @@ describe("Lago-compatible metered usage", () => {
         },
       },
     });
-    expect(cascade.status).toBe(422);
-    await expect(cascade.json()).resolves.toMatchObject({ code: "unsupported_charge_feature" });
-
-    const recreated = await api(collectionPath, {
-      method: "POST",
-      body: {
-        filter: { properties: { amount: "3" }, values: { region: ["eu"] } },
-      },
-    }).then((response) => response.json<{ filter: { lago_id: string } }>());
+    expect(cascade.status).toBe(200);
+    const recreated = await cascade.json<{ filter: { lago_id: string } }>();
     expect(recreated.filter.lago_id).not.toBe(created.filter.lago_id);
 
     const events = await env.BILLING_DB.prepare(

@@ -62,7 +62,7 @@ beforeEach(async () => {
        (id, organization_id, code, name, aggregation_type, field_name, recurring,
         properties_json, filters_json, version, active, created_at, updated_at)
        VALUES ('metric-sub-filter', 'org-sub-filter', 'requests', 'Requests', 'count_agg',
-               NULL, 0, '{}', '[{"key":"region","values":["eu","us"]}]', 1, 1, ?, ?)`,
+               NULL, 0, '{}', '[{"key":"region","values":["asia","eu","us"]}]', 1, 1, ?, ?)`,
     ).bind(now, now),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO billable_metrics
@@ -281,7 +281,108 @@ describe("subscription charge-filter overrides", () => {
     ).first();
     expect(counts).toEqual({ plans: 1, charges: 2 });
   });
+
+  it("cascades catalog filter changes while preserving subscriber-customized pricing", async () => {
+    const override = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters",
+      "POST",
+      { filter: { properties: { amount: "7" }, values: { region: ["us"] } } },
+    );
+    expect(override.status).toBe(200);
+
+    const parentOnly = await api(
+      `/api/v1/plans/filter-plan/charges/requests-charge/filters/${originalFilter.lagoId}`,
+      "PUT",
+      { filter: { invoice_display_name: "Parent no cascade" } },
+    );
+    expect(parentOnly.status).toBe(200);
+    let childFilters = await subscriptionFilters();
+    expect(childFilters.find((filter) => filter.values.region?.[0] === "eu")).toMatchObject({
+      invoice_display_name: "Parent Europe",
+      properties: { amount: "2" },
+    });
+
+    const firstCascade = await api(
+      `/api/v1/plans/filter-plan/charges/requests-charge/filters/${originalFilter.lagoId}`,
+      "PUT",
+      { filter: { properties: { amount: "5" }, cascade_updates: true } },
+    );
+    expect(firstCascade.status).toBe(200);
+    childFilters = await subscriptionFilters();
+    const childEurope = childFilters.find((filter) => filter.values.region?.[0] === "eu");
+    expect(childEurope).toMatchObject({
+      invoice_display_name: "Parent no cascade",
+      properties: { amount: "5" },
+    });
+
+    const customized = await api(
+      `/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters/${childEurope?.lago_id}`,
+      "PUT",
+      { filter: { properties: { amount: "99" } } },
+    );
+    expect(customized.status).toBe(200);
+    const secondCascade = await api(
+      `/api/v1/plans/filter-plan/charges/requests-charge/filters/${originalFilter.lagoId}`,
+      "PUT",
+      { filter: { properties: { amount: "6" }, cascade_updates: true } },
+    );
+    expect(secondCascade.status).toBe(200);
+    childFilters = await subscriptionFilters();
+    expect(childFilters.find((filter) => filter.lago_id === childEurope?.lago_id)).toMatchObject({
+      properties: { amount: "99" },
+    });
+
+    const created = await api("/api/v1/plans/filter-plan/charges/requests-charge/filters", "POST", {
+      filter: {
+        invoice_display_name: "Asia",
+        properties: { amount: "8" },
+        values: { region: ["asia"] },
+        cascade_updates: true,
+      },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ filter: { lago_id: string } }>();
+    childFilters = await subscriptionFilters();
+    const childAsia = childFilters.find((filter) => filter.values.region?.[0] === "asia");
+    expect(childAsia).toMatchObject({
+      invoice_display_name: "Asia",
+      properties: { amount: "8" },
+    });
+    expect(childAsia?.lago_id).not.toBe(createdBody.filter.lago_id);
+
+    const deleted = await api(
+      `/api/v1/plans/filter-plan/charges/requests-charge/filters/${createdBody.filter.lago_id}`,
+      "DELETE",
+      { filter: { cascade_updates: true } },
+    );
+    expect(deleted.status).toBe(200);
+    childFilters = await subscriptionFilters();
+    expect(childFilters.some((filter) => filter.values.region?.[0] === "asia")).toBe(false);
+  });
 });
+
+async function subscriptionFilters(): Promise<
+  Array<{
+    lago_id: string;
+    invoice_display_name: string | null;
+    properties: Record<string, unknown>;
+    values: Record<string, string[]>;
+  }>
+> {
+  const response = await api(
+    "/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters",
+  );
+  expect(response.status).toBe(200);
+  const body = await response.json<{
+    filters: Array<{
+      lago_id: string;
+      invoice_display_name: string | null;
+      properties: Record<string, unknown>;
+      values: Record<string, string[]>;
+    }>;
+  }>();
+  return body.filters;
+}
 
 function api(path: string, method = "GET", body?: Record<string, unknown>): Promise<Response> {
   return SELF.fetch(`https://lago.test${path}`, {
