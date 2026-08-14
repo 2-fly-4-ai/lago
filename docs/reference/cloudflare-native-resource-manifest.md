@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `58bf3a55-d194-4762-a390-a6794c360194`
+- Latest verified version: `b201ce1f-43dd-4097-bfbf-491e448b8fb3`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -35,7 +35,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0051_pay_in_advance_fixed_charges.sql`.
+`0052_pay_in_advance_usage_charges.sql`.
 
 ## Verified behavior
 
@@ -447,6 +447,18 @@ Applied D1 migrations: `0001_foundation.sql` through
   fixed-charge unit events, usage events, wallets, outbox rows, and plan-deletion tasks plus 246
   schedule audits. All three external-action flags remain `0`; no resource provisioning,
   production route/domain, secret, provider action, customer data, or billing row changed.
+- The pay-in-advance usage deployment applied only
+  `0052_pay_in_advance_usage_charges.sql`. Remote schema verification found the 15-column strict
+  event/charge billing ledger, four indexes, 52 total migrations, zero foreign-key violations, and
+  no remaining migration. Worker version `b201ce1f-43dd-4097-bfbf-491e448b8fb3` retained only the
+  existing workers.dev URL, `*/5` Cron, D1, R2, Queue/DLQ, Durable Object, Browser, and four
+  Workflow bindings. The deployed bundle was 1036.03 KiB (179.42 KiB gzip) with a 6 ms startup.
+  Health/readiness returned `200`/`200`, and unauthenticated charge access returned `401`.
+  Aggregate-only verification found zero organizations, customers, plans, subscriptions, invoices,
+  billable metrics, usage charges, fixed charges, usage events, advance-usage billings, wallets,
+  outbox rows, and plan-deletion tasks plus 254 schedule audits. All three external-action flags
+  remain `0`; no resource provisioning, production route/domain, secret, provider action, customer
+  data, or billing row changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

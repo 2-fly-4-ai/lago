@@ -298,9 +298,11 @@ Acceptance:
       remain explicit gaps. Standalone plan charge
       create/list/show/update/delete supports the exact in-arrears rating models, nested
       filter-specific price overrides, and standalone filter list/show/create/update/delete.
-      Pay-in-advance, proration, targeted taxes, pricing units, and charge-level cascades fail
-      explicitly until their billing and cleanup workflows are ported. Filter-level cascades across
-      subscription override graphs are ported. Weighted filters reconstruct independent
+      Invoiceable, non-prorated pay-in-advance usage is ported for count, sum, and unique-count
+      metrics using standard, graduated, package, percentage, and graduated-percentage pricing.
+      Non-invoiceable or prorated advance usage, volume/custom aggregation, positive minimums,
+      grouped pricing, targeted taxes, and pricing units fail explicitly. Charge- and filter-level
+      cascades across subscription override graphs are ported. Weighted filters reconstruct independent
       recurring baselines per filter/base partition across periods and subscription generations.
       Filter/base partitions can also combine with target-wallet grouping as exact two-dimensional
       current-usage and invoice cells with deterministic identities and wallet allocations.
@@ -344,7 +346,9 @@ Acceptance:
       charges. Fixed fees enter the exact recurring invoice pipeline before minimum commitments,
       coupons, taxes, credit notes, and wallets. In-arrears standard, volume, and graduated charges
       support event-weighted customer-local calendar-day proration for renewal, current usage, and
-      termination. Pay-in-advance charges and targeted taxes remain pending and fail explicitly.
+      termination. Standard pay-in-advance fixed charges support optional local-day proration;
+      graduated advance charges are non-prorated, while volume advance charges and targeted taxes
+      remain explicit unsupported boundaries.
       Subscription
       fixed-charge list/show/update is ported; override mutations clone the full active pricing
       graph and persist effective-dated units so the default applies at the next boundary while an
@@ -2205,3 +2209,29 @@ resource and mutation described.
   aggregate-only verification stayed empty apart from 246 schedule audits. All three external-
   action flags remain `0`; no resource provisioning, production route/domain, secret, provider
   action, customer data, or billing row changed.
+- 2026-08-15: Ported Lago's event-triggered, invoiceable pay-in-advance usage contract for count,
+  sum, and unique-count metrics with standard, graduated, package, percentage, and graduated-
+  percentage rating. Each usage event creates one marginal finalized invoice per matching charge;
+  filter-specific pricing, target-wallet grouping, coupons, manual taxes, credit-note balances,
+  wallets, invoice ownership, custom-section triggers, and outbox events use the existing invoice
+  pipeline. Migration `0052_pay_in_advance_usage_charges.sql` adds an atomic event/charge billing
+  ledger so Queue delivery is replay-safe, while the five-minute reconciliation owner repairs
+  persisted events that missed Queue processing. Catalog validation keeps non-invoiceable or
+  prorated advance usage, volume/custom aggregation, positive minimums, and grouped pricing as
+  explicit unsupported boundaries. All 52 migrations replayed from zero in an isolated local D1
+  state with 15 ledger columns, four indexes, and zero foreign-key violations. Strict format/lint,
+  inventory, generated types, TypeScript, and Wrangler dry run pass. The parallel suite reached
+  209/210 before the known `draft-termination-credit` 10-second load timeout; that file passed 2/2
+  alone, and the serial suite passes all 210 tests across 38 files in 124.96 seconds. The dry-run
+  bundle is 1036.03 KiB (179.42 KiB gzip). Feature checkpoint: `a6fb8a8`.
+- 2026-08-15: Remote preflight found only `0052_pay_in_advance_usage_charges.sql` pending and zero
+  organizations, customers, plans, subscriptions, invoices, billable metrics, charges, fixed
+  charges, usage events, wallets, outbox rows, and plan-deletion tasks, with zero foreign-key
+  violations. Applied only that migration to the isolated non-production D1, then verified the
+  15-column strict event/charge ledger, four indexes, 52 total migrations, zero foreign-key
+  violations, and no remaining migration. Deployed only the isolated Worker as version
+  `b201ce1f-43dd-4097-bfbf-491e448b8fb3` with a 6 ms startup. Health/readiness returned
+  `200`/`200`, unauthenticated charge access returned `401`, and post-deploy aggregate-only
+  verification stayed empty apart from 254 schedule audits. All three external-action flags remain
+  `0`; no resource provisioning, production route/domain, secret, provider action, customer data,
+  or billing row changed.
