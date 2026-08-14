@@ -1361,11 +1361,11 @@ function assertChargeFilterCompatibility(
     );
   }
   if (filters.length === 0) return;
-  if (aggregationType === "weighted_sum_agg" || acceptsTargetWallet === 1) {
+  if (aggregationType === "weighted_sum_agg") {
     throw new ApiError(
       422,
       "unsupported_charge_feature",
-      "Charge filters cannot yet be combined with weighted usage or target wallets",
+      "Charge filters cannot yet be combined with weighted usage",
     );
   }
 }

@@ -510,18 +510,22 @@ export async function calculateSubscriptionInvoice(
     const groups =
       filters.length > 0
         ? [
-            ...filtered.filters.map(({ filter, events: filterEvents }) => ({
-              events: filterEvents,
-              filter,
-              properties: filter.properties,
-              targetWalletCode: null,
-            })),
-            {
-              events: filtered.base,
-              filter: null,
-              properties: parseObject(charge.properties_json),
-              targetWalletCode: null,
-            },
+            ...filtered.filters.flatMap(({ filter, events: filterEvents }) =>
+              targetWalletEventGroups(filterEvents, charge.accepts_target_wallet === 1).map(
+                (group) => ({
+                  ...group,
+                  filter,
+                  properties: filter.properties,
+                }),
+              ),
+            ),
+            ...targetWalletEventGroups(filtered.base, charge.accepts_target_wallet === 1).map(
+              (group) => ({
+                ...group,
+                filter: null,
+                properties: parseObject(charge.properties_json),
+              }),
+            ),
           ]
         : targetWalletEventGroups(events, charge.accepts_target_wallet === 1).map((group) => ({
             ...group,
@@ -564,7 +568,9 @@ export async function calculateSubscriptionInvoice(
         id: await deterministicUuid(
           "billing-cycle-line",
           filteredLine
-            ? `${cycleKey}:${charge.id}:filter:${group.filter.lagoId}`
+            ? targeted
+              ? `${cycleKey}:${charge.id}:filter:${group.filter.lagoId}:wallet:${groupKey}`
+              : `${cycleKey}:${charge.id}:filter:${group.filter.lagoId}`
             : targeted
               ? `${cycleKey}:${charge.id}:wallet:${groupKey}`
               : `${cycleKey}:${charge.id}`,
@@ -576,7 +582,12 @@ export async function calculateSubscriptionInvoice(
         rounded,
         sourceId: charge.id,
         persistenceSourceId: filteredLine
-          ? group.filter.lagoId
+          ? targeted
+            ? await deterministicUuid(
+                "charge-filter-wallet-group-source",
+                `${group.filter.lagoId}:${groupKey}`,
+              )
+            : group.filter.lagoId
           : targeted
             ? await deterministicUuid("charge-wallet-group-source", `${charge.id}:${groupKey}`)
             : charge.id,
@@ -1095,9 +1106,6 @@ function assertChargeFilterCompatibility(charge: ChargeRow, filters: ChargeFilte
   if (filters.length === 0) return;
   if (charge.aggregation_type === "weighted_sum_agg") {
     throw new Error("weighted_sum_charge_filters_unsupported");
-  }
-  if (charge.accepts_target_wallet === 1) {
-    throw new Error("target_wallet_charge_filters_unsupported");
   }
 }
 

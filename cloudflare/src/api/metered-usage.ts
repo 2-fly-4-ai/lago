@@ -2064,15 +2064,33 @@ async function currentUsage(
       );
       return { aggregation, amount, events: partitionEvents, units };
     };
-    const base = ratePartition(partitions.base, parseStoredObject(charge.properties_json));
+    const rateTargetGroups = (
+      partitionEvents: typeof events,
+      properties: Record<string, unknown>,
+    ) => {
+      const rated = targetWalletUsageEventGroups(
+        partitionEvents,
+        charge.accepts_target_wallet === 1,
+      ).map((groupEvents) => ratePartition(groupEvents, properties));
+      return {
+        amount: rated.reduce((sum, group) => sum.add(group.amount), Decimal.zero()),
+        events: partitionEvents,
+        totalAggregatedUnits: rated.reduce(
+          (sum, group) => sum.add(group.aggregation.totalAggregatedUnits),
+          Decimal.zero(),
+        ),
+        units: rated.reduce((sum, group) => sum.add(group.units), Decimal.zero()),
+      };
+    };
+    const base = rateTargetGroups(partitions.base, parseStoredObject(charge.properties_json));
     const ratedFilters = partitions.filters.map(({ filter, events: filterEvents }) => ({
       filter,
-      ...ratePartition(filterEvents, filter.properties),
+      ...rateTargetGroups(filterEvents, filter.properties),
     }));
     const units = ratedFilters.reduce((sum, filter) => sum.add(filter.units), base.units);
     const totalAggregatedUnits = ratedFilters.reduce(
-      (sum, filter) => sum.add(filter.aggregation.totalAggregatedUnits),
-      base.aggregation.totalAggregatedUnits,
+      (sum, filter) => sum.add(filter.totalAggregatedUnits),
+      base.totalAggregatedUnits,
     );
     const amount = ratedFilters.reduce((sum, filter) => sum.add(filter.amount), base.amount);
     total = total.add(amount);
@@ -2095,7 +2113,7 @@ async function currentUsage(
       },
       filters: ratedFilters.map((filter) => ({
         units: filter.units.toString(),
-        total_aggregated_units: filter.aggregation.totalAggregatedUnits.toString(),
+        total_aggregated_units: filter.totalAggregatedUnits.toString(),
         events_count: filter.events.length,
         amount_cents: jsonDecimal(filter.amount),
         pricing_unit_details: null,
@@ -2154,6 +2172,30 @@ async function usageEventsForPeriod(
     timestampMs: event.timestamp_ms,
     properties: parseStoredObject(event.properties_json),
   }));
+}
+
+function targetWalletUsageEventGroups<T extends { properties: Record<string, unknown> }>(
+  events: T[],
+  acceptsTargetWallet: boolean,
+): T[][] {
+  if (!acceptsTargetWallet) return [events];
+  const groups = new Map<string | null, T[]>();
+  if (events.length === 0) groups.set(null, []);
+  for (const event of events) {
+    const value = event.properties.target_wallet_code;
+    const code = typeof value === "string" && value.trim() ? value.trim() : null;
+    const grouped = groups.get(code) ?? [];
+    grouped.push(event);
+    groups.set(code, grouped);
+  }
+  return [...groups.entries()]
+    .sort(([left], [right]) => {
+      if (left === right) return 0;
+      if (left === null) return -1;
+      if (right === null) return 1;
+      return left.localeCompare(right);
+    })
+    .map(([, grouped]) => grouped);
 }
 
 async function recurringWeightedBaseline(
@@ -2723,13 +2765,6 @@ function assertChargeFilterCompatibility(
       422,
       "unsupported_charge_feature",
       "Weighted-sum charge filters require per-filter recurring baselines",
-    );
-  }
-  if (acceptsTargetWallet === 1) {
-    throw new ApiError(
-      422,
-      "unsupported_charge_feature",
-      "Charge filters cannot be combined with target-wallet grouping",
     );
   }
 }

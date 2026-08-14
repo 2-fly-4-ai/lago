@@ -188,6 +188,110 @@ describe("events targeting wallets", () => {
     });
   });
 
+  it("partitions filtered events by target wallet with distinct lines and exact allocations", async () => {
+    const filterPeriodEnd = "2026-10-01T00:00:00.000Z";
+    await env.BILLING_DB.prepare(
+      `UPDATE subscriptions SET current_period_end = ?
+       WHERE id = 'subscription-target-events'`,
+    )
+      .bind(filterPeriodEnd)
+      .run();
+    await env.BILLING_DB.prepare(
+      `UPDATE billable_metrics
+       SET filters_json = '[{"key":"region","values":["eu","us"]}]'
+       WHERE id = 'metric-target-events'`,
+    ).run();
+    const filterResponse = await api(
+      "/api/v1/plans/target-plan/charges/target-charge/filters",
+      "POST",
+      {
+        filter: {
+          invoice_display_name: "Europe",
+          properties: { amount: "20" },
+          values: { region: ["eu"] },
+        },
+      },
+    );
+    expect(filterResponse.status).toBe(200);
+    const filterId = (await filterResponse.json<{ filter: { lago_id: string } }>()).filter.lago_id;
+
+    for (const [id, value, region, target] of [
+      ["filter-target-eu-one", "2", "eu", "wallet_1"],
+      ["filter-target-eu-two", "3", "eu", "wallet_2"],
+      ["filter-target-base", "4", "us", "wallet_1"],
+    ] as const) {
+      const response = await api("/api/v1/events", "POST", {
+        event: {
+          transaction_id: id,
+          code: "target-units",
+          external_subscription_id: "subscription-target-events-external",
+          timestamp: Date.parse(now) / 1000,
+          properties: { region, target_wallet_code: target, value },
+        },
+      });
+      expect(response.status).toBe(200);
+    }
+
+    const usage = await api(
+      "/api/v1/customers/customer-target-events-external/current_usage?external_subscription_id=subscription-target-events-external",
+    ).then((response) =>
+      response.json<{
+        customer_usage: {
+          amount_cents: number;
+          charges_usage: Array<{ amount_cents: number; filters: Array<{ amount_cents: number }> }>;
+        };
+      }>(),
+    );
+    expect(usage.customer_usage).toMatchObject({
+      amount_cents: 140,
+      charges_usage: [{ amount_cents: 140, filters: [{ amount_cents: 100 }] }],
+    });
+
+    const closed = await closeBillingPeriod(
+      env,
+      "subscription-target-events",
+      filterPeriodEnd,
+      "filter-target-close",
+    );
+    expect(closed).toMatchObject({ lineCount: 4, totalDueMinor: 0 });
+    const lines = await env.BILLING_DB.prepare(
+      `SELECT amount_minor, source_id, metadata_json FROM invoice_lines
+       WHERE invoice_id = ? AND line_type = 'usage' ORDER BY amount_minor, source_id`,
+    )
+      .bind(closed.invoiceId)
+      .all<{ amount_minor: number; source_id: string; metadata_json: string }>();
+    expect(lines.results.map(({ amount_minor }) => amount_minor)).toEqual([40, 40, 60]);
+    expect(new Set(lines.results.map(({ source_id }) => source_id)).size).toBe(3);
+    expect(lines.results.map(({ metadata_json }) => JSON.parse(metadata_json))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          chargeFilterId: filterId,
+          targetWalletCode: "wallet_1",
+        }),
+        expect.objectContaining({
+          chargeFilterId: filterId,
+          targetWalletCode: "wallet_2",
+        }),
+        expect.objectContaining({
+          targetWalletCode: "wallet_1",
+        }),
+      ]),
+    );
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT wallet_id, amount_minor FROM wallet_transactions
+         WHERE invoice_id = ? ORDER BY wallet_id`,
+      )
+        .bind(closed.invoiceId)
+        .all(),
+    ).resolves.toMatchObject({
+      results: [
+        { amount_minor: 80, wallet_id: "wallet-target-one" },
+        { amount_minor: 60, wallet_id: "wallet-target-two" },
+      ],
+    });
+  });
+
   it("ignores target properties for an opt-out charge and validates malformed codes", async () => {
     await env.BILLING_DB.prepare(
       "UPDATE charges SET accepts_target_wallet = 0 WHERE id = 'charge-target-events'",
