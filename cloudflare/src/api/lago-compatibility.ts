@@ -27,6 +27,7 @@ import { handleTaxLedgerRequest } from "./tax-ledger";
 import { Decimal } from "../rating/decimal";
 import { handleWebhookEndpointRequest } from "./webhook-endpoints";
 import { handleAddOnLedgerRequest } from "./add-on-ledger";
+import { handlePaymentLedgerRequest } from "./payment-ledger";
 import {
   calculateManualTaxes,
   manualTaxStatements,
@@ -85,6 +86,7 @@ type InvoiceRow = {
   credit_notes_minor: number;
   prepaid_credit_minor: number;
   total_due_minor: number;
+  total_paid_minor: number;
   version: number;
   finalized_at: string | null;
   voided_at: string | null;
@@ -126,6 +128,9 @@ export async function handleLagoCompatibilityRequest(
 
   const webhookEndpointResponse = await handleWebhookEndpointRequest(request, env, auth, requestId);
   if (webhookEndpointResponse) return webhookEndpointResponse;
+
+  const paymentResponse = await handlePaymentLedgerRequest(request, env, auth, requestId);
+  if (paymentResponse) return paymentResponse;
 
   if (request.method === "POST" && url.pathname === "/api/v1/customers") {
     return upsertCustomer(request, null, env, auth, requestId);
@@ -854,7 +859,10 @@ async function listInvoices(
               c.payment_provider, c.payment_provider_code, i.number, i.status,
               i.payment_status, i.currency, i.subtotal_minor, i.tax_minor,
               i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
-              i.total_due_minor, i.version, i.finalized_at,
+              i.total_due_minor,
+              COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
+                        WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
+              i.version, i.finalized_at,
               i.voided_at, i.created_at, i.updated_at
        FROM invoices i JOIN customers c ON c.id = i.customer_id
        WHERE ${where}
@@ -1128,7 +1136,10 @@ async function findInvoice(
               c.email AS customer_email, c.payment_provider, c.payment_provider_code,
               i.number, i.status, i.payment_status, i.currency, i.subtotal_minor,
               i.tax_minor, i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
-              i.total_due_minor, i.version,
+              i.total_due_minor,
+              COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
+                        WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
+              i.version,
               i.finalized_at, i.voided_at, i.created_at, i.updated_at
        FROM invoices i JOIN customers c ON c.id = i.customer_id
        WHERE i.organization_id = ? AND i.id = ? LIMIT 1`,
@@ -1380,7 +1391,10 @@ async function generateInvoicePaymentUrl(
             c.payment_provider, c.payment_provider_code, i.number, i.status,
             i.payment_status, i.currency, i.subtotal_minor, i.tax_minor,
             i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
-            i.total_due_minor, i.version, i.finalized_at,
+            i.total_due_minor,
+            COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
+                      WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
+            i.version, i.finalized_at,
             i.voided_at, i.created_at, i.updated_at
      FROM invoices i JOIN customers c ON c.id = i.customer_id
      WHERE i.organization_id = ? AND i.id = ? LIMIT 1`,
@@ -1389,6 +1403,10 @@ async function generateInvoicePaymentUrl(
     .first<InvoiceRow>();
   if (!invoice) throw new ApiError(404, "invoice_not_found", "Invoice was not found");
   if (invoice.status !== "finalized" || invoice.payment_status === "succeeded") {
+    throw new ApiError(422, "invalid_invoice_status_or_payment_status", "Invoice is not payable");
+  }
+  const outstandingMinor = invoice.total_due_minor - invoice.total_paid_minor;
+  if (outstandingMinor <= 0) {
     throw new ApiError(422, "invalid_invoice_status_or_payment_status", "Invoice is not payable");
   }
   if (invoice.payment_provider !== "authorize_net") {
@@ -1417,7 +1435,7 @@ async function generateInvoicePaymentUrl(
     const reservationKey = `payment-url:${invoice.id}:v${invoice.version}`;
     const reservationHash = await sha256Hex(
       JSON.stringify({
-        amountMinor: invoice.total_due_minor,
+        amountMinor: outstandingMinor,
         currency: invoice.currency,
         invoiceId: invoice.id,
       }),
@@ -1462,7 +1480,7 @@ async function generateInvoicePaymentUrl(
         externalCustomerId: invoice.customer_external_id,
         customerEmail: invoice.customer_email,
         organizationId: auth.organizationId,
-        amountMinor: invoice.total_due_minor,
+        amountMinor: outstandingMinor,
         currency: invoice.currency,
       });
       const tokenSha256 = await sha256Hex(generated.token);
@@ -1628,8 +1646,8 @@ function serializeInvoice(invoice: InvoiceRow): Record<string, unknown> {
     sub_total_excluding_taxes_amount_cents: invoice.subtotal_minor,
     sub_total_including_taxes_amount_cents: invoice.subtotal_minor + invoice.tax_minor,
     total_amount_cents: invoice.total_due_minor,
-    total_due_amount_cents: invoice.total_due_minor,
-    total_paid_amount_cents: invoice.payment_status === "succeeded" ? invoice.total_due_minor : 0,
+    total_due_amount_cents: Math.max(invoice.total_due_minor - invoice.total_paid_minor, 0),
+    total_paid_amount_cents: invoice.total_paid_minor,
     version_number: invoice.version,
     created_at: invoice.created_at,
     updated_at: invoice.updated_at,

@@ -163,6 +163,42 @@ describe("Authorize.Net webhooks", () => {
       `SELECT COUNT(*) AS count FROM payment_attempts WHERE provider_transaction_id = 'transaction-reconcile'`,
     ).first<{ count: number }>();
     expect(attemptCount?.count).toBe(1);
+    const payments = await SELF.fetch("https://lago.test/api/v1/payments", {
+      headers: await authorization(),
+    });
+    expect(payments.status).toBe(200);
+    const paymentsBody = await payments.json<{
+      payments: Array<{ lago_id: string; provider_payment_id: string; payment_status: string }>;
+    }>();
+    expect(paymentsBody.payments).toEqual([
+      expect.objectContaining({
+        provider_payment_id: "transaction-reconcile",
+        payment_status: "succeeded",
+      }),
+    ]);
+    const shown = await SELF.fetch(
+      `https://lago.test/api/v1/payments/${paymentsBody.payments[0]?.lago_id}`,
+      { headers: await authorization() },
+    );
+    expect(shown.status).toBe(200);
+    await expect(shown.json()).resolves.toMatchObject({
+      payment: {
+        external_customer_id: "customer-webhook",
+        invoice_ids: ["invoice-webhook"],
+        payment_provider_type: "PaymentProviders::AuthorizeNetProvider",
+        type: "provider",
+      },
+    });
+    const eventTypes = await env.BILLING_DB.prepare(
+      `SELECT event_type FROM outbox_events
+       WHERE aggregate_id IN ('invoice-webhook', ?) ORDER BY event_type`,
+    )
+      .bind(paymentsBody.payments[0]?.lago_id)
+      .all<{ event_type: string }>();
+    expect(eventTypes.results).toEqual([
+      { event_type: "invoice.payment_status_updated" },
+      { event_type: "payment.succeeded" },
+    ]);
 
     const replayResult = await dispatchQueue(event);
     expect(replayResult.retryMessages).toEqual([]);
@@ -170,8 +206,71 @@ describe("Authorize.Net webhooks", () => {
       `SELECT payment_status, version FROM invoices WHERE id = 'invoice-webhook'`,
     ).first<{ payment_status: string; version: number }>();
     expect(replayInvoice).toEqual({ payment_status: "succeeded", version: 2 });
+
+    const regressionBody = JSON.stringify({
+      notificationId: "notification-reconcile-regression",
+      eventType: "net.authorize.payment.fraud.declined",
+      payload: { id: "transaction-reconcile", authAmount: 19.99 },
+    });
+    const regressionSignature = await signatureFor(hexToBytes(signatureKey), regressionBody);
+    const regressionReceipt = await SELF.fetch(
+      "https://lago.test/webhooks/authorize_net/org-webhook",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ANET-Signature": regressionSignature,
+        },
+        body: regressionBody,
+      },
+    );
+    expect(regressionReceipt.status).toBe(200);
+    const declinedFetch = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        transaction: {
+          transId: "transaction-reconcile",
+          transactionStatus: "declined",
+          authAmount: "19.99",
+          order: { invoiceNumber: "INV-WEBHOOK" },
+          userFields: {
+            userField: [{ name: "lago_invoice_id", value: "invoice-webhook" }],
+          },
+          responseReasonCode: "2",
+          responseReasonDescription: "Synthetic decline after settlement",
+        },
+        messages: { resultCode: "Ok" },
+      }),
+    );
+    await expect(
+      reconcileAuthorizeNetReceipt(env, "anet_notification-reconcile-regression", declinedFetch),
+    ).resolves.toBe("processed");
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT status, version FROM payment_attempts
+         WHERE provider_transaction_id = 'transaction-reconcile'`,
+      ).first(),
+    ).resolves.toEqual({ status: "succeeded", version: 1 });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT payment_status, version FROM invoices WHERE id = 'invoice-webhook'`,
+      ).first(),
+    ).resolves.toEqual({ payment_status: "succeeded", version: 2 });
   });
 });
+
+async function authorization(): Promise<Record<string, string>> {
+  const apiKey = "webhook-test-api-key";
+  const now = new Date().toISOString();
+  const { sha256Hex } = await import("../src/auth/api-key");
+  await env.BILLING_DB.prepare(
+    `INSERT OR IGNORE INTO api_keys
+     (id, organization_id, key_prefix, key_hash, created_at, revoked_at)
+     VALUES ('key-webhook', 'org-webhook', 'webhook-test', ?, ?, NULL)`,
+  )
+    .bind(await sha256Hex(apiKey), now)
+    .run();
+  return { Authorization: `Bearer ${apiKey}` };
+}
 
 async function dispatchQueue(event: Record<string, unknown>) {
   const batch = createMessageBatch("serp-dev-lago-domain-events", [
