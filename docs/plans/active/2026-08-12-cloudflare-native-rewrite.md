@@ -1996,3 +1996,20 @@ resource and mutation described.
   verification remained empty apart from 202 schedule audits. All three external-action flags
   remain `0`; no migration, resource provisioning, production route/domain, secret, provider
   action, customer data, or billing row changed.
+- 2026-08-15: Ported standalone usage-charge `cascade_updates` across subscription override graphs.
+  Create clones the complete charge and filters into every direct child plan with an active or
+  pending subscription. Update always propagates the code to model-compatible children, propagates
+  base properties only while they still match the parent's old model/properties, reconciles filters
+  by immutable values, and preserves subscriber-customized filter prices and child-only filters;
+  charge-level display names intentionally remain child-local. Delete retires the eligible child
+  charges with the parent. Each operation guards the complete eligible child ID/version set and
+  commits parent, children, and versioned outbox events in one transactional D1 batch, so a graph
+  race forces retry without partial propagation. The synchronous Worker contract is explicitly
+  bounded to 100 direct children and 512 KiB of prepared cascade JSON; larger legacy graphs fail
+  before mutation rather than exceeding Worker limits. Evidence covers inherited and customized
+  base pricing, inherited/customized/child-only filters, code and display-name behavior, full child
+  creation with independent IDs, and parent/child retirement. Strict format/lint, inventory, and
+  TypeScript checks pass. The fully parallel suite passed 189/190 before the known
+  draft-termination-credit case exceeded its 10-second harness limit; that file passed 2/2 alone,
+  and bounded groups passed all 190 tests as 45 + 69 + 69 + 7. The dry-run bundle is 930.13 KiB
+  (161.37 KiB gzip). No migration is required. Feature checkpoint: `21ba179`.
