@@ -767,3 +767,16 @@ resource and mutation described.
   `401`, and direct read-only counts confirmed zero organizations, customers, and payments. The
   stack remains without a production route or provider secret, with payment, provider-read, and
   outbound-webhook flags disabled.
+- 2026-08-14: Added idempotent Lago-compatible one-off invoice creation over active add-ons with
+  exact decimal units, per-request unit-price and display overrides, preserved fee order,
+  immutable organization-default tax snapshots, zero-amount settlement, tenant-scoped replay, and
+  transactional `invoice.one_off_created` events. Automatic provider charging must be explicitly
+  skipped until that workflow is ported; targeted fee taxes, custom sections, alternate billing
+  entities, payment methods, and unsupported fields fail explicitly. All 65 Workers-runtime tests
+  pass across 20 files; formatting, lint, TypeScript, generated types, cross-repository inventory,
+  and the 401.73 KiB dry-run bundle are green.
+- 2026-08-14: Applied only migration `0018_one_off_invoices.sql` to the isolated development D1 and
+  deployed Worker version `5b72fb2f-9a59-402e-ae39-dfe6385e3daf`. Follow-up migration inventory was
+  empty; remote health/readiness returned `200`, unauthenticated one-off creation returned `401`,
+  and direct read-only counts confirmed zero organizations, invoices, and invoice lines. No
+  production route, provider secret, or external-mutation flag was changed.
