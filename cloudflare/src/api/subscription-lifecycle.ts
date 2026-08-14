@@ -1,13 +1,19 @@
 import type { AuthContext } from "../auth/api-key";
 import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
-import { terminateSubscriptionWithInvoice } from "../billing/terminate-subscription";
+import {
+  terminateSubscriptionWithInvoice,
+  terminateSubscriptionWithoutInvoice,
+  type TerminationActions,
+} from "../billing/terminate-subscription";
 import { terminatePayInAdvanceWithCredit } from "../billing/pay-in-advance-termination-credit";
 import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../http";
 import { stableJson } from "../json";
 import {
   assertEndingAtAfterStart,
+  assertFutureEndingAt,
   assertFutureSubscriptionAt,
+  normalizeEndingAt,
   normalizeSubscriptionAt,
 } from "../subscriptions/time";
 
@@ -20,6 +26,7 @@ type SubscriptionRow = {
   plan_amount_minor: number;
   plan_currency: string;
   plan_pay_in_advance: number;
+  plan_interval: string;
   name: string | null;
   status: string;
   subscription_at: string | null;
@@ -27,6 +34,8 @@ type SubscriptionRow = {
   current_period_start: string | null;
   current_period_end: string | null;
   ending_at: string | null;
+  on_termination_credit_note: string | null;
+  on_termination_invoice: string | null;
   canceled_at: string | null;
   terminated_at: string | null;
   created_at: string;
@@ -73,7 +82,16 @@ async function updateSubscription(
   if (!["active", "past_due", "pending"].includes(subscription.status))
     throw new ApiError(422, "subscription_not_updatable", "Subscription is not updatable");
   const input = objectAt(await parseJsonObject(request), "subscription");
-  const allowed = subscription.status === "pending" ? ["name", "subscription_at"] : ["name"];
+  const allowed =
+    subscription.status === "pending"
+      ? [
+          "name",
+          "subscription_at",
+          "ending_at",
+          "on_termination_credit_note",
+          "on_termination_invoice",
+        ]
+      : ["name", "ending_at", "on_termination_credit_note", "on_termination_invoice"];
   const unsupported = Object.keys(input).find((key) => !allowed.includes(key));
   if (unsupported)
     throw new ApiError(
@@ -95,6 +113,25 @@ async function updateSubscription(
       assertEndingAtAfterStart(subscription.ending_at, subscriptionAt);
     }
   }
+  let endingAt = subscription.ending_at;
+  if (input.ending_at !== undefined) {
+    endingAt = normalizeEndingAt(input.ending_at);
+    if (endingAt) {
+      assertSupportedScheduledTermination(subscription);
+      assertFutureEndingAt(endingAt, nowDate);
+      const startsAt = subscriptionAt ?? subscription.started_at;
+      if (!startsAt) throw new ApiError(422, "validation_error", "Subscription start is missing");
+      assertEndingAtAfterStart(endingAt, startsAt);
+    }
+  }
+  const onTerminationCreditNote = terminationCreditAction(
+    input.on_termination_credit_note,
+    subscription,
+  );
+  const onTerminationInvoice = terminationInvoiceAction(
+    input.on_termination_invoice,
+    subscription.on_termination_invoice,
+  );
   const event: DomainEvent = {
     id: `subscription-updated:${subscription.id}:v${subscription.version + 1}`,
     type: "subscription.updated",
@@ -111,16 +148,24 @@ async function updateSubscription(
       externalSubscriptionId: externalId,
       name,
       subscriptionAt,
+      endingAt,
+      onTerminationCreditNote,
+      onTerminationInvoice,
     },
   };
   const results = await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
-      `UPDATE subscriptions SET name = ?, subscription_at = ?, version = version + 1, updated_at = ?
+      `UPDATE subscriptions
+       SET name = ?, subscription_at = ?, ending_at = ?, on_termination_credit_note = ?,
+           on_termination_invoice = ?, version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?
          AND status = ?`,
     ).bind(
       name,
       subscriptionAt,
+      endingAt,
+      onTerminationCreditNote,
+      onTerminationInvoice,
       now,
       subscription.id,
       auth.organizationId,
@@ -224,9 +269,14 @@ async function terminateSubscription(
   if (subscription.status === "pending") {
     return cancelPendingSubscription(subscription, env, auth, requestId);
   }
-  const onTerminationInvoice = url.searchParams.get("on_termination_invoice")?.trim() || "generate";
+  const onTerminationInvoice =
+    url.searchParams.get("on_termination_invoice")?.trim() ||
+    subscription.on_termination_invoice ||
+    "generate";
   const onTerminationCreditNote =
-    url.searchParams.get("on_termination_credit_note")?.trim() || "credit";
+    url.searchParams.get("on_termination_credit_note")?.trim() ||
+    subscription.on_termination_credit_note ||
+    "credit";
   if (onTerminationInvoice !== "generate" && onTerminationInvoice !== "skip") {
     throw new ApiError(422, "validation_error", "on_termination_invoice must be generate or skip");
   }
@@ -248,6 +298,13 @@ async function terminateSubscription(
       "Pay-in-advance termination currently supports only credit or skip",
     );
   }
+  const actions: TerminationActions = {
+    creditNote:
+      subscription.plan_pay_in_advance === 1
+        ? (onTerminationCreditNote as "credit" | "skip")
+        : null,
+    invoice: onTerminationInvoice as "generate" | "skip",
+  };
   if (subscription.status !== "active" && subscription.status !== "past_due") {
     throw new ApiError(422, "subscription_not_terminable", "Subscription is not active");
   }
@@ -289,25 +346,6 @@ async function terminateSubscription(
   }
 
   const terminatedAt = new Date().toISOString();
-  const event: DomainEvent = {
-    id: `subscription-terminated:${subscription.id}:v${subscription.version + 1}`,
-    type: "subscription.terminated",
-    version: 1,
-    aggregateType: "subscription",
-    aggregateId: subscription.id,
-    aggregateVersion: subscription.version + 1,
-    occurredAt: terminatedAt,
-    causationId: requestId,
-    correlationId: requestId,
-    payload: {
-      organizationId: auth.organizationId,
-      subscriptionId: subscription.id,
-      externalSubscriptionId: subscription.external_id,
-      terminatedAt,
-      finalInvoiceGenerated: false,
-      creditNoteGenerated: false,
-    },
-  };
   try {
     if (
       subscription.plan_pay_in_advance === 1 &&
@@ -320,6 +358,7 @@ async function terminateSubscription(
         subscription.version,
         terminatedAt,
         requestId,
+        actions,
       );
       await account.completeCommand(reservationKey, {
         terminatedAt,
@@ -339,6 +378,7 @@ async function terminateSubscription(
         requestId,
         true,
         subscription.plan_pay_in_advance === 1 && onTerminationCreditNote === "credit",
+        actions,
       );
       await account.completeCommand(reservationKey, {
         terminatedAt,
@@ -350,50 +390,15 @@ async function terminateSubscription(
       if (!subscription) throw new ApiError(500, "persistence_error", "Subscription disappeared");
       return json({ subscription: serializeSubscription(subscription) }, { requestId });
     }
-    const results = await env.BILLING_DB.batch([
-      env.BILLING_DB.prepare(
-        `UPDATE subscriptions
-         SET status = 'terminated', terminated_at = ?, current_period_end = ?,
-             version = version + 1, updated_at = ?
-         WHERE id = ? AND organization_id = ? AND version = ?
-           AND status IN ('active', 'past_due')`,
-      ).bind(
-        terminatedAt,
-        terminatedAt,
-        terminatedAt,
-        subscription.id,
-        auth.organizationId,
-        subscription.version,
-      ),
-      env.BILLING_DB.prepare(
-        `INSERT INTO outbox_events
-         (event_id, organization_id, event_type, event_version, aggregate_type,
-          aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
-          occurred_at, published_at)
-         SELECT ?, ?, ?, 1, 'subscription', ?, ?, ?, ?, ?, ?, NULL
-         FROM subscriptions
-         WHERE id = ? AND organization_id = ? AND version = ?
-           AND status = 'terminated' AND terminated_at = ?`,
-      ).bind(
-        event.id,
-        auth.organizationId,
-        event.type,
-        subscription.id,
-        event.aggregateVersion,
-        requestId,
-        requestId,
-        stableJson(event.payload),
-        terminatedAt,
-        subscription.id,
-        auth.organizationId,
-        subscription.version + 1,
-        terminatedAt,
-      ),
-    ]);
-    if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
-      throw new Error("subscription_version_conflict");
-    }
-    await env.DOMAIN_EVENTS.send(event);
+    const event = await terminateSubscriptionWithoutInvoice(
+      env,
+      subscription.id,
+      subscription.version,
+      terminatedAt,
+      requestId,
+      true,
+      actions,
+    );
     await account.completeCommand(reservationKey, { terminatedAt, eventId: event.id });
   } catch (error) {
     await account.releaseCommand(reservationKey, requestHash);
@@ -517,12 +522,13 @@ async function hasMinimumCommitment(
 
 function subscriptionSelect(): string {
   return `SELECT s.id, s.external_id, s.customer_id, c.external_id AS customer_external_id,
-                 p.code AS plan_code, p.amount_minor AS plan_amount_minor,
+                 p.code AS plan_code, p.amount_minor AS plan_amount_minor, p.interval AS plan_interval,
                  p.currency AS plan_currency, p.pay_in_advance AS plan_pay_in_advance,
                  COALESCE(c.invoice_grace_period, o.invoice_grace_period) AS invoice_grace_period,
                  s.name, s.status, s.subscription_at, s.started_at,
                  s.current_period_start, s.current_period_end, s.canceled_at,
-                 s.ending_at, s.terminated_at, s.created_at, s.updated_at, s.version
+                 s.ending_at, s.on_termination_credit_note, s.on_termination_invoice,
+                 s.terminated_at, s.created_at, s.updated_at, s.version
           FROM subscriptions s
           JOIN customers c ON c.id = s.customer_id
           JOIN plans p ON p.id = s.plan_id
@@ -571,11 +577,49 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     terminated_at: subscription.terminated_at,
     canceled_at: subscription.canceled_at,
     ending_at: subscription.ending_at,
+    on_termination_credit_note: subscription.on_termination_credit_note,
+    on_termination_invoice: subscription.on_termination_invoice,
     created_at: subscription.created_at,
     current_billing_period_started_at: subscription.current_period_start,
     current_billing_period_ending_at: subscription.current_period_end,
     payment_method: { payment_method_id: null, payment_method_type: null },
   };
+}
+
+function assertSupportedScheduledTermination(subscription: SubscriptionRow): void {
+  if (subscription.plan_pay_in_advance === 1 || subscription.plan_interval === "one_time") {
+    throw new ApiError(
+      422,
+      "unsupported_scheduled_termination",
+      "ending_at is not implemented for pay-in-advance or one-time plans",
+    );
+  }
+}
+
+function terminationCreditAction(value: unknown, subscription: SubscriptionRow): string | null {
+  if (value === undefined) return subscription.on_termination_credit_note;
+  if (value === null || value === "") return null;
+  if (typeof value !== "string" || !new Set(["credit", "skip", "refund", "offset"]).has(value)) {
+    throw new ApiError(422, "validation_error", "on_termination_credit_note is invalid");
+  }
+  if (subscription.plan_pay_in_advance !== 1) return null;
+  if (value === "refund" || value === "offset") {
+    throw new ApiError(
+      422,
+      "unsupported_termination_credit_note",
+      "Pay-in-advance termination currently supports only credit or skip",
+    );
+  }
+  return value;
+}
+
+function terminationInvoiceAction(value: unknown, current: string | null): string | null {
+  if (value === undefined) return current;
+  if (value === null || value === "") return null;
+  if (value !== "generate" && value !== "skip") {
+    throw new ApiError(422, "validation_error", "on_termination_invoice is invalid");
+  }
+  return value;
 }
 
 function positiveInteger(value: string | null, fallback: number): number {

@@ -8,6 +8,7 @@ import type {
   SubscriptionInvoiceCalculation,
   SubscriptionInvoiceLine,
 } from "./subscription-invoice-calculation";
+import type { TerminationActions } from "./terminate-subscription";
 
 type CreditSource = {
   organization_id: string;
@@ -371,6 +372,8 @@ export async function terminatePayInAdvanceWithCredit(
   expectedVersion: number,
   terminatedAt: string,
   correlationId: string,
+  actions: TerminationActions = { creditNote: "credit", invoice: "skip" },
+  publishImmediately = true,
 ): Promise<PayInAdvanceTerminationResult> {
   const prepared = await preparePayInAdvanceTerminationCredit(
     env.BILLING_DB,
@@ -401,6 +404,8 @@ export async function terminatePayInAdvanceWithCredit(
       creditNoteGenerated: creditNoteId !== null,
       creditNoteId,
       creditAmountMinor,
+      onTerminationCreditNote: actions.creditNote,
+      onTerminationInvoice: actions.invoice,
     },
   };
   const statements: D1PreparedStatement[] = [
@@ -408,12 +413,15 @@ export async function terminatePayInAdvanceWithCredit(
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
        SET status = 'terminated', terminated_at = ?, current_period_end = ?,
+           on_termination_credit_note = ?, on_termination_invoice = ?,
            version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?
          AND status IN ('active', 'past_due')`,
     ).bind(
       terminatedAt,
       terminatedAt,
+      actions.creditNote,
+      actions.invoice,
       now,
       subscriptionId,
       prepared.organizationId,
@@ -442,8 +450,10 @@ export async function terminatePayInAdvanceWithCredit(
   if (results[subscriptionUpdateIndex]?.meta.changes !== 1) {
     throw new Error("subscription_version_conflict");
   }
-  if (creditNoteEvent) await env.DOMAIN_EVENTS.send(creditNoteEvent);
-  await env.DOMAIN_EVENTS.send(subscriptionEvent);
+  if (publishImmediately) {
+    if (creditNoteEvent) await env.DOMAIN_EVENTS.send(creditNoteEvent);
+    await env.DOMAIN_EVENTS.send(subscriptionEvent);
+  }
   return {
     terminatedAt,
     creditNoteId,

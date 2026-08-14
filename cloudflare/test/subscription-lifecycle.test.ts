@@ -75,12 +75,12 @@ describe("subscription lifecycle", () => {
     ).first<{ event_type: string; aggregate_version: number }>();
     expect(event).toEqual({ event_type: "subscription.updated", aggregate_version: 2 });
 
-    const guarded = await api("/api/v1/subscriptions/subscription-external", "PUT", {
+    const scheduled = await api("/api/v1/subscriptions/subscription-external", "PUT", {
       subscription: { ending_at: "2026-09-01T00:00:00.000Z" },
     });
-    expect(guarded.status).toBe(422);
-    await expect(guarded.json()).resolves.toMatchObject({
-      code: "unsupported_subscription_feature",
+    expect(scheduled.status).toBe(200);
+    await expect(scheduled.json()).resolves.toMatchObject({
+      subscription: { ending_at: "2026-09-01T00:00:00.000Z" },
     });
   });
 

@@ -69,3 +69,9 @@ export function assertEndingAtAfterStart(endingAt: string, startAt: string): voi
     );
   }
 }
+
+export function assertFutureEndingAt(endingAt: string, now: Date): void {
+  if (endingAt.slice(0, 10) <= now.toISOString().slice(0, 10)) {
+    throw new ApiError(422, "validation_error", "ending_at must be on a future UTC date");
+  }
+}

@@ -5,7 +5,10 @@ import { couponCreditStatements } from "./coupon-credits";
 import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
 import { paymentDueDate } from "./payment-terms";
-import { preparePayInAdvanceTerminationCredit } from "./pay-in-advance-termination-credit";
+import {
+  preparePayInAdvanceTerminationCredit,
+  terminatePayInAdvanceWithCredit,
+} from "./pay-in-advance-termination-credit";
 import {
   calculateTerminationSubscriptionInvoice,
   findBillableSubscription,
@@ -24,6 +27,11 @@ export type TerminateSubscriptionWithInvoiceResult = {
   creditAmountMinor: number;
 };
 
+export type TerminationActions = {
+  creditNote: "credit" | "skip" | null;
+  invoice: "generate" | "skip";
+};
+
 export async function terminateSubscriptionWithInvoice(
   env: Env,
   subscriptionId: string,
@@ -32,10 +40,15 @@ export async function terminateSubscriptionWithInvoice(
   correlationId: string,
   publishImmediately = true,
   includeUnusedCredit = false,
+  actions?: TerminationActions,
 ): Promise<TerminateSubscriptionWithInvoiceResult> {
   const subscription = await findBillableSubscription(env.BILLING_DB, subscriptionId);
   if (!subscription) throw new Error("subscription_not_found");
   const draft = subscription.invoice_grace_period > 0;
+  const effectiveActions: TerminationActions = actions ?? {
+    creditNote: includeUnusedCredit ? "credit" : null,
+    invoice: "generate",
+  };
   const terminationId = await deterministicUuid(
     "subscription-termination",
     `${subscription.id}:v${expectedVersion + 1}:${subscription.current_period_start}`,
@@ -117,6 +130,8 @@ export async function terminateSubscriptionWithInvoice(
       creditNoteGenerated: Boolean(unusedCredit?.creditNoteId),
       creditNoteId: unusedCredit?.creditNoteId,
       creditAmountMinor: unusedCredit?.creditAmountMinor,
+      onTerminationCreditNote: effectiveActions.creditNote,
+      onTerminationInvoice: effectiveActions.invoice,
     },
   };
   const couponStatements = draft
@@ -242,12 +257,15 @@ export async function terminateSubscriptionWithInvoice(
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
        SET status = 'terminated', terminated_at = ?, current_period_end = ?,
+           on_termination_credit_note = ?, on_termination_invoice = ?,
            version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?
          AND status IN ('active', 'past_due')`,
     ).bind(
       terminatedAt,
       terminatedAt,
+      effectiveActions.creditNote,
+      effectiveActions.invoice,
       now,
       subscription.id,
       subscription.organization_id,
@@ -304,6 +322,71 @@ export async function terminateSubscriptionWithInvoice(
   };
 }
 
+export async function terminateSubscriptionWithoutInvoice(
+  env: Env,
+  subscriptionId: string,
+  expectedVersion: number,
+  terminatedAt: string,
+  correlationId: string,
+  publishImmediately = true,
+  actions: TerminationActions = { creditNote: null, invoice: "skip" },
+): Promise<DomainEvent> {
+  const subscription = await findBillableSubscription(env.BILLING_DB, subscriptionId);
+  if (!subscription) throw new Error("subscription_not_found");
+  const event: DomainEvent = {
+    id: `subscription-terminated:${subscription.id}:v${expectedVersion + 1}`,
+    type: "subscription.terminated",
+    version: 1,
+    aggregateType: "subscription",
+    aggregateId: subscription.id,
+    aggregateVersion: expectedVersion + 1,
+    occurredAt: terminatedAt,
+    causationId: correlationId,
+    correlationId,
+    payload: {
+      organizationId: subscription.organization_id,
+      subscriptionId: subscription.id,
+      externalSubscriptionId: subscription.external_id,
+      terminatedAt,
+      finalInvoiceGenerated: false,
+      creditNoteGenerated: false,
+      onTerminationCreditNote: actions.creditNote,
+      onTerminationInvoice: actions.invoice,
+    },
+  };
+  const results = await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `UPDATE subscriptions
+       SET status = 'terminated', terminated_at = ?, current_period_end = ?,
+           on_termination_credit_note = ?, on_termination_invoice = ?,
+           version = version + 1, updated_at = ?
+       WHERE id = ? AND organization_id = ? AND version = ?
+         AND status IN ('active', 'past_due')`,
+    ).bind(
+      terminatedAt,
+      terminatedAt,
+      actions.creditNote,
+      actions.invoice,
+      terminatedAt,
+      subscription.id,
+      subscription.organization_id,
+      expectedVersion,
+    ),
+    terminationOutboxStatement(
+      env.BILLING_DB,
+      subscription.organization_id,
+      event,
+      expectedVersion + 1,
+      terminatedAt,
+    ),
+  ]);
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
+    throw new Error("subscription_version_conflict");
+  }
+  if (publishImmediately) await env.DOMAIN_EVENTS.send(event);
+  return event;
+}
+
 function shiftCalendarDate(value: string, days: number): string {
   const date = new Date(`${value}T00:00:00.000Z`);
   if (!Number.isFinite(date.getTime())) throw new Error("invalid_termination_date");
@@ -318,23 +401,64 @@ export async function terminateEndedSubscriptions(
 ): Promise<number> {
   if (!Number.isFinite(Date.parse(cutoff))) throw new Error("invalid_termination_cutoff");
   const due = await env.BILLING_DB.prepare(
-    `SELECT id, version, ending_at FROM subscriptions
-     WHERE status IN ('active', 'past_due') AND ending_at IS NOT NULL AND ending_at <= ?
-     ORDER BY ending_at, id LIMIT 100`,
+    `SELECT s.id, s.version, s.ending_at, p.pay_in_advance AS plan_pay_in_advance,
+            s.on_termination_credit_note, s.on_termination_invoice
+     FROM subscriptions s JOIN plans p ON p.id = s.plan_id
+     WHERE s.status IN ('active', 'past_due') AND s.ending_at IS NOT NULL AND s.ending_at <= ?
+     ORDER BY s.ending_at, s.id LIMIT 100`,
   )
     .bind(cutoff)
-    .all<{ id: string; version: number; ending_at: string }>();
+    .all<{
+      id: string;
+      version: number;
+      ending_at: string;
+      plan_pay_in_advance: number;
+      on_termination_credit_note: "credit" | "skip" | null;
+      on_termination_invoice: "generate" | "skip" | null;
+    }>();
   let terminated = 0;
   for (const subscription of due.results) {
     try {
-      await terminateSubscriptionWithInvoice(
-        env,
-        subscription.id,
-        subscription.version,
-        subscription.ending_at,
-        `${correlationId}:${subscription.id}`,
-        false,
-      );
+      const actions: TerminationActions = {
+        creditNote:
+          subscription.plan_pay_in_advance === 1
+            ? (subscription.on_termination_credit_note ?? "credit")
+            : null,
+        invoice: subscription.on_termination_invoice ?? "generate",
+      };
+      const commandCorrelationId = `${correlationId}:${subscription.id}`;
+      if (actions.invoice === "generate") {
+        await terminateSubscriptionWithInvoice(
+          env,
+          subscription.id,
+          subscription.version,
+          subscription.ending_at,
+          commandCorrelationId,
+          false,
+          subscription.plan_pay_in_advance === 1 && actions.creditNote === "credit",
+          actions,
+        );
+      } else if (subscription.plan_pay_in_advance === 1 && actions.creditNote === "credit") {
+        await terminatePayInAdvanceWithCredit(
+          env,
+          subscription.id,
+          subscription.version,
+          subscription.ending_at,
+          commandCorrelationId,
+          actions,
+          false,
+        );
+      } else {
+        await terminateSubscriptionWithoutInvoice(
+          env,
+          subscription.id,
+          subscription.version,
+          subscription.ending_at,
+          commandCorrelationId,
+          false,
+          actions,
+        );
+      }
       terminated += 1;
     } catch (error) {
       if (!(error instanceof Error) || error.message !== "subscription_version_conflict") {
@@ -376,5 +500,42 @@ function outboxStatement(
       event.correlationId,
       stableJson(event.payload),
       event.occurredAt,
+    );
+}
+
+function terminationOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+  expectedVersion: number,
+  terminatedAt: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type,
+        aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+        occurred_at, published_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+       FROM subscriptions
+       WHERE id = ? AND organization_id = ? AND version = ?
+         AND status = 'terminated' AND terminated_at = ?`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+      event.aggregateId,
+      organizationId,
+      expectedVersion,
+      terminatedAt,
     );
 }

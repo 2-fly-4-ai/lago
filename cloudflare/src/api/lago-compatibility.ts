@@ -76,6 +76,8 @@ type SubscriptionRow = {
   current_period_start: string | null;
   current_period_end: string | null;
   ending_at: string | null;
+  on_termination_credit_note: string | null;
+  on_termination_invoice: string | null;
   canceled_at: string | null;
   terminated_at: string | null;
   created_at: string;
@@ -538,10 +540,16 @@ async function createSubscription(
   const timestamp = now.toISOString();
   const subscriptionAt = normalizeSubscriptionAt(input.subscription_at);
   const endingAt = normalizeEndingAt(input.ending_at);
+  const onTerminationCreditNote = normalizeTerminationCreditAction(
+    input.on_termination_credit_note,
+  );
+  const onTerminationInvoice = normalizeTerminationInvoiceAction(input.on_termination_invoice);
   const requestIdentity: Record<string, unknown> = subscriptionAt
     ? { externalCustomerId, externalId, name, planCode, subscriptionAt }
     : { externalCustomerId, externalId, name, planCode };
   if (endingAt) requestIdentity.endingAt = endingAt;
+  if (onTerminationCreditNote) requestIdentity.onTerminationCreditNote = onTerminationCreditNote;
+  if (onTerminationInvoice) requestIdentity.onTerminationInvoice = onTerminationInvoice;
   const requestHash = await sha256Hex(JSON.stringify(requestIdentity));
 
   const existing = await findSubscription(database, auth.organizationId, externalId);
@@ -553,6 +561,8 @@ async function createSubscription(
       requestHash,
       subscriptionAt,
       endingAt,
+      onTerminationCreditNote,
+      onTerminationInvoice,
     });
     return json({ subscription: serializeSubscription(existing) }, { requestId });
   }
@@ -588,6 +598,7 @@ async function createSubscription(
       pay_in_advance: number;
     }>();
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  assertSupportedTerminationActions(plan.pay_in_advance, onTerminationCreditNote);
   if (endingAt) {
     assertScheduledTerminationPlanSupported(plan.pay_in_advance, plan.interval);
   }
@@ -615,6 +626,8 @@ async function createSubscription(
         status: "pending",
         subscriptionAt,
         endingAt,
+        onTerminationCreditNote,
+        onTerminationInvoice,
         startedAt: null,
       },
     };
@@ -624,10 +637,10 @@ async function createSubscription(
           .prepare(
             `INSERT INTO subscriptions
              (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
-              ending_at,
+              ending_at, on_termination_credit_note, on_termination_invoice,
               started_at, current_period_start, current_period_end, version, created_at,
               updated_at, name, request_sha256)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, NULL, NULL, NULL, 1, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, NULL, NULL, 1, ?, ?, ?, ?)`,
           )
           .bind(
             subscriptionId,
@@ -637,6 +650,8 @@ async function createSubscription(
             externalId,
             subscriptionAt,
             endingAt,
+            onTerminationCreditNote,
+            onTerminationInvoice,
             timestamp,
             timestamp,
             name,
@@ -671,6 +686,8 @@ async function createSubscription(
         requestHash,
         subscriptionAt,
         endingAt,
+        onTerminationCreditNote,
+        onTerminationInvoice,
       });
       return json({ subscription: serializeSubscription(concurrent) }, { requestId });
     }
@@ -700,6 +717,8 @@ async function createSubscription(
         status: "active",
         subscriptionAt: timestamp,
         endingAt,
+        onTerminationCreditNote,
+        onTerminationInvoice,
         startedAt: timestamp,
         initialInvoiceGenerated: false,
       },
@@ -730,10 +749,10 @@ async function createSubscription(
           .prepare(
             `INSERT INTO subscriptions
              (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
-              ending_at,
+              ending_at, on_termination_credit_note, on_termination_invoice,
               started_at, current_period_start, current_period_end, version, created_at,
               updated_at, name, request_sha256)
-             VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
           )
           .bind(
             subscriptionId,
@@ -743,6 +762,8 @@ async function createSubscription(
             externalId,
             timestamp,
             endingAt,
+            onTerminationCreditNote,
+            onTerminationInvoice,
             timestamp,
             timestamp,
             periodEnd,
@@ -798,6 +819,8 @@ async function createSubscription(
         requestHash,
         subscriptionAt,
         endingAt,
+        onTerminationCreditNote,
+        onTerminationInvoice,
       });
       return json({ subscription: serializeSubscription(concurrent) }, { requestId });
     }
@@ -876,6 +899,8 @@ async function createSubscription(
       planCode,
       startedAt: timestamp,
       endingAt,
+      onTerminationCreditNote,
+      onTerminationInvoice,
     },
   };
   const startedEvent = {
@@ -922,11 +947,11 @@ async function createSubscription(
         .prepare(
           `INSERT INTO subscriptions
           (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
-          ending_at,
+          ending_at, on_termination_credit_note, on_termination_invoice,
           started_at,
           current_period_start, current_period_end, version, created_at, updated_at,
           name, request_sha256)
-         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
         )
         .bind(
           subscriptionId,
@@ -936,6 +961,8 @@ async function createSubscription(
           externalId,
           timestamp,
           endingAt,
+          onTerminationCreditNote,
+          onTerminationInvoice,
           timestamp,
           timestamp,
           periodEnd,
@@ -1105,6 +1132,8 @@ async function createSubscription(
       requestHash,
       subscriptionAt,
       endingAt,
+      onTerminationCreditNote,
+      onTerminationInvoice,
     });
     return json({ subscription: serializeSubscription(concurrent) }, { requestId });
   }
@@ -1118,6 +1147,8 @@ async function createSubscription(
     requestHash,
     subscriptionAt,
     endingAt,
+    onTerminationCreditNote,
+    onTerminationInvoice,
   });
   await Promise.all([
     env.DOMAIN_EVENTS.send({
@@ -1184,6 +1215,42 @@ function assertScheduledTerminationPlanSupported(payInAdvance: number, interval:
       422,
       "unsupported_scheduled_termination",
       "ending_at is not implemented for pay-in-advance or one-time plans",
+    );
+  }
+}
+
+function normalizeTerminationCreditAction(value: unknown): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || !new Set(["credit", "skip", "refund", "offset"]).has(value)) {
+    throw new ApiError(422, "validation_error", "on_termination_credit_note is invalid");
+  }
+  return value;
+}
+
+function normalizeTerminationInvoiceAction(value: unknown): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (value !== "generate" && value !== "skip") {
+    throw new ApiError(422, "validation_error", "on_termination_invoice is invalid");
+  }
+  return value;
+}
+
+function assertSupportedTerminationActions(
+  payInAdvance: number,
+  creditAction: string | null,
+): void {
+  if (payInAdvance !== 1 && creditAction) {
+    throw new ApiError(
+      422,
+      "validation_error",
+      "on_termination_credit_note is only valid for pay-in-advance plans",
+    );
+  }
+  if (creditAction === "refund" || creditAction === "offset") {
+    throw new ApiError(
+      422,
+      "unsupported_termination_credit_note",
+      "Pay-in-advance termination currently supports only credit or skip",
     );
   }
 }
@@ -2346,7 +2413,8 @@ async function findSubscription(
               p.currency AS plan_currency, p.interval AS plan_interval,
               s.name, s.request_sha256,
               s.status, s.subscription_at, s.started_at, s.current_period_start,
-              s.current_period_end, s.ending_at,
+              s.current_period_end, s.ending_at, s.on_termination_credit_note,
+              s.on_termination_invoice,
               s.canceled_at, s.terminated_at, s.created_at
        FROM subscriptions s
        JOIN customers c ON c.id = s.customer_id
@@ -2395,6 +2463,8 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     terminated_at: subscription.terminated_at,
     canceled_at: subscription.canceled_at,
     ending_at: subscription.ending_at,
+    on_termination_credit_note: subscription.on_termination_credit_note,
+    on_termination_invoice: subscription.on_termination_invoice,
     created_at: subscription.created_at,
     current_billing_period_started_at: subscription.current_period_start,
     current_billing_period_ending_at: subscription.current_period_end,
@@ -2689,6 +2759,8 @@ function assertSubscriptionReplay(
     requestHash: string;
     subscriptionAt: string | null;
     endingAt: string | null;
+    onTerminationCreditNote: string | null;
+    onTerminationInvoice: string | null;
   },
 ): void {
   const matchesSubscriptionAt =
@@ -2700,7 +2772,9 @@ function assertSubscriptionReplay(
     subscription.plan_code === input.planCode &&
     subscription.name === input.name &&
     matchesSubscriptionAt &&
-    subscription.ending_at === input.endingAt;
+    subscription.ending_at === input.endingAt &&
+    subscription.on_termination_credit_note === input.onTerminationCreditNote &&
+    subscription.on_termination_invoice === input.onTerminationInvoice;
   if (
     (subscription.request_sha256 && subscription.request_sha256 !== input.requestHash) ||
     !matchesLegacyFields
