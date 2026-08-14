@@ -1461,3 +1461,17 @@ resource and mutation described.
   Formatting, strict lint, generated inventory/types, TypeScript, and a 681.49 KiB (118.38 KiB
   gzip) dry-run bundle are green. This is a local pre-deployment checkpoint; isolated remote D1
   remains on migration `0036` and Worker version `fe2fb69c-b113-438f-884f-b6b5f367b87c`.
+- 2026-08-15: Remote preflight on the explicit SERP account showed exactly
+  `0037_wallet_invoice_custom_sections.sql` pending, no foreign-key violations, and zero
+  organizations, customers, plans, subscriptions, invoices, catalog sections, wallets, wallet
+  transactions, section links, snapshots, and outbox events plus 117 schedule audits. Applied only
+  that migration, confirmed the follow-up inventory was empty, and verified 37 migrations, seven
+  section tables, 25 related triggers including all four wallet guards, both skip columns, and no
+  foreign-key violations. Deployed isolated Worker version
+  `a0c0ab74-b4bc-4493-94af-b8128d0535f9`; health/readiness returned `200`/`200`, and
+  unauthenticated catalog/wallet access returned `401`/`401`. Post-deploy aggregate-only
+  verification remained empty apart from 118 schedule audits. The deployed version retains
+  `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` at `0`,
+  uses the existing isolated D1/R2/Queue/Durable Object/Workflow/Browser/Cron bindings, and adds no
+  production route, domain, secret, provider action, customer data, or billing/catalog/wallet
+  record.
