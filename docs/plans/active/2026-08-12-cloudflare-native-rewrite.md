@@ -1189,3 +1189,13 @@ resource and mutation described.
   strict lint, generated inventory/types, TypeScript, and the dry-run bundle are green at 529.07 KiB
   (94.51 KiB gzip). The still-draft source remains guarded when its calculation contains coupon,
   tax, wallet, or finalized-credit adjustments.
+- 2026-08-14: Remote inventory showed exactly
+  `0030_draft_termination_credit_notes.sql`; applied only that migration and confirmed the follow-up
+  inventory was empty before deploying isolated Worker version
+  `f4fd52ff-083f-4e40-9240-ccec9b24091c`. Remote health/readiness returned `200`, unauthenticated
+  termination returned `401`, and the deployed version retained the three disabled external-action
+  flags and only the existing isolated bindings/triggers. Aggregate-only verification confirmed the
+  allocation-state column, termination-credit context table, guarded application trigger, zero
+  organizations, subscriptions, invoices, invoice lines, invoice contexts, credit notes,
+  termination-credit contexts, credit-note applications, wallets, and outbox events plus 59 Cron
+  audits. No route, secret, or billing data changed.

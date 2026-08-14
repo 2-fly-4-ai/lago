@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `68149384-b3cd-4cb4-8b25-de6f366e55e0`
+- Latest verified version: `f4fd52ff-083f-4e40-9240-ccec9b24091c`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -34,7 +34,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0028_scheduled_subscription_termination.sql`.
+`0030_draft_termination_credit_notes.sql`.
 
 ## Verified behavior
 
@@ -204,6 +204,16 @@ Applied D1 migrations: `0001_foundation.sql` through
   verification found zero organizations, subscriptions, invoices, invoice lines, credit notes,
   credit-note applications, wallets, and outbox events plus 49 Cron audits. All external-action
   flags remain disabled, with no route, secret, or billing data added.
+- The positive-grace pay-in-advance deployment applied only
+  `0030_draft_termination_credit_notes.sql`, adding the non-allocatable draft-note state, immutable
+  source/ratio context, and application guard. Follow-up migration inventory was empty. Isolated
+  Worker version `f4fd52ff-083f-4e40-9240-ccec9b24091c` retained only the existing workers.dev URL,
+  `*/5` Cron, D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow bindings. Remote
+  health/readiness returned `200`/`200`, unauthenticated termination returned `401`, and
+  aggregate-only verification found zero organizations, subscriptions, invoices, invoice lines,
+  invoice contexts, credit notes, termination-credit contexts, credit-note applications, wallets,
+  and outbox events plus 59 Cron audits. All external-action flags remain disabled, with no route,
+  secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
