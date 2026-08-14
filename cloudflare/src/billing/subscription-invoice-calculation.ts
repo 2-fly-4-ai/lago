@@ -263,38 +263,45 @@ export async function calculateSubscriptionInvoice(
         ? followingPeriodEnd
         : periodEnd;
   const lines: SubscriptionInvoiceLine[] = [];
+  const includePlanLine = !(
+    options.context === "termination" && subscription.plan_pay_in_advance === 1
+  );
   const precisePlanAmount =
-    options.context === "termination"
+    options.context === "termination" && includePlanLine
       ? Decimal.parse(subscription.plan_amount_minor)
           .multiply(Decimal.parse(options.window.billableDays))
           .divideByInteger(BigInt(options.window.fullPeriodDays))
-      : Decimal.parse(subscription.plan_amount_minor);
-  const roundedPlanAmount = safeMinorInteger(precisePlanAmount);
+      : includePlanLine
+        ? Decimal.parse(subscription.plan_amount_minor)
+        : Decimal.zero();
+  const roundedPlanAmount = includePlanLine ? safeMinorInteger(precisePlanAmount) : 0;
   let subtotalMinor = roundedPlanAmount;
-  lines.push({
-    id: await deterministicUuid("billing-cycle-plan-line", cycleKey),
-    description: subscription.plan_name,
-    units: "1",
-    precise: precisePlanAmount.toString(),
-    rounded: roundedPlanAmount,
-    sourceId: subscription.plan_id,
-    lineType: "subscription",
-    sourceType: "plan",
-    metadataJson: stableJson({
-      billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
-      billingMode: subscription.plan_pay_in_advance === 1 ? "in_advance" : "in_arrears",
-      periodStart: planPeriodStart,
-      periodEnd: planPeriodEnd,
-      ...(options.context === "termination"
-        ? {
-            contextType: "termination",
-            billableDays: options.window.billableDays,
-            fullPeriodDays: options.window.fullPeriodDays,
-            terminatedAt: options.terminatedAt,
-          }
-        : {}),
-    }),
-  });
+  if (includePlanLine) {
+    lines.push({
+      id: await deterministicUuid("billing-cycle-plan-line", cycleKey),
+      description: subscription.plan_name,
+      units: "1",
+      precise: precisePlanAmount.toString(),
+      rounded: roundedPlanAmount,
+      sourceId: subscription.plan_id,
+      lineType: "subscription",
+      sourceType: "plan",
+      metadataJson: stableJson({
+        billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
+        billingMode: subscription.plan_pay_in_advance === 1 ? "in_advance" : "in_arrears",
+        periodStart: planPeriodStart,
+        periodEnd: planPeriodEnd,
+        ...(options.context === "termination"
+          ? {
+              contextType: "termination",
+              billableDays: options.window.billableDays,
+              fullPeriodDays: options.window.fullPeriodDays,
+              terminatedAt: options.terminatedAt,
+            }
+          : {}),
+      }),
+    });
+  }
 
   for (const charge of await loadCharges(database, subscription)) {
     const events = await loadEvents(
@@ -472,9 +479,6 @@ export async function calculateTerminationSubscriptionInvoice(
   terminationId: string,
   terminatedAt: string,
 ): Promise<SubscriptionInvoiceCalculation> {
-  if (subscription.plan_pay_in_advance === 1) {
-    throw new Error("unsupported_pay_in_advance_termination_invoice");
-  }
   const unsupported = await database
     .prepare(
       `SELECT

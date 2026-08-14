@@ -229,7 +229,7 @@ describe("subscription lifecycle", () => {
     });
   });
 
-  it("keeps pay-in-advance termination invoices and unused-period credits guarded", async () => {
+  it("separates pay-in-advance final usage from unused-period credits", async () => {
     const now = new Date().toISOString();
     await env.BILLING_DB.batch([
       env.BILLING_DB.prepare(
@@ -240,13 +240,21 @@ describe("subscription lifecycle", () => {
                  'Monthly advance', 'monthly', 1000, 'USD', 1, 1, 1, ?, ?)`,
       ).bind(now, now),
       env.BILLING_DB.prepare(
-        `INSERT INTO subscriptions
-         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
-          current_period_start, current_period_end, version, created_at, updated_at)
-         VALUES ('subscription-lifecycle-advance', 'org-lifecycle', 'customer-lifecycle',
-                 'plan-lifecycle-advance', 'subscription-external-advance', 'active', ?, ?,
-                 '2026-09-13T00:00:00.000Z', 1, ?, ?)`,
-      ).bind(now, now, now, now),
+        `INSERT INTO billable_metrics
+         (id, organization_id, code, name, aggregation_type, field_name, recurring,
+          properties_json, version, active, created_at, updated_at)
+         VALUES ('metric-lifecycle-advance', 'org-lifecycle', 'advance-units', 'Advance units',
+                 'sum_agg', 'quantity', 0, '{}', 1, 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO charges
+         (id, organization_id, plan_id, billable_metric_id, code, charge_model,
+          properties_json, invoiceable, pay_in_advance, prorated, min_amount_minor,
+          version, active, created_at, updated_at)
+         VALUES ('charge-lifecycle-advance', 'org-lifecycle', 'plan-lifecycle-advance',
+                 'metric-lifecycle-advance', 'advance-unit-charge', 'standard',
+                 '{"amount":"2.5"}', 1, 0, 0, 0, 1, 1, ?, ?)`,
+      ).bind(now, now),
     ]);
 
     const scheduledGuard = await api("/api/v1/subscriptions", "POST", {
@@ -333,34 +341,70 @@ describe("subscription lifecycle", () => {
         .first(),
     ).resolves.toEqual({ total: 1 });
 
-    const creditGuard = await api("/api/v1/subscriptions/subscription-external-advance", "DELETE");
-    expect(creditGuard.status).toBe(422);
-    await expect(creditGuard.json()).resolves.toMatchObject({
-      code: "unsupported_termination_invoicing",
+    const usageSource = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-external",
+        external_id: "subscription-external-advance-usage",
+        plan_code: "monthly-advance",
+      },
     });
+    expect(usageSource.status).toBe(200);
+    const usageSourceBody = await usageSource.json<{ subscription: { lago_id: string } }>();
+    const usageAt = new Date().toISOString();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO usage_events
+       (id, organization_id, subscription_id, customer_id, billable_metric_id,
+        transaction_id, code, timestamp, timestamp_ms, properties_json, request_sha256,
+        archive_key, created_at)
+       VALUES ('event-lifecycle-advance', 'org-lifecycle', ?, 'customer-lifecycle',
+               'metric-lifecycle-advance', 'advance-usage', 'advance-units', ?, ?,
+               '{"quantity":"10"}', 'advance-usage-hash', 'advance-usage-archive', ?)`,
+    )
+      .bind(usageSourceBody.subscription.lago_id, usageAt, Date.parse(usageAt), usageAt)
+      .run();
 
-    const invoiceGuard = await api(
-      "/api/v1/subscriptions/subscription-external-advance?on_termination_credit_note=skip",
+    const combinedGuard = await api(
+      "/api/v1/subscriptions/subscription-external-advance-usage",
       "DELETE",
     );
-    expect(invoiceGuard.status).toBe(422);
-    await expect(invoiceGuard.json()).resolves.toMatchObject({
+    expect(combinedGuard.status).toBe(422);
+    await expect(combinedGuard.json()).resolves.toMatchObject({
       code: "unsupported_termination_invoicing",
     });
-
-    const skipped = await api(
-      "/api/v1/subscriptions/subscription-external-advance?on_termination_invoice=skip&on_termination_credit_note=skip",
+    const usageTerminated = await api(
+      "/api/v1/subscriptions/subscription-external-advance-usage?on_termination_credit_note=skip",
       "DELETE",
     );
-    expect(skipped.status).toBe(200);
-    await expect(skipped.json()).resolves.toMatchObject({
+    expect(usageTerminated.status).toBe(200);
+    await expect(usageTerminated.json()).resolves.toMatchObject({
       subscription: { status: "terminated" },
     });
     await expect(
       env.BILLING_DB.prepare(
-        "SELECT COUNT(*) AS total FROM invoices WHERE subscription_id = 'subscription-lifecycle-advance'",
-      ).first(),
-    ).resolves.toEqual({ total: 0 });
+        `SELECT i.subtotal_minor, i.total_due_minor, il.line_type, il.quantity_decimal,
+                il.precise_amount_minor, il.amount_minor,
+                (SELECT COUNT(*) FROM invoice_lines all_lines
+                 WHERE all_lines.invoice_id = i.id AND all_lines.line_type = 'subscription')
+                  AS subscription_lines
+         FROM invoices i JOIN invoice_lines il ON il.invoice_id = i.id
+         WHERE i.subscription_id = ? AND il.line_type = 'usage'`,
+      )
+        .bind(usageSourceBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({
+      subtotal_minor: 25,
+      total_due_minor: 25,
+      line_type: "usage",
+      quantity_decimal: "10",
+      precise_amount_minor: "25",
+      amount_minor: 25,
+      subscription_lines: 0,
+    });
+    await expect(
+      env.BILLING_DB.prepare("SELECT COUNT(*) AS total FROM invoices WHERE subscription_id = ?")
+        .bind(usageSourceBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({ total: 2 });
   });
 
   it("terminates a due UTC ending_at exactly once with a final in-arrears invoice", async () => {

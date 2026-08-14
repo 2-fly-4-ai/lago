@@ -248,11 +248,15 @@ async function terminateSubscription(
       "Pay-in-advance termination currently supports only credit or skip",
     );
   }
-  if (onTerminationInvoice === "generate" && subscription.plan_pay_in_advance === 1) {
+  if (
+    onTerminationInvoice === "generate" &&
+    subscription.plan_pay_in_advance === 1 &&
+    onTerminationCreditNote !== "skip"
+  ) {
     throw new ApiError(
       422,
       "unsupported_termination_invoicing",
-      "Pay-in-advance final invoicing is guarded until unused-period credits are ported",
+      "Combined pay-in-advance final invoicing and unused-period crediting is not implemented atomically",
     );
   }
   if (subscription.status !== "active" && subscription.status !== "past_due") {
