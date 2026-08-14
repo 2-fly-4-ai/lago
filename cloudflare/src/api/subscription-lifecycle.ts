@@ -12,6 +12,14 @@ import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../ht
 import { stableJson } from "../json";
 import { normalizeSubscriptionPaymentMethod } from "./subscription-payment-method";
 import {
+  guardedCustomSectionLinkStatements,
+  normalizeSubscriptionCustomSections,
+  resolveCustomSectionIds,
+  serializeAppliedCustomSections,
+  serializeAppliedCustomSectionsForSubscriptions,
+  type SerializedAppliedCustomSection,
+} from "../subscriptions/custom-sections";
+import {
   assertEndingAtAfterStart,
   assertFutureEndingAt,
   assertFutureSubscriptionAt,
@@ -54,6 +62,7 @@ type SubscriptionRow = {
   downgrade_plan_date: string | null;
   payment_method_type: "manual" | "provider" | null;
   payment_method_id: string | null;
+  skip_invoice_custom_sections: number;
 };
 
 export async function handleSubscriptionLifecycleRequest(
@@ -103,6 +112,7 @@ async function updateSubscription(
           "on_termination_credit_note",
           "on_termination_invoice",
           "payment_method",
+          "invoice_custom_section",
         ]
       : [
           "name",
@@ -110,6 +120,7 @@ async function updateSubscription(
           "on_termination_credit_note",
           "on_termination_invoice",
           "payment_method",
+          "invoice_custom_section",
         ];
   const unsupported = Object.keys(input).find((key) => !allowed.includes(key));
   if (unsupported)
@@ -126,6 +137,17 @@ async function updateSubscription(
       : paymentMethod.paymentMethodType;
   const paymentMethodId =
     paymentMethod === undefined ? subscription.payment_method_id : paymentMethod.paymentMethodId;
+  const customSections = normalizeSubscriptionCustomSections(input.invoice_custom_section);
+  const resolvedCustomSectionIds = await resolveCustomSectionIds(
+    env.BILLING_DB,
+    auth.organizationId,
+    customSections?.codes,
+  );
+  const customSectionUpdate = subscriptionCustomSectionUpdate(
+    subscription,
+    customSections?.skip,
+    resolvedCustomSectionIds,
+  );
   const nowDate = new Date();
   const now = nowDate.toISOString();
   let subscriptionAt = subscription.subscription_at;
@@ -179,13 +201,24 @@ async function updateSubscription(
       onTerminationInvoice,
       paymentMethodId,
       paymentMethodType,
+      skipInvoiceCustomSections: customSectionUpdate.skip === 1,
     },
   };
+  const sectionStatements = guardedCustomSectionLinkStatements(
+    env.BILLING_DB,
+    auth.organizationId,
+    subscription.id,
+    customSectionUpdate.sectionIds,
+    now,
+    subscription.version + 1,
+    subscription.status,
+  );
   const results = await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
        SET name = ?, subscription_at = ?, ending_at = ?, on_termination_credit_note = ?,
            on_termination_invoice = ?, payment_method_type = ?, payment_method_id = ?,
+           skip_invoice_custom_sections = ?,
            version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?
          AND status = ?`,
@@ -197,12 +230,14 @@ async function updateSubscription(
       onTerminationInvoice,
       paymentMethodType,
       paymentMethodId,
+      customSectionUpdate.skip,
       now,
       subscription.id,
       auth.organizationId,
       subscription.version,
       subscription.status,
     ),
+    ...sectionStatements,
     env.BILLING_DB.prepare(
       `INSERT INTO outbox_events
        (event_id, organization_id, event_type, event_version, aggregate_type,
@@ -226,12 +261,31 @@ async function updateSubscription(
       now,
     ),
   ]);
-  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
+  if (
+    (results[0]?.meta.changes ?? 0) < 1 ||
+    results[1 + sectionStatements.length]?.meta.changes !== 1
+  )
     throw new ApiError(409, "subscription_version_conflict", "Subscription changed concurrently");
   await env.DOMAIN_EVENTS.send(event);
   const updated = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
   if (!updated) throw new ApiError(500, "persistence_error", "Subscription disappeared");
-  return json({ subscription: serializeSubscription(updated) }, { requestId });
+  return json(
+    { subscription: await serializeSubscription(env.BILLING_DB, updated) },
+    { requestId },
+  );
+}
+
+function subscriptionCustomSectionUpdate(
+  subscription: SubscriptionRow,
+  skip: boolean | undefined,
+  sectionIds: string[] | undefined,
+): { skip: number; sectionIds: string[] | undefined } {
+  if (skip === true) return { skip: 1, sectionIds: [] };
+  if (skip === false) return { skip: 0, sectionIds };
+  if (subscription.skip_invoice_custom_sections === 1) {
+    return { skip: 1, sectionIds: undefined };
+  }
+  return { skip: 0, sectionIds };
 }
 
 async function listSubscriptions(
@@ -261,9 +315,21 @@ async function listSubscriptions(
               ORDER BY s.created_at DESC, s.id DESC LIMIT ? OFFSET ?`)
     .bind(...bindings, perPage, offset)
     .all<SubscriptionRow>();
+  const sectionsBySubscription = await serializeAppliedCustomSectionsForSubscriptions(
+    database,
+    result.results.map((subscription) => subscription.id),
+  );
   return json(
     {
-      subscriptions: result.results.map(serializeSubscription),
+      subscriptions: await Promise.all(
+        result.results.map((subscription) =>
+          serializeSubscription(
+            database,
+            subscription,
+            sectionsBySubscription.get(subscription.id) ?? [],
+          ),
+        ),
+      ),
       meta: pagination(count?.total ?? 0, page, perPage),
     },
     { requestId },
@@ -281,7 +347,7 @@ async function showSubscription(
   const subscription = await findSubscription(database, auth.organizationId, externalId, status);
   if (!subscription)
     throw new ApiError(404, "subscription_not_found", "Subscription was not found");
-  return json({ subscription: serializeSubscription(subscription) }, { requestId });
+  return json({ subscription: await serializeSubscription(database, subscription) }, { requestId });
 }
 
 async function terminateSubscription(
@@ -295,7 +361,10 @@ async function terminateSubscription(
   if (!subscription)
     throw new ApiError(404, "subscription_not_found", "Subscription was not found");
   if (subscription.status === "terminated" || subscription.status === "canceled") {
-    return json({ subscription: serializeSubscription(subscription) }, { requestId });
+    return json(
+      { subscription: await serializeSubscription(env.BILLING_DB, subscription) },
+      { requestId },
+    );
   }
   if (subscription.status === "pending") {
     return cancelPendingSubscription(subscription, env, auth, requestId);
@@ -373,7 +442,10 @@ async function terminateSubscription(
   if (reservation.replayed) {
     subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
     if (!subscription) throw new ApiError(500, "persistence_error", "Subscription disappeared");
-    return json({ subscription: serializeSubscription(subscription) }, { requestId });
+    return json(
+      { subscription: await serializeSubscription(env.BILLING_DB, subscription) },
+      { requestId },
+    );
   }
 
   const terminatedAt = new Date().toISOString();
@@ -398,7 +470,10 @@ async function terminateSubscription(
       });
       subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
       if (!subscription) throw new ApiError(500, "persistence_error", "Subscription disappeared");
-      return json({ subscription: serializeSubscription(subscription) }, { requestId });
+      return json(
+        { subscription: await serializeSubscription(env.BILLING_DB, subscription) },
+        { requestId },
+      );
     }
     if (onTerminationInvoice === "generate") {
       const result = await terminateSubscriptionWithInvoice(
@@ -419,7 +494,10 @@ async function terminateSubscription(
       });
       subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
       if (!subscription) throw new ApiError(500, "persistence_error", "Subscription disappeared");
-      return json({ subscription: serializeSubscription(subscription) }, { requestId });
+      return json(
+        { subscription: await serializeSubscription(env.BILLING_DB, subscription) },
+        { requestId },
+      );
     }
     const event = await terminateSubscriptionWithoutInvoice(
       env,
@@ -452,7 +530,10 @@ async function terminateSubscription(
   }
   subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
   if (!subscription) throw new ApiError(500, "persistence_error", "Subscription disappeared");
-  return json({ subscription: serializeSubscription(subscription) }, { requestId });
+  return json(
+    { subscription: await serializeSubscription(env.BILLING_DB, subscription) },
+    { requestId },
+  );
 }
 
 async function cancelPendingSubscription(
@@ -521,7 +602,10 @@ async function cancelPendingSubscription(
       subscription.external_id,
     );
     if (current?.status === "canceled") {
-      return json({ subscription: serializeSubscription(current) }, { requestId });
+      return json(
+        { subscription: await serializeSubscription(env.BILLING_DB, current) },
+        { requestId },
+      );
     }
     throw new ApiError(409, "subscription_version_conflict", "Subscription changed concurrently");
   }
@@ -532,7 +616,10 @@ async function cancelPendingSubscription(
     subscription.external_id,
   );
   if (!canceled) throw new ApiError(500, "persistence_error", "Subscription disappeared");
-  return json({ subscription: serializeSubscription(canceled) }, { requestId });
+  return json(
+    { subscription: await serializeSubscription(env.BILLING_DB, canceled) },
+    { requestId },
+  );
 }
 
 async function hasMinimumCommitment(
@@ -562,6 +649,7 @@ function subscriptionSelect(): string {
                  s.terminated_at, s.created_at, s.updated_at, s.version,
                  s.billing_time, s.billing_timezone, s.trial_started_at, s.trial_end_at,
                  s.trial_ended_at, s.payment_method_type, s.payment_method_id,
+                 s.skip_invoice_custom_sections,
                  (SELECT pp.code FROM subscriptions ps JOIN plans pp ON pp.id = ps.plan_id
                   WHERE ps.id = s.previous_subscription_id LIMIT 1) AS previous_plan_code,
                  (SELECT np.code FROM subscriptions ns JOIN plans np ON np.id = ns.plan_id
@@ -606,7 +694,11 @@ async function findAnySubscription(
     .first<SubscriptionRow>();
 }
 
-function serializeSubscription(subscription: SubscriptionRow): Record<string, unknown> {
+async function serializeSubscription(
+  database: D1Database,
+  subscription: SubscriptionRow,
+  appliedSections?: SerializedAppliedCustomSection[],
+): Promise<Record<string, unknown>> {
   return {
     lago_id: subscription.id,
     external_id: subscription.external_id,
@@ -638,6 +730,9 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
       payment_method_id: subscription.payment_method_id,
       payment_method_type: subscription.payment_method_type,
     },
+    skip_invoice_custom_sections: subscription.skip_invoice_custom_sections === 1,
+    applied_invoice_custom_sections:
+      appliedSections ?? (await serializeAppliedCustomSections(database, subscription.id)),
   };
 }
 

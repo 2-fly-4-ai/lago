@@ -388,9 +388,13 @@ Acceptance:
       through the multi-subscription invoice graph.
       Backdated calendar/anniversary starts on an earlier customer-local day activate at the exact
       supplied instant without a retroactive invoice and resume in the period containing creation;
-      Manual/provider-default payment policy persists across create, update, and plan generations;
-      provider-specific method IDs, backdated one-time, custom-section, and threshold inputs fail
-      explicitly.
+      Manual/provider-default payment policy persists across create, update, and plan generations.
+      Tenant-scoped manual invoice custom-section catalog CRUD is available through a documented
+      REST equivalent for the operator GraphQL workflow. Explicit subscription attach/skip/replace
+      semantics, pending-row preservation, clean or explicitly supplied plan generations, draft
+      refresh, immutable finalized snapshots, invoice serialization, and PDF projection are
+      implemented. Customer/billing-entity defaults, system-generated sections, provider-specific
+      method IDs, backdated one-time plans, and threshold inputs remain explicit gaps.
       Calendar billing and trial dates use a snapshotted customer IANA
       timezone; the retained termination subset remains UTC-specific.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
@@ -488,7 +492,9 @@ Acceptance:
 
 - [ ] Inventory the Vite UI's GraphQL operations and screen-level feature dependencies.
 - [ ] Implement the GraphQL compatibility surface or replace individual screens with a documented
-      Worker API equivalent.
+      Worker API equivalent. Manual invoice custom-section catalog CRUD now uses the documented
+      tenant-scoped REST equivalent; the remaining operator operations and screens are still
+      inventoried/ported individually.
 - [ ] Serve the operator application with Workers Static Assets.
 - [ ] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained.
 - [ ] Mark retired screens explicitly with approved product rationale.
@@ -1374,3 +1380,22 @@ resource and mutation described.
   aggregate-only verification remained empty. The deployed version retained all three disabled
   external-action flags and only the existing isolated bindings/triggers. No production route,
   domain, secret, provider action, or billing record changed.
+- 2026-08-14: Ported the explicit subscription invoice custom-section slice and documented its
+  tenant-scoped REST catalog as the Worker equivalent for the corresponding operator GraphQL
+  workflow. Migration `0035_invoice_custom_sections.sql` adds the active manual-section catalog,
+  subscription selection/skip state, tenant and immutability triggers, draft invalidation, and
+  immutable invoice snapshots. Create/update follows Lago's explicit and implicit skip semantics,
+  silently ignores unknown codes, preserves omitted selections during pending-row plan
+  replacement, and starts upgrade/downgrade generations clean unless the replacement request
+  supplies selections. Draft refresh recopies current catalog content; finalization freezes it for
+  invoice API and escaped Browser Rendering/PDF output. Bulk list projection avoids per-row D1
+  queries. Evidence covers catalog replay/conflict/termination/recreation, outbox rollback, tenant
+  isolation and injected relationship/snapshot mutation, subscription replay divergence,
+  attach/skip/restore, draft refresh/finalized immutability, every plan-generation transition, and
+  rendered HTML/PDF content. All 128 tests pass across 28 files; all 35 migrations replay from an
+  empty D1 with no foreign-key violations and 11 custom-section guards/triggers, while formatting,
+  strict lint, generated inventory/types, TypeScript, and a 651.71 KiB (113.70 KiB gzip) dry-run
+  bundle are green. Customer/billing-entity defaults, system-generated sections, wallet targets,
+  and the remaining operator UI are still pending. This is a local pre-deployment checkpoint;
+  isolated remote D1 remains on migration `0034` and Worker version
+  `943b9159-4f62-4f52-9061-a3424f578e0c`.

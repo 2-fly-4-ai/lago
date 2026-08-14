@@ -296,7 +296,7 @@ export async function refreshSubscriptionDraft(
       ...draftTerminationCredits.eventStatements,
     );
     const results = await env.BILLING_DB.batch(statements);
-    if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1) {
+    if (results[0]?.meta.changes !== 1 || (results[1]?.meta.changes ?? 0) < 1) {
       throw new Error("invoice_version_conflict");
     }
     const outbox = results[invoiceOutboxIndex];

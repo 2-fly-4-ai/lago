@@ -27,6 +27,12 @@ type InvoiceLineDocumentRow = {
   amount_minor: number;
 };
 
+type AppliedInvoiceCustomSectionRow = {
+  name: string;
+  details: string | null;
+  display_name: string | null;
+};
+
 export type PdfRenderer = {
   render(html: string): Promise<Response>;
 };
@@ -60,6 +66,7 @@ export async function generateInvoicePdf(
   const invoice = await loadInvoice(env.BILLING_DB, invoiceId);
   if (!invoice || invoice.status !== "finalized") throw new Error("invoice_not_finalized");
   const lines = await loadLines(env.BILLING_DB, invoice.id);
+  const customSections = await loadCustomSections(env.BILLING_DB, invoice.id);
   const artifactId = await deterministicUuid("invoice-pdf", `${invoice.id}:v${invoice.version}`);
   const objectKey = `invoices/${invoice.organization_id}/${invoice.id}/v${invoice.version}.pdf`;
   const now = new Date().toISOString();
@@ -90,7 +97,7 @@ export async function generateInvoicePdf(
     };
   }
   try {
-    const response = await renderer.render(renderInvoiceHtml(invoice, lines));
+    const response = await renderer.render(renderInvoiceHtml(invoice, lines, customSections));
     if (!response.ok || !response.body) throw new Error(`browser_pdf_error:${response.status}`);
     const declared = Number.parseInt(response.headers.get("Content-Length") ?? "", 10);
     if (Number.isFinite(declared) && declared > MAX_PDF_BYTES) throw new Error("pdf_too_large");
@@ -131,6 +138,7 @@ export async function generateInvoicePdf(
 export function renderInvoiceHtml(
   invoice: InvoiceDocumentRow,
   lines: InvoiceLineDocumentRow[],
+  customSections: AppliedInvoiceCustomSectionRow[] = [],
 ): string {
   const rows = lines
     .map(
@@ -138,7 +146,13 @@ export function renderInvoiceHtml(
         `<tr><td>${escapeHtml(line.description)}</td><td class="number">${escapeHtml(line.quantity_decimal)}</td><td class="number">${formatMinor(line.unit_amount_decimal, invoice.currency)}</td><td class="number">${formatMinor(String(line.amount_minor), invoice.currency)}</td></tr>`,
     )
     .join("");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Invoice ${escapeHtml(invoice.number ?? invoice.id)}</title><style>@page{size:A4;margin:12mm}*{box-sizing:border-box}body{font:13px system-ui,sans-serif;color:#172033}h1{font-size:28px;margin:0}.header{display:flex;justify-content:space-between;border-bottom:2px solid #172033;padding-bottom:18px}.meta{text-align:right}.customer{margin:28px 0}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #d7dce5;text-align:left}.number{text-align:right}.totals{margin:24px 0 0 auto;width:45%}.totals div{display:flex;justify-content:space-between;padding:5px}.total{font-size:17px;font-weight:700;border-top:2px solid #172033;margin-top:5px;padding-top:10px!important}.footer{margin-top:40px;color:#667085;font-size:11px}</style></head><body><section class="header"><div><h1>Invoice</h1><div>${escapeHtml(invoice.number ?? invoice.id)}</div></div><div class="meta"><strong>${escapeHtml(invoice.status.toUpperCase())}</strong><br>Issued ${escapeHtml(invoice.issuing_date ?? "—")}</div></section><section class="customer"><strong>Bill to</strong><br>${escapeHtml(invoice.customer_name ?? invoice.customer_external_id)}<br>${escapeHtml(invoice.customer_email ?? "")}</section><table><thead><tr><th>Description</th><th class="number">Quantity</th><th class="number">Unit</th><th class="number">Amount</th></tr></thead><tbody>${rows}</tbody></table><section class="totals"><div><span>Subtotal</span><span>${formatMinor(String(invoice.subtotal_minor), invoice.currency)}</span></div><div><span>Tax</span><span>${formatMinor(String(invoice.tax_minor), invoice.currency)}</span></div><div><span>Credits</span><span>-${formatMinor(String(invoice.credits_minor), invoice.currency)}</span></div><div class="total"><span>Total due</span><span>${formatMinor(String(invoice.total_due_minor), invoice.currency)}</span></div></section><div class="footer">Generated from immutable invoice version ${invoice.version}. Amounts are shown in ${escapeHtml(invoice.currency)}.</div></body></html>`;
+  const sections = customSections
+    .map(
+      (section) =>
+        `<section class="custom-section"><h2>${escapeHtml(section.display_name ?? "")}</h2>${section.details ? `<div>${escapeHtml(section.details)}</div>` : ""}</section>`,
+    )
+    .join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Invoice ${escapeHtml(invoice.number ?? invoice.id)}</title><style>@page{size:A4;margin:12mm}*{box-sizing:border-box}body{font:13px system-ui,sans-serif;color:#172033}h1{font-size:28px;margin:0}.header{display:flex;justify-content:space-between;border-bottom:2px solid #172033;padding-bottom:18px}.meta{text-align:right}.customer{margin:28px 0}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #d7dce5;text-align:left}.number{text-align:right}.totals{margin:24px 0 0 auto;width:45%}.totals div{display:flex;justify-content:space-between;padding:5px}.total{font-size:17px;font-weight:700;border-top:2px solid #172033;margin-top:5px;padding-top:10px!important}.custom-section{margin-top:28px;break-inside:avoid}.custom-section h2{font-size:15px;margin:0 0 8px}.custom-section div{white-space:pre-wrap;line-height:1.5}.footer{margin-top:40px;color:#667085;font-size:11px}</style></head><body><section class="header"><div><h1>Invoice</h1><div>${escapeHtml(invoice.number ?? invoice.id)}</div></div><div class="meta"><strong>${escapeHtml(invoice.status.toUpperCase())}</strong><br>Issued ${escapeHtml(invoice.issuing_date ?? "—")}</div></section><section class="customer"><strong>Bill to</strong><br>${escapeHtml(invoice.customer_name ?? invoice.customer_external_id)}<br>${escapeHtml(invoice.customer_email ?? "")}</section><table><thead><tr><th>Description</th><th class="number">Quantity</th><th class="number">Unit</th><th class="number">Amount</th></tr></thead><tbody>${rows}</tbody></table><section class="totals"><div><span>Subtotal</span><span>${formatMinor(String(invoice.subtotal_minor), invoice.currency)}</span></div><div><span>Tax</span><span>${formatMinor(String(invoice.tax_minor), invoice.currency)}</span></div><div><span>Credits</span><span>-${formatMinor(String(invoice.credits_minor), invoice.currency)}</span></div><div class="total"><span>Total due</span><span>${formatMinor(String(invoice.total_due_minor), invoice.currency)}</span></div></section>${sections}<div class="footer">Generated from immutable invoice version ${invoice.version}. Amounts are shown in ${escapeHtml(invoice.currency)}.</div></body></html>`;
 }
 
 async function loadInvoice(database: D1Database, invoiceId: string) {
@@ -163,6 +177,18 @@ async function loadLines(database: D1Database, invoiceId: string) {
     )
     .bind(invoiceId)
     .all<InvoiceLineDocumentRow>();
+  return [...result.results];
+}
+
+async function loadCustomSections(database: D1Database, invoiceId: string) {
+  const result = await database
+    .prepare(
+      `SELECT name, details, display_name
+       FROM applied_invoice_custom_sections
+       WHERE invoice_id = ? ORDER BY name, code, id`,
+    )
+    .bind(invoiceId)
+    .all<AppliedInvoiceCustomSectionRow>();
   return [...result.results];
 }
 

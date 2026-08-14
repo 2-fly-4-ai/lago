@@ -33,6 +33,13 @@ beforeEach(async () => {
        VALUES ('line-document', 'invoice-document', 'subscription', 'Plan <script>',
                '1', '1250', 1250, 'plan', 'plan-document', '{}', ?)`,
     ).bind(now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO applied_invoice_custom_sections
+       (id, invoice_id, organization_id, invoice_custom_section_id, code, name, description,
+        details, display_name, created_at)
+       VALUES ('section-document', 'invoice-document', 'org-document', NULL, 'legal', 'Legal',
+               NULL, 'Pay <carefully> & promptly', 'Payment terms', ?)`,
+    ).bind(now),
   ]);
 });
 
@@ -64,19 +71,31 @@ describe("invoice documents", () => {
           amount_minor: 1250,
         },
       ],
+      [
+        {
+          name: "Legal <name>",
+          details: "Pay <carefully> & promptly",
+          display_name: "Terms & conditions",
+        },
+      ],
     );
     expect(html).toContain("Customer &lt;Example&gt;");
     expect(html).toContain("Plan &lt;script&gt;");
     expect(html).not.toContain("<script>");
     expect(html).toContain("$12.50");
+    expect(html).toContain("Terms &amp; conditions");
+    expect(html).toContain("Pay &lt;carefully&gt; &amp; promptly");
   });
 
   it("archives one checksummed PDF and replays without rerendering", async () => {
     const pdf = new TextEncoder().encode("%PDF-1.7\nsynthetic pdf\n%%EOF");
     const render = vi.fn(
-      async () => new Response(pdf, { headers: { "Content-Type": "application/pdf" } }),
+      async (_html: string) =>
+        new Response(pdf, { headers: { "Content-Type": "application/pdf" } }),
     );
     const first = await generateInvoicePdf(env, "invoice-document", { render });
+    expect(render.mock.calls[0]?.[0]).toContain("Payment terms");
+    expect(render.mock.calls[0]?.[0]).toContain("Pay &lt;carefully&gt; &amp; promptly");
     expect(first.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(first.byteLength).toBe(pdf.byteLength);
     expect(await (await env.BILLING_ARTIFACTS.get(first.objectKey))?.text()).toBe(

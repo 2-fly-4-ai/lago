@@ -21,6 +21,10 @@ import {
   type SubscriptionInvoiceLine,
 } from "./subscription-invoice-calculation";
 import { walletAllocationStatements } from "./wallet-credits";
+import {
+  customSectionLinkStatements,
+  guardedCustomSectionLinkStatements,
+} from "../subscriptions/custom-sections";
 
 type CurrentGeneration = {
   id: string;
@@ -49,6 +53,7 @@ type CurrentGeneration = {
   net_payment_term: number;
   payment_method_type: "manual" | "provider" | null;
   payment_method_id: string | null;
+  skip_invoice_custom_sections: number;
 };
 
 type TargetPlan = {
@@ -73,6 +78,8 @@ export type ChangeSubscriptionPlanInput = {
   requestId: string;
   paymentMethodType?: "manual" | "provider" | null;
   paymentMethodId?: string | null;
+  customSectionIds?: string[];
+  skipInvoiceCustomSections?: boolean;
 };
 
 export type ChangeSubscriptionPlanResult = {
@@ -183,6 +190,7 @@ async function updateInitialPending(
     input.paymentMethodType === undefined
       ? current.payment_method_id
       : (input.paymentMethodId ?? null);
+  const sectionUpdate = pendingCustomSectionUpdate(current, input);
   const event = subscriptionEvent(
     "subscription.updated",
     current.id,
@@ -195,7 +203,17 @@ async function updateInitialPending(
       externalSubscriptionId: current.external_id,
       planCode: target.code,
       status: "pending",
+      skipInvoiceCustomSections: sectionUpdate.skip === 1,
     },
+  );
+  const sectionStatements = guardedCustomSectionLinkStatements(
+    env.BILLING_DB,
+    current.organization_id,
+    current.id,
+    sectionUpdate.sectionIds,
+    changedAt,
+    current.version + 1,
+    "pending",
   );
   const results = await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
@@ -203,6 +221,7 @@ async function updateInitialPending(
        SET plan_id = ?, name = ?, ending_at = ?, request_sha256 = ?,
            payment_method_type = ?, payment_method_id = ?,
            trial_started_at = ?, trial_end_at = ?, trial_ended_at = NULL,
+           skip_invoice_custom_sections = ?,
            version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ? AND status = 'pending'
          AND previous_subscription_id IS NULL`,
@@ -215,11 +234,13 @@ async function updateInitialPending(
       paymentMethodId,
       trialEndAt ? initialStartedAt : null,
       trialEndAt,
+      sectionUpdate.skip,
       changedAt,
       current.id,
       current.organization_id,
       current.version,
     ),
+    ...sectionStatements,
     guardedOutboxStatement(
       env.BILLING_DB,
       current.organization_id,
@@ -230,11 +251,26 @@ async function updateInitialPending(
       changedAt,
     ),
   ]);
-  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
+  if (
+    (results[0]?.meta.changes ?? 0) < 1 ||
+    results[1 + sectionStatements.length]?.meta.changes !== 1
+  ) {
     throw new Error("subscription_version_conflict");
   }
   await env.DOMAIN_EVENTS.send(event);
   return { responseSubscriptionId: current.id, changed: true, transition: "pending_update" };
+}
+
+function pendingCustomSectionUpdate(
+  current: CurrentGeneration,
+  input: ChangeSubscriptionPlanInput,
+): { skip: number; sectionIds: string[] | undefined } {
+  if (input.skipInvoiceCustomSections === true) return { skip: 1, sectionIds: [] };
+  if (input.skipInvoiceCustomSections === false) {
+    return { skip: 0, sectionIds: input.customSectionIds };
+  }
+  if (current.skip_invoice_custom_sections === 1) return { skip: 1, sectionIds: undefined };
+  return { skip: 0, sectionIds: input.customSectionIds };
 }
 
 async function scheduleDowngrade(
@@ -262,6 +298,7 @@ async function scheduleDowngrade(
   );
   const initialStartedAt = await initialStartedAtFor(env.BILLING_DB, current);
   const trialEndAt = trialEnd(target, initialStartedAt, current.billing_timezone);
+  const nextSkipInvoiceCustomSections = input.skipInvoiceCustomSections === true ? 1 : 0;
   const event = subscriptionEvent(
     "subscription.updated",
     current.id,
@@ -308,9 +345,10 @@ async function scheduleDowngrade(
         created_at, updated_at, name, request_sha256, subscription_at, ending_at,
         on_termination_credit_note, on_termination_invoice, billing_time, billing_timezone,
         trial_started_at, trial_end_at, trial_ended_at, previous_subscription_id,
-        transition_kind, transition_at, generation, payment_method_type, payment_method_id)
+        transition_kind, transition_at, generation, payment_method_type, payment_method_id,
+        skip_invoice_custom_sections)
        SELECT ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, NULL, 1, ?, ?, ?, ?, ?, ?,
-              NULL, NULL, ?, ?, ?, ?, ?, ?, 'downgrade', ?, ?, ?, ?
+              NULL, NULL, ?, ?, ?, ?, ?, ?, 'downgrade', ?, ?, ?, ?, ?
        FROM subscriptions previous
        WHERE previous.id = ? AND previous.organization_id = ? AND previous.version = ?
          AND previous.status IN ('active', 'past_due')`,
@@ -340,9 +378,18 @@ async function scheduleDowngrade(
       input.paymentMethodType === undefined
         ? current.payment_method_id
         : (input.paymentMethodId ?? null),
+      nextSkipInvoiceCustomSections,
       current.id,
       current.organization_id,
       current.version,
+    ),
+    ...customSectionLinkStatements(
+      env.BILLING_DB,
+      current.organization_id,
+      nextId,
+      input.customSectionIds,
+      changedAt,
+      false,
     ),
     env.BILLING_DB.prepare(
       `UPDATE subscriptions SET version = version + 1, updated_at = ?
@@ -366,10 +413,12 @@ async function scheduleDowngrade(
     throw new Error("subscription_version_conflict");
   }
   const insertIndex = existing ? 1 : 0;
+  const linkCount = input.customSectionIds?.length ?? 0;
+  const updateIndex = insertIndex + 1 + linkCount;
   if (
     results[insertIndex]?.meta.changes !== 1 ||
-    (results[insertIndex + 1]?.meta.changes ?? 0) < 1 ||
-    results[insertIndex + 2]?.meta.changes !== 1
+    (results[updateIndex]?.meta.changes ?? 0) < 1 ||
+    results[updateIndex + 1]?.meta.changes !== 1
   ) {
     throw new Error("subscription_version_conflict");
   }
@@ -407,6 +456,7 @@ async function upgradeActiveGeneration(
   const targetTrialEndAt = trialEnd(target, initialStartedAt, current.billing_timezone);
   const targetTrialActive =
     targetTrialEndAt !== null && Date.parse(targetTrialEndAt) > Date.parse(changedAt);
+  const nextSkipInvoiceCustomSections = input.skipInvoiceCustomSections === true ? 1 : 0;
   const nextSubscription: BillableSubscription = {
     id: nextId,
     organization_id: current.organization_id,
@@ -625,9 +675,10 @@ async function upgradeActiveGeneration(
         created_at, updated_at, name, request_sha256, subscription_at, ending_at,
         on_termination_credit_note, on_termination_invoice, billing_time, billing_timezone,
         trial_started_at, trial_end_at, trial_ended_at, previous_subscription_id,
-        transition_kind, transition_at, generation, payment_method_type, payment_method_id)
+        transition_kind, transition_at, generation, payment_method_type, payment_method_id,
+        skip_invoice_custom_sections)
        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, NULL, 1, ?, ?, ?, ?, ?, ?, NULL, NULL,
-               ?, ?, ?, ?, ?, ?, 'upgrade', ?, ?, ?, ?)`,
+               ?, ?, ?, ?, ?, ?, 'upgrade', ?, ?, ?, ?, ?)`,
     ).bind(
       nextId,
       current.organization_id,
@@ -655,6 +706,15 @@ async function upgradeActiveGeneration(
       input.paymentMethodType === undefined
         ? current.payment_method_id
         : (input.paymentMethodId ?? null),
+      nextSkipInvoiceCustomSections,
+    ),
+    ...customSectionLinkStatements(
+      env.BILLING_DB,
+      current.organization_id,
+      nextId,
+      input.customSectionIds,
+      changedAt,
+      false,
     ),
     env.BILLING_DB.prepare(
       `INSERT INTO invoice_subscriptions
@@ -807,7 +867,7 @@ async function findCurrentGeneration(
       `SELECT s.id, s.organization_id, s.customer_id, s.plan_id, s.external_id, s.status,
               s.subscription_at, s.started_at, s.current_period_start, s.current_period_end,
               s.ending_at, s.billing_time, s.billing_timezone, s.generation, s.version,
-              s.payment_method_type, s.payment_method_id,
+              s.payment_method_type, s.payment_method_id, s.skip_invoice_custom_sections,
               s.trial_started_at, s.trial_end_at, s.trial_ended_at,
               p.amount_minor AS plan_amount_minor, p.currency AS plan_currency,
               p.interval AS plan_interval, p.pay_in_advance AS plan_pay_in_advance,

@@ -13,6 +13,8 @@ remaining Lago feature inventory is dispositioned and ported.
   pay-in-arrears fixed charges, customer payment terms, immutable invoice due-date snapshots,
   customer invoice-grace settings, distinct initial/renewal invoice contexts, refreshable draft
   state, dependency-invalidation triggers and mutation guards, immutable issuing/finalization dates,
+  tenant-scoped invoice custom-section catalog records, subscription selections, and immutable
+  invoice section snapshots,
   customer time zones, subscription billing mode/timezone snapshots, immutable trial boundaries,
   overdue state, payment attempts, outbox state, and webhook receipt metadata;
   plan-level minimum commitments are reconciled as auditable period true-up lines after recurring
@@ -29,7 +31,12 @@ remaining Lago feature inventory is dispositioned and ported.
   canceled without producing an invoice. Immediate, historical, and scheduled activation emit a
   transactional `subscription.started` event. Subscription create, update, and plan replacement
   persist Lago's `manual` or provider-default payment policy; provider-specific method IDs remain
-  guarded until the tenant-scoped registry is ported. Zero-grace in-arrears subscriptions can terminate
+  guarded until the tenant-scoped registry is ported. Subscription create/update also accepts
+  Lago's `invoice_custom_section` wrapper: explicit skip clears selections, explicit false can
+  replace them, an omitted skip preserves a prior skip, and unknown codes are ignored as in the
+  legacy service. Pending plan replacement preserves omitted selections; new upgrade/downgrade
+  generations start without inherited selections unless explicitly supplied. Zero-grace
+  in-arrears subscriptions can terminate
   with an atomic final invoice: the base fee and minimum-commitment target are prorated by inclusive
   UTC service days, usage is bounded to the following UTC-day boundary, and supported
   non-prorated pay-in-arrears fixed charges retain their full amount. The same constrained plans may persist a
@@ -92,9 +99,44 @@ remaining Lago feature inventory is dispositioned and ported.
   transactionally before removing receipt rows, so storage outages remain retryable.
 - R2: immutable provider webhook, usage-event, and invoice-document archives.
 - Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
+- Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
+  `/api/v1/invoice_custom_sections` replace the retained operator GraphQL workflow for this
+  feature. Draft invoices refresh their snapshots; finalized invoice API/PDF output uses only the
+  immutable copy.
 
 No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or
 OS command is required by this package.
+
+## Invoice custom-section compatibility
+
+The retained operator catalog uses authenticated tenant-scoped REST endpoints in place of its
+legacy GraphQL operations:
+
+- `POST` and `GET /api/v1/invoice_custom_sections` create and list manual sections.
+- `GET`, `PUT`, and `DELETE /api/v1/invoice_custom_sections/:code` show, update, and terminate a
+  section. Termination is a soft delete; its code may be reused by a later section.
+
+Create and update bodies use the Lago-shaped `invoice_custom_section` wrapper with `code`, `name`,
+`description`, `details`, and `display_name`. Subscription create/update and plan-replacement
+requests use the same wrapper name with selection fields:
+
+```json
+{
+  "subscription": {
+    "invoice_custom_section": {
+      "skip_invoice_custom_sections": false,
+      "invoice_custom_section_codes": ["payment-terms", "legal"]
+    }
+  }
+}
+```
+
+Unknown codes are ignored, repeated/reordered codes describe the same selection, explicit
+`skip_invoice_custom_sections: true` removes selections, and explicit false with codes replaces
+them. A codes-only subscription selection update does nothing while skip is already true; false
+re-enables selection.
+Draft invoice snapshots change only after refresh/finalization, and finalized API/PDF content does
+not follow later catalog edits.
 
 ## Safety defaults
 
