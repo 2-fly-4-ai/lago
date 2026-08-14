@@ -129,9 +129,11 @@ remaining Lago feature inventory is dispositioned and ported.
   still requiring the event property to exist. Current usage and invoice lines preserve the same
   exact partition, and filter invoice lines use deterministic source identities. Current usage
   reports actual rated usage without applying charge minimums; invoices add one charge-wide,
-  termination-prorated true-up line across all filter/base fees. Filters combined with weighted
-  sums or target-wallet grouping fail explicitly until per-filter baselines and multidimensional
-  grouping are ported.
+  termination-prorated true-up line across all filter/base fees. Target-wallet-enabled charges
+  partition each filter/base fee again by wallet code, preserving deterministic line identities,
+  combined filter/wallet metadata, exact current-usage totals, and exact wallet allocations.
+  Filters combined with weighted sums fail explicitly until per-filter recurring baselines are
+  ported.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,

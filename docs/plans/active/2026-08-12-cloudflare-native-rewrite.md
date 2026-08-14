@@ -299,9 +299,11 @@ Acceptance:
       create/list/show/update/delete supports the exact in-arrears rating models, nested
       filter-specific price overrides, and standalone filter list/show/create/update/delete.
       Pay-in-advance, proration, targeted taxes, pricing units, and cascades fail explicitly until
-      their billing and cleanup workflows are ported; combining filters with weighted usage or
-      target-wallet grouping remains guarded. Charge minimums now create one charge-wide,
-      termination-prorated true-up line after all filter/base fees are rated.
+      their billing and cleanup workflows are ported; combining filters with weighted usage
+      remains guarded. Filter/base partitions can combine with target-wallet grouping as exact
+      two-dimensional current-usage and invoice cells with deterministic identities and wallet
+      allocations. Charge minimums create one charge-wide, termination-prorated true-up line after
+      every cell is rated.
 - [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
       and rounding behavior according to feature disposition. Unrestricted fixed/percentage
       coupons now support once/recurring/forever application, initial and renewal invoice
@@ -501,11 +503,13 @@ Acceptance:
       reconstructed across subscription generations. Nested metric/charge filters use bounded D1
       documents, strict allowed-value validation, wildcard key-presence semantics, and first
       most-specific event assignment for current usage and invoice lines. Weighted target-wallet
-      grouping, custom aggregation, filter/weighted or filter/wallet combinations, and advanced
-      adjustments remain pending. Optional round/ceil/floor metric configuration applies to
-      aggregate units before current-usage and recurring-invoice rating, including negative
-      precision. Filtered and unfiltered charge minimums are excluded from current usage and emit a
-      separate charge-wide invoice true-up, matching the legacy fee contract.
+      grouping, custom aggregation, filter/weighted combinations, and advanced adjustments remain
+      pending. Filter partitions may combine with target-wallet groups; every event enters one
+      filter/base and one wallet cell, and current usage, invoice lines, and wallet allocations
+      reconcile exactly. Optional round/ceil/floor metric configuration applies to aggregate units
+      before current-usage and recurring-invoice rating, including negative precision. Filtered and
+      unfiltered charge minimums are excluded from current usage and emit a separate charge-wide
+      invoice true-up, matching the legacy fee contract.
 - [x] Replace the Ruby subprocess and Go/Rust native library with a restricted TypeScript parser or
       a supported precompiled Wasm module. The pinned `lago-expression` Rust extension is now
       replaced by a bounded TypeScript parser/evaluator with no dynamic evaluation; the separately
@@ -1882,3 +1886,21 @@ resource and mutation described.
   `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`;
   no migration, resource provisioning, production route/domain, secret, provider action, customer
   data, or billing row changed.
+- 2026-08-15: Ported exact filter-by-target-wallet grouping. Every event first enters the legacy
+  most-specific filter or base partition and then one normalized wallet-code group. Current usage
+  rates every two-dimensional cell independently before reconciling charge/filter totals; recurring
+  and termination invoices persist one deterministic line identity per cell with both dimensions
+  in metadata, and wallet allocation consumes those distinct persistence sources without losing
+  the owning charge. Evidence covers two wallet targets across a filtered and unmatched partition,
+  exact 140-cent current usage, three distinct invoice lines, and exact 80/60-cent allocations.
+  Formatting, strict lint, inventory, generated types, and TypeScript are green; bounded Worker
+  groups pass all 182 tests as 50 + 69 + 63. The dry-run bundle is 878.24 KiB (153.04 KiB gzip).
+  Feature checkpoint: `8aec08c`.
+- 2026-08-15: Remote preflight on the explicit SERP account found no pending migration and zero
+  organizations, customers, plans, subscriptions, invoices, billable metrics, charges, usage
+  events, wallets, wallet targets, and outbox rows. Deployed only the isolated Worker as version
+  `c3281312-ae2f-425f-bc3c-07ca186f3e8b` with a 6 ms startup. Health/readiness returned `200`/`200`,
+  unauthenticated standalone filter access returned `401`, and post-deploy aggregate-only
+  verification remained empty apart from 187 schedule audits. All three external-action flags
+  remain `0`; no migration, resource provisioning, production route/domain, secret, provider
+  action, customer data, or billing row changed.
