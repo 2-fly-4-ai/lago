@@ -143,6 +143,12 @@ type PreparedFixedChargeCascadeDelete = {
   version: number;
 };
 
+type PreparedPlanAmountCascade = {
+  id: string;
+  code: string;
+  version: number;
+};
+
 const INTERVALS = new Set(["weekly", "monthly", "quarterly", "yearly", "one_time"]);
 
 export async function handlePlanCatalogRequest(
@@ -1106,6 +1112,7 @@ async function updatePlan(
   assertPlanMutationAvailable(plan);
   const input = objectAt(await parseJsonObject(request), "plan");
   rejectUpdateGraph(input);
+  const cascade = cascadeRequested(input);
   if (input.bill_charges_monthly === true || input.bill_fixed_charges_monthly === true)
     throw new ApiError(422, "unsupported_plan_feature", "Monthly split billing is not implemented");
   const attached = await env.BILLING_DB.prepare(
@@ -1186,6 +1193,13 @@ async function updatePlan(
         : optionalObject(input.metadata, "metadata"),
   };
   const now = new Date().toISOString();
+  const cascadeChildren =
+    cascade && next.amountMinor !== plan.amount_minor
+      ? await preparePlanAmountCascade(env.BILLING_DB, plan.id, plan.amount_minor)
+      : [];
+  const cascadeJson = stableJson(cascadeChildren);
+  const cascadeEnabled = cascade && next.amountMinor !== plan.amount_minor ? 1 : 0;
+  const cascadeCount = cascadeChildren.length;
   const event = planEvent(
     "plan.updated",
     plan.id,
@@ -1194,6 +1208,12 @@ async function updatePlan(
     requestId,
     now,
     { code: next.code },
+  );
+  const childEvents = cascadeChildren.map((child) =>
+    planEvent("plan.updated", child.id, child.version + 1, auth.organizationId, requestId, now, {
+      code: child.code,
+      cascadedFromPlanId: plan.id,
+    }),
   );
   try {
     const results = await env.BILLING_DB.batch([
@@ -1205,7 +1225,23 @@ async function updatePlan(
          version = version + 1, updated_at = ?
          WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?
            AND EXISTS (SELECT 1 FROM plan_mutation_guards
-                       WHERE request_id = ? AND plan_id = ?)`,
+                       WHERE request_id = ? AND plan_id = ?)
+           AND (
+             ? = 0 OR (
+               ? = (
+                 SELECT COUNT(*) FROM json_each(?) expected
+                 JOIN plans child ON child.id = json_extract(expected.value, '$.id')
+                 WHERE child.organization_id = ? AND child.active = 1
+                   AND child.parent_id = ? AND child.amount_minor = ?
+                   AND child.version = json_extract(expected.value, '$.version')
+               )
+               AND ? = (
+                 SELECT COUNT(*) FROM plans child
+                 WHERE child.organization_id = ? AND child.active = 1
+                   AND child.parent_id = ? AND child.amount_minor = ?
+               )
+             )
+           )`,
       ).bind(
         next.code,
         next.name,
@@ -1225,6 +1261,43 @@ async function updatePlan(
         plan.version,
         requestId,
         plan.id,
+        cascadeEnabled,
+        cascadeCount,
+        cascadeJson,
+        auth.organizationId,
+        plan.id,
+        plan.amount_minor,
+        cascadeCount,
+        auth.organizationId,
+        plan.id,
+        plan.amount_minor,
+      ),
+      env.BILLING_DB.prepare(
+        `UPDATE plans AS child SET amount_minor = ?, version = version + 1, updated_at = ?
+         WHERE child.id IN (SELECT json_extract(value, '$.id') FROM json_each(?))
+           AND child.organization_id = ? AND child.active = 1
+           AND child.parent_id = ? AND child.amount_minor = ?
+           AND child.version = (
+             SELECT json_extract(update_row.value, '$.version') FROM json_each(?) update_row
+             WHERE json_extract(update_row.value, '$.id') = child.id
+           )
+           AND EXISTS (
+             SELECT 1 FROM plans parent
+             WHERE parent.id = ? AND parent.organization_id = ? AND parent.active = 1
+               AND parent.version = ? AND parent.updated_at = ?
+           )`,
+      ).bind(
+        next.amountMinor,
+        now,
+        cascadeJson,
+        auth.organizationId,
+        plan.id,
+        plan.amount_minor,
+        cascadeJson,
+        plan.id,
+        auth.organizationId,
+        plan.version + 1,
+        now,
       ),
       guardedPlanOutboxStatement(
         env.BILLING_DB,
@@ -1236,13 +1309,22 @@ async function updatePlan(
         1,
         requestId,
       ),
+      bulkPlanCascadeOutboxStatement(
+        env.BILLING_DB,
+        auth.organizationId,
+        childEvents,
+        cascadeChildren,
+        now,
+      ),
       clearPlanMutationGuardStatement(env.BILLING_DB, requestId, plan.id),
     ]);
     if (
       results[0]?.meta.changes !== 1 ||
       (results[1]?.meta.changes ?? 0) < 1 ||
-      results[2]?.meta.changes !== 1 ||
-      results[3]?.meta.changes !== 1
+      (results[2]?.meta.changes ?? 0) < cascadeCount ||
+      results[3]?.meta.changes !== 1 ||
+      (results[4]?.meta.changes ?? 0) !== cascadeCount ||
+      results[5]?.meta.changes !== 1
     )
       throw new ApiError(409, "plan_version_conflict", "Plan changed concurrently");
   } catch (error) {
@@ -1250,6 +1332,7 @@ async function updatePlan(
     throw new ApiError(422, "value_already_exist", "Plan code already exists");
   }
   await env.DOMAIN_EVENTS.send(event);
+  for (const childEvent of childEvents) await env.DOMAIN_EVENTS.send(childEvent);
   const updated = await findPlan(env.BILLING_DB, auth.organizationId, next.code);
   if (!updated) throw new ApiError(500, "persistence_error", "Plan disappeared");
   return json({ plan: await serializePlan(env.BILLING_DB, updated) }, { requestId });
@@ -2089,7 +2172,6 @@ function rejectUpdateGraph(input: Record<string, unknown>): void {
     "minimum_commitment",
     "tax_codes",
     "usage_thresholds",
-    "cascade_updates",
   ]) {
     if (input[field] === undefined) continue;
     throw new ApiError(
@@ -2098,6 +2180,42 @@ function rejectUpdateGraph(input: Record<string, unknown>): void {
       `${field} mutation is not implemented by the Cloudflare plan catalog`,
     );
   }
+}
+
+const MAX_PLAN_AMOUNT_CASCADE_CHILDREN = 100;
+const MAX_PLAN_AMOUNT_CASCADE_JSON_BYTES = 64 * 1024;
+
+async function preparePlanAmountCascade(
+  database: D1Database,
+  parentPlanId: string,
+  oldAmountMinor: number,
+): Promise<PreparedPlanAmountCascade[]> {
+  const result = await database
+    .prepare(
+      `SELECT id, code, version FROM plans
+       WHERE parent_id = ? AND active = 1 AND amount_minor = ?
+       ORDER BY created_at, id LIMIT ?`,
+    )
+    .bind(parentPlanId, oldAmountMinor, MAX_PLAN_AMOUNT_CASCADE_CHILDREN + 1)
+    .all<PreparedPlanAmountCascade>();
+  if (result.results.length > MAX_PLAN_AMOUNT_CASCADE_CHILDREN) {
+    throw new ApiError(
+      422,
+      "plan_cascade_too_large",
+      `Plan amount cascades support at most ${MAX_PLAN_AMOUNT_CASCADE_CHILDREN} unchanged child plans`,
+    );
+  }
+  const prepared = [...result.results];
+  if (
+    new TextEncoder().encode(stableJson(prepared)).byteLength > MAX_PLAN_AMOUNT_CASCADE_JSON_BYTES
+  ) {
+    throw new ApiError(
+      422,
+      "plan_cascade_too_large",
+      "Plan amount cascade data exceeds the supported size",
+    );
+  }
+  return prepared;
 }
 
 function planEvent(
@@ -2235,6 +2353,50 @@ function guardedPlanOutboxStatement(
       expectedVersion,
       expectedUpdatedAt,
     );
+}
+
+function bulkPlanCascadeOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  events: DomainEvent[],
+  cascades: PreparedPlanAmountCascade[],
+  updatedAt: string,
+): D1PreparedStatement {
+  const rows = events.map((event, index) => ({
+    eventId: event.id,
+    eventType: event.type,
+    eventVersion: event.version,
+    aggregateType: event.aggregateType,
+    aggregateId: event.aggregateId,
+    aggregateVersion: event.aggregateVersion,
+    causationId: event.causationId,
+    correlationId: event.correlationId,
+    payloadJson: stableJson(event.payload),
+    occurredAt: event.occurredAt,
+    expectedVersion: cascades[index]!.version + 1,
+  }));
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       SELECT json_extract(row.value, '$.eventId'), ?,
+              json_extract(row.value, '$.eventType'),
+              json_extract(row.value, '$.eventVersion'),
+              json_extract(row.value, '$.aggregateType'),
+              json_extract(row.value, '$.aggregateId'),
+              json_extract(row.value, '$.aggregateVersion'),
+              json_extract(row.value, '$.causationId'),
+              json_extract(row.value, '$.correlationId'),
+              json_extract(row.value, '$.payloadJson'),
+              json_extract(row.value, '$.occurredAt'), NULL
+       FROM json_each(?) row
+       JOIN plans child ON child.id = json_extract(row.value, '$.aggregateId')
+       WHERE child.organization_id = ? AND child.active = 1
+         AND child.version = json_extract(row.value, '$.expectedVersion')
+         AND child.updated_at = ?`,
+    )
+    .bind(organizationId, stableJson(rows), organizationId, updatedAt);
 }
 
 function clearPlanMutationGuardStatement(

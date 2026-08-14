@@ -35,6 +35,10 @@ beforeEach(async () => {
     env.BILLING_DB.prepare(
       "DELETE FROM plans WHERE organization_id = 'org-sub-filter' AND parent_id IS NOT NULL",
     ),
+    env.BILLING_DB.prepare(
+      `UPDATE plans SET amount_minor = 1000, version = 1, updated_at = ?
+       WHERE id = 'plan-sub-filter'`,
+    ).bind(now),
     env.BILLING_DB.prepare("DELETE FROM outbox_events WHERE organization_id = 'org-sub-filter'"),
     env.BILLING_DB.prepare(
       `UPDATE charges SET code = 'requests-charge', invoice_display_name = NULL,
@@ -295,6 +299,53 @@ describe("subscription charge-filter overrides", () => {
               (SELECT COUNT(*) FROM charges WHERE organization_id = 'org-sub-filter') AS charges`,
     ).first();
     expect(counts).toEqual({ plans: 1, charges: 2 });
+  });
+
+  it("cascades plan amounts only while child pricing remains inherited", async () => {
+    const override = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters",
+      "POST",
+      { filter: { properties: { amount: "7" }, values: { region: ["us"] } } },
+    );
+    expect(override.status).toBe(200);
+
+    const inherited = await api("/api/v1/plans/filter-plan", "PUT", {
+      plan: { amount_cents: 1200, cascade_updates: true },
+    });
+    expect(inherited.status, await inherited.clone().text()).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT amount_minor FROM plans WHERE parent_id = 'plan-sub-filter'",
+      ).first(),
+    ).resolves.toEqual({ amount_minor: 1200 });
+
+    await env.BILLING_DB.prepare(
+      "UPDATE plans SET amount_minor = 1500 WHERE parent_id = 'plan-sub-filter'",
+    ).run();
+    const preserved = await api("/api/v1/plans/filter-plan", "PUT", {
+      plan: { amount_cents: 1300, cascade_updates: true },
+    });
+    expect(preserved.status).toBe(200);
+    const isolated = await api("/api/v1/plans/filter-plan", "PUT", {
+      plan: { amount_cents: 1400, cascade_updates: false },
+    });
+    expect(isolated.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT parent.amount_minor AS parent_amount, parent.version AS parent_version,
+                child.amount_minor AS child_amount, child.version AS child_version
+         FROM plans parent JOIN plans child ON child.parent_id = parent.id
+         WHERE parent.id = 'plan-sub-filter'`,
+      ).first(),
+    ).resolves.toEqual({
+      parent_amount: 1400,
+      parent_version: 4,
+      child_amount: 1500,
+      child_version: 3,
+    });
+    await expect(env.BILLING_DB.prepare("PRAGMA foreign_key_check").all()).resolves.toMatchObject({
+      results: [],
+    });
   });
 
   it("cascades inherited charge pricing and filters without overwriting child customizations", async () => {
