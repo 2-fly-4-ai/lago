@@ -34,8 +34,10 @@ remaining Lago feature inventory is dispositioned and ported.
   Supported pay-in-arrears, non-prorated fixed charges also expose standalone create/list/show,
   optimistic core update, and soft-delete routes with the same draft/finalized invariants. Their
   retained hard uniqueness constraint means a deleted fixed-charge code cannot yet be reused.
-  Filter/tax/pricing-unit/child-plan cascades, catalog graph replacement, and destructive plan
-  lifecycle remain guarded.
+  Unused plans can also be retired atomically with their active usage/fixed charges; commitments
+  and relational catalog rows remain historical, and monotonic deterministic generations permit
+  repeated same-code recreation. Filter/tax/pricing-unit/child-plan cascades, catalog graph
+  replacement, and deletion of plans with subscriptions remain guarded.
 - Subscription lifecycle: pay-in-advance starts create their initial invoice atomically, while
   in-arrears starts create no initial invoice. A supported future UTC `subscription_at` creates a
   pending subscription with no invoice, and the five-minute activation owner applies the same

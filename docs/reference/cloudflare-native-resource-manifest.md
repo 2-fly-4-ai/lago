@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `487d002b-4eb1-4332-a2a1-676f9211141a`
+- Latest verified version: `b0a3bd59-f583-4a8c-82dc-84f1119c8b5a`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -33,7 +33,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `*/5 * * * *`                                                      | Worker scheduled handler  | Deterministic legacy-schedule dispatch                             |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
-Applied D1 migrations: `0001_foundation.sql` through `0043_billable_metric_lifecycle.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0044_standalone_plan_lifecycle.sql`.
 
 ## Verified behavior
 
@@ -382,6 +382,22 @@ Applied D1 migrations: `0001_foundation.sql` through `0043_billable_metric_lifec
   charges, usage events, wallets, wallet targets, wallet transactions, outbox events, cleanup tasks,
   and mutation guards plus 151 schedule audits. All three external-action flags remain disabled,
   with no route, secret, provider action, customer data, or billing data added.
+- The standalone-plan lifecycle deployment applied only `0044_standalone_plan_lifecycle.sql`;
+  remote schema verification found 44 migrations, zero foreign-key violations, and the empty
+  transaction-local plan mutation-guard table. Unused plan deletion atomically retires active
+  usage/fixed charges, retains commitments and relational catalog history, and writes exactly one
+  versioned outbox event. Plan and metric recreation now allocate monotonic code-scoped versions as
+  well as new deterministic IDs, so repeated delete/recreate cycles cannot collide with historical
+  unique constraints. Plans with any subscription history remain explicitly `plan_in_use` pending
+  asynchronous termination/cancellation/draft-finalization parity. Isolated Worker version
+  `b0a3bd59-f583-4a8c-82dc-84f1119c8b5a` retained only the existing workers.dev URL, `*/5` Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow bindings. The deployed bundle was
+  794.38 KiB (138.01 KiB gzip) with a 7 ms startup. Health/readiness returned `200`/`200`, and
+  unauthenticated plan deletion returned `401`. Aggregate-only verification found zero
+  organizations, customers, plans, subscriptions, invoices, billable metrics, usage charges, fixed
+  charges, usage events, wallets, outbox events, and plan guards plus 154 schedule audits. All three
+  external-action flags remain disabled, with no route, secret, provider action, customer data, or
+  billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

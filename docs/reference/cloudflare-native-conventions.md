@@ -146,6 +146,11 @@ this document does not silently redefine that behavior.
   deletes share the optimistic version/outbox batch; deletion sets `active = 0`, the dependency
   trigger invalidates affected drafts, and finalized invoice lines never re-read mutable charge
   pricing.
+- Standalone plan create/recreate uses a deterministic ID generation and a monotonic code-scoped
+  aggregate version. Update/delete acquires a transaction-local D1 guard before changing the plan
+  and outbox. Deleting a plan with no subscription history retires the plan and its active usage and
+  fixed charges atomically while retaining commitments and catalog history; any subscription edge
+  keeps deletion behind `plan_in_use` until asynchronous terminate/cancel/finalize parity exists.
 - Supported fixed charges use the same active/version/outbox and draft/finalized invariants, and
   inactive rows are excluded from add-on usage checks and future invoice calculation. The original
   hard `(plan_id, code)` uniqueness constraint remains authoritative, so soft-deleted fixed-charge

@@ -1673,3 +1673,28 @@ resource and mutation described.
   Post-deploy aggregate-only verification remained empty apart from 151 schedule audits. All three
   external-action flags remain `0`; no production route, domain, secret, provider action, customer
   data, or billing row was added.
+- 2026-08-15: Ported the safe standalone subset of plan retirement. Plans with no subscription
+  history now acquire a transaction-local D1 mutation guard, then atomically soft-delete the plan
+  and its active usage/fixed charges with exactly one versioned outbox event. Minimum commitments
+  and relational catalog rows remain historical, while inactive readers exclude the retired graph.
+  Any active, pending, terminated, or canceled subscription edge returns `plan_in_use`; the legacy
+  asynchronous terminate/cancel/finalize workflow remains explicit rather than being compressed
+  into an unbounded API request. Plan and billable-metric recreation now combine a new deterministic
+  ID generation with a monotonic code-scoped aggregate version, closing the repeated-retirement
+  collision exposed by their historical unique constraints. Evidence covers scalar updates,
+  mutation-guard cleanup, subscription guarding, usage/fixed-charge cascade, retained commitment,
+  repeated deletion, and three same-code generations. All 158 tests across 31 files pass in bounded
+  Workers-runtime groups. All 44 migrations replay from empty local D1 with no foreign-key
+  violations. Formatting, strict lint, generated inventory/types, TypeScript, and a 794.38 KiB
+  (138.01 KiB gzip) dry-run bundle are green. Feature checkpoint: `357fbc0`.
+- 2026-08-15: Remote preflight on the explicit SERP account showed only
+  `0044_standalone_plan_lifecycle.sql` pending. A first read-only aggregate query named the pending
+  guard table before migration and failed with `no such table` without mutation; the corrected
+  query verified zero organizations, customers, plans, subscriptions, invoices, billable metrics,
+  charges, fixed charges, usage events, wallets, and outbox rows. Applied only that migration in
+  0.41 ms, then verified 44 migrations, zero foreign-key violations, and an empty plan guard table.
+  Deployed isolated Worker version `b0a3bd59-f583-4a8c-82dc-84f1119c8b5a` with a 7 ms startup;
+  health/readiness returned `200`/`200`, and unauthenticated plan deletion returned `401`.
+  Post-deploy aggregate-only verification remained empty apart from 154 schedule audits. All three
+  external-action flags remain `0`; no production route, domain, secret, provider action, customer
+  data, or billing row was added.
