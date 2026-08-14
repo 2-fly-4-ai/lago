@@ -1752,3 +1752,25 @@ resource and mutation described.
   and plan-deletion tasks plus 163 schedule audits. No migration, resource provisioning, route,
   domain, secret, provider action, customer data, or billing row changed.
   `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`.
+- 2026-08-15: Replaced the pinned `getlago/lago-expression` Rust/Ruby native extension in the
+  Cloudflare path with a bounded TypeScript Pratt parser and evaluator. It implements the pinned
+  grammar's exact decimal literals, precedence, parentheses, unary minus, top-level event fields,
+  own-property lookup, and `round`/`ceil`/`floor`/`concat`/`least`/`greatest` functions without
+  `eval`, `Function`, Wasm, native code, or a subprocess. Length, token, nesting, and argument caps
+  bound untrusted work. Metric create/replay validates and persists expressions; authenticated
+  evaluation and single/batch ingestion apply Lago's whole-second timestamp and numeric-string
+  conventions. The derived property is overwritten before aggregation validation, request hashing,
+  D1 persistence, and immutable R2 archiving. Missing variables fail before any single write, and
+  one failed batch item prevents all D1/R2 commits. Strict format/lint, inventory/types, TypeScript,
+  and focused expression/metering tests pass. One fully parallel run passed 165/166 before the
+  previously documented draft-termination-credit test exceeded its 10-second harness limit; that
+  file passed 2/2 alone, and bounded groups passed all 166 tests as 43 + 64 + 59. The dry-run bundle
+  is 838.46 KiB (146.34 KiB gzip). Feature checkpoint: `b464b03`.
+- 2026-08-15: Remote preflight on the explicit SERP account found no pending migration and zero
+  organizations, customers, plans, subscriptions, invoices, and usage events. Deployed only the
+  isolated Worker as version `3b8d7c0d-c893-4cec-b3a2-4c9c1594697a` with a 6 ms startup.
+  Health/readiness returned `200`/`200`, unauthenticated expression evaluation returned `401`, and
+  post-deploy aggregate-only verification remained empty apart from 169 schedule audits.
+  `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`;
+  no migration, resource provisioning, production route/domain, secret, provider action, customer
+  data, or billing row changed.

@@ -411,6 +411,18 @@ Applied D1 migrations: `0001_foundation.sql` through `0044_standalone_plan_lifec
   migrations and zero organizations, customers, plans, subscriptions, invoices, and plan-deletion
   tasks plus 163 schedule audits. All three external-action flags remain disabled, with no route,
   secret, provider action, customer data, or billing data added.
+- The code-only usage-expression deployment required no D1 migration. It replaces the pinned
+  `lago-expression` Rust extension with a bounded TypeScript parser/evaluator for exact decimals,
+  arithmetic precedence, event attributes, and the six legacy functions. It uses no dynamic
+  evaluation, Wasm, native extension, or subprocess; derived properties enter replay hashing, D1,
+  and immutable R2 evidence before aggregation. Isolated Worker version
+  `3b8d7c0d-c893-4cec-b3a2-4c9c1594697a` retained only the existing workers.dev URL, `*/5` Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The deployed bundle was
+  838.46 KiB (146.34 KiB gzip) with a 6 ms startup. Health/readiness returned `200`/`200`, and
+  unauthenticated expression evaluation returned `401`. Remote verification found no pending
+  migrations and zero organizations, customers, plans, subscriptions, invoices, and usage events
+  plus 169 schedule audits. All three external-action flags remain disabled, with no route, secret,
+  provider action, customer data, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
