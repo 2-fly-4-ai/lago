@@ -130,8 +130,10 @@ Required evidence for a new aggregate or a boundary change:
 
 ## Known gaps that constrain later work
 
-- Refreshable draft invoices still need a reversible allocation model for coupons, credit notes,
-  and wallet lots before their line graph can be rebuilt safely.
+- Refreshable initial and renewal drafts now rebuild non-consuming previews and allocate coupons,
+  credit notes, and wallet lots only while finalizing. Plan/charge graph replacement, subscription
+  termination during grace, and other rebilling triggers still need explicit draft invalidation and
+  lifecycle rules.
 - Tenant-local billing time zones and daylight-saving transitions are not yet parity-proven.
 - Provider reads, payment mutations, and outbound webhook delivery are implemented only behind
   disabled safety gates in the isolated stack.

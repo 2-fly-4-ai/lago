@@ -335,9 +335,11 @@ Acceptance:
       the same plan/usage/fixed/commitment/coupon/tax/credit-note/wallet calculation. Coupon,
       credit-note, and wallet balances are consumed only by the final atomic transition. Triggered
       version guards abort a losing refresh/finalize batch before its line deletes can commit.
-      Grace-period initial subscription invoices remain an explicit unsupported error until their
-      pay-in-advance and period-ownership semantics are ported. Paid-invoice credit/refund voids and
-      broader retry transitions also remain pending.
+      Grace-period initial subscription invoices use a distinct immutable initial context, create
+      the same non-consuming preview, refresh manually or on schedule, and allocate credits only
+      while finalizing; they do not masquerade as renewal cycles. Paid-invoice credit/refund voids,
+      subscription termination during grace, additional rebilling triggers, and broader retry
+      transitions remain pending.
       Customer net-payment terms now snapshot onto finalized initial, recurring, and one-off
       invoices with deterministic due dates. The legacy hourly overdue transition is replay-safe,
       emits a transactional outbox event, and successful manual or Authorize.Net settlement clears
@@ -345,7 +347,7 @@ Acceptance:
       Immutable issuing dates and expected-finalization dates now support tenant-scoped manual
       refresh/finalization plus the legacy five-minute refresh and hourly `:20` finalization
       transitions with replay-safe version/outbox evidence. Customer grace changes reschedule and
-      flag existing renewal drafts without changing their issuing-date anchor.
+      flag existing initial and renewal drafts without changing their issuing-date anchor.
       Subscription creation now atomically records `subscription.created` and the initial
       `invoice.finalized` outbox events with the monetary ledger. Name-only subscription update
       emits a versioned `subscription.updated`; scheduling, calendar billing, ending rules,
@@ -876,3 +878,10 @@ resource and mutation described.
   aggregate-only counts confirmed zero organizations, invoices, drafts, and mutation guards. The
   five-minute dispatcher has 15 audit rows; all provider/payment/outbound flags remain disabled,
   with no production route, provider secret, or seeded billing data.
+- 2026-08-14: Added immutable initial-subscription invoice contexts so positive-grace subscription
+  creation now produces a non-consuming draft without fabricating a renewal cycle. Manual and
+  scheduled refresh recalculate the plan, coupon, tax, credit-note, and wallet preview; finalization
+  alone commits allocations. The existing zero-grace `store-new` checkout contract remains
+  finalized and unchanged. All 77 Workers-runtime tests pass across 22 files; all 24 migrations
+  replay from empty D1 state, formatting, lint, generated bindings, TypeScript, and the
+  cross-repository inventory are green, and the dry-run bundle is 453.19 KiB (82.65 KiB gzip).

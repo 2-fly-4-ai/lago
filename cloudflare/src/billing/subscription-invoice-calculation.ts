@@ -22,6 +22,7 @@ export type BillableSubscription = {
   interval: string;
   currency: string;
   plan_name: string;
+  subscription_name: string | null;
   plan_amount_minor: number;
   net_payment_term: number;
   invoice_grace_period: number;
@@ -89,7 +90,8 @@ export async function findBillableSubscription(
     .prepare(
       `SELECT s.id, s.organization_id, s.customer_id, s.plan_id, s.external_id,
               s.current_period_start, s.current_period_end, p.interval, p.currency,
-              p.name AS plan_name, p.amount_minor AS plan_amount_minor,
+              p.name AS plan_name, s.name AS subscription_name,
+              p.amount_minor AS plan_amount_minor,
               COALESCE(c.net_payment_term, o.net_payment_term) AS net_payment_term,
               COALESCE(c.invoice_grace_period, o.invoice_grace_period) AS invoice_grace_period
        FROM subscriptions s JOIN plans p ON p.id = s.plan_id
@@ -99,6 +101,91 @@ export async function findBillableSubscription(
     )
     .bind(id)
     .first<BillableSubscription>();
+}
+
+export async function calculateInitialSubscriptionInvoice(
+  database: D1Database,
+  subscription: BillableSubscription,
+  invoiceId: string,
+  periodStart: string,
+  periodEnd: string,
+): Promise<SubscriptionInvoiceCalculation> {
+  if (!Number.isFinite(Date.parse(periodStart)) || !Number.isFinite(Date.parse(periodEnd))) {
+    throw new Error("invalid_billing_period");
+  }
+  const line: SubscriptionInvoiceLine = {
+    id: await deterministicUuid("initial-invoice-line", invoiceId),
+    description: subscription.subscription_name ?? subscription.plan_name,
+    units: "1",
+    precise: String(subscription.plan_amount_minor),
+    rounded: subscription.plan_amount_minor,
+    sourceId: subscription.plan_id,
+    lineType: "subscription",
+    sourceType: "plan",
+    metadataJson: stableJson({ contextType: "initial", periodStart, periodEnd }),
+  };
+  const lines = [line];
+  const subtotalMinor = subscription.plan_amount_minor;
+  const couponCredits = await calculateCouponCredits(
+    database,
+    subscription.organization_id,
+    subscription.customer_id,
+    invoiceId,
+    subscription.currency,
+    subtotalMinor,
+  );
+  const couponsMinor = couponCredits.reduce(
+    (total, credit) => safeAdd(total, credit.amountMinor),
+    0,
+  );
+  const invoiceTaxes = await calculateManualTaxes(
+    database,
+    subscription.organization_id,
+    invoiceId,
+    [{ id: line.id, amountMinor: line.rounded }],
+    couponsMinor,
+  );
+  const taxMinor = totalManualTaxMinor(invoiceTaxes);
+  const creditNoteAllocations = await calculateCreditNoteAllocations(
+    database,
+    subscription.organization_id,
+    subscription.customer_id,
+    invoiceId,
+    subscription.currency,
+    subtotalMinor + taxMinor - couponsMinor,
+  );
+  const creditNotesMinor = creditNoteAllocations.reduce(
+    (total, allocation) => safeAdd(total, allocation.amountMinor),
+    0,
+  );
+  const walletAllocations = await calculateWalletAllocations(
+    database,
+    subscription.organization_id,
+    subscription.customer_id,
+    invoiceId,
+    subscription.currency,
+    subtotalMinor + taxMinor - couponsMinor - creditNotesMinor,
+  );
+  const prepaidCreditMinor = walletAllocations.reduce(
+    (total, allocation) => safeAdd(total, allocation.amountMinor),
+    0,
+  );
+  const creditsMinor = safeAdd(safeAdd(couponsMinor, creditNotesMinor), prepaidCreditMinor);
+  return {
+    lines,
+    subtotalMinor,
+    couponCredits,
+    couponsMinor,
+    invoiceTaxes,
+    taxMinor,
+    creditNoteAllocations,
+    creditNotesMinor,
+    walletAllocations,
+    prepaidCreditMinor,
+    creditsMinor,
+    totalDueMinor: subtotalMinor + taxMinor - creditsMinor,
+    nextPeriodEnd: periodEnd,
+  };
 }
 
 export async function calculateSubscriptionInvoice(
@@ -299,7 +386,7 @@ export async function calculateSubscriptionInvoice(
 export function subscriptionInvoiceLineStatements(
   database: D1Database,
   invoiceId: string,
-  billingCycleId: string,
+  billingCycleId: string | null,
   lines: SubscriptionInvoiceLine[],
   now: string,
 ): D1PreparedStatement[] {

@@ -29,7 +29,8 @@ export async function finalizeInvoice(
   const invoice = await env.BILLING_DB.prepare(
     `SELECT id, organization_id, customer_id, subscription_id, status, currency,
             total_due_minor, net_payment_term, issuing_date, version,
-            EXISTS(SELECT 1 FROM billing_cycles WHERE invoice_id = invoices.id)
+            (EXISTS(SELECT 1 FROM billing_cycles WHERE invoice_id = invoices.id) OR
+             EXISTS(SELECT 1 FROM subscription_invoice_contexts WHERE invoice_id = invoices.id))
               AS refreshable_draft
      FROM invoices WHERE id = ?${organizationFilter} LIMIT 1`,
   )

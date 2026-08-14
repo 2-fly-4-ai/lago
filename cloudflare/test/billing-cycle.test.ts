@@ -404,7 +404,7 @@ describe("billing period close", () => {
     });
   });
 
-  it("accepts nested customer grace settings but rejects unsupported initial grace billing explicitly", async () => {
+  it("creates, refreshes, and finalizes an initial grace-period subscription draft", async () => {
     const customer = await invoiceRequest("/api/v1/customers", "POST", {
       customer: {
         external_id: "customer-initial-grace",
@@ -423,9 +423,48 @@ describe("billing period close", () => {
         plan_code: "cycle-plan",
       },
     });
-    expect(subscription.status).toBe(422);
-    await expect(subscription.json()).resolves.toMatchObject({
-      code: "unsupported_initial_invoice_grace_period",
+    expect(subscription.status).toBe(200);
+    const subscriptionBody = await subscription.json<{
+      subscription: { lago_id: string };
+    }>();
+    const initial = await env.BILLING_DB.prepare(
+      `SELECT i.id, i.status, i.version, i.issuing_date, i.expected_finalization_date,
+              CAST(julianday(i.expected_finalization_date) - julianday(date(i.created_at)) AS INTEGER)
+                AS grace_days,
+              (SELECT COUNT(*) FROM subscription_invoice_contexts sic
+               WHERE sic.invoice_id = i.id AND sic.context_type = 'initial') AS contexts,
+              (SELECT COUNT(*) FROM coupon_credits WHERE invoice_id = i.id) AS coupon_credits
+       FROM invoices i WHERE i.subscription_id = ?`,
+    )
+      .bind(subscriptionBody.subscription.lago_id)
+      .first<{
+        id: string;
+        status: string;
+        version: number;
+        issuing_date: string;
+        expected_finalization_date: string;
+        grace_days: number;
+        contexts: number;
+        coupon_credits: number;
+      }>();
+    expect(initial).toMatchObject({
+      status: "draft",
+      version: 1,
+      grace_days: 2,
+      contexts: 1,
+      coupon_credits: 0,
+    });
+    expect(initial?.issuing_date).toBe(initial?.expected_finalization_date);
+
+    const refreshed = await invoiceRequest(`/api/v1/invoices/${initial?.id}/refresh`, "PUT");
+    expect(refreshed.status).toBe(200);
+    await expect(refreshed.json()).resolves.toMatchObject({
+      invoice: { status: "draft", version_number: 2, total_amount_cents: 1000 },
+    });
+    const finalized = await invoiceRequest(`/api/v1/invoices/${initial?.id}/finalize`, "PUT");
+    expect(finalized.status).toBe(200);
+    await expect(finalized.json()).resolves.toMatchObject({
+      invoice: { status: "finalized", version_number: 3, total_amount_cents: 1000 },
     });
   });
 });

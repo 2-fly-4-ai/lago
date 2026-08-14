@@ -6,6 +6,7 @@ import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
 import { paymentDueDate } from "./payment-terms";
 import {
+  calculateInitialSubscriptionInvoice,
   calculateSubscriptionInvoice,
   findBillableSubscription,
   subscriptionInvoiceLineStatements,
@@ -22,7 +23,8 @@ type DraftInvoiceRow = {
   issuing_date: string;
   net_payment_term: number;
   version: number;
-  billing_cycle_id: string;
+  billing_cycle_id: string | null;
+  context_type: "initial" | "renewal";
   period_start: string;
   period_end: string;
 };
@@ -81,14 +83,23 @@ export async function refreshSubscriptionDraft(
   if (reservation.replayed) throw new Error("invoice_refresh_in_progress");
 
   try {
-    const calculation = await calculateSubscriptionInvoice(
-      env.BILLING_DB,
-      subscription,
-      invoice.id,
-      invoice.billing_cycle_id,
-      invoice.period_start,
-      invoice.period_end,
-    );
+    const calculation =
+      invoice.context_type === "initial"
+        ? await calculateInitialSubscriptionInvoice(
+            env.BILLING_DB,
+            subscription,
+            invoice.id,
+            invoice.period_start,
+            invoice.period_end,
+          )
+        : await calculateSubscriptionInvoice(
+            env.BILLING_DB,
+            subscription,
+            invoice.id,
+            requireBillingCycleId(invoice.billing_cycle_id),
+            invoice.period_start,
+            invoice.period_end,
+          );
     const nextVersion = invoice.version + 1;
     const paymentDue = paymentDueDate(invoice.issuing_date, invoice.net_payment_term);
     const eventType = finalize ? "invoice.finalized" : "invoice.refreshed";
@@ -286,12 +297,24 @@ async function findDraftInvoice(
     .prepare(
       `SELECT i.id, i.organization_id, i.customer_id, i.subscription_id, i.status,
               i.currency, i.issuing_date, i.net_payment_term, i.version,
-              bc.id AS billing_cycle_id, bc.period_start, bc.period_end
-       FROM invoices i JOIN billing_cycles bc ON bc.invoice_id = i.id
-       WHERE i.id = ?${organizationFilter} AND i.subscription_id IS NOT NULL LIMIT 1`,
+              bc.id AS billing_cycle_id,
+              CASE WHEN bc.id IS NOT NULL THEN 'renewal' ELSE sic.context_type END AS context_type,
+              COALESCE(bc.period_start, sic.period_start) AS period_start,
+              COALESCE(bc.period_end, sic.period_end) AS period_end
+       FROM invoices i
+       LEFT JOIN billing_cycles bc ON bc.invoice_id = i.id
+       LEFT JOIN subscription_invoice_contexts sic ON sic.invoice_id = i.id
+       WHERE i.id = ?${organizationFilter} AND i.subscription_id IS NOT NULL
+         AND (bc.id IS NOT NULL OR sic.invoice_id IS NOT NULL)
+       LIMIT 1`,
     )
     .bind(...(organizationId ? [invoiceId, organizationId] : [invoiceId]))
     .first<DraftInvoiceRow>();
+}
+
+function requireBillingCycleId(value: string | null): string {
+  if (!value) throw new Error("draft_billing_cycle_not_found");
+  return value;
 }
 
 async function assertDraftHasNoCommittedAllocations(

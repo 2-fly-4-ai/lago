@@ -6,7 +6,7 @@ import { stableJson } from "../json";
 import type { DomainEvent } from "../domain-events";
 import { createAuthorizeNetPaymentUrl } from "../providers/authorize-net";
 import { nextPeriodEnd } from "../billing/periods";
-import { calculateCouponCredits } from "../billing/coupon-credits";
+import { calculateCouponCredits, couponCreditStatements } from "../billing/coupon-credits";
 import {
   calculateWalletAllocations,
   walletAllocationStatements,
@@ -415,7 +415,11 @@ async function updateCustomer(
              (SELECT invoice_grace_period FROM organizations WHERE id = ?), 0
            ),
            expected_finalization_date = date(
-             (SELECT period_end FROM billing_cycles WHERE invoice_id = invoices.id LIMIT 1),
+             COALESCE(
+               (SELECT period_end FROM billing_cycles WHERE invoice_id = invoices.id LIMIT 1),
+               (SELECT period_start FROM subscription_invoice_contexts
+                WHERE invoice_id = invoices.id LIMIT 1)
+             ),
              printf('+%d days', COALESCE(
                (SELECT invoice_grace_period FROM customers WHERE id = ?),
                (SELECT invoice_grace_period FROM organizations WHERE id = ?), 0
@@ -423,7 +427,10 @@ async function updateCustomer(
            ),
            ready_to_be_refreshed = 1, updated_at = ?
        WHERE customer_id = ? AND organization_id = ? AND status = 'draft'
-         AND EXISTS (SELECT 1 FROM billing_cycles WHERE invoice_id = invoices.id)
+         AND (
+           EXISTS (SELECT 1 FROM billing_cycles WHERE invoice_id = invoices.id) OR
+           EXISTS (SELECT 1 FROM subscription_invoice_contexts WHERE invoice_id = invoices.id)
+         )
          AND EXISTS (
            SELECT 1 FROM customers
            WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?
@@ -539,13 +546,6 @@ async function createSubscription(
     .first<{ net_payment_term: number; invoice_grace_period: number }>();
   const invoiceGracePeriod =
     customer.invoice_grace_period ?? organizationBilling?.invoice_grace_period ?? 0;
-  if (invoiceGracePeriod > 0) {
-    throw new ApiError(
-      422,
-      "unsupported_initial_invoice_grace_period",
-      "Grace-period initial subscription invoices are not implemented; create with zero grace and update before renewal billing",
-    );
-  }
 
   const plan = await database
     .prepare(
@@ -568,12 +568,15 @@ async function createSubscription(
   const now = new Date();
   const timestamp = now.toISOString();
   const netPaymentTerm = customer.net_payment_term ?? organizationBilling?.net_payment_term ?? 0;
-  const dueDate = paymentDueDate(timestamp, netPaymentTerm);
+  const draft = invoiceGracePeriod > 0;
+  const issuingDate = shiftCalendarDate(timestamp.slice(0, 10), invoiceGracePeriod);
+  const expectedFinalizationDate = issuingDate;
+  const dueDate = paymentDueDate(issuingDate, netPaymentTerm);
   const periodEnd = nextPeriodEnd(now, plan.interval).toISOString();
   const commandKey = `${auth.organizationId}:${externalId}`;
   const subscriptionId = await deterministicUuid("subscription", commandKey);
   const invoiceId = await deterministicUuid("initial-invoice", commandKey);
-  const invoiceLineId = await deterministicUuid("initial-invoice-line", commandKey);
+  const invoiceLineId = await deterministicUuid("initial-invoice-line", invoiceId);
   const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
   const couponCredits = await calculateCouponCredits(
     database,
@@ -639,8 +642,8 @@ async function createSubscription(
     },
   };
   const invoiceEvent = {
-    id: `invoice-finalized:${invoiceId}:v1`,
-    type: "invoice.finalized",
+    id: `${draft ? "invoice-drafted" : "invoice-finalized"}:${invoiceId}:v1`,
+    type: draft ? "invoice.drafted" : "invoice.finalized",
     aggregateType: "invoice",
     aggregateId: invoiceId,
     payload: {
@@ -655,6 +658,9 @@ async function createSubscription(
       currency: plan.currency,
       periodStart: timestamp,
       periodEnd,
+      issuingDate,
+      expectedFinalizationDate,
+      appliedGracePeriod: invoiceGracePeriod,
     },
   };
 
@@ -688,8 +694,11 @@ async function createSubscription(
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
           finalized_at, issuing_date, created_at, updated_at, coupons_minor, prepaid_credit_minor,
-          credit_notes_minor, net_payment_term, payment_due_date, payment_overdue)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+          credit_notes_minor, net_payment_term, payment_due_date, payment_overdue,
+          expected_finalization_date, applied_grace_period, ready_to_be_refreshed,
+          last_refreshed_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0,
+                 ?, ?, 0, ?)`,
         )
         .bind(
           invoiceId,
@@ -697,13 +706,14 @@ async function createSubscription(
           customer.id,
           subscriptionId,
           invoiceNumber,
+          draft ? "draft" : "finalized",
           plan.currency,
           plan.amount_minor,
           taxMinor,
           creditsMinor,
           totalDueMinor,
-          timestamp,
-          timestamp.slice(0, 10),
+          draft ? null : timestamp,
+          issuingDate,
           timestamp,
           timestamp,
           couponsMinor,
@@ -711,6 +721,9 @@ async function createSubscription(
           creditNotesMinor,
           netPaymentTerm,
           dueDate,
+          expectedFinalizationDate,
+          invoiceGracePeriod,
+          draft ? timestamp : null,
         ),
       database
         .prepare(
@@ -728,47 +741,26 @@ async function createSubscription(
           plan.id,
           timestamp,
         ),
+      database
+        .prepare(
+          `INSERT INTO subscription_invoice_contexts
+           (invoice_id, organization_id, subscription_id, context_type, period_start,
+            period_end, created_at)
+           VALUES (?, ?, ?, 'initial', ?, ?, ?)`,
+        )
+        .bind(invoiceId, auth.organizationId, subscriptionId, timestamp, periodEnd, timestamp),
     ];
-    for (const credit of couponCredits) {
+    if (!draft) {
       statements.push(
-        database
-          .prepare(
-            `INSERT INTO coupon_credits
-             (id, organization_id, invoice_id, applied_coupon_id, applied_coupon_version,
-              amount_minor, currency, before_taxes, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-          )
-          .bind(
-            credit.id,
-            auth.organizationId,
-            invoiceId,
-            credit.appliedCouponId,
-            credit.expectedVersion,
-            credit.amountMinor,
-            plan.currency,
-            timestamp,
-          ),
-        database
-          .prepare(
-            `UPDATE applied_coupons
-             SET frequency_duration_remaining = ?,
-                 status = CASE WHEN ? = 1 THEN 'terminated' ELSE status END,
-                 termination_reason = CASE WHEN ? = 1 THEN 'consumed' ELSE termination_reason END,
-                 terminated_at = CASE WHEN ? = 1 THEN ? ELSE terminated_at END,
-                 version = version + 1, updated_at = ?
-             WHERE id = ? AND organization_id = ? AND status = 'active' AND version = ?`,
-          )
-          .bind(
-            credit.nextRemaining,
-            credit.terminates ? 1 : 0,
-            credit.terminates ? 1 : 0,
-            credit.terminates ? 1 : 0,
-            timestamp,
-            timestamp,
-            credit.appliedCouponId,
-            auth.organizationId,
-            credit.expectedVersion,
-          ),
+        ...couponCreditStatements(
+          database,
+          auth.organizationId,
+          invoiceId,
+          plan.currency,
+          couponCredits,
+          timestamp,
+          requestId,
+        ),
       );
     }
     statements.push(
@@ -781,29 +773,31 @@ async function createSubscription(
         timestamp,
       ),
     );
-    for (const allocation of walletAllocations) {
-      statements.push(
-        ...walletAllocationStatements(
-          database,
-          auth.organizationId,
-          invoiceId,
-          allocation,
-          timestamp,
-          requestId,
-        ),
-      );
-    }
-    for (const allocation of creditNoteAllocations) {
-      statements.push(
-        ...creditNoteAllocationStatements(
-          database,
-          auth.organizationId,
-          invoiceId,
-          allocation,
-          timestamp,
-          requestId,
-        ),
-      );
+    if (!draft) {
+      for (const allocation of walletAllocations) {
+        statements.push(
+          ...walletAllocationStatements(
+            database,
+            auth.organizationId,
+            invoiceId,
+            allocation,
+            timestamp,
+            requestId,
+          ),
+        );
+      }
+      for (const allocation of creditNoteAllocations) {
+        statements.push(
+          ...creditNoteAllocationStatements(
+            database,
+            auth.organizationId,
+            invoiceId,
+            allocation,
+            timestamp,
+            requestId,
+          ),
+        );
+      }
     }
     for (const event of [subscriptionEvent, invoiceEvent]) {
       statements.push(
@@ -829,9 +823,11 @@ async function createSubscription(
       );
     }
     const results = await database.batch(statements);
-    for (let offset = 0; offset < couponCredits.length; offset += 1) {
-      const update = results[4 + offset * 2];
-      if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
+    if (!draft) {
+      for (let offset = 0; offset < couponCredits.length; offset += 1) {
+        const update = results[5 + offset * 3];
+        if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
+      }
     }
   } catch (error) {
     const concurrent = await findSubscription(database, auth.organizationId, externalId);
@@ -912,6 +908,15 @@ function safeAddMinor(left: number, right: number): number {
     throw new ApiError(422, "invalid_minor_amount", "Coupon amount exceeds supported precision");
   }
   return total;
+}
+
+function shiftCalendarDate(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(date.getTime())) {
+    throw new ApiError(422, "invalid_billing_date", "Subscription billing date is invalid");
+  }
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function rejectUnsupportedTaxTarget(input: Record<string, unknown>, target: string) {
