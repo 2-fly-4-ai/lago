@@ -1222,3 +1222,15 @@ resource and mutation described.
   verification confirmed both new columns, zero organizations, subscriptions, stored subscription
   actions, invoices, credit notes, and outbox events plus 68 Cron audits. No route, secret, or
   billing data changed.
+- 2026-08-14: Narrowed the scheduled pay-in-advance guard without exposing unattended source-credit
+  ambiguity. Creation and update now admit a future `ending_at` for pay-in-advance subscriptions
+  only when the effective persisted `on_termination_credit_note` action is `skip`; the hourly owner
+  then honors stored `generate` or `skip` invoice behavior through the same atomic termination
+  primitives as manual calls. Default/credit schedules remain rejected, changing an already
+  scheduled subscription back to credit is rejected, and clearing the ending permits credit mode
+  again. Evidence covers exact creation replay, pre-cutoff/no-op and due/exactly-once execution,
+  skip-invoice and generate-invoice outcomes, update/clear invariants, and retained credit guards.
+  All 95 tests pass across 24 files; formatting, strict lint, generated inventory/types, TypeScript,
+  and the dry-run bundle are green at 538.58 KiB (95.76 KiB gzip). This slice is code-only; the
+  remote stack remains on migration `0031` and Worker version
+  `f83c6e7a-0d6b-4e2b-a9b5-d987096cfab4` until deployment.

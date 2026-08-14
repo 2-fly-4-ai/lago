@@ -55,7 +55,9 @@ this document does not silently redefine that behavior.
   supported updates may set it to a future UTC date or clear it. The subscription also persists the
   supported termination invoice action and, for pay-in-advance plans only, the supported
   credit-note action. Manual query parameters override those stored actions and the hourly owner
-  uses them when no query exists. Customer-local dates require separate timezone evidence.
+  uses them when no query exists. A pay-in-advance `ending_at` is admitted only when the persisted
+  credit action is `skip`; scheduled unused-source crediting remains guarded. Customer-local dates
+  require separate timezone evidence.
 - Tenant-local time zones, daylight-saving behavior, and Rails time-zone parity are not implemented
   unless a feature's executable evidence says otherwise. A port that depends on local civil time
   must add the time-zone field, transition tests, and migration notes before it can be called parity.
@@ -159,7 +161,8 @@ Required evidence for a new aggregate or a boundary change:
   subset may persist or update a future UTC `ending_at`, which the hourly owner executes before
   billing close. Stored `generate`/`skip` invoice actions are honored by both manual and scheduled
   termination; pay-in-advance subscriptions may also store `credit`/`skip`, while refund and offset
-  remain guarded.
+  remain guarded. Pay-in-advance scheduled endings require stored skip-credit; eligible manual
+  unused-period crediting remains separate.
   Credit-only pay-in-advance termination may issue an unused-period balance against a finalized base
   line only when the source invoice has no coupon, tax, wallet, or prior credit-note allocation.
   The default combined mode creates that unused-period note before finalizing bounded in-arrears

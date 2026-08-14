@@ -32,7 +32,9 @@ remaining Lago feature inventory is dispositioned and ported.
   over the recurring close. Supported active and pending updates can set or clear that instant and
   persist Lago's `on_termination_invoice` action; pay-in-advance subscriptions can additionally
   persist the supported `credit` or `skip` credit-note action. Manual and scheduled termination use
-  the stored actions unless a valid manual query override is supplied. Explicit
+  the stored actions unless a valid manual query override is supplied. Pay-in-advance subscriptions
+  may schedule `ending_at` only with persisted skip-credit, so the unattended owner cannot enter an
+  allocated-source credit path. Explicit
   skip-invoice/skip-credit termination remains idempotent; any existing draft is invalidated and remains refreshable/
   finalizable from its immutable invoice context. At renewal, pay-in-advance base fees snapshot the
   next period while in-arrears base fees and usage snapshot the closed period. Credit-only
