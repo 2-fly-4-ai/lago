@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `958a6269-1741-404d-b76c-0363a4f54e09`
+- Latest verified version: `b4be3c4d-1958-4c13-9a59-b875967b34e4`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -172,6 +172,14 @@ Applied D1 migrations: `0001_foundation.sql` through
   termination returned `401`, and no migration was pending. Aggregate-only verification found zero
   organizations, subscriptions, invoices, credit notes, and credit-note items plus 40 Cron audits.
   All external-action flags remain disabled, with no route, secret, or billing data added.
+- The code-only advance-plan termination-usage deployment added the complementary mode: when
+  unused-period crediting is explicitly skipped, termination finalizes only bounded in-arrears
+  usage and does not repeat the already-paid base line. The combined usage-invoice plus unused-credit
+  command remains guarded until both ledger mutations share one proof. Remote health/readiness
+  returned `200`/`200`, unauthenticated termination returned `401`, and no migration was pending.
+  Aggregate-only verification found zero organizations, subscriptions, invoices, invoice lines, and
+  credit notes plus 42 Cron audits. All external-action flags remain disabled, with no route,
+  secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

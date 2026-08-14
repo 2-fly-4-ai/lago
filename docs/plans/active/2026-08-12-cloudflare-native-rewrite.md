@@ -1073,3 +1073,19 @@ resource and mutation described.
   aggregate-only verification confirmed zero organizations, subscriptions, invoices, credit notes,
   and credit-note items plus 40 Cron audits. No route, secret, seeded billing data, or disabled
   external flag changed.
+- 2026-08-14: Added the complementary pay-in-advance termination mode. With
+  `on_termination_credit_note=skip`, the final calculator omits the already-paid base line and
+  persists only bounded in-arrears usage, taxes, and supported invoice credits before transitioning
+  the subscription. Executable evidence proves the subscription retains one initial base invoice
+  and adds one 25-cent usage-only invoice for ten units at 2.5 cents. The combined final-invoice plus
+  unused-period-credit command remains guarded until both ledgers can commit atomically. Two long
+  integration tests crossed Vitest's default five-second timeout under parallel SMB/Miniflare load;
+  the suite timeout is now 10 seconds, after which the full 85-test run passed across 22 files.
+  Formatting, lint, generated bindings, TypeScript, inventory, and the dry-run bundle are green at
+  515.47 KiB (91.96 KiB gzip). No migration is required.
+- 2026-08-14: Confirmed no remote migration was pending and deployed pay-in-advance termination
+  usage as isolated Worker version `b4be3c4d-1958-4c13-9a59-b875967b34e4`. Follow-up inventory
+  remained empty; remote health/readiness returned `200`, unauthenticated termination returned
+  `401`, and aggregate-only verification confirmed zero organizations, subscriptions, invoices,
+  invoice lines, and credit notes plus 42 Cron audits. No route, secret, seeded billing data, or
+  disabled external flag changed.

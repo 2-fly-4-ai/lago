@@ -149,9 +149,11 @@ Required evidence for a new aggregate or a boundary change:
   may also persist a future UTC `ending_at`, which the hourly owner executes before billing close.
   Credit-only pay-in-advance termination may issue an unused-period balance against a finalized base
   line only when the source invoice has no coupon, tax, wallet, or prior credit-note allocation.
-  Positive-grace termination drafts, tenant-local termination dates, fixed-charge/commitment
-  proration, pay-in-advance final usage invoicing, allocated-source adjustments, refunds, and offsets
-  still need explicit lifecycle rules.
+  A separate pay-in-advance mode may finalize only the bounded in-arrears usage invoice when credit
+  creation is explicitly skipped; it never repeats the prepaid base line. Positive-grace
+  termination drafts, tenant-local termination dates, fixed-charge/commitment proration, the atomic
+  combined invoice-and-credit command, allocated-source adjustments, refunds, and offsets still
+  need explicit lifecycle rules.
 - A base subscription creates an initial invoice only when its plan snapshots
   `pay_in_advance = 1`; in-arrears starts seed the billing period without an invoice. Recurring
   pay-in-advance base lines snapshot the next period, while in-arrears base lines, usage, fixed
