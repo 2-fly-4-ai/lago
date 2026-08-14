@@ -16,6 +16,7 @@ import { walletAllocationStatements } from "./wallet-credits";
 type PendingSubscription = BillableSubscription & {
   subscription_at: string;
   version: number;
+  plan_pay_in_advance: number;
 };
 
 export async function activatePendingSubscriptions(
@@ -26,6 +27,7 @@ export async function activatePendingSubscriptions(
   const pending = await env.BILLING_DB.prepare(
     `SELECT s.id, s.organization_id, s.customer_id, s.plan_id, s.external_id,
             s.subscription_at, s.version, p.interval, p.currency, p.name AS plan_name,
+            p.pay_in_advance AS plan_pay_in_advance,
             s.name AS subscription_name, p.amount_minor AS plan_amount_minor,
             COALESCE(c.net_payment_term, o.net_payment_term) AS net_payment_term,
             COALESCE(c.invoice_grace_period, o.invoice_grace_period) AS invoice_grace_period,
@@ -64,6 +66,9 @@ async function activatePendingSubscription(
     "initial-invoice",
     `${pending.organization_id}:${pending.external_id}`,
   );
+  if (pending.plan_pay_in_advance !== 1) {
+    return activateWithoutInitialInvoice(env, pending, activatedAt, periodEnd, correlationId);
+  }
   const calculation = await calculateInitialSubscriptionInvoice(
     env.BILLING_DB,
     subscription,
@@ -258,6 +263,107 @@ async function activatePendingSubscription(
     env.DOMAIN_EVENTS.send(invoiceEvent),
   ]);
   return true;
+}
+
+async function activateWithoutInitialInvoice(
+  env: Env,
+  pending: PendingSubscription,
+  activatedAt: string,
+  periodEnd: string,
+  correlationId: string,
+): Promise<boolean> {
+  const subscriptionVersion = pending.version + 1;
+  const event: DomainEvent = {
+    id: `subscription-started:${pending.id}:v${subscriptionVersion}`,
+    type: "subscription.started",
+    version: 1,
+    aggregateType: "subscription",
+    aggregateId: pending.id,
+    aggregateVersion: subscriptionVersion,
+    occurredAt: activatedAt,
+    causationId: correlationId,
+    correlationId,
+    payload: {
+      organizationId: pending.organization_id,
+      subscriptionId: pending.id,
+      externalSubscriptionId: pending.external_id,
+      subscriptionAt: pending.subscription_at,
+      startedAt: activatedAt,
+      initialInvoiceGenerated: false,
+    },
+  };
+  const results = await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `UPDATE subscriptions
+       SET status = 'active', started_at = ?, current_period_start = ?, current_period_end = ?,
+           version = version + 1, updated_at = ?
+       WHERE id = ? AND organization_id = ? AND status = 'pending' AND version = ?
+         AND subscription_at <= ?`,
+    ).bind(
+      activatedAt,
+      activatedAt,
+      periodEnd,
+      activatedAt,
+      pending.id,
+      pending.organization_id,
+      pending.version,
+      activatedAt,
+    ),
+    conditionalActivationOutboxStatement(
+      env.BILLING_DB,
+      pending.organization_id,
+      event,
+      activatedAt,
+    ),
+  ]);
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
+    const current = await env.BILLING_DB.prepare(
+      `SELECT status FROM subscriptions WHERE id = ? AND organization_id = ? LIMIT 1`,
+    )
+      .bind(pending.id, pending.organization_id)
+      .first<{ status: string }>();
+    if (current?.status === "active") return false;
+    throw new Error("subscription_activation_conflict");
+  }
+  await env.DOMAIN_EVENTS.send(event);
+  return true;
+}
+
+function conditionalActivationOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+  activatedAt: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type,
+        aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+        occurred_at, published_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+       FROM subscriptions
+       WHERE id = ? AND organization_id = ? AND status = 'active' AND version = ?
+         AND started_at = ?
+       ON CONFLICT(event_id) DO NOTHING`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+      event.aggregateId,
+      organizationId,
+      event.aggregateVersion,
+      activatedAt,
+    );
 }
 
 function outboxStatement(

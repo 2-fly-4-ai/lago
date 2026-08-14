@@ -25,10 +25,10 @@ beforeEach(async () => {
     ).bind(now, now),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO plans
-       (id, organization_id, code, name, interval, amount_minor, currency, version,
-        active, created_at, updated_at)
+       (id, organization_id, code, name, interval, amount_minor, currency, pay_in_advance,
+        version, active, created_at, updated_at)
        VALUES ('plan-cycle', 'org-cycle', 'cycle-plan', 'Cycle Plan', 'monthly', 1000,
-               'USD', 1, 1, ?, ?)`,
+               'USD', 1, 1, 1, ?, ?)`,
     ).bind(now, now),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO subscriptions
@@ -77,6 +77,69 @@ beforeEach(async () => {
 });
 
 describe("billing period close", () => {
+  it("does not create an initial invoice for an in-arrears plan", async () => {
+    const now = new Date().toISOString();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO plans
+       (id, organization_id, code, name, interval, amount_minor, currency, pay_in_advance,
+        version, active, created_at, updated_at)
+       VALUES ('plan-arrears', 'org-cycle', 'arrears-plan', 'Arrears Plan', 'monthly', 700,
+               'USD', 0, 1, 1, ?, ?)`,
+    )
+      .bind(now, now)
+      .run();
+    const immediate = await invoiceRequest("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-cycle-external",
+        external_id: "subscription-arrears-immediate",
+        plan_code: "arrears-plan",
+      },
+    });
+    expect(immediate.status).toBe(200);
+    const immediateBody = await immediate.json<{ subscription: { lago_id: string } }>();
+
+    const futureAt = new Date(Date.now() + 60_000).toISOString();
+    const future = await invoiceRequest("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-cycle-external",
+        external_id: "subscription-arrears-future",
+        plan_code: "arrears-plan",
+        subscription_at: futureAt,
+      },
+    });
+    expect(future.status).toBe(200);
+    const futureBody = await future.json<{ subscription: { lago_id: string } }>();
+    await expect(activatePendingSubscriptions(env, futureAt, "activate-arrears")).resolves.toBe(1);
+
+    const states = await env.BILLING_DB.prepare(
+      `SELECT s.external_id, s.status,
+              (SELECT COUNT(*) FROM invoices i WHERE i.subscription_id = s.id) AS invoices
+       FROM subscriptions s WHERE s.id IN (?, ?) ORDER BY s.external_id`,
+    )
+      .bind(immediateBody.subscription.lago_id, futureBody.subscription.lago_id)
+      .all();
+    expect(states.results).toEqual([
+      { external_id: "subscription-arrears-future", status: "active", invoices: 0 },
+      { external_id: "subscription-arrears-immediate", status: "active", invoices: 0 },
+    ]);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM outbox_events
+            WHERE event_type = 'subscription.created'
+              AND aggregate_id IN (?, ?)) AS created_events,
+           (SELECT COUNT(*) FROM outbox_events
+            WHERE event_type = 'subscription.started' AND aggregate_id = ?) AS started_events`,
+      )
+        .bind(
+          immediateBody.subscription.lago_id,
+          futureBody.subscription.lago_id,
+          futureBody.subscription.lago_id,
+        )
+        .first(),
+    ).resolves.toEqual({ created_events: 2, started_events: 1 });
+  });
+
   it("defers a future subscription and activates it with exactly one initial invoice", async () => {
     const subscriptionAt = new Date(Date.now() + 60_000).toISOString();
     const customerResponse = await invoiceRequest("/api/v1/customers", "POST", {

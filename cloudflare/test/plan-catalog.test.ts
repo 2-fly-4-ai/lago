@@ -38,6 +38,7 @@ describe("Lago-compatible plan catalog", () => {
         description: "Synthetic plan",
         amount_cents: 1000,
         amount_currency: "usd",
+        pay_in_advance: true,
         metadata: { tier: "pro" },
         charges: [
           {
@@ -58,6 +59,7 @@ describe("Lago-compatible plan catalog", () => {
         code: "pro",
         amount_cents: 1000,
         amount_currency: "USD",
+        pay_in_advance: true,
         metadata: { tier: "pro" },
         charges: [
           {
@@ -110,6 +112,7 @@ describe("Lago-compatible plan catalog", () => {
         interval: "monthly",
         amount_cents: 100,
         amount_currency: "USD",
+        pay_in_advance: true,
         metadata: { version: 1 },
       },
     };
@@ -124,6 +127,7 @@ describe("Lago-compatible plan catalog", () => {
         amount_cents: 250,
         amount_currency: "EUR",
         interval: "quarterly",
+        pay_in_advance: false,
         metadata: { version: 2 },
       },
     });
@@ -138,6 +142,7 @@ describe("Lago-compatible plan catalog", () => {
         amount_cents: 250,
         amount_currency: "EUR",
         interval: "quarterly",
+        pay_in_advance: false,
         metadata: { version: 2 },
       },
     });

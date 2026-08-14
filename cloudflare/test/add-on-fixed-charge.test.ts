@@ -58,6 +58,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
         interval: "monthly",
         amount_cents: 500,
         amount_currency: "USD",
+        pay_in_advance: true,
         fixed_charges: [
           {
             add_on_id: addOnId,

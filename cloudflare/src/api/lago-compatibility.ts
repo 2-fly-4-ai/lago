@@ -565,7 +565,7 @@ async function createSubscription(
 
   const plan = await database
     .prepare(
-      `SELECT id, code, name, interval, amount_minor, currency
+      `SELECT id, code, name, interval, amount_minor, currency, pay_in_advance
        FROM plans
        WHERE organization_id = ? AND code = ? AND active = 1
        ORDER BY version DESC LIMIT 1`,
@@ -578,6 +578,7 @@ async function createSubscription(
       interval: string;
       amount_minor: number;
       currency: string;
+      pay_in_advance: number;
     }>();
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
 
@@ -663,6 +664,91 @@ async function createSubscription(
     const pending = await findSubscription(database, auth.organizationId, externalId);
     if (!pending) throw new ApiError(500, "persistence_error", "Subscription was not persisted");
     return json({ subscription: serializeSubscription(pending) }, { requestId });
+  }
+  if (plan.pay_in_advance !== 1) {
+    const periodEnd = nextPeriodEnd(now, plan.interval).toISOString();
+    const event: DomainEvent = {
+      id: `subscription-created:${subscriptionId}:v1`,
+      type: "subscription.created",
+      version: 1,
+      aggregateType: "subscription",
+      aggregateId: subscriptionId,
+      aggregateVersion: 1,
+      occurredAt: timestamp,
+      causationId: requestId,
+      correlationId: requestId,
+      payload: {
+        organizationId: auth.organizationId,
+        subscriptionId,
+        externalSubscriptionId: externalId,
+        externalCustomerId,
+        planCode,
+        status: "active",
+        subscriptionAt: timestamp,
+        startedAt: timestamp,
+        initialInvoiceGenerated: false,
+      },
+    };
+    try {
+      await database.batch([
+        database
+          .prepare(
+            `INSERT INTO subscriptions
+             (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
+              started_at, current_period_start, current_period_end, version, created_at,
+              updated_at, name, request_sha256)
+             VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+          )
+          .bind(
+            subscriptionId,
+            auth.organizationId,
+            customer.id,
+            plan.id,
+            externalId,
+            timestamp,
+            timestamp,
+            timestamp,
+            periodEnd,
+            timestamp,
+            timestamp,
+            name,
+            requestHash,
+          ),
+        database
+          .prepare(
+            `INSERT INTO outbox_events
+             (event_id, organization_id, event_type, event_version, aggregate_type,
+              aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+              occurred_at, published_at)
+             VALUES (?, ?, ?, 1, 'subscription', ?, 1, ?, ?, ?, ?, NULL)`,
+          )
+          .bind(
+            event.id,
+            auth.organizationId,
+            event.type,
+            subscriptionId,
+            requestId,
+            requestId,
+            stableJson(event.payload),
+            timestamp,
+          ),
+      ]);
+    } catch (error) {
+      const concurrent = await findSubscription(database, auth.organizationId, externalId);
+      if (!concurrent) throw error;
+      assertSubscriptionReplay(concurrent, {
+        externalCustomerId,
+        name,
+        planCode,
+        requestHash,
+        subscriptionAt,
+      });
+      return json({ subscription: serializeSubscription(concurrent) }, { requestId });
+    }
+    await env.DOMAIN_EVENTS.send(event);
+    const active = await findSubscription(database, auth.organizationId, externalId);
+    if (!active) throw new ApiError(500, "persistence_error", "Subscription was not persisted");
+    return json({ subscription: serializeSubscription(active) }, { requestId });
   }
   const draft = invoiceGracePeriod > 0;
   const issuingDate = shiftCalendarDate(timestamp.slice(0, 10), invoiceGracePeriod);

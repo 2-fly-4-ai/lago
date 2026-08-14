@@ -23,9 +23,10 @@ beforeEach(async () => {
     ).bind(await sha256Hex(apiKey), now),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO plans
-       (id, organization_id, code, name, interval, amount_minor, currency, version, active, created_at, updated_at)
+       (id, organization_id, code, name, interval, amount_minor, currency, pay_in_advance,
+        version, active, created_at, updated_at)
        VALUES ('plan-monthly', 'org-test', 'serp-1-app-plan-monthly', 'One App Monthly',
-               'monthly', 1999, 'USD', 1, 1, ?, ?)`,
+               'monthly', 1999, 'USD', 1, 1, 1, ?, ?)`,
     ).bind(now, now),
   ]);
 });

@@ -185,12 +185,6 @@ async function createPlan(
   if (!/^[A-Z]{3}$/.test(currency)) {
     throw new ApiError(422, "validation_error", "amount_currency must be an ISO currency code");
   }
-  if (input.pay_in_advance === true)
-    throw new ApiError(
-      422,
-      "unsupported_plan_feature",
-      "Pay-in-advance plan billing is not implemented",
-    );
   if (input.bill_charges_monthly === true)
     throw new ApiError(
       422,
@@ -485,12 +479,6 @@ async function updatePlan(
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
   const input = objectAt(await parseJsonObject(request), "plan");
   rejectUpdateGraph(input);
-  if (input.pay_in_advance === true)
-    throw new ApiError(
-      422,
-      "unsupported_plan_feature",
-      "Pay-in-advance plan billing is not implemented",
-    );
   if (input.bill_charges_monthly === true || input.bill_fixed_charges_monthly === true)
     throw new ApiError(422, "unsupported_plan_feature", "Monthly split billing is not implemented");
   const attached = await env.BILLING_DB.prepare(

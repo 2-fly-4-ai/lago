@@ -102,6 +102,7 @@ describe("granted wallet ledger", () => {
             interval: "monthly",
             amount_cents: 1200,
             amount_currency: "USD",
+            pay_in_advance: true,
           },
         })
       ).status,

@@ -165,6 +165,7 @@ describe("coupon ledger API", () => {
             interval: "monthly",
             amount_cents: 1000,
             amount_currency: "USD",
+            pay_in_advance: true,
           },
         })
       ).status,
