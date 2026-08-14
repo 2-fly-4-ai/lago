@@ -1,6 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
+import { calculateWalletAllocations } from "../src/billing/wallet-credits";
 
 const apiKey = "wallet-ledger-key";
 
@@ -741,7 +742,176 @@ describe("granted wallet ledger", () => {
     });
   });
 
-  it("rejects paid and targeted wallet features explicitly", async () => {
+  it("creates, serializes, replaces, and validates wallet limitations atomically", async () => {
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO billable_metrics
+         (id, organization_id, code, name, aggregation_type, properties_json,
+          version, active, created_at, updated_at)
+         VALUES ('metric-wallet-events', 'org-wallet', 'events', 'Events', 'count_agg', '{}',
+                 1, 1, '2026-08-13T00:00:00.000Z', '2026-08-13T00:00:00.000Z')`,
+      ),
+      env.BILLING_DB.prepare(
+        `INSERT OR IGNORE INTO organizations (id, external_id, name, created_at, updated_at)
+         VALUES ('org-wallet-other', 'wallet-other', 'Wallet Other',
+                 '2026-08-13T00:00:00.000Z', '2026-08-13T00:00:00.000Z')`,
+      ),
+      env.BILLING_DB.prepare(
+        `INSERT INTO billable_metrics
+         (id, organization_id, code, name, aggregation_type, properties_json,
+          version, active, created_at, updated_at)
+         VALUES ('metric-wallet-other', 'org-wallet-other', 'other-only', 'Other', 'count_agg',
+                 '{}', 1, 1, '2026-08-13T00:00:00.000Z', '2026-08-13T00:00:00.000Z')`,
+      ),
+    ]);
+    const payload = {
+      wallet: {
+        external_customer_id: "customer-wallet-external",
+        code: "limited",
+        currency: "USD",
+        rate_amount: "1",
+        applies_to: {
+          fee_types: ["subscription", "subscription", "fixed_charge"],
+          billable_metric_codes: ["events", "events"],
+        },
+      },
+    };
+    const created = await request("/api/v1/wallets", "POST", payload);
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ wallet: { lago_id: string } }>();
+    const walletId = createdBody.wallet.lago_id;
+    await expect(
+      request(`/api/v1/wallets/${walletId}`).then((response) => response.json()),
+    ).resolves.toMatchObject({
+      wallet: {
+        applies_to: {
+          fee_types: ["subscription", "fixed_charge"],
+          billable_metric_codes: ["events"],
+        },
+      },
+    });
+    expect((await request("/api/v1/wallets", "POST", payload)).status).toBe(200);
+
+    const updated = await request(`/api/v1/wallets/${walletId}`, "PUT", {
+      wallet: { applies_to: { fee_types: ["charge"] } },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      wallet: {
+        applies_to: { fee_types: ["charge"], billable_metric_codes: [] },
+      },
+    });
+
+    const missing = await request(`/api/v1/wallets/${walletId}`, "PUT", {
+      wallet: { applies_to: { billable_metric_codes: ["other-only"] } },
+    });
+    expect(missing.status).toBe(422);
+    await expect(missing.json()).resolves.toMatchObject({ code: "invalid_identifier" });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT allowed_fee_types_json,
+                (SELECT COUNT(*) FROM wallet_targets WHERE wallet_id = wallets.id) AS targets
+         FROM wallets WHERE id = ?`,
+      )
+        .bind(walletId)
+        .first(),
+    ).resolves.toEqual({ allowed_fee_types_json: '["charge"]', targets: 0 });
+
+    await env.BILLING_DB.prepare(
+      `CREATE TRIGGER fail_wallet_limitation_outbox
+       BEFORE INSERT ON outbox_events
+       WHEN NEW.event_type = 'wallet.updated' AND NEW.aggregate_id = '${walletId}'
+       BEGIN
+         SELECT RAISE(ABORT, 'injected_wallet_limitation_outbox_failure');
+       END`,
+    ).run();
+    try {
+      const failed = await request(`/api/v1/wallets/${walletId}`, "PUT", {
+        wallet: {
+          applies_to: {
+            fee_types: ["subscription"],
+            billable_metric_codes: ["events"],
+          },
+        },
+      });
+      expect(failed.status).toBe(500);
+    } finally {
+      await env.BILLING_DB.prepare("DROP TRIGGER fail_wallet_limitation_outbox").run();
+    }
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT allowed_fee_types_json,
+                (SELECT COUNT(*) FROM wallet_targets WHERE wallet_id = wallets.id) AS targets
+         FROM wallets WHERE id = ?`,
+      )
+        .bind(walletId)
+        .first(),
+    ).resolves.toEqual({ allowed_fee_types_json: '["charge"]', targets: 0 });
+  });
+
+  it("drains applicable fee buckets across wallets in application order", async () => {
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, currency, metadata_json, created_at, updated_at)
+         VALUES ('customer-wallet-allocation', 'org-wallet', 'customer-wallet-allocation-external',
+                 'USD', '{}', '2026-08-13T00:00:00.000Z', '2026-08-13T00:00:00.000Z')`,
+      ),
+      env.BILLING_DB.prepare(
+        `INSERT INTO billable_metrics
+         (id, organization_id, code, name, aggregation_type, properties_json,
+          version, active, created_at, updated_at)
+         VALUES ('metric-wallet-allocation', 'org-wallet', 'allocation-events',
+                 'Allocation events', 'count_agg', '{}', 1, 1,
+                 '2026-08-13T00:00:00.000Z', '2026-08-13T00:00:00.000Z')`,
+      ),
+    ]);
+    const subscriptionWallet = await createLimitedWallet(
+      "allocation-subscription",
+      "3",
+      10,
+      { fee_types: ["subscription"] },
+      "customer-wallet-allocation-external",
+    );
+    const metricWallet = await createLimitedWallet(
+      "allocation-metric",
+      "7",
+      20,
+      { billable_metric_codes: ["allocation-events"] },
+      "customer-wallet-allocation-external",
+    );
+    const unrestrictedWallet = await createLimitedWallet(
+      "allocation-unrestricted",
+      "10",
+      30,
+      undefined,
+      "customer-wallet-allocation-external",
+    );
+
+    const allocations = await calculateWalletAllocations(
+      env.BILLING_DB,
+      "org-wallet",
+      "customer-wallet-allocation",
+      "allocation-invoice",
+      "USD",
+      1300,
+      [
+        { feeType: "charge", billableMetricId: "metric-wallet-allocation", amountMinor: 600 },
+        { feeType: "subscription", billableMetricId: null, amountMinor: 500 },
+        { feeType: "fixed_charge", billableMetricId: null, amountMinor: 200 },
+      ],
+    );
+    expect(allocations.map(({ walletId, amountMinor }) => ({ walletId, amountMinor }))).toEqual([
+      { walletId: subscriptionWallet, amountMinor: 300 },
+      { walletId: metricWallet, amountMinor: 600 },
+      { walletId: unrestrictedWallet, amountMinor: 400 },
+    ]);
+    expect(
+      allocations.flatMap((allocation) => allocation.lots).map((lot) => lot.amountMinor),
+    ).toEqual([300, 600, 400]);
+  });
+
+  it("rejects paid wallet features explicitly", async () => {
     const response = await request("/api/v1/wallets", "POST", {
       wallet: {
         external_customer_id: "customer-wallet-external",
@@ -761,6 +931,28 @@ async function createSection(code: string, name: string) {
     invoice_custom_section: { code, name, details: `${name} details` },
   });
   expect(response.status).toBe(200);
+}
+
+async function createLimitedWallet(
+  code: string,
+  grantedCredits: string,
+  priority: number,
+  appliesTo?: { fee_types?: string[]; billable_metric_codes?: string[] },
+  externalCustomerId = "customer-wallet-external",
+): Promise<string> {
+  const response = await request("/api/v1/wallets", "POST", {
+    wallet: {
+      external_customer_id: externalCustomerId,
+      code,
+      currency: "USD",
+      rate_amount: "1",
+      granted_credits: grantedCredits,
+      priority,
+      ...(appliesTo ? { applies_to: appliesTo } : {}),
+    },
+  });
+  expect(response.status).toBe(200);
+  return (await response.json<{ wallet: { lago_id: string } }>()).wallet.lago_id;
 }
 
 function request(

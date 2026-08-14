@@ -163,6 +163,48 @@ describe("ongoing wallet balance projection", () => {
     ).resolves.toEqual({ ongoing_balance_minor: 300, ongoing_usage_balance_minor: 700 });
   });
 
+  it("projects each draft fee onto the first wallet matching its fee limitation", async () => {
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE wallets SET allowed_fee_types_json = '["charge"]'
+         WHERE id = 'wallet-projection-first'`,
+      ),
+      env.BILLING_DB.prepare(
+        `UPDATE wallets SET allowed_fee_types_json = '["subscription"]'
+         WHERE id = 'wallet-projection-second'`,
+      ),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoice_lines
+         (id, invoice_id, line_type, description, quantity_decimal, unit_amount_decimal,
+          amount_minor, source_type, source_id, metadata_json, created_at)
+         VALUES ('projection-usage-line', 'invoice-projection-draft', 'usage', 'Usage', '1',
+                 '700', 700, 'charge', 'projection-charge', '{}', ?)`,
+      ).bind(now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoice_lines
+         (id, invoice_id, line_type, description, quantity_decimal, unit_amount_decimal,
+          amount_minor, source_type, source_id, metadata_json, created_at)
+         VALUES ('projection-subscription-line', 'invoice-projection-draft', 'subscription',
+                 'Subscription', '1', '500', 500, 'plan', 'projection-plan', '{}', ?)`,
+      ).bind(now),
+    ]);
+    await expect(
+      refreshWalletOngoingBalances(env, now, "projection-fee-limitations"),
+    ).resolves.toMatchObject({ customers: 1, wallets: 2, thresholdTopUps: 0 });
+    await expect(walletState()).resolves.toEqual([
+      expect.objectContaining({
+        id: "wallet-projection-first",
+        ongoing_balance_minor: 300,
+        ongoing_usage_balance_minor: 700,
+      }),
+      expect.objectContaining({
+        id: "wallet-projection-second",
+        ongoing_balance_minor: 0,
+        ongoing_usage_balance_minor: 500,
+      }),
+    ]);
+  });
+
   it("suppresses a threshold grant while pending credits carry the balance above the threshold", async () => {
     await env.BILLING_DB.prepare(
       `INSERT INTO wallet_transactions

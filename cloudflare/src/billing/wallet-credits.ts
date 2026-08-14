@@ -1,9 +1,17 @@
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { Decimal } from "../rating/decimal";
+import {
+  orderedWalletFeeBuckets,
+  walletAppliesToBucket,
+  type WalletFeeBucket,
+  type WalletFeeType,
+} from "./wallet-limitations";
 
 type WalletRow = {
   id: string;
+  code: string;
+  allowed_fee_types_json: string;
   rate_amount: string;
   currency_exponent: number;
   priority: number;
@@ -28,10 +36,14 @@ export async function calculateWalletAllocations(
   invoiceId: string,
   currency: string,
   amountDueMinor: number,
+  feeBuckets: WalletFeeBucket[] = [
+    { amountMinor: amountDueMinor, billableMetricId: null, feeType: "subscription" },
+  ],
 ): Promise<WalletAllocation[]> {
   const wallets = await database
     .prepare(
-      `SELECT id, rate_amount, currency_exponent, priority, balance_minor, version
+      `SELECT id, code, allowed_fee_types_json, rate_amount, currency_exponent, priority,
+              balance_minor, version
      FROM wallets WHERE organization_id = ? AND customer_id = ? AND status = 'active'
        AND currency = ? AND balance_minor > 0
        AND (expiration_at IS NULL OR expiration_at > ?)
@@ -40,10 +52,30 @@ export async function calculateWalletAllocations(
     .bind(organizationId, customerId, currency, new Date().toISOString())
     .all<WalletRow>();
   const allocations: WalletAllocation[] = [];
+  const targets = await loadWalletTargets(
+    database,
+    wallets.results.map((wallet) => wallet.id),
+  );
+  const candidates = wallets.results.map((wallet) => ({
+    ...wallet,
+    allowedFeeTypes: parseFeeTypes(wallet.allowed_fee_types_json),
+    billableMetricIds: targets.get(wallet.id) ?? new Set<string>(),
+  }));
+  const remainingBuckets = orderedWalletFeeBuckets(feeBuckets).map((bucket) => ({ ...bucket }));
   let remainingInvoice = amountDueMinor;
-  for (const wallet of wallets.results) {
+  for (const wallet of candidates) {
     if (remainingInvoice <= 0) break;
-    const amountMinor = Math.min(remainingInvoice, wallet.balance_minor);
+    let remainingWalletBalance = wallet.balance_minor;
+    let amountMinor = 0;
+    for (const bucket of remainingBuckets) {
+      if (remainingInvoice <= 0 || remainingWalletBalance <= 0) break;
+      if (bucket.amountMinor <= 0 || !walletAppliesToBucket(wallet, bucket)) continue;
+      const amount = Math.min(bucket.amountMinor, remainingWalletBalance, remainingInvoice);
+      bucket.amountMinor -= amount;
+      remainingWalletBalance -= amount;
+      remainingInvoice -= amount;
+      amountMinor += amount;
+    }
     if (amountMinor <= 0) continue;
     const transactionId = await deterministicUuid(
       "wallet-invoice-consumption",
@@ -76,9 +108,43 @@ export async function calculateWalletAllocations(
       transactionId,
       lots: consumedLots,
     });
-    remainingInvoice -= amountMinor;
   }
   return allocations;
+}
+
+async function loadWalletTargets(database: D1Database, walletIds: string[]) {
+  const result = new Map<string, Set<string>>();
+  if (walletIds.length === 0) return result;
+  const placeholders = walletIds.map(() => "?").join(", ");
+  const rows = await database
+    .prepare(
+      `SELECT wallet_id, billable_metric_id FROM wallet_targets
+       WHERE wallet_id IN (${placeholders}) ORDER BY wallet_id, billable_metric_id`,
+    )
+    .bind(...walletIds)
+    .all<{ wallet_id: string; billable_metric_id: string }>();
+  for (const row of rows.results) {
+    const values = result.get(row.wallet_id) ?? new Set<string>();
+    values.add(row.billable_metric_id);
+    result.set(row.wallet_id, values);
+  }
+  return result;
+}
+
+function parseFeeTypes(value: string): Set<WalletFeeType> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(
+      parsed.filter((item): item is WalletFeeType =>
+        ["charge", "add_on", "subscription", "credit", "commitment", "fixed_charge"].includes(
+          String(item),
+        ),
+      ),
+    );
+  } catch {
+    return new Set();
+  }
 }
 
 export function walletAllocationStatements(

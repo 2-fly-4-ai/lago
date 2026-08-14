@@ -5,6 +5,7 @@ import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredStri
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { Decimal } from "../rating/decimal";
+import { WALLET_FEE_TYPES, type WalletFeeType } from "../billing/wallet-limitations";
 import {
   normalizeSubscriptionCustomSections,
   resolveCustomSectionIds,
@@ -47,6 +48,14 @@ type WalletRow = {
   created_at: string;
   updated_at: string;
   terminated_at: string | null;
+  allowed_fee_types_json: string;
+};
+
+type WalletMetricTarget = { id: string; code: string };
+
+type NormalizedWalletLimitations = {
+  feeTypes: WalletFeeType[] | undefined;
+  billableMetricCodes: string[];
 };
 
 type WalletTransactionRow = {
@@ -149,6 +158,7 @@ async function createWallet(
 ): Promise<Response> {
   const input = objectAt(await parseJsonObject(request), "wallet");
   rejectUnsupported(input);
+  const limitations = normalizeWalletLimitations(input.applies_to);
   const requestedAt = new Date().toISOString();
   const customSections = normalizeSubscriptionCustomSections(input.invoice_custom_section);
   const recurringRuleInputs = normalizeRecurringRuleList(input.recurring_transaction_rules);
@@ -194,6 +204,11 @@ async function createWallet(
     auth.organizationId,
     recurringRule?.customSections?.codes,
   );
+  const metricTargets = await resolveWalletMetricTargets(
+    env.BILLING_DB,
+    auth.organizationId,
+    limitations.billableMetricCodes,
+  );
   const normalized = {
     code,
     currency,
@@ -203,6 +218,10 @@ async function createWallet(
     name,
     priority,
     rateAmount,
+    appliesTo: {
+      feeTypes: limitations.feeTypes ?? [],
+      billableMetricCodes: metricTargets.map((target) => target.code),
+    },
     invoiceCustomSection: customSections
       ? { skip: customSections.skip === true, sectionIds: customSectionIds ?? null }
       : null,
@@ -227,8 +246,8 @@ async function createWallet(
      (id, organization_id, customer_id, code, name, currency, currency_exponent, rate_amount,
       priority, balance_minor, consumed_minor, status, expiration_at, version, request_sha256,
       created_at, updated_at, terminated_at, skip_invoice_custom_sections,
-      ongoing_balance_minor, ongoing_usage_balance_minor)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, 1, ?, ?, ?, NULL, ?, ?, 0)`,
+      ongoing_balance_minor, ongoing_usage_balance_minor, allowed_fee_types_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, 1, ?, ?, ?, NULL, ?, ?, 0, ?)`,
     ).bind(
       id,
       auth.organizationId,
@@ -246,8 +265,18 @@ async function createWallet(
       now,
       customSections?.skip === true ? 1 : 0,
       initialMinor,
+      stableJson(limitations.feeTypes ?? []),
     ),
   ];
+  for (const target of metricTargets) {
+    statements.push(
+      env.BILLING_DB.prepare(
+        `INSERT INTO wallet_targets
+         (wallet_id, billable_metric_id, organization_id, created_at)
+         VALUES (?, ?, ?, ?)`,
+      ).bind(id, target.id, auth.organizationId, now),
+    );
+  }
   statements.push(
     ...resourceCustomSectionLinkStatements(
       env.BILLING_DB,
@@ -556,7 +585,10 @@ async function updateWallet(
     throw new ApiError(404, "wallet_not_found", "Active wallet was not found");
   const input = objectAt(await parseJsonObject(request), "wallet");
   const unsupported = Object.keys(input).find(
-    (field) => field !== "invoice_custom_section" && field !== "recurring_transaction_rules",
+    (field) =>
+      field !== "invoice_custom_section" &&
+      field !== "recurring_transaction_rules" &&
+      field !== "applies_to",
   );
   if (unsupported)
     throw new ApiError(
@@ -566,12 +598,31 @@ async function updateWallet(
     );
   const customSections = normalizeSubscriptionCustomSections(input.invoice_custom_section);
   const recurringRuleInputs = normalizeRecurringRuleList(input.recurring_transaction_rules);
-  if (!customSections && recurringRuleInputs === undefined)
+  const limitations =
+    input.applies_to === undefined ? undefined : normalizeWalletLimitations(input.applies_to);
+  if (!customSections && recurringRuleInputs === undefined && limitations === undefined)
     throw new ApiError(
       422,
       "validation_error",
-      "invoice_custom_section or recurring_transaction_rules is required",
+      "invoice_custom_section, recurring_transaction_rules, or applies_to is required",
     );
+  const metricTargets = limitations
+    ? await resolveWalletMetricTargets(
+        env.BILLING_DB,
+        auth.organizationId,
+        limitations.billableMetricCodes,
+      )
+    : [];
+  const currentMetricTargetIds = limitations
+    ? await selectedWalletMetricTargetIds(env.BILLING_DB, wallet.id)
+    : [];
+  const nextMetricTargetIds = metricTargets.map((target) => target.id);
+  const currentFeeTypes = parseWalletFeeTypes(wallet.allowed_fee_types_json);
+  const nextFeeTypes = limitations?.feeTypes ?? currentFeeTypes;
+  const limitationsChanged =
+    limitations !== undefined &&
+    (!sameStringSets(currentFeeTypes, nextFeeTypes) ||
+      !sameStringSets(currentMetricTargetIds, nextMetricTargetIds));
   const resolvedIds = await resolveCustomSectionIds(
     env.BILLING_DB,
     auth.organizationId,
@@ -670,7 +721,7 @@ async function updateWallet(
       }
     }
   }
-  if (!walletSectionsChanged && recurringRuleMutation.kind === "none")
+  if (!walletSectionsChanged && recurringRuleMutation.kind === "none" && !limitationsChanged)
     return json({ wallet: await serializeWallet(env.BILLING_DB, wallet) }, { requestId });
 
   const nextVersion = wallet.version + 1;
@@ -686,15 +737,58 @@ async function updateWallet(
       skipInvoiceCustomSections: nextSkipped,
       invoiceCustomSectionIds: replaceSections ? nextSectionIds : undefined,
       recurringTransactionRuleMutation: recurringRuleMutation.kind,
+      appliesTo: limitations
+        ? {
+            feeTypes: nextFeeTypes,
+            billableMetricCodes: metricTargets.map((target) => target.code),
+          }
+        : undefined,
     },
   );
   const statements: D1PreparedStatement[] = [
     env.BILLING_DB.prepare(
       `UPDATE wallets
-       SET skip_invoice_custom_sections = ?, version = version + 1, updated_at = ?
+       SET skip_invoice_custom_sections = ?, allowed_fee_types_json = ?,
+           version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND status = 'active' AND version = ?`,
-    ).bind(nextSkipped ? 1 : 0, now, wallet.id, auth.organizationId, wallet.version),
+    ).bind(
+      nextSkipped ? 1 : 0,
+      stableJson(nextFeeTypes),
+      now,
+      wallet.id,
+      auth.organizationId,
+      wallet.version,
+    ),
   ];
+  if (limitations) {
+    statements.push(
+      env.BILLING_DB.prepare(
+        `DELETE FROM wallet_targets
+         WHERE wallet_id = ? AND organization_id = ?
+           AND EXISTS (SELECT 1 FROM wallets WHERE id = ? AND organization_id = ?
+                       AND version = ? AND updated_at = ?)`,
+      ).bind(wallet.id, auth.organizationId, wallet.id, auth.organizationId, nextVersion, now),
+    );
+    for (const target of metricTargets) {
+      statements.push(
+        env.BILLING_DB.prepare(
+          `INSERT INTO wallet_targets
+           (wallet_id, billable_metric_id, organization_id, created_at)
+           SELECT ?, ?, ?, ? FROM wallets
+           WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
+        ).bind(
+          wallet.id,
+          target.id,
+          auth.organizationId,
+          now,
+          wallet.id,
+          auth.organizationId,
+          nextVersion,
+          now,
+        ),
+      );
+    }
+  }
   if (replaceSections) {
     statements.push(
       env.BILLING_DB.prepare(
@@ -825,7 +919,7 @@ function walletSelect() {
     w.ongoing_balance_minor, w.ongoing_usage_balance_minor, w.depleted_ongoing_balance,
     w.last_ongoing_balance_sync_at, w.ongoing_balance_version, w.consumed_minor,
     w.status, w.expiration_at, w.skip_invoice_custom_sections, w.version, w.request_sha256,
-    w.created_at, w.updated_at, w.terminated_at
+    w.created_at, w.updated_at, w.terminated_at, w.allowed_fee_types_json
     FROM wallets w JOIN customers c ON c.id = w.customer_id`;
 }
 function transactionSelect() {
@@ -860,6 +954,17 @@ async function selectedWalletCustomSectionIds(database: D1Database, walletId: st
     .bind(walletId)
     .all<{ invoice_custom_section_id: string }>();
   return rows.results.map((row) => row.invoice_custom_section_id);
+}
+
+async function selectedWalletMetricTargetIds(database: D1Database, walletId: string) {
+  const rows = await database
+    .prepare(
+      `SELECT billable_metric_id FROM wallet_targets
+       WHERE wallet_id = ? ORDER BY billable_metric_id`,
+    )
+    .bind(walletId)
+    .all<{ billable_metric_id: string }>();
+  return rows.results.map((row) => row.billable_metric_id);
 }
 
 async function selectedRecurringRuleCustomSectionIds(database: D1Database, rule: RecurringRuleRow) {
@@ -1348,16 +1453,22 @@ async function serializeWallet(database: D1Database, row: WalletRow) {
 
 async function serializeWallets(database: D1Database, rows: WalletRow[]) {
   const walletIds = rows.map((row) => row.id);
-  const [sections, recurringRules] = await Promise.all([
+  const [sections, recurringRules, metricCodes] = await Promise.all([
     serializeAppliedCustomSectionsForResources(
       database,
       { table: "wallets_invoice_custom_sections", ownerColumn: "wallet_id" },
       walletIds,
     ),
     serializeRecurringRulesForWallets(database, walletIds),
+    walletMetricCodes(database, walletIds),
   ]);
   return rows.map((row) =>
-    serializeWalletRow(row, sections.get(row.id) ?? [], recurringRules.get(row.id) ?? []),
+    serializeWalletRow(
+      row,
+      sections.get(row.id) ?? [],
+      recurringRules.get(row.id) ?? [],
+      metricCodes.get(row.id) ?? [],
+    ),
   );
 }
 
@@ -1365,6 +1476,7 @@ function serializeWalletRow(
   row: WalletRow,
   sections: SerializedAppliedCustomSection[],
   recurringRules: SerializedRecurringRule[],
+  metricCodes: string[],
 ) {
   const credits = minorToCredits(row.balance_minor, row.rate_amount, row.currency_exponent);
   const ongoingCredits = minorToCredits(
@@ -1402,7 +1514,10 @@ function serializeWalletRow(
     paid_top_up_max_amount_cents: null,
     recurring_transaction_rules: recurringRules,
     applied_invoice_custom_sections: sections,
-    applies_to: { fee_types: [], billable_metric_codes: [] },
+    applies_to: {
+      fee_types: parseWalletFeeTypes(row.allowed_fee_types_json),
+      billable_metric_codes: metricCodes,
+    },
     payment_method: { payment_method_id: null, payment_method_type: null },
   };
 }
@@ -1552,13 +1667,126 @@ function pagination(total: number) {
   };
 }
 function rejectUnsupported(input: Record<string, unknown>) {
-  for (const field of ["paid_credits", "applies_to", "payment_method", "metadata"])
+  for (const field of ["paid_credits", "payment_method", "metadata"])
     if (input[field] !== undefined && input[field] !== null)
       throw new ApiError(
         422,
         "unsupported_wallet_feature",
         `${field} is not implemented for Cloudflare wallets`,
       );
+}
+
+function normalizeWalletLimitations(value: unknown): NormalizedWalletLimitations {
+  if (value === undefined || value === null) return { feeTypes: [], billableMetricCodes: [] };
+  if (typeof value !== "object" || Array.isArray(value))
+    throw new ApiError(422, "validation_error", "applies_to must be an object");
+  const input = value as Record<string, unknown>;
+  const unsupported = Object.keys(input).find(
+    (field) => field !== "fee_types" && field !== "billable_metric_codes",
+  );
+  if (unsupported)
+    throw new ApiError(
+      422,
+      "validation_error",
+      `applies_to.${unsupported} is not a supported wallet limitation`,
+    );
+  return {
+    feeTypes:
+      input.fee_types === undefined
+        ? undefined
+        : normalizeStringArray(input.fee_types, "applies_to.fee_types").map((feeType) => {
+            if (!(WALLET_FEE_TYPES as readonly string[]).includes(feeType))
+              throw new ApiError(
+                422,
+                "invalid_fee_types",
+                `Unsupported wallet fee type: ${feeType}`,
+              );
+            return feeType as WalletFeeType;
+          }),
+    billableMetricCodes:
+      input.billable_metric_codes === undefined
+        ? []
+        : normalizeStringArray(input.billable_metric_codes, "applies_to.billable_metric_codes"),
+  };
+}
+
+function normalizeStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value))
+    throw new ApiError(422, "validation_error", `${field} must be an array`);
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !item.trim())
+      throw new ApiError(422, "validation_error", `${field} entries must be non-empty strings`);
+    const normalized = item.trim();
+    if (!result.includes(normalized)) result.push(normalized);
+  }
+  return result;
+}
+
+async function resolveWalletMetricTargets(
+  database: D1Database,
+  organizationId: string,
+  codes: string[],
+): Promise<WalletMetricTarget[]> {
+  if (codes.length === 0) return [];
+  if (codes.length > 100)
+    throw new ApiError(
+      422,
+      "validation_error",
+      "applies_to.billable_metric_codes supports at most 100 entries",
+    );
+  const placeholders = codes.map(() => "?").join(", ");
+  const rows = await database
+    .prepare(
+      `SELECT id, code FROM billable_metrics
+       WHERE organization_id = ? AND active = 1 AND code IN (${placeholders})`,
+    )
+    .bind(organizationId, ...codes)
+    .all<WalletMetricTarget>();
+  const byCode = new Map(rows.results.map((row) => [row.code, row]));
+  const missing = codes.filter((code) => !byCode.has(code));
+  if (missing.length > 0)
+    throw new ApiError(
+      422,
+      "invalid_identifier",
+      `Unknown billable metric code: ${missing.join(", ")}`,
+    );
+  return codes.map((code) => byCode.get(code)!);
+}
+
+async function walletMetricCodes(database: D1Database, walletIds: string[]) {
+  const result = new Map<string, string[]>();
+  if (walletIds.length === 0) return result;
+  const placeholders = walletIds.map(() => "?").join(", ");
+  const rows = await database
+    .prepare(
+      `SELECT target.wallet_id, metric.code
+       FROM wallet_targets target
+       JOIN billable_metrics metric ON metric.id = target.billable_metric_id
+       WHERE target.wallet_id IN (${placeholders})
+       ORDER BY target.wallet_id, metric.code`,
+    )
+    .bind(...walletIds)
+    .all<{ wallet_id: string; code: string }>();
+  for (const row of rows.results) {
+    const codes = result.get(row.wallet_id) ?? [];
+    codes.push(row.code);
+    result.set(row.wallet_id, codes);
+  }
+  return result;
+}
+
+function parseWalletFeeTypes(value: string): WalletFeeType[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is WalletFeeType =>
+        typeof item === "string" && (WALLET_FEE_TYPES as readonly string[]).includes(item),
+    );
+  } catch {
+    return [];
+  }
 }
 
 function walletEvent(

@@ -15,6 +15,7 @@ import {
   type BillingTime,
 } from "./periods";
 import { calculateWalletAllocations, type WalletAllocation } from "./wallet-credits";
+import type { WalletFeeBucket, WalletFeeType } from "./wallet-limitations";
 
 export type BillableSubscription = {
   id: string;
@@ -74,6 +75,7 @@ export type SubscriptionInvoiceLine = {
   sourceId: string;
   lineType: "subscription" | "usage" | "fixed_charge" | "commitment";
   sourceType: "plan" | "charge" | "fixed_charge" | "commitment";
+  billableMetricId?: string | null;
   metadataJson: string;
 };
 
@@ -308,6 +310,7 @@ export async function calculateInvoiceAllocations(
     invoiceId,
     owner.currency,
     subtotalMinor + taxMinor - couponsMinor - creditNotesMinor,
+    walletFeeBuckets(lines, invoiceTaxes),
   );
   const prepaidCreditMinor = walletAllocations.reduce(
     (total, allocation) => safeAdd(total, allocation.amountMinor),
@@ -483,6 +486,7 @@ export async function calculateSubscriptionInvoice(
       sourceId: charge.id,
       lineType: "usage",
       sourceType: "charge",
+      billableMetricId: charge.metric_id,
       metadataJson: stableJson({
         billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
         billableMetricCode: charge.metric_code,
@@ -589,6 +593,36 @@ export async function calculateSubscriptionInvoice(
     ...allocations,
     nextPeriodEnd: options.context === "renewal" ? nextEnd : calculationPeriodEnd,
   };
+}
+
+export function walletFeeBuckets(
+  lines: SubscriptionInvoiceLine[],
+  taxes: InvoiceTax[],
+): WalletFeeBucket[] {
+  const preciseTaxByLine = new Map<string, Decimal>();
+  for (const tax of taxes) {
+    for (const lineTax of tax.lineTaxes) {
+      preciseTaxByLine.set(
+        lineTax.lineId,
+        (preciseTaxByLine.get(lineTax.lineId) ?? Decimal.zero()).add(
+          Decimal.parse(lineTax.preciseAmountMinor),
+        ),
+      );
+    }
+  }
+  return lines.map((line) => ({
+    amountMinor: safeAdd(
+      line.rounded,
+      preciseTaxByLine.has(line.id) ? safeMinorInteger(preciseTaxByLine.get(line.id)!) : 0,
+    ),
+    billableMetricId: line.billableMetricId ?? null,
+    feeType: walletFeeType(line.lineType),
+  }));
+}
+
+function walletFeeType(lineType: SubscriptionInvoiceLine["lineType"]): WalletFeeType {
+  if (lineType === "usage") return "charge";
+  return lineType;
 }
 
 export async function calculateTerminationSubscriptionInvoice(

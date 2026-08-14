@@ -2,7 +2,14 @@ import { sha256Hex } from "../auth/api-key";
 import {
   calculateSubscriptionInvoice,
   findBillableSubscription,
+  walletFeeBuckets,
 } from "../billing/subscription-invoice-calculation";
+import {
+  projectedUsageByWallet,
+  type WalletApplicability,
+  type WalletFeeBucket,
+  type WalletFeeType,
+} from "../billing/wallet-limitations";
 import type { DomainEvent } from "../domain-events";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
@@ -14,6 +21,7 @@ type ProjectionCustomer = { id: string; organization_id: string };
 
 type ProjectionWallet = {
   id: string;
+  code: string;
   organization_id: string;
   customer_id: string;
   balance_minor: number;
@@ -24,6 +32,7 @@ type ProjectionWallet = {
   rate_amount: string;
   currency_exponent: number;
   priority: number;
+  allowed_fee_types_json: string;
 };
 
 type ThresholdRule = {
@@ -129,7 +138,7 @@ async function projectCustomerWallets(
     .prepare(
       `SELECT id, organization_id, customer_id, balance_minor, ongoing_balance_minor,
               depleted_ongoing_balance, ongoing_balance_version, version, rate_amount,
-              currency_exponent, priority
+              currency_exponent, priority, code, allowed_fee_types_json
        FROM wallets
        WHERE customer_id = ? AND organization_id = ? AND status = 'active'
          AND (expiration_at IS NULL OR expiration_at > ?)
@@ -139,12 +148,22 @@ async function projectCustomerWallets(
     .all<ProjectionWallet>();
   if (wallets.results.length === 0) return { wallets: 0, thresholdTopUps: 0 };
 
-  const liabilityMinor = await projectedCustomerLiabilityMinor(database, customer.id);
+  const metricTargets = await projectionWalletTargets(
+    database,
+    wallets.results.map((wallet) => wallet.id),
+  );
+  const applicability: WalletApplicability[] = wallets.results.map((wallet) => ({
+    id: wallet.id,
+    code: wallet.code,
+    allowedFeeTypes: new Set(parseFeeTypes(wallet.allowed_fee_types_json)),
+    billableMetricIds: metricTargets.get(wallet.id) ?? new Set<string>(),
+  }));
+  const usageByWallet = await projectedCustomerUsageByWallet(database, customer.id, applicability);
   const rules = await activeThresholdRules(database, customer, refreshedAt);
   const statements: D1PreparedStatement[] = [];
   let thresholdTopUps = 0;
-  for (const [index, wallet] of wallets.results.entries()) {
-    const usageMinor = index === 0 ? liabilityMinor : 0;
+  for (const wallet of wallets.results) {
+    const usageMinor = usageByWallet.get(wallet.id) ?? 0;
     const ongoingMinor = wallet.balance_minor - usageMinor;
     const depleted = ongoingMinor <= 0 ? 1 : 0;
     const projectionVersion = wallet.ongoing_balance_version + 1;
@@ -281,6 +300,145 @@ async function projectCustomerWallets(
   );
   await database.batch(statements);
   return { wallets: wallets.results.length, thresholdTopUps };
+}
+
+async function projectedCustomerUsageByWallet(
+  database: D1Database,
+  customerId: string,
+  wallets: WalletApplicability[],
+): Promise<Map<string, number>> {
+  const result = new Map(wallets.map((wallet) => [wallet.id, 0]));
+  const subscriptionRows = await database
+    .prepare(
+      `SELECT id FROM subscriptions
+       WHERE customer_id = ? AND status IN ('active', 'past_due')
+         AND current_period_start IS NOT NULL AND current_period_end IS NOT NULL
+       ORDER BY generation, id`,
+    )
+    .bind(customerId)
+    .all<{ id: string }>();
+  for (const row of subscriptionRows.results) {
+    const subscription = await findBillableSubscription(database, row.id);
+    if (!subscription) continue;
+    const calculation = await calculateSubscriptionInvoice(
+      database,
+      subscription,
+      `wallet-projection:${subscription.id}:${subscription.current_period_start}:${subscription.current_period_end}`,
+      `wallet-projection:${subscription.current_period_start}:${subscription.current_period_end}`,
+      subscription.current_period_start,
+      subscription.current_period_end,
+    );
+    addProjectedUsage(
+      result,
+      projectedUsageByWallet(
+        wallets,
+        walletFeeBuckets(calculation.lines, calculation.invoiceTaxes),
+        safeAdd(calculation.totalDueMinor, calculation.prepaidCreditMinor),
+      ),
+    );
+  }
+
+  const drafts = await database
+    .prepare(
+      `SELECT id, total_due_minor + prepaid_credit_minor AS liability_minor
+       FROM invoices WHERE customer_id = ? AND status = 'draft' ORDER BY id`,
+    )
+    .bind(customerId)
+    .all<{ id: string; liability_minor: number }>();
+  for (const draft of drafts.results) {
+    const buckets = await persistedInvoiceFeeBuckets(database, draft.id);
+    addProjectedUsage(
+      result,
+      projectedUsageByWallet(
+        wallets,
+        buckets.length > 0
+          ? buckets
+          : [
+              {
+                amountMinor: draft.liability_minor,
+                billableMetricId: null,
+                feeType: "subscription",
+              },
+            ],
+        draft.liability_minor,
+      ),
+    );
+  }
+  return result;
+}
+
+function addProjectedUsage(target: Map<string, number>, additions: Map<string, number>): void {
+  for (const [walletId, amountMinor] of additions)
+    target.set(walletId, safeAdd(target.get(walletId) ?? 0, amountMinor));
+}
+
+async function persistedInvoiceFeeBuckets(
+  database: D1Database,
+  invoiceId: string,
+): Promise<WalletFeeBucket[]> {
+  const rows = await database
+    .prepare(
+      `SELECT line.line_type, line.amount_minor,
+              CASE WHEN line.source_type = 'charge' THEN charge.billable_metric_id END
+                AS billable_metric_id,
+              COALESCE((SELECT SUM(tax.amount_minor) FROM invoice_line_taxes tax
+                        WHERE tax.invoice_line_id = line.id), 0) AS tax_minor
+       FROM invoice_lines line
+       LEFT JOIN charges charge ON charge.id = line.source_id
+       WHERE line.invoice_id = ? ORDER BY line.id`,
+    )
+    .bind(invoiceId)
+    .all<{
+      line_type: string;
+      amount_minor: number;
+      billable_metric_id: string | null;
+      tax_minor: number;
+    }>();
+  return rows.results.map((row) => ({
+    amountMinor: safeAdd(row.amount_minor, row.tax_minor),
+    billableMetricId: row.billable_metric_id,
+    feeType: projectionFeeType(row.line_type),
+  }));
+}
+
+async function projectionWalletTargets(database: D1Database, walletIds: string[]) {
+  const result = new Map<string, Set<string>>();
+  if (walletIds.length === 0) return result;
+  const placeholders = walletIds.map(() => "?").join(", ");
+  const rows = await database
+    .prepare(
+      `SELECT wallet_id, billable_metric_id FROM wallet_targets
+       WHERE wallet_id IN (${placeholders}) ORDER BY wallet_id, billable_metric_id`,
+    )
+    .bind(...walletIds)
+    .all<{ wallet_id: string; billable_metric_id: string }>();
+  for (const row of rows.results) {
+    const values = result.get(row.wallet_id) ?? new Set<string>();
+    values.add(row.billable_metric_id);
+    result.set(row.wallet_id, values);
+  }
+  return result;
+}
+
+function parseFeeTypes(value: string): WalletFeeType[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is WalletFeeType =>
+      ["charge", "add_on", "subscription", "credit", "commitment", "fixed_charge"].includes(
+        String(item),
+      ),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function projectionFeeType(lineType: string): WalletFeeType {
+  if (lineType === "usage") return "charge";
+  if (["subscription", "fixed_charge", "commitment"].includes(lineType))
+    return lineType as WalletFeeType;
+  throw new Error("unsupported_wallet_projection_line_type");
 }
 
 async function activeThresholdRules(

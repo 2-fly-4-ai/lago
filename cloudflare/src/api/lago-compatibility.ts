@@ -1167,6 +1167,13 @@ async function createSubscription(
     invoiceId,
     plan.currency,
     initialPlanAmountMinor + taxMinor - couponsMinor - creditNotesMinor,
+    [
+      {
+        amountMinor: initialPlanAmountMinor + taxMinor,
+        billableMetricId: null,
+        feeType: "subscription",
+      },
+    ],
   );
   const prepaidCreditMinor = walletAllocations.reduce(
     (total, allocation) => safeAddMinor(total, allocation.amountMinor),
