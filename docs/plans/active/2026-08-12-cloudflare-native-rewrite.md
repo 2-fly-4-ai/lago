@@ -2044,3 +2044,17 @@ resource and mutation described.
   and post-deploy aggregate-only verification stayed empty apart from 210 schedule audits. All
   three external-action flags remain `0`; no migration, resource provisioning, production
   route/domain, secret, provider action, customer data, or billing row changed.
+- 2026-08-15: Ported scalar plan-amount `cascade_updates` for subscription override plans.
+  Migration `0048_plan_override_version_scope.sql` corrects the discovered version-scope defect by
+  applying `(organization, code, version)` uniqueness only to catalog roots; hidden child plans now
+  retain the public code while versioning independently. The migration rebuilds the final plan
+  schema, restores its indexes and draft/deletion/subscribability triggers, and passes an explicit
+  foreign-key check. A bounded D1 transaction now updates only direct child plans whose amount still
+  equals the parent's old amount, preserves subscriber-customized amounts, guards the complete
+  eligible child ID/version set, and emits parent/child outbox events. Non-cascade updates remain
+  root-only. The synchronous contract supports at most 100 unchanged children and 64 KiB of guard
+  JSON. Strict format/lint, inventory, TypeScript, migration replay, plan/override/plan-change
+  evidence, and foreign-key integrity checks pass. The fully parallel suite passed 192/193 before
+  the known draft-termination-credit case exceeded its 10-second harness limit; that file passed
+  2/2 alone, and bounded groups passed all 193 tests as 45 + 69 + 72 + 7. The dry-run bundle is
+  952.92 KiB (164.26 KiB gzip). Feature checkpoint: `aa52ef6`.
