@@ -179,6 +179,10 @@ type CustomSectionResourceLink =
   | {
       table: "recurring_transaction_rules_invoice_custom_sections";
       ownerColumn: "recurring_transaction_rule_id";
+    }
+  | {
+      table: "wallet_threshold_rules_invoice_custom_sections";
+      ownerColumn: "wallet_threshold_rule_id";
     };
 
 export function resourceCustomSectionLinkStatements(

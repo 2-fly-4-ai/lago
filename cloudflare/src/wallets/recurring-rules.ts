@@ -23,9 +23,11 @@ export type RecurringRuleRow = {
   wallet_id: string;
   interval: RecurringRuleInterval;
   method: "fixed";
-  trigger: "interval";
+  trigger: "interval" | "threshold";
+  storage_kind: "interval" | "threshold";
   paid_credits: "0";
   granted_credits: string;
+  threshold_credits: string;
   started_at: string | null;
   expiration_at: string | null;
   status: "active" | "terminated";
@@ -43,7 +45,9 @@ export type RecurringRuleRow = {
 export type NormalizedRecurringRule = {
   lagoId: string | null;
   interval: RecurringRuleInterval;
+  trigger: "interval" | "threshold";
   grantedCredits: string;
+  thresholdCredits: string;
   startedAt: string | null;
   expirationAt: string | null;
   transactionMetadata: Array<{ key?: string; value?: string }>;
@@ -105,7 +109,8 @@ export function normalizeRecurringRule(
     );
 
   const trigger = stringValue(input.trigger, "trigger") ?? options.current?.trigger ?? "interval";
-  if (trigger !== "interval") unsupported("threshold trigger requires ongoing-balance processing");
+  if (trigger !== "interval" && trigger !== "threshold")
+    throw new ApiError(422, "invalid_recurring_rule", "Recurring trigger is invalid");
   const method = stringValue(input.method, "method") ?? options.current?.method ?? "fixed";
   if (method !== "fixed") unsupported("target method requires paid-credit processing");
 
@@ -114,8 +119,6 @@ export function normalizeRecurringRule(
     unsupported("paid credits require the payment workflow");
   if (input.target_ongoing_balance !== undefined && input.target_ongoing_balance !== null)
     unsupported("target ongoing balance requires paid-credit processing");
-  if (input.threshold_credits !== undefined && input.threshold_credits !== null)
-    unsupported("threshold credits require ongoing-balance processing");
   if (input.payment_method !== undefined && input.payment_method !== null)
     unsupported("payment methods require the payment workflow");
   if (
@@ -126,13 +129,17 @@ export function normalizeRecurringRule(
     unsupported("paid top-up limits require the payment workflow");
 
   const intervalValue =
-    stringValue(input.interval, "interval") ?? options.current?.interval ?? null;
+    stringValue(input.interval, "interval") ?? options.current?.interval ?? "weekly";
   if (!intervalValue || !RECURRING_RULE_INTERVALS.includes(intervalValue as RecurringRuleInterval))
     throw new ApiError(422, "invalid_recurring_rule", "Recurring interval is invalid");
 
   const grantedCredits = decimalOrDefault(
     input.granted_credits,
     options.current?.granted_credits ?? options.fallbackGrantedCredits ?? "0",
+  );
+  const thresholdCredits = decimalOrDefault(
+    input.threshold_credits,
+    options.current?.threshold_credits ?? "0",
   );
   const startedAt = timestampOrCurrent(input, "started_at", options.current?.started_at ?? null);
   const expirationAt = timestampOrCurrent(
@@ -146,7 +153,9 @@ export function normalizeRecurringRule(
   return {
     lagoId: nullableId(input.lago_id),
     interval: intervalValue as RecurringRuleInterval,
+    trigger,
     grantedCredits,
+    thresholdCredits,
     startedAt,
     expirationAt,
     transactionMetadata:
@@ -170,12 +179,8 @@ export async function activeRecurringRuleRows(
   walletId: string,
 ): Promise<RecurringRuleRow[]> {
   const result = await database
-    .prepare(
-      `SELECT * FROM recurring_transaction_rules
-       WHERE organization_id = ? AND wallet_id = ? AND status = 'active'
-       ORDER BY created_at, id`,
-    )
-    .bind(organizationId, walletId)
+    .prepare(`${recurringRuleUnion()} ORDER BY created_at, id`)
+    .bind(organizationId, walletId, organizationId, walletId)
     .all<RecurringRuleRow>();
   return result.results;
 }
@@ -190,22 +195,60 @@ export async function serializeRecurringRulesForWallets(
   const placeholders = walletIds.map(() => "?").join(", ");
   const rows = await database
     .prepare(
-      `SELECT * FROM recurring_transaction_rules
-       WHERE wallet_id IN (${placeholders}) AND status = 'active'
-         AND (expiration_at IS NULL OR expiration_at > ?)
-       ORDER BY wallet_id, created_at, id`,
+      `SELECT id, organization_id, wallet_id, interval, method, trigger, storage_kind,
+              paid_credits, granted_credits, threshold_credits, started_at, expiration_at,
+              status, transaction_metadata_json, transaction_name,
+              invoice_requires_successful_payment, ignore_paid_top_up_limits,
+              skip_invoice_custom_sections, version, created_at, updated_at, terminated_at
+       FROM (
+         SELECT id, organization_id, wallet_id, interval, method, trigger,
+                'interval' AS storage_kind, paid_credits, granted_credits,
+                threshold_credits, started_at, expiration_at, status,
+                transaction_metadata_json, transaction_name, invoice_requires_successful_payment,
+                ignore_paid_top_up_limits, skip_invoice_custom_sections, version, created_at,
+                updated_at, terminated_at
+         FROM recurring_transaction_rules
+         WHERE wallet_id IN (${placeholders}) AND status = 'active'
+           AND (expiration_at IS NULL OR expiration_at > ?)
+         UNION ALL
+         SELECT id, organization_id, wallet_id, interval, method, trigger,
+                'threshold' AS storage_kind, paid_credits, granted_credits, threshold_credits,
+                started_at, expiration_at, status, transaction_metadata_json, transaction_name,
+                invoice_requires_successful_payment, ignore_paid_top_up_limits,
+                skip_invoice_custom_sections, version, created_at, updated_at, terminated_at
+         FROM wallet_threshold_rules
+         WHERE wallet_id IN (${placeholders}) AND status = 'active'
+           AND (expiration_at IS NULL OR expiration_at > ?)
+       ) ORDER BY wallet_id, created_at, id`,
     )
-    .bind(...walletIds, now)
+    .bind(...walletIds, now, ...walletIds, now)
     .all<RecurringRuleRow>();
-  const sections = await serializeAppliedCustomSectionsForResources(
-    database,
-    {
-      table: "recurring_transaction_rules_invoice_custom_sections",
-      ownerColumn: "recurring_transaction_rule_id",
-    },
-    rows.results.map((row) => row.id),
-  );
+  const intervalIds = rows.results
+    .filter((row) => row.storage_kind === "interval")
+    .map((row) => row.id);
+  const thresholdIds = rows.results
+    .filter((row) => row.storage_kind === "threshold")
+    .map((row) => row.id);
+  const [intervalSections, thresholdSections] = await Promise.all([
+    serializeAppliedCustomSectionsForResources(
+      database,
+      {
+        table: "recurring_transaction_rules_invoice_custom_sections",
+        ownerColumn: "recurring_transaction_rule_id",
+      },
+      intervalIds,
+    ),
+    serializeAppliedCustomSectionsForResources(
+      database,
+      {
+        table: "wallet_threshold_rules_invoice_custom_sections",
+        ownerColumn: "wallet_threshold_rule_id",
+      },
+      thresholdIds,
+    ),
+  ]);
   for (const row of rows.results) {
+    const sections = row.storage_kind === "interval" ? intervalSections : thresholdSections;
     const serialized = serializeRecurringRule(row, sections.get(row.id) ?? []);
     const walletRules = grouped.get(row.wallet_id) ?? [];
     walletRules.push(serialized);
@@ -225,7 +268,7 @@ function serializeRecurringRule(row: RecurringRuleRow, sections: SerializedAppli
     expiration_at: row.expiration_at,
     status: row.status,
     target_ongoing_balance: null,
-    threshold_credits: "0",
+    threshold_credits: row.threshold_credits,
     trigger: row.trigger,
     created_at: row.created_at,
     invoice_requires_successful_payment: false,
@@ -235,6 +278,25 @@ function serializeRecurringRule(row: RecurringRuleRow, sections: SerializedAppli
     applied_invoice_custom_sections: sections,
     payment_method: { payment_method_id: null, payment_method_type: "provider" },
   };
+}
+
+function recurringRuleUnion() {
+  return `SELECT id, organization_id, wallet_id, interval, method, trigger,
+                 'interval' AS storage_kind, paid_credits, granted_credits,
+                 threshold_credits, started_at, expiration_at, status,
+                 transaction_metadata_json, transaction_name, invoice_requires_successful_payment,
+                 ignore_paid_top_up_limits, skip_invoice_custom_sections, version, created_at,
+                 updated_at, terminated_at
+          FROM recurring_transaction_rules
+          WHERE organization_id = ? AND wallet_id = ? AND status = 'active'
+          UNION ALL
+          SELECT id, organization_id, wallet_id, interval, method, trigger,
+                 'threshold' AS storage_kind, paid_credits, granted_credits, threshold_credits,
+                 started_at, expiration_at, status, transaction_metadata_json, transaction_name,
+                 invoice_requires_successful_payment, ignore_paid_top_up_limits,
+                 skip_invoice_custom_sections, version, created_at, updated_at, terminated_at
+          FROM wallet_threshold_rules
+          WHERE organization_id = ? AND wallet_id = ? AND status = 'active'`;
 }
 
 function decimalOrDefault(value: unknown, fallback: string): string {

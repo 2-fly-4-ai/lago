@@ -33,6 +33,11 @@ type WalletRow = {
   rate_amount: string;
   priority: number;
   balance_minor: number;
+  ongoing_balance_minor: number;
+  ongoing_usage_balance_minor: number;
+  depleted_ongoing_balance: number;
+  last_ongoing_balance_sync_at: string | null;
+  ongoing_balance_version: number;
   consumed_minor: number;
   status: string;
   expiration_at: string | null;
@@ -76,6 +81,14 @@ type RecurringRuleMutation =
       rule: NormalizedRecurringRule;
       ruleId: string;
       sectionIds: string[];
+    }
+  | {
+      kind: "replace";
+      current: RecurringRuleRow;
+      rule: NormalizedRecurringRule;
+      ruleId: string;
+      sectionIds: string[];
+      skipSections: boolean;
     }
   | {
       kind: "update";
@@ -213,8 +226,9 @@ async function createWallet(
       `INSERT INTO wallets
      (id, organization_id, customer_id, code, name, currency, currency_exponent, rate_amount,
       priority, balance_minor, consumed_minor, status, expiration_at, version, request_sha256,
-      created_at, updated_at, terminated_at, skip_invoice_custom_sections)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, 1, ?, ?, ?, NULL, ?)`,
+      created_at, updated_at, terminated_at, skip_invoice_custom_sections,
+      ongoing_balance_minor, ongoing_usage_balance_minor)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, 1, ?, ?, ?, NULL, ?, ?, 0)`,
     ).bind(
       id,
       auth.organizationId,
@@ -231,6 +245,7 @@ async function createWallet(
       now,
       now,
       customSections?.skip === true ? 1 : 0,
+      initialMinor,
     ),
   ];
   statements.push(
@@ -257,10 +272,7 @@ async function createWallet(
       ),
       ...resourceCustomSectionLinkStatements(
         env.BILLING_DB,
-        {
-          table: "recurring_transaction_rules_invoice_custom_sections",
-          ownerColumn: "recurring_transaction_rule_id",
-        },
+        recurringRuleCustomSectionLink(recurringRule.trigger),
         auth.organizationId,
         recurringRuleId,
         recurringRuleSectionIds,
@@ -445,8 +457,10 @@ async function createTransaction(
         false,
       ),
       env.BILLING_DB.prepare(
-        "UPDATE wallets SET balance_minor = balance_minor + ?, version = version + 1, updated_at = ? WHERE id = ? AND organization_id = ? AND version = ? AND status = 'active'",
-      ).bind(amountMinor, now, wallet.id, auth.organizationId, wallet.version),
+        `UPDATE wallets SET balance_minor = balance_minor + ?,
+         ongoing_balance_minor = ongoing_balance_minor + ?, version = version + 1, updated_at = ?
+         WHERE id = ? AND organization_id = ? AND version = ? AND status = 'active'`,
+      ).bind(amountMinor, amountMinor, now, wallet.id, auth.organizationId, wallet.version),
       outboxStatement(env.BILLING_DB, auth.organizationId, event),
     ];
     const walletUpdateIndex = statements.length - 2;
@@ -630,12 +644,21 @@ async function updateWallet(
           (!currentlyRuleSkipped || rule.customSections.skip === false));
       const nextRuleSectionIds = rule.customSections?.skip === true ? [] : (ruleSectionIds ?? []);
       const currentRuleSectionIds = replaceRuleSections
-        ? await selectedRecurringRuleCustomSectionIds(env.BILLING_DB, current.id)
+        ? await selectedRecurringRuleCustomSectionIds(env.BILLING_DB, current)
         : [];
       const ruleFieldsChanged = !sameRecurringRule(current, rule, nextRuleSkipped);
       const ruleSectionsChanged =
         replaceRuleSections && !sameStringSets(currentRuleSectionIds, nextRuleSectionIds);
-      if (ruleFieldsChanged || ruleSectionsChanged) {
+      if (current.trigger !== rule.trigger) {
+        recurringRuleMutation = {
+          kind: "replace",
+          current,
+          rule,
+          ruleId: crypto.randomUUID(),
+          sectionIds: nextRuleSectionIds,
+          skipSections: nextRuleSkipped,
+        };
+      } else if (ruleFieldsChanged || ruleSectionsChanged) {
         recurringRuleMutation = {
           kind: "update",
           current,
@@ -798,7 +821,9 @@ async function showTransaction(
 
 function walletSelect() {
   return `SELECT w.id, w.customer_id, c.external_id AS external_customer_id, w.code, w.name,
-    w.currency, w.currency_exponent, w.rate_amount, w.priority, w.balance_minor, w.consumed_minor,
+    w.currency, w.currency_exponent, w.rate_amount, w.priority, w.balance_minor,
+    w.ongoing_balance_minor, w.ongoing_usage_balance_minor, w.depleted_ongoing_balance,
+    w.last_ongoing_balance_sync_at, w.ongoing_balance_version, w.consumed_minor,
     w.status, w.expiration_at, w.skip_invoice_custom_sections, w.version, w.request_sha256,
     w.created_at, w.updated_at, w.terminated_at
     FROM wallets w JOIN customers c ON c.id = w.customer_id`;
@@ -837,14 +862,15 @@ async function selectedWalletCustomSectionIds(database: D1Database, walletId: st
   return rows.results.map((row) => row.invoice_custom_section_id);
 }
 
-async function selectedRecurringRuleCustomSectionIds(database: D1Database, ruleId: string) {
+async function selectedRecurringRuleCustomSectionIds(database: D1Database, rule: RecurringRuleRow) {
+  const link = recurringRuleCustomSectionLink(rule.trigger);
   const rows = await database
     .prepare(
       `SELECT invoice_custom_section_id
-       FROM recurring_transaction_rules_invoice_custom_sections
-       WHERE recurring_transaction_rule_id = ? ORDER BY invoice_custom_section_id`,
+       FROM ${link.table}
+       WHERE ${link.ownerColumn} = ? ORDER BY invoice_custom_section_id`,
     )
-    .bind(ruleId)
+    .bind(rule.id)
     .all<{ invoice_custom_section_id: string }>();
   return rows.results.map((row) => row.invoice_custom_section_id);
 }
@@ -852,7 +878,9 @@ async function selectedRecurringRuleCustomSectionIds(database: D1Database, ruleI
 function canonicalRecurringRule(rule: NormalizedRecurringRule, sectionIds: string[] | undefined) {
   return {
     interval: rule.interval,
+    trigger: rule.trigger,
     grantedCredits: rule.grantedCredits,
+    thresholdCredits: rule.thresholdCredits,
     startedAt: rule.startedAt,
     expirationAt: rule.expirationAt,
     transactionMetadata: rule.transactionMetadata,
@@ -871,14 +899,42 @@ function recurringRuleInsertStatement(
   rule: NormalizedRecurringRule,
   now: string,
 ): D1PreparedStatement {
+  if (rule.trigger === "threshold") {
+    return database
+      .prepare(
+        `INSERT INTO wallet_threshold_rules
+         (id, organization_id, wallet_id, interval, method, trigger, paid_credits,
+          granted_credits, threshold_credits, started_at, expiration_at, status,
+          transaction_metadata_json, transaction_name, invoice_requires_successful_payment,
+          ignore_paid_top_up_limits, skip_invoice_custom_sections, version, created_at,
+          updated_at, terminated_at)
+         VALUES (?, ?, ?, ?, 'fixed', 'threshold', '0', ?, ?, ?, ?, 'active', ?, ?, 0, 0, ?,
+                 1, ?, ?, NULL)`,
+      )
+      .bind(
+        ruleId,
+        organizationId,
+        walletId,
+        rule.interval,
+        rule.grantedCredits,
+        rule.thresholdCredits,
+        rule.startedAt,
+        rule.expirationAt,
+        stableJson(rule.transactionMetadata),
+        rule.transactionName,
+        rule.customSections?.skip === true ? 1 : 0,
+        now,
+        now,
+      );
+  }
   return database
     .prepare(
       `INSERT INTO recurring_transaction_rules
        (id, organization_id, wallet_id, interval, method, trigger, paid_credits, granted_credits,
-        started_at, expiration_at, status, transaction_metadata_json, transaction_name,
+        threshold_credits, started_at, expiration_at, status, transaction_metadata_json, transaction_name,
         invoice_requires_successful_payment, ignore_paid_top_up_limits,
         skip_invoice_custom_sections, version, created_at, updated_at, terminated_at)
-       VALUES (?, ?, ?, ?, 'fixed', 'interval', '0', ?, ?, ?, 'active', ?, ?, 0, 0, ?, 1, ?, ?, NULL)`,
+       VALUES (?, ?, ?, ?, 'fixed', 'interval', '0', ?, ?, ?, ?, 'active', ?, ?, 0, 0, ?, 1, ?, ?, NULL)`,
     )
     .bind(
       ruleId,
@@ -886,12 +942,104 @@ function recurringRuleInsertStatement(
       walletId,
       rule.interval,
       rule.grantedCredits,
+      rule.thresholdCredits,
       rule.startedAt,
       rule.expirationAt,
       stableJson(rule.transactionMetadata),
       rule.transactionName,
       rule.customSections?.skip === true ? 1 : 0,
       now,
+      now,
+    );
+}
+
+function recurringRuleTable(trigger: "interval" | "threshold") {
+  return trigger === "threshold" ? "wallet_threshold_rules" : "recurring_transaction_rules";
+}
+
+function recurringRuleCustomSectionLink(trigger: "interval" | "threshold") {
+  return trigger === "threshold"
+    ? ({
+        table: "wallet_threshold_rules_invoice_custom_sections",
+        ownerColumn: "wallet_threshold_rule_id",
+      } as const)
+    : ({
+        table: "recurring_transaction_rules_invoice_custom_sections",
+        ownerColumn: "recurring_transaction_rule_id",
+      } as const);
+}
+
+function guardedRecurringRuleInsertStatement(
+  database: D1Database,
+  organizationId: string,
+  wallet: WalletRow,
+  ruleId: string,
+  rule: NormalizedRecurringRule,
+  nextWalletVersion: number,
+  now: string,
+): D1PreparedStatement {
+  if (rule.trigger === "threshold") {
+    return database
+      .prepare(
+        `INSERT INTO wallet_threshold_rules
+         (id, organization_id, wallet_id, interval, method, trigger, paid_credits,
+          granted_credits, threshold_credits, started_at, expiration_at, status,
+          transaction_metadata_json, transaction_name, invoice_requires_successful_payment,
+          ignore_paid_top_up_limits, skip_invoice_custom_sections, version, created_at,
+          updated_at, terminated_at)
+         SELECT ?, ?, ?, ?, 'fixed', 'threshold', '0', ?, ?, ?, ?, 'active', ?, ?, 0, 0, ?,
+                1, ?, ?, NULL
+         FROM wallets WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
+      )
+      .bind(
+        ruleId,
+        organizationId,
+        wallet.id,
+        rule.interval,
+        rule.grantedCredits,
+        rule.thresholdCredits,
+        rule.startedAt,
+        rule.expirationAt,
+        stableJson(rule.transactionMetadata),
+        rule.transactionName,
+        rule.customSections?.skip === true ? 1 : 0,
+        now,
+        now,
+        wallet.id,
+        organizationId,
+        nextWalletVersion,
+        now,
+      );
+  }
+  return database
+    .prepare(
+      `INSERT INTO recurring_transaction_rules
+       (id, organization_id, wallet_id, interval, method, trigger, paid_credits,
+        granted_credits, threshold_credits, started_at, expiration_at, status,
+        transaction_metadata_json, transaction_name, invoice_requires_successful_payment,
+        ignore_paid_top_up_limits, skip_invoice_custom_sections, version, created_at,
+        updated_at, terminated_at)
+       SELECT ?, ?, ?, ?, 'fixed', 'interval', '0', ?, ?, ?, ?, 'active', ?, ?, 0, 0, ?, 1,
+              ?, ?, NULL
+       FROM wallets WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
+    )
+    .bind(
+      ruleId,
+      organizationId,
+      wallet.id,
+      rule.interval,
+      rule.grantedCredits,
+      rule.thresholdCredits,
+      rule.startedAt,
+      rule.expirationAt,
+      stableJson(rule.transactionMetadata),
+      rule.transactionName,
+      rule.customSections?.skip === true ? 1 : 0,
+      now,
+      now,
+      wallet.id,
+      organizationId,
+      nextWalletVersion,
       now,
     );
 }
@@ -929,48 +1077,96 @@ function recurringRuleMutationStatements(
           nextWalletVersion,
           now,
         ),
-    );
-  }
-  if (mutation.kind === "create") {
-    const rule = mutation.rule;
-    statements.push(
       database
         .prepare(
-          `INSERT INTO recurring_transaction_rules
-           (id, organization_id, wallet_id, interval, method, trigger, paid_credits,
-            granted_credits, started_at, expiration_at, status, transaction_metadata_json,
-            transaction_name, invoice_requires_successful_payment, ignore_paid_top_up_limits,
-            skip_invoice_custom_sections, version, created_at, updated_at, terminated_at)
-           SELECT ?, ?, ?, ?, 'fixed', 'interval', '0', ?, ?, ?, 'active', ?, ?, 0, 0, ?, 1,
-                  ?, ?, NULL
-           FROM wallets WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
+          `UPDATE wallet_threshold_rules
+           SET status = 'terminated', terminated_at = COALESCE(terminated_at, ?),
+               updated_at = ?, version = version + 1
+           WHERE wallet_id = ? AND organization_id = ? AND status = 'active'
+             AND ${walletGuard}`,
         )
         .bind(
-          mutation.ruleId,
-          organizationId,
+          now,
+          now,
           wallet.id,
-          rule.interval,
-          rule.grantedCredits,
-          rule.startedAt,
-          rule.expirationAt,
-          stableJson(rule.transactionMetadata),
-          rule.transactionName,
-          rule.customSections?.skip === true ? 1 : 0,
-          now,
-          now,
+          organizationId,
           wallet.id,
           organizationId,
           nextWalletVersion,
           now,
         ),
     );
+  }
+  if (mutation.kind === "create") {
+    statements.push(
+      guardedRecurringRuleInsertStatement(
+        database,
+        organizationId,
+        wallet,
+        mutation.ruleId,
+        mutation.rule,
+        nextWalletVersion,
+        now,
+      ),
+    );
+    const link = recurringRuleCustomSectionLink(mutation.rule.trigger);
     for (const sectionId of mutation.sectionIds) {
       statements.push(
         database
           .prepare(
-            `INSERT OR IGNORE INTO recurring_transaction_rules_invoice_custom_sections
-             (recurring_transaction_rule_id, invoice_custom_section_id, organization_id, created_at)
-             SELECT ?, ?, ?, ? FROM recurring_transaction_rules
+            `INSERT OR IGNORE INTO ${link.table}
+             (${link.ownerColumn}, invoice_custom_section_id, organization_id, created_at)
+             SELECT ?, ?, ?, ? FROM ${recurringRuleTable(mutation.rule.trigger)}
+             WHERE id = ? AND organization_id = ? AND status = 'active'`,
+          )
+          .bind(mutation.ruleId, sectionId, organizationId, now, mutation.ruleId, organizationId),
+      );
+    }
+  }
+  if (mutation.kind === "replace") {
+    const currentTable = recurringRuleTable(mutation.current.trigger);
+    statements.push(
+      database
+        .prepare(
+          `UPDATE ${currentTable}
+           SET status = 'terminated', terminated_at = COALESCE(terminated_at, ?),
+               updated_at = ?, version = version + 1
+           WHERE id = ? AND wallet_id = ? AND organization_id = ? AND status = 'active'
+             AND version = ? AND ${walletGuard}`,
+        )
+        .bind(
+          now,
+          now,
+          mutation.current.id,
+          wallet.id,
+          organizationId,
+          mutation.current.version,
+          wallet.id,
+          organizationId,
+          nextWalletVersion,
+          now,
+        ),
+      guardedRecurringRuleInsertStatement(
+        database,
+        organizationId,
+        wallet,
+        mutation.ruleId,
+        {
+          ...mutation.rule,
+          customSections: { skip: mutation.skipSections, codes: undefined },
+        },
+        nextWalletVersion,
+        now,
+      ),
+    );
+    const link = recurringRuleCustomSectionLink(mutation.rule.trigger);
+    for (const sectionId of mutation.sectionIds) {
+      statements.push(
+        database
+          .prepare(
+            `INSERT OR IGNORE INTO ${link.table}
+             (${link.ownerColumn}, invoice_custom_section_id, organization_id, created_at)
+             SELECT ?, ?, ?, ? FROM ${recurringRuleTable(mutation.rule.trigger)}
              WHERE id = ? AND organization_id = ? AND status = 'active'`,
           )
           .bind(mutation.ruleId, sectionId, organizationId, now, mutation.ruleId, organizationId),
@@ -983,8 +1179,8 @@ function recurringRuleMutationStatements(
     statements.push(
       database
         .prepare(
-          `UPDATE recurring_transaction_rules
-           SET interval = ?, granted_credits = ?, started_at = ?, expiration_at = ?,
+          `UPDATE ${recurringRuleTable(mutation.current.trigger)}
+           SET interval = ?, granted_credits = ?, threshold_credits = ?, started_at = ?, expiration_at = ?,
                transaction_metadata_json = ?, transaction_name = ?,
                skip_invoice_custom_sections = ?, version = version + 1, updated_at = ?
            WHERE id = ? AND wallet_id = ? AND organization_id = ? AND status = 'active'
@@ -993,6 +1189,7 @@ function recurringRuleMutationStatements(
         .bind(
           rule.interval,
           rule.grantedCredits,
+          rule.thresholdCredits,
           rule.startedAt,
           rule.expirationAt,
           stableJson(rule.transactionMetadata),
@@ -1010,13 +1207,14 @@ function recurringRuleMutationStatements(
         ),
     );
     if (mutation.replaceSections) {
+      const link = recurringRuleCustomSectionLink(mutation.current.trigger);
       statements.push(
         database
           .prepare(
-            `DELETE FROM recurring_transaction_rules_invoice_custom_sections
-             WHERE recurring_transaction_rule_id = ? AND organization_id = ?
+            `DELETE FROM ${link.table}
+             WHERE ${link.ownerColumn} = ? AND organization_id = ?
                AND EXISTS (
-                 SELECT 1 FROM recurring_transaction_rules
+                 SELECT 1 FROM ${recurringRuleTable(mutation.current.trigger)}
                  WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?
                )`,
           )
@@ -1033,9 +1231,9 @@ function recurringRuleMutationStatements(
         statements.push(
           database
             .prepare(
-              `INSERT OR IGNORE INTO recurring_transaction_rules_invoice_custom_sections
-               (recurring_transaction_rule_id, invoice_custom_section_id, organization_id, created_at)
-               SELECT ?, ?, ?, ? FROM recurring_transaction_rules
+              `INSERT OR IGNORE INTO ${link.table}
+               (${link.ownerColumn}, invoice_custom_section_id, organization_id, created_at)
+               SELECT ?, ?, ?, ? FROM ${recurringRuleTable(mutation.current.trigger)}
                WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
             )
             .bind(
@@ -1062,7 +1260,9 @@ function sameRecurringRule(
 ) {
   return (
     current.interval === next.interval &&
+    current.trigger === next.trigger &&
     current.granted_credits === next.grantedCredits &&
+    current.threshold_credits === next.thresholdCredits &&
     current.started_at === next.startedAt &&
     current.expiration_at === next.expirationAt &&
     current.transaction_metadata_json === stableJson(next.transactionMetadata) &&
@@ -1167,6 +1367,16 @@ function serializeWalletRow(
   recurringRules: SerializedRecurringRule[],
 ) {
   const credits = minorToCredits(row.balance_minor, row.rate_amount, row.currency_exponent);
+  const ongoingCredits = minorToCredits(
+    row.ongoing_balance_minor,
+    row.rate_amount,
+    row.currency_exponent,
+  );
+  const ongoingUsageCredits = minorToCredits(
+    row.ongoing_usage_balance_minor,
+    row.rate_amount,
+    row.currency_exponent,
+  );
   return {
     lago_id: row.id,
     lago_customer_id: row.customer_id,
@@ -1177,11 +1387,11 @@ function serializeWalletRow(
     code: row.code,
     rate_amount: row.rate_amount,
     credits_balance: credits,
-    credits_ongoing_balance: credits,
-    credits_ongoing_usage_balance: credits,
+    credits_ongoing_balance: ongoingCredits,
+    credits_ongoing_usage_balance: ongoingUsageCredits,
     balance_cents: row.balance_minor,
-    ongoing_balance_cents: row.balance_minor,
-    ongoing_usage_balance_cents: row.balance_minor,
+    ongoing_balance_cents: row.ongoing_balance_minor,
+    ongoing_usage_balance_cents: row.ongoing_usage_balance_minor,
     consumed_credits: minorToCredits(row.consumed_minor, row.rate_amount, row.currency_exponent),
     created_at: row.created_at,
     expiration_at: row.expiration_at,

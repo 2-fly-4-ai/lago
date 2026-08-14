@@ -20,6 +20,7 @@ import {
   expireRecurringWalletRules,
   topUpDueRecurringWallets,
 } from "../schedules/recurring-wallets";
+import { refreshWalletOngoingBalances } from "../schedules/wallet-balances";
 
 type ReconciliationParams = {
   schedule?: {
@@ -201,6 +202,17 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           )
         : 0;
 
+      const walletBalanceProjection = executors.has("refresh_wallet_balances")
+        ? await step.do(
+            "refresh ongoing wallet balances and threshold grants",
+            {
+              retries: { limit: 5, delay: "5 seconds", backoff: "exponential" },
+              timeout: "5 minutes",
+            },
+            async () => refreshWalletOngoingBalances(this.env, triggeredAtIso, runId),
+          )
+        : { customers: 0, wallets: 0, thresholdTopUps: 0 };
+
       const retentionCutoff = webhookRetentionCutoff(triggeredAtIso);
       const deletedOutboundWebhooks = executors.has("cleanup_outbound_webhooks")
         ? await step.do(
@@ -245,6 +257,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         overdueInvoices,
         finalizedInvoices,
         refreshedDraftInvoices,
+        walletBalanceProjection,
         deletedOutboundWebhooks,
         deletedInboundWebhooks,
         publishedEvents,

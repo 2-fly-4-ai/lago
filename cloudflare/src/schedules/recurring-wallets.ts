@@ -28,6 +28,7 @@ type ExpiringRecurringRule = {
   organization_id: string;
   wallet_id: string;
   version: number;
+  storage_kind: "interval" | "threshold";
 };
 
 export async function expireRecurringWalletRules(
@@ -36,21 +37,31 @@ export async function expireRecurringWalletRules(
   correlationId: string,
 ): Promise<number> {
   const rows = await env.BILLING_DB.prepare(
-    `SELECT id, organization_id, wallet_id, version FROM recurring_transaction_rules
-     WHERE status = 'active' AND expiration_at IS NOT NULL AND expiration_at <= ?
-     ORDER BY expiration_at, id LIMIT 100`,
+    `SELECT id, organization_id, wallet_id, version, storage_kind FROM (
+       SELECT id, organization_id, wallet_id, version, expiration_at,
+              'interval' AS storage_kind
+       FROM recurring_transaction_rules
+       WHERE status = 'active' AND expiration_at IS NOT NULL AND expiration_at <= ?
+       UNION ALL
+       SELECT id, organization_id, wallet_id, version, expiration_at,
+              'threshold' AS storage_kind
+       FROM wallet_threshold_rules
+       WHERE status = 'active' AND expiration_at IS NOT NULL AND expiration_at <= ?
+     ) ORDER BY expiration_at, id LIMIT 100`,
   )
-    .bind(cutoff)
+    .bind(cutoff, cutoff)
     .all<ExpiringRecurringRule>();
   let terminated = 0;
   for (const row of rows.results) {
+    const table =
+      row.storage_kind === "threshold" ? "wallet_threshold_rules" : "recurring_transaction_rules";
     const event = recurringRuleEvent(row, cutoff, correlationId);
     const results = await env.BILLING_DB.batch([
       env.BILLING_DB.prepare(
         `INSERT INTO outbox_events
          (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
           aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL FROM recurring_transaction_rules
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL FROM ${table}
          WHERE id = ? AND organization_id = ? AND status = 'active' AND version = ?
            AND expiration_at IS NOT NULL AND expiration_at <= ?
          ON CONFLICT(event_id) DO NOTHING`,
@@ -72,7 +83,7 @@ export async function expireRecurringWalletRules(
         cutoff,
       ),
       env.BILLING_DB.prepare(
-        `UPDATE recurring_transaction_rules
+        `UPDATE ${table}
          SET status = 'terminated', terminated_at = COALESCE(terminated_at, ?),
              updated_at = ?, version = version + 1
          WHERE id = ? AND organization_id = ? AND status = 'active' AND version = ?
@@ -188,10 +199,18 @@ export async function topUpDueRecurringWallets(
           row.id,
         ),
         env.BILLING_DB.prepare(
-          `UPDATE wallets SET balance_minor = balance_minor + ?, version = version + 1,
+          `UPDATE wallets SET balance_minor = balance_minor + ?,
+               ongoing_balance_minor = ongoing_balance_minor + ?, version = version + 1,
                updated_at = ?
            WHERE id = ? AND organization_id = ? AND status = 'active' AND version = ?`,
-        ).bind(amountMinor, triggeredAt, row.wallet_id, row.organization_id, row.wallet_version),
+        ).bind(
+          amountMinor,
+          amountMinor,
+          triggeredAt,
+          row.wallet_id,
+          row.organization_id,
+          row.wallet_version,
+        ),
         outboxStatement(env.BILLING_DB, row.organization_id, event),
       ]);
       if ((results[1]?.meta.changes ?? 0) > 0) created += 1;

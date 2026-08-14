@@ -247,10 +247,12 @@ export async function walletRecreditStatements(
       database
         .prepare(
           `UPDATE wallets SET balance_minor = balance_minor + ?,
+         ongoing_balance_minor = ongoing_balance_minor + ?,
          consumed_minor = MAX(0, consumed_minor - ?), version = version + 1, updated_at = ?
          WHERE id = ? AND organization_id = ? AND version = ?`,
         )
         .bind(
+          transaction.amount_minor,
           transaction.amount_minor,
           transaction.amount_minor,
           now,

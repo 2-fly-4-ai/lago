@@ -9,6 +9,7 @@ export type ScheduleExecutor =
   | "finalize_invoices"
   | "mark_invoices_overdue"
   | "refresh_draft_invoices"
+  | "refresh_wallet_balances"
   | "reconcile_provider_receipts"
   | "terminate_recurring_wallet_rules"
   | "top_up_recurring_wallets"
@@ -81,7 +82,8 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     legacyJob: "Clock::RefreshWalletsOngoingBalanceJob",
     cadence: everyMinutes(5),
     owner: "wallet projection workflow",
-    parity: "not_started",
+    parity: "partial",
+    executor: "refresh_wallet_balances",
   },
   {
     key: "schedule:refresh_dedicated_org_wallets",

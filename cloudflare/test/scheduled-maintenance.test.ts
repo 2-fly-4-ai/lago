@@ -86,6 +86,7 @@ describe("legacy schedule ownership", () => {
     ).toEqual([
       "schedule:activate_subscriptions",
       "schedule:refresh_draft_invoices",
+      "schedule:refresh_wallets_ongoing_balance",
       "schedule:terminate_ended_subscriptions",
       "schedule:bill_customers",
       "schedule:finalize_invoices",
