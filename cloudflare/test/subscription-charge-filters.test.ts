@@ -1,6 +1,10 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
+import {
+  calculateSubscriptionInvoice,
+  findBillableSubscription,
+} from "../src/billing/subscription-invoice-calculation";
 
 const apiKey = "subscription-filter-test-key";
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
@@ -18,6 +22,9 @@ beforeEach(async () => {
       `UPDATE subscriptions SET plan_id = 'plan-sub-filter', version = 1, updated_at = ?
        WHERE id = 'subscription-sub-filter'`,
     ).bind(now),
+    env.BILLING_DB.prepare(
+      "DELETE FROM fixed_charge_unit_events WHERE organization_id = 'org-sub-filter'",
+    ),
     env.BILLING_DB.prepare(
       "DELETE FROM fixed_charges WHERE organization_id = 'org-sub-filter' AND parent_id IS NOT NULL",
     ),
@@ -791,6 +798,22 @@ describe("subscription charge-filter overrides", () => {
       properties: { amount: "750" },
       units: "2",
     });
+    const overriddenSubscription = await findBillableSubscription(
+      env.BILLING_DB,
+      "subscription-sub-filter",
+    );
+    expect(overriddenSubscription).not.toBeNull();
+    const currentCalculation = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      overriddenSubscription!,
+      "subscription-fixed-current",
+      "subscription-fixed-current-cycle",
+      "2026-08-01T00:00:00.000Z",
+      "2026-09-01T00:00:00.000Z",
+    );
+    expect(currentCalculation.lines.find((line) => line.lineType === "fixed_charge")).toMatchObject(
+      { units: "1", rounded: 750 },
+    );
 
     const graph = await env.BILLING_DB.prepare(
       `SELECT s.version AS subscription_version, p.parent_id,
@@ -835,6 +858,29 @@ describe("subscription charge-filter overrides", () => {
         units: "3",
       },
     });
+    const currentAfterSecondUpdate = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      overriddenSubscription!,
+      "subscription-fixed-current-second",
+      "subscription-fixed-current-second-cycle",
+      "2026-08-01T00:00:00.000Z",
+      "2026-09-01T00:00:00.000Z",
+    );
+    expect(
+      currentAfterSecondUpdate.lines.find((line) => line.lineType === "fixed_charge"),
+    ).toMatchObject({ units: "1", rounded: 900 });
+    const nextCalculation = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      overriddenSubscription!,
+      "subscription-fixed-next",
+      "subscription-fixed-next-cycle",
+      "2026-09-01T00:00:00.000Z",
+      "2026-10-01T00:00:00.000Z",
+    );
+    expect(nextCalculation.lines.find((line) => line.lineType === "fixed_charge")).toMatchObject({
+      units: "3",
+      rounded: 2700,
+    });
     await expect(
       env.BILLING_DB.prepare(
         `SELECT invoice_display_name, properties_json, units, version
@@ -852,18 +898,30 @@ describe("subscription charge-filter overrides", () => {
          WHERE organization_id = 'org-sub-filter' AND event_type = 'fixed_charge.updated'`,
       ).first(),
     ).resolves.toEqual({ total: 2 });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT fixed_charge_version, units, effective_at
+         FROM fixed_charge_unit_events
+         WHERE subscription_id = 'subscription-sub-filter'
+         ORDER BY fixed_charge_version`,
+      ).all(),
+    ).resolves.toMatchObject({
+      results: [
+        { fixed_charge_version: 0, units: "1", effective_at: "2026-08-01T00:00:00.000Z" },
+        { fixed_charge_version: 1, units: "2", effective_at: "2026-09-01T00:00:00.000Z" },
+        { fixed_charge_version: 2, units: "3", effective_at: "2026-09-01T00:00:00.000Z" },
+      ],
+    });
   });
 
   it("rejects unsupported subscription fixed-charge features before cloning the plan", async () => {
-    const immediate = await api(
+    const malformedImmediate = await api(
       "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
       "PUT",
-      { fixed_charge: { units: "2", apply_units_immediately: true } },
+      { fixed_charge: { units: "2", apply_units_immediately: "yes" } },
     );
-    expect(immediate.status).toBe(422);
-    await expect(immediate.json()).resolves.toMatchObject({
-      code: "unsupported_fixed_charge_feature",
-    });
+    expect(malformedImmediate.status).toBe(422);
+    await expect(malformedImmediate.json()).resolves.toMatchObject({ code: "validation_error" });
     const taxes = await api(
       "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
       "PUT",
@@ -886,6 +944,94 @@ describe("subscription charge-filter overrides", () => {
                 (SELECT COUNT(*) FROM fixed_charges WHERE organization_id = 'org-sub-filter') AS fixed_charges`,
       ).first(),
     ).resolves.toEqual({ plans: 1, fixed_charges: 1 });
+  });
+
+  it("applies subscription fixed-charge units immediately only when requested", async () => {
+    const response = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
+      "PUT",
+      {
+        fixed_charge: {
+          properties: { amount: "600" },
+          units: "2",
+          apply_units_immediately: true,
+        },
+      },
+    );
+    expect(response.status, await response.clone().text()).toBe(200);
+    const subscription = await findBillableSubscription(env.BILLING_DB, "subscription-sub-filter");
+    expect(subscription).not.toBeNull();
+    const calculation = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      subscription!,
+      "subscription-fixed-immediate",
+      "subscription-fixed-immediate-cycle",
+      "2026-08-01T00:00:00.000Z",
+      "2026-09-01T00:00:00.000Z",
+    );
+    expect(calculation.lines.find((line) => line.lineType === "fixed_charge")).toMatchObject({
+      units: "2",
+      rounded: 1200,
+    });
+    const events = await env.BILLING_DB.prepare(
+      `SELECT fixed_charge_version, units, effective_at
+       FROM fixed_charge_unit_events
+       WHERE subscription_id = 'subscription-sub-filter'
+       ORDER BY fixed_charge_version`,
+    ).all<{ fixed_charge_version: number; units: string; effective_at: string }>();
+    expect(events.results).toHaveLength(2);
+    expect(events.results[0]).toEqual({
+      fixed_charge_version: 0,
+      units: "1",
+      effective_at: "2026-08-01T00:00:00.000Z",
+    });
+    expect(Date.parse(events.results[1]?.effective_at ?? "")).toBeGreaterThan(
+      Date.parse("2026-08-01T00:00:00.000Z"),
+    );
+    expect(Date.parse(events.results[1]?.effective_at ?? "")).toBeLessThan(
+      Date.parse("2026-09-01T00:00:00.000Z"),
+    );
+  });
+
+  it("lets a newer immediate unit change supersede an older scheduled change", async () => {
+    const scheduled = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
+      "PUT",
+      { fixed_charge: { properties: { amount: "600" }, units: "2" } },
+    );
+    expect(scheduled.status).toBe(200);
+    const immediate = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
+      "PUT",
+      { fixed_charge: { units: "3", apply_units_immediately: true } },
+    );
+    expect(immediate.status, await immediate.clone().text()).toBe(200);
+    const subscription = await findBillableSubscription(env.BILLING_DB, "subscription-sub-filter");
+    expect(subscription).not.toBeNull();
+    const current = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      subscription!,
+      "subscription-fixed-mixed-current",
+      "subscription-fixed-mixed-current-cycle",
+      "2026-08-01T00:00:00.000Z",
+      "2026-09-01T00:00:00.000Z",
+    );
+    const next = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      subscription!,
+      "subscription-fixed-mixed-next",
+      "subscription-fixed-mixed-next-cycle",
+      "2026-09-01T00:00:00.000Z",
+      "2026-10-01T00:00:00.000Z",
+    );
+    expect(current.lines.find((line) => line.lineType === "fixed_charge")).toMatchObject({
+      units: "3",
+      rounded: 1800,
+    });
+    expect(next.lines.find((line) => line.lineType === "fixed_charge")).toMatchObject({
+      units: "3",
+      rounded: 1800,
+    });
   });
 
   it("returns precise not-found errors for subscription fixed-charge routes", async () => {

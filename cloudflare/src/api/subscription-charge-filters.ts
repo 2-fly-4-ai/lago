@@ -17,6 +17,10 @@ import {
 type SubscriptionPlanRow = {
   subscription_id: string;
   subscription_version: number;
+  subscription_status: string;
+  subscription_started_at: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
   plan_id: string;
   parent_id: string | null;
   code: string;
@@ -71,6 +75,16 @@ type NormalizedFixedChargeOverride = {
   invoiceDisplayName: string | null;
   properties: Record<string, unknown>;
   units: string;
+  applyUnitsImmediately: boolean;
+};
+
+type FixedChargeUnitEventInput = {
+  id: string;
+  subscriptionId: string;
+  fixedChargeId: string;
+  fixedChargeVersion: number;
+  units: string;
+  effectiveAt: string;
 };
 
 type ClonedGraphCharge = {
@@ -420,6 +434,7 @@ async function createPlanOverride(
     subscriptionEvent,
     chargeEvent,
     "charge",
+    [],
     now,
     env,
     auth,
@@ -454,6 +469,15 @@ async function createFixedChargePlanOverride(
     throw new ApiError(409, "fixed_charge_version_conflict", "Fixed charge changed concurrently");
   }
   const now = new Date().toISOString();
+  const unitEvents = await prepareFixedChargeUnitEvents(
+    plan,
+    childTargetId,
+    targetFixedCharge.units,
+    normalized.units,
+    1,
+    normalized.applyUnitsImmediately,
+    now,
+  );
   const subscriptionEvent = domainEvent(
     "subscription.updated",
     "subscription",
@@ -480,6 +504,7 @@ async function createFixedChargePlanOverride(
     subscriptionEvent,
     fixedChargeEvent,
     "fixed_charge",
+    unitEvents,
     now,
     env,
     auth,
@@ -596,6 +621,7 @@ async function persistPlanOverrideGraph(
   subscriptionEvent: DomainEvent,
   mutationEvent: DomainEvent,
   mutationKind: "charge" | "fixed_charge",
+  unitEvents: FixedChargeUnitEventInput[],
   now: string,
   env: Env,
   auth: AuthContext,
@@ -709,6 +735,7 @@ async function persistPlanOverrideGraph(
       prepared.childPlanId,
       plan.plan_id,
     ),
+    fixedChargeUnitEventInsertStatement(env.BILLING_DB, auth.organizationId, unitEvents, now),
     conditionalOutboxStatement(
       env.BILLING_DB,
       auth.organizationId,
@@ -724,8 +751,9 @@ async function persistPlanOverrideGraph(
     results[1]?.meta.changes !== prepared.clonedCharges.length ||
     results[2]?.meta.changes !== prepared.clonedFixedCharges.length ||
     results[3]?.meta.changes !== 1 ||
-    results[4]?.meta.changes !== 1 ||
-    results[5]?.meta.changes !== 1
+    results[4]?.meta.changes !== unitEvents.length ||
+    results[5]?.meta.changes !== 1 ||
+    results[6]?.meta.changes !== 1
   ) {
     throw new ApiError(409, "subscription_version_conflict", "Subscription changed concurrently");
   }
@@ -789,6 +817,15 @@ async function mutateExistingFixedChargeOverride(
 ): Promise<Response> {
   const now = new Date().toISOString();
   const nextVersion = fixedCharge.version + 1;
+  const unitEvents = await prepareFixedChargeUnitEvents(
+    plan,
+    fixedCharge.id,
+    fixedCharge.units,
+    normalized.units,
+    nextVersion,
+    normalized.applyUnitsImmediately,
+    now,
+  );
   const event = domainEvent(
     "fixed_charge.updated",
     "fixed_charge",
@@ -815,6 +852,7 @@ async function mutateExistingFixedChargeOverride(
       plan.plan_id,
       fixedCharge.version,
     ),
+    fixedChargeUnitEventInsertStatement(env.BILLING_DB, auth.organizationId, unitEvents, now),
     conditionalFixedChargeOutboxStatement(
       env.BILLING_DB,
       auth.organizationId,
@@ -824,7 +862,11 @@ async function mutateExistingFixedChargeOverride(
       now,
     ),
   ]);
-  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
+  if (
+    (results[0]?.meta.changes ?? 0) < 1 ||
+    (results[1]?.meta.changes ?? 0) < (unitEvents.length === 0 ? 0 : 1) ||
+    results[2]?.meta.changes !== 1
+  ) {
     throw new ApiError(409, "fixed_charge_version_conflict", "Fixed charge changed concurrently");
   }
   await env.DOMAIN_EVENTS.send(event);
@@ -919,6 +961,89 @@ async function cloneFilters(
   );
 }
 
+async function prepareFixedChargeUnitEvents(
+  plan: SubscriptionPlanRow,
+  fixedChargeId: string,
+  previousUnits: string,
+  nextUnits: string,
+  fixedChargeVersion: number,
+  applyUnitsImmediately: boolean,
+  now: string,
+): Promise<FixedChargeUnitEventInput[]> {
+  if (!["active", "past_due"].includes(plan.subscription_status)) return [];
+  const periodStart = plan.current_period_start ?? plan.subscription_started_at;
+  const periodEnd = plan.current_period_end;
+  if (
+    !periodStart ||
+    !periodEnd ||
+    !Number.isFinite(Date.parse(periodStart)) ||
+    !Number.isFinite(Date.parse(periodEnd))
+  ) {
+    throw new ApiError(
+      409,
+      "subscription_period_unavailable",
+      "Subscription fixed-charge units require an active billing period",
+    );
+  }
+  const baselineId = await deterministicUuid(
+    "fixed-charge-unit-event",
+    `${plan.subscription_id}:${fixedChargeId}:v0`,
+  );
+  const changeId = await deterministicUuid(
+    "fixed-charge-unit-event",
+    `${plan.subscription_id}:${fixedChargeId}:v${fixedChargeVersion}`,
+  );
+  return [
+    {
+      id: baselineId,
+      subscriptionId: plan.subscription_id,
+      fixedChargeId,
+      fixedChargeVersion: 0,
+      units: previousUnits,
+      effectiveAt: periodStart,
+    },
+    {
+      id: changeId,
+      subscriptionId: plan.subscription_id,
+      fixedChargeId,
+      fixedChargeVersion,
+      units: nextUnits,
+      effectiveAt: applyUnitsImmediately ? now : periodEnd,
+    },
+  ];
+}
+
+function fixedChargeUnitEventInsertStatement(
+  database: D1Database,
+  organizationId: string,
+  unitEvents: FixedChargeUnitEventInput[],
+  createdAt: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT OR IGNORE INTO fixed_charge_unit_events
+       (id, organization_id, subscription_id, fixed_charge_id, fixed_charge_version, units,
+        effective_at, created_at)
+       SELECT json_extract(event.value, '$.id'), ?,
+              json_extract(event.value, '$.subscriptionId'),
+              json_extract(event.value, '$.fixedChargeId'),
+              json_extract(event.value, '$.fixedChargeVersion'),
+              json_extract(event.value, '$.units'),
+              json_extract(event.value, '$.effectiveAt'), ?
+       FROM json_each(?) event
+       WHERE EXISTS (
+         SELECT 1 FROM subscriptions s
+         JOIN fixed_charges fc ON fc.plan_id = s.plan_id
+         WHERE s.id = json_extract(event.value, '$.subscriptionId')
+           AND s.organization_id = ?
+           AND fc.id = json_extract(event.value, '$.fixedChargeId')
+           AND fc.organization_id = ?
+           AND fc.active = 1
+       )`,
+    )
+    .bind(organizationId, createdAt, stableJson(unitEvents), organizationId, organizationId);
+}
+
 function chargeFiltersFromJson(
   filtersJson: string,
   source: GraphChargeRow,
@@ -939,7 +1064,9 @@ async function requireSubscriptionPlan(
 ): Promise<SubscriptionPlanRow> {
   const plan = await database
     .prepare(
-      `SELECT s.id AS subscription_id, s.version AS subscription_version, s.plan_id,
+      `SELECT s.id AS subscription_id, s.version AS subscription_version,
+              s.status AS subscription_status, s.started_at AS subscription_started_at,
+              s.current_period_start, s.current_period_end, s.plan_id,
               p.parent_id, p.code, p.name, p.invoice_display_name, p.description, p.interval,
               p.amount_minor, p.currency, p.trial_period, p.pay_in_advance,
               p.bill_charges_monthly, p.bill_fixed_charges_monthly, p.metadata_json,
@@ -1047,12 +1174,11 @@ function normalizeFixedChargeOverride(
   current: GraphFixedChargeRow,
   input: Record<string, unknown>,
 ): NormalizedFixedChargeOverride {
-  if (input.apply_units_immediately === true) {
-    throw new ApiError(
-      422,
-      "unsupported_fixed_charge_feature",
-      "Immediate fixed-charge unit events are not implemented",
-    );
+  if (
+    input.apply_units_immediately !== undefined &&
+    typeof input.apply_units_immediately !== "boolean"
+  ) {
+    throw new ApiError(422, "validation_error", "apply_units_immediately must be boolean");
   }
   if (input.tax_codes !== undefined && !Array.isArray(input.tax_codes)) {
     throw new ApiError(422, "validation_error", "tax_codes must be an array");
@@ -1113,7 +1239,12 @@ function normalizeFixedChargeOverride(
     if (error instanceof ApiError) throw error;
     throw new ApiError(422, "validation_error", "Fixed charge has invalid rating properties");
   }
-  return { invoiceDisplayName, properties, units };
+  return {
+    invoiceDisplayName,
+    properties,
+    units,
+    applyUnitsImmediately: input.apply_units_immediately === true,
+  };
 }
 
 function optionalObject(value: unknown, field: string): Record<string, unknown> {

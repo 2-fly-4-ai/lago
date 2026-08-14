@@ -682,7 +682,7 @@ export async function calculateSubscriptionInvoice(
     }
   }
 
-  for (const charge of await loadFixedCharges(database, subscription)) {
+  for (const charge of await loadFixedCharges(database, subscription, calculationPeriodEnd)) {
     const precise = Decimal.parse(
       rateCharge(
         charge.units,
@@ -948,11 +948,23 @@ async function loadCharges(
 async function loadFixedCharges(
   database: D1Database,
   subscription: BillableSubscription,
+  calculationPeriodEnd: string,
 ): Promise<FixedChargeRow[]> {
   const result = await database
     .prepare(
       `SELECT fc.id, fc.code, fc.invoice_display_name, fc.charge_model,
-              fc.properties_json, fc.units, ao.code AS add_on_code, ao.name AS add_on_name,
+              fc.properties_json,
+              CASE WHEN EXISTS (
+                SELECT 1 FROM fixed_charge_unit_events any_event
+                WHERE any_event.subscription_id = ? AND any_event.fixed_charge_id = fc.id
+              ) THEN COALESCE((
+                SELECT event.units FROM fixed_charge_unit_events event
+                WHERE event.subscription_id = ? AND event.fixed_charge_id = fc.id
+                  AND event.effective_at < ?
+                ORDER BY event.fixed_charge_version DESC, event.effective_at DESC, event.id DESC
+                LIMIT 1
+              ), '0') ELSE fc.units END AS units,
+              ao.code AS add_on_code, ao.name AS add_on_name,
               ao.invoice_display_name AS add_on_invoice_display_name
        FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id
        WHERE fc.organization_id = ? AND fc.plan_id = ? AND fc.active = 1
@@ -960,7 +972,13 @@ async function loadFixedCharges(
          AND fc.prorated = 0
        ORDER BY fc.created_at, fc.id`,
     )
-    .bind(subscription.organization_id, subscription.plan_id)
+    .bind(
+      subscription.id,
+      subscription.id,
+      calculationPeriodEnd,
+      subscription.organization_id,
+      subscription.plan_id,
+    )
     .all<FixedChargeRow>();
   return [...result.results];
 }
