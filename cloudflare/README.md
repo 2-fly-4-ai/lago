@@ -12,8 +12,8 @@ remaining Lago feature inventory is dispositioned and ported.
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
   pay-in-arrears fixed charges, customer payment terms, immutable invoice due-date snapshots,
   customer invoice-grace settings, distinct initial/renewal invoice contexts, refreshable draft
-  state and mutation guards, immutable issuing/finalization dates, overdue state, payment attempts,
-  outbox state, and webhook receipt metadata;
+  state, dependency-invalidation triggers and mutation guards, immutable issuing/finalization dates,
+  overdue state, payment attempts, outbox state, and webhook receipt metadata;
   plan-level minimum commitments are reconciled as auditable period true-up lines after recurring
   subscription, usage, and fixed-charge fees.
 - Plan catalog: idempotent creation and optimistic scalar updates with transactional versioned

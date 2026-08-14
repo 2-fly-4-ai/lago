@@ -331,7 +331,7 @@ async function voidCreditNote(
       now,
     ),
   ]);
-  if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
     throw new ApiError(409, "credit_note_version_conflict", "Credit note changed concurrently");
   await env.DOMAIN_EVENTS.send(event);
   note = await findCreditNote(env.BILLING_DB, auth.organizationId, id);

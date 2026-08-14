@@ -456,18 +456,85 @@ describe("billing period close", () => {
     });
     expect(initial?.issuing_date).toBe(initial?.expected_finalization_date);
 
+    const appliedCoupon = await invoiceRequest("/api/v1/applied_coupons", "POST", {
+      applied_coupon: {
+        external_customer_id: "customer-initial-grace",
+        coupon_code: "cycle-credit",
+      },
+    });
+    expect(appliedCoupon.status).toBe(200);
+    await expect(draftRefreshState(initial?.id)).resolves.toEqual({
+      ready_to_be_refreshed: 1,
+      coupon_credits: 0,
+    });
+
     const refreshed = await invoiceRequest(`/api/v1/invoices/${initial?.id}/refresh`, "PUT");
     expect(refreshed.status).toBe(200);
     await expect(refreshed.json()).resolves.toMatchObject({
-      invoice: { status: "draft", version_number: 2, total_amount_cents: 1000 },
+      invoice: { status: "draft", version_number: 2, total_amount_cents: 900 },
     });
+    await expect(draftRefreshState(initial?.id)).resolves.toEqual({
+      ready_to_be_refreshed: 0,
+      coupon_credits: 0,
+    });
+
+    const renamed = await invoiceRequest(
+      "/api/v1/subscriptions/subscription-initial-grace",
+      "PUT",
+      { subscription: { name: "Renamed initial draft" } },
+    );
+    expect(renamed.status).toBe(200);
+    await expect(draftRefreshState(initial?.id)).resolves.toMatchObject({
+      ready_to_be_refreshed: 1,
+    });
+    const renamedRefresh = await invoiceRequest(`/api/v1/invoices/${initial?.id}/refresh`, "PUT");
+    await expect(renamedRefresh.json()).resolves.toMatchObject({
+      invoice: { status: "draft", version_number: 3, total_amount_cents: 900 },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT description FROM invoice_lines WHERE invoice_id = ? AND line_type = 'subscription'",
+      )
+        .bind(initial?.id)
+        .first(),
+    ).resolves.toEqual({ description: "Renamed initial draft" });
+
+    const repriced = await invoiceRequest("/api/v1/plans/cycle-plan", "PUT", {
+      plan: { amount_cents: 1200 },
+    });
+    expect(repriced.status).toBe(200);
+    await expect(draftRefreshState(initial?.id)).resolves.toMatchObject({
+      ready_to_be_refreshed: 1,
+    });
+    const repricedRefresh = await invoiceRequest(`/api/v1/invoices/${initial?.id}/refresh`, "PUT");
+    await expect(repricedRefresh.json()).resolves.toMatchObject({
+      invoice: { status: "draft", version_number: 4, total_amount_cents: 1100 },
+    });
+
     const finalized = await invoiceRequest(`/api/v1/invoices/${initial?.id}/finalize`, "PUT");
     expect(finalized.status).toBe(200);
     await expect(finalized.json()).resolves.toMatchObject({
-      invoice: { status: "finalized", version_number: 3, total_amount_cents: 1000 },
+      invoice: { status: "finalized", version_number: 5, total_amount_cents: 1100 },
+    });
+    await expect(draftRefreshState(initial?.id)).resolves.toEqual({
+      ready_to_be_refreshed: 0,
+      coupon_credits: 1,
     });
   });
 });
+
+async function draftRefreshState(invoiceId: string | undefined): Promise<{
+  ready_to_be_refreshed: number;
+  coupon_credits: number;
+} | null> {
+  return env.BILLING_DB.prepare(
+    `SELECT ready_to_be_refreshed,
+            (SELECT COUNT(*) FROM coupon_credits WHERE invoice_id = invoices.id) AS coupon_credits
+     FROM invoices WHERE id = ?`,
+  )
+    .bind(invoiceId)
+    .first();
+}
 
 function invoiceRequest(path: string, method = "GET", body?: unknown): Promise<Response> {
   return SELF.fetch(`https://lago.test${path}`, {

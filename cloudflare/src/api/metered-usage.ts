@@ -383,7 +383,7 @@ async function updateBillableMetric(
         now,
       ),
     ]);
-    if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+    if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
       throw new ApiError(
         409,
         "billable_metric_version_conflict",

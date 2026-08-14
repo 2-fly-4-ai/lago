@@ -182,7 +182,7 @@ async function updateTax(
         now,
       ),
     ]);
-    if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+    if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
       throw new ApiError(409, "tax_version_conflict", "Tax changed concurrently");
   } catch (error) {
     if (error instanceof ApiError) throw error;
@@ -225,7 +225,7 @@ async function terminateTax(code: string, env: Env, auth: AuthContext, requestId
       now,
     ),
   ]);
-  if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
     throw new ApiError(409, "tax_version_conflict", "Tax changed concurrently");
   await env.DOMAIN_EVENTS.send(event);
   tax = await findTax(env.BILLING_DB, auth.organizationId, code);

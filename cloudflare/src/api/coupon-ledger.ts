@@ -496,7 +496,7 @@ async function terminateAppliedCoupon(
       ).bind(now, now, applied.id, auth.organizationId, applied.version),
       outboxStatement(env.BILLING_DB, auth.organizationId, event),
     ]);
-    if (results[0]?.meta.changes !== 1)
+    if ((results[0]?.meta.changes ?? 0) < 1)
       throw new ApiError(409, "coupon_version_conflict", "Applied coupon changed concurrently");
     await env.DOMAIN_EVENTS.send(event);
     await account.completeCommand(commandKey, { terminatedAt: now });

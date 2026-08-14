@@ -117,7 +117,7 @@ async function updateSubscription(
       now,
     ),
   ]);
-  if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
     throw new ApiError(409, "subscription_version_conflict", "Subscription changed concurrently");
   await env.DOMAIN_EVENTS.send(event);
   const updated = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);

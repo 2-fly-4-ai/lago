@@ -302,7 +302,7 @@ export async function closeBillingPeriod(
       const firstCouponUpdate = 2 + lines.length;
       for (let offset = 0; offset < couponCredits.length; offset += 1) {
         const update = results[firstCouponUpdate + offset * 3];
-        if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
+        if (!update || update.meta.changes < 1) throw new Error("coupon_version_conflict");
       }
     }
     const subscriptionUpdate = results[results.length - 3];

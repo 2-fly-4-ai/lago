@@ -70,7 +70,7 @@ export async function expireCoupons(
          updated_at = ? WHERE id = ? AND status = 'active' AND expiration_at < ?`,
       ).bind(cutoff, cutoff, row.id, cutoff),
     ]);
-    terminated += results[1]?.meta.changes ?? 0;
+    terminated += (results[1]?.meta.changes ?? 0) > 0 ? 1 : 0;
   }
   return terminated;
 }
@@ -113,7 +113,7 @@ export async function expireWallets(
          WHERE id = ? AND status = 'active' AND expiration_at < ? AND version = ?`,
       ).bind(cutoff, cutoff, row.id, cutoff, row.version),
     ]);
-    terminated += results[1]?.meta.changes ?? 0;
+    terminated += (results[1]?.meta.changes ?? 0) > 0 ? 1 : 0;
   }
   return terminated;
 }

@@ -130,10 +130,11 @@ Required evidence for a new aggregate or a boundary change:
 
 ## Known gaps that constrain later work
 
-- Refreshable initial and renewal drafts now rebuild non-consuming previews and allocate coupons,
-  credit notes, and wallet lots only while finalizing. Plan/charge graph replacement, subscription
-  termination during grace, and other rebilling triggers still need explicit draft invalidation and
-  lifecycle rules.
+- Refreshable initial and renewal drafts rebuild non-consuming previews and allocate coupons,
+  credit notes, and wallet lots only while finalizing. Supported subscription, plan/rating, coupon,
+  tax, credit-note, wallet, and usage mutations flag affected drafts through D1 triggers.
+  Destructive plan/charge graph replacement and subscription termination during grace still need
+  explicit lifecycle rules.
 - Tenant-local billing time zones and daylight-saving transitions are not yet parity-proven.
 - Provider reads, payment mutations, and outbound webhook delivery are implemented only behind
   disabled safety gates in the isolated stack.

@@ -617,7 +617,7 @@ async function updatePlan(
         now,
       ),
     ]);
-    if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+    if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
       throw new ApiError(409, "plan_version_conflict", "Plan changed concurrently");
   } catch (error) {
     if (error instanceof ApiError) throw error;

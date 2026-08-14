@@ -216,7 +216,7 @@ async function updateAddOn(
         now,
       ),
     ]);
-    if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+    if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
       throw new ApiError(409, "add_on_version_conflict", "Add-on changed concurrently");
   } catch (error) {
     if (error instanceof ApiError) throw error;
@@ -262,7 +262,7 @@ async function terminateAddOn(code: string, env: Env, auth: AuthContext, request
       now,
     ),
   ]);
-  if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
     throw new ApiError(409, "add_on_version_conflict", "Add-on changed concurrently");
   await env.DOMAIN_EVENTS.send(event);
   return json(

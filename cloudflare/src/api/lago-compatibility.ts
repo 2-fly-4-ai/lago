@@ -826,7 +826,7 @@ async function createSubscription(
     if (!draft) {
       for (let offset = 0; offset < couponCredits.length; offset += 1) {
         const update = results[5 + offset * 3];
-        if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
+        if (!update || update.meta.changes < 1) throw new Error("coupon_version_conflict");
       }
     }
   } catch (error) {

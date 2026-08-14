@@ -262,7 +262,7 @@ export async function refreshSubscriptionDraft(
       const firstCouponUpdate = 6 + calculation.lines.length;
       for (let offset = 0; offset < calculation.couponCredits.length; offset += 1) {
         const couponUpdate = results[firstCouponUpdate + offset * 3];
-        if (!couponUpdate || couponUpdate.meta.changes !== 1) {
+        if (!couponUpdate || couponUpdate.meta.changes < 1) {
           throw new Error("coupon_version_conflict");
         }
       }

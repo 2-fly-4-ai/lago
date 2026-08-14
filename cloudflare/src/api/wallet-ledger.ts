@@ -317,7 +317,7 @@ async function createTransaction(
       ).bind(amountMinor, now, wallet.id, auth.organizationId, wallet.version),
       outboxStatement(env.BILLING_DB, auth.organizationId, event),
     ]);
-    if (results[1]?.meta.changes !== 1) throw new Error("wallet_version_conflict");
+    if ((results[1]?.meta.changes ?? 0) < 1) throw new Error("wallet_version_conflict");
   } catch (error) {
     const concurrent = await findTransactionByKey(
       env.BILLING_DB,
@@ -409,7 +409,7 @@ async function terminateWallet(
       ).bind(now, now, id, auth.organizationId, wallet.version),
       outboxStatement(env.BILLING_DB, auth.organizationId, event),
     ]);
-    if (results[0]?.meta.changes !== 1)
+    if ((results[0]?.meta.changes ?? 0) < 1)
       throw new ApiError(409, "wallet_version_conflict", "Wallet changed concurrently");
     await env.DOMAIN_EVENTS.send(event);
     wallet = await findWallet(env.BILLING_DB, auth.organizationId, id);

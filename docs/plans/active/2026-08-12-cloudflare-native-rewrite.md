@@ -338,8 +338,8 @@ Acceptance:
       Grace-period initial subscription invoices use a distinct immutable initial context, create
       the same non-consuming preview, refresh manually or on schedule, and allocate credits only
       while finalizing; they do not masquerade as renewal cycles. Paid-invoice credit/refund voids,
-      subscription termination during grace, additional rebilling triggers, and broader retry
-      transitions remain pending.
+      subscription termination during grace, destructive plan/charge graph replacement, and
+      broader retry transitions remain pending.
       Customer net-payment terms now snapshot onto finalized initial, recurring, and one-off
       invoices with deterministic due dates. The legacy hourly overdue transition is replay-safe,
       emits a transactional outbox event, and successful manual or Authorize.Net settlement clears
@@ -347,7 +347,9 @@ Acceptance:
       Immutable issuing dates and expected-finalization dates now support tenant-scoped manual
       refresh/finalization plus the legacy five-minute refresh and hourly `:20` finalization
       transitions with replay-safe version/outbox evidence. Customer grace changes reschedule and
-      flag existing initial and renewal drafts without changing their issuing-date anchor.
+      flag existing initial and renewal drafts without changing their issuing-date anchor. D1
+      triggers also flag the affected drafts after supported subscription, plan/rating, applied
+      coupon, tax, credit-note, wallet, and usage mutations.
       Subscription creation now atomically records `subscription.created` and the initial
       `invoice.finalized` outbox events with the monetary ledger. Name-only subscription update
       emits a versioned `subscription.updated`; scheduling, calendar billing, ending rules,
@@ -891,3 +893,12 @@ resource and mutation described.
   and aggregate-only counts confirmed zero organizations, invoices, initial contexts, and mutation
   guards. The five-minute dispatcher has 17 audit rows; all provider/payment/outbound flags remain
   disabled, with no production route, provider secret, or seeded billing data.
+- 2026-08-14: Added trigger-backed draft dependency invalidation for supported subscription,
+  plan/rating, applied-coupon, tax, credit-note, wallet, and usage mutations. Optimistic writers now
+  distinguish at-least-one source change from trigger-touched rows while retaining exact one-row
+  outbox/version guards; scheduled expiry reports source entities instead of trigger row counts.
+  Integration evidence applies a coupon, renames a subscription, reprices its plan, refreshes the
+  same initial draft after each dependency change, and proves credits remain unconsumed until final
+  allocation. All 77 Workers-runtime tests pass across 22 files; all 25 migrations replay from
+  empty D1 state, formatting, lint, generated bindings, TypeScript, and the cross-repository
+  inventory are green, and the dry-run bundle is 453.27 KiB (82.71 KiB gzip).
