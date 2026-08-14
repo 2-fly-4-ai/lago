@@ -1698,3 +1698,34 @@ resource and mutation described.
   Post-deploy aggregate-only verification remained empty apart from 154 schedule audits. All three
   external-action flags remain `0`; no production route, domain, secret, provider action, customer
   data, or billing row was added.
+- 2026-08-15: Ported subscription-bearing plan retirement to a dedicated Cloudflare Workflow.
+  Migration `0045_plan_deletion_workflow.sql` adds one durable plan task, a closed snapshot of its
+  active/past-due/pending subscription generations, deterministic Workflow instance sequencing,
+  and database guards that reject new subscription attachment or catalog mutation after
+  preparation. The Lago-compatible DELETE remains bounded: it atomically marks the plan pending,
+  persists the task/snapshot, and dispatches the Workflow; replay converges on the same task and a
+  failed instance can be retried under the next deterministic sequence. Each instance processes
+  20 subscriptions or 10 drafts per step for at most 100 rounds, then atomically hands off to a
+  continuation; the five-minute reconciliation Workflow repairs any D1-to-Workflow dispatch gap.
+  Active generations use their persisted invoice and prepaid-credit actions, pending generations
+  are canceled idempotently, every plan-linked draft is recalculated and finalized, and only then
+  does one guarded D1 batch retire the plan and active usage/fixed charges with one contiguous
+  `plan.deleted` event. Historical subscriptions, invoices, commitments, and catalog rows remain.
+  Pay-in-advance minimum-commitment termination and prepaid `refund`/`offset` actions retain their
+  existing explicit unsupported failures rather than silently discarding billing obligations.
+  Evidence injects a transient Workflow step failure, replays DELETE, verifies concurrent catalog
+  and subscription rejection, terminates/cancels two generations, finalizes the termination draft,
+  preserves history, and proves one final event. All 160 tests across 31 files pass in bounded
+  Workers-runtime groups; all 45 migrations replay from an empty D1. Formatting, strict lint,
+  generated inventory/types, TypeScript, and an 822.46 KiB (142.99 KiB gzip) dry-run bundle are
+  green. Feature checkpoint: `ae5e7dd`.
+- 2026-08-15: Remote preflight on the explicit SERP account showed exactly
+  `0045_plan_deletion_workflow.sql` pending and zero organizations, customers, plans,
+  subscriptions, invoices, and plan-deletion tasks. Applied only that migration in 1.95 ms,
+  confirmed no migrations remained, and verified both task tables plus the catalog/subscription
+  guards. Deployed isolated Worker version `46579fbe-39e3-4ccf-8a93-e8cc0a4e19bc` with the new
+  `serp-dev-lago-plan-deletion` Workflow binding and an 8 ms startup. Health/readiness returned
+  `200`/`200`, unauthenticated plan deletion returned `401`, and post-deploy aggregate-only
+  verification remained empty apart from 160 schedule audits. `PAYMENT_MUTATIONS_ENABLED`,
+  `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`; no production route,
+  domain, secret, provider action, customer data, or billing record changed.
