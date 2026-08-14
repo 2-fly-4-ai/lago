@@ -2,7 +2,10 @@ import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
 import { activatePendingSubscriptions } from "../src/billing/activate-pending-subscriptions";
-import { terminateSubscriptionWithInvoice } from "../src/billing/terminate-subscription";
+import {
+  terminateEndedSubscriptions,
+  terminateSubscriptionWithInvoice,
+} from "../src/billing/terminate-subscription";
 import { terminationBillingWindowUtc } from "../src/billing/subscription-invoice-calculation";
 
 const apiKey = "subscription-lifecycle-key";
@@ -246,6 +249,19 @@ describe("subscription lifecycle", () => {
       ).bind(now, now, now, now),
     ]);
 
+    const scheduledGuard = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-external",
+        external_id: "subscription-external-advance-scheduled",
+        plan_code: "monthly-advance",
+        ending_at: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+      },
+    });
+    expect(scheduledGuard.status).toBe(422);
+    await expect(scheduledGuard.json()).resolves.toMatchObject({
+      code: "unsupported_scheduled_termination",
+    });
+
     const creditGuard = await api("/api/v1/subscriptions/subscription-external-advance", "DELETE");
     expect(creditGuard.status).toBe(422);
     await expect(creditGuard.json()).resolves.toMatchObject({
@@ -274,6 +290,81 @@ describe("subscription lifecycle", () => {
         "SELECT COUNT(*) AS total FROM invoices WHERE subscription_id = 'subscription-lifecycle-advance'",
       ).first(),
     ).resolves.toEqual({ total: 0 });
+  });
+
+  it("terminates a due UTC ending_at exactly once with a final in-arrears invoice", async () => {
+    const endingAt = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    const created = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-external",
+        external_id: "subscription-scheduled-end",
+        plan_code: "monthly",
+        ending_at: endingAt,
+      },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{
+      subscription: { lago_id: string; ending_at: string; status: string };
+    }>();
+    expect(createdBody.subscription).toMatchObject({ ending_at: endingAt, status: "active" });
+    const replay = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-external",
+        external_id: "subscription-scheduled-end",
+        plan_code: "monthly",
+        ending_at: endingAt,
+      },
+    });
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({
+      subscription: { lago_id: createdBody.subscription.lago_id, ending_at: endingAt },
+    });
+    const conflict = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-external",
+        external_id: "subscription-scheduled-end",
+        plan_code: "monthly",
+        ending_at: new Date(Date.parse(endingAt) + 86_400_000).toISOString(),
+      },
+    });
+    expect(conflict.status).toBe(409);
+    await expect(conflict.json()).resolves.toMatchObject({
+      code: "subscription_idempotency_conflict",
+    });
+
+    await expect(
+      terminateEndedSubscriptions(
+        env,
+        new Date(Date.parse(endingAt) - 1).toISOString(),
+        "scheduled-end-before",
+      ),
+    ).resolves.toBe(0);
+    await expect(terminateEndedSubscriptions(env, endingAt, "scheduled-end-due")).resolves.toBe(1);
+    await expect(terminateEndedSubscriptions(env, endingAt, "scheduled-end-replay")).resolves.toBe(
+      0,
+    );
+
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT s.status, s.ending_at, s.terminated_at,
+                (SELECT COUNT(*) FROM invoices i WHERE i.subscription_id = s.id) AS invoices,
+                (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = s.id
+                  AND o.event_type = 'subscription.terminated') AS terminated_events,
+                (SELECT COUNT(*) FROM outbox_events o JOIN invoices i ON i.id = o.aggregate_id
+                  WHERE i.subscription_id = s.id AND o.event_type = 'invoice.finalized')
+                  AS invoice_events
+         FROM subscriptions s WHERE s.id = ?`,
+      )
+        .bind(createdBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({
+      status: "terminated",
+      ending_at: endingAt,
+      terminated_at: endingAt,
+      invoices: 1,
+      terminated_events: 1,
+      invoice_events: 1,
+    });
   });
 
   it("matches legacy inclusive-day proration and excludes usage at the partial boundary", async () => {

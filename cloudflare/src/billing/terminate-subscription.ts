@@ -27,6 +27,7 @@ export async function terminateSubscriptionWithInvoice(
   expectedVersion: number,
   terminatedAt: string,
   correlationId: string,
+  publishImmediately = true,
 ): Promise<TerminateSubscriptionWithInvoiceResult> {
   const subscription = await findBillableSubscription(env.BILLING_DB, subscriptionId);
   if (!subscription) throw new Error("subscription_not_found");
@@ -219,8 +220,10 @@ export async function terminateSubscriptionWithInvoice(
     const update = results[firstCouponUpdate + offset * 3];
     if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
   }
-  await env.DOMAIN_EVENTS.send(invoiceEvent);
-  await env.DOMAIN_EVENTS.send(subscriptionEvent);
+  if (publishImmediately) {
+    await env.DOMAIN_EVENTS.send(invoiceEvent);
+    await env.DOMAIN_EVENTS.send(subscriptionEvent);
+  }
   return {
     invoiceId,
     terminatedAt,
@@ -229,6 +232,46 @@ export async function terminateSubscriptionWithInvoice(
     invoiceEvent,
     subscriptionEvent,
   };
+}
+
+export async function terminateEndedSubscriptions(
+  env: Env,
+  cutoff: string,
+  correlationId: string,
+): Promise<number> {
+  if (!Number.isFinite(Date.parse(cutoff))) throw new Error("invalid_termination_cutoff");
+  const due = await env.BILLING_DB.prepare(
+    `SELECT id, version, ending_at FROM subscriptions
+     WHERE status IN ('active', 'past_due') AND ending_at IS NOT NULL AND ending_at <= ?
+     ORDER BY ending_at, id LIMIT 100`,
+  )
+    .bind(cutoff)
+    .all<{ id: string; version: number; ending_at: string }>();
+  let terminated = 0;
+  for (const subscription of due.results) {
+    try {
+      await terminateSubscriptionWithInvoice(
+        env,
+        subscription.id,
+        subscription.version,
+        subscription.ending_at,
+        `${correlationId}:${subscription.id}`,
+        false,
+      );
+      terminated += 1;
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "subscription_version_conflict") {
+        throw error;
+      }
+      const current = await env.BILLING_DB.prepare(
+        "SELECT status FROM subscriptions WHERE id = ? LIMIT 1",
+      )
+        .bind(subscription.id)
+        .first<{ status: string }>();
+      if (current?.status !== "terminated") throw error;
+    }
+  }
+  return terminated;
 }
 
 function outboxStatement(

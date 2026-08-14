@@ -4,7 +4,11 @@ import type { DomainEvent } from "../domain-events";
 import { terminateSubscriptionWithInvoice } from "../billing/terminate-subscription";
 import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../http";
 import { stableJson } from "../json";
-import { assertFutureSubscriptionAt, normalizeSubscriptionAt } from "../subscriptions/time";
+import {
+  assertEndingAtAfterStart,
+  assertFutureSubscriptionAt,
+  normalizeSubscriptionAt,
+} from "../subscriptions/time";
 
 type SubscriptionRow = {
   id: string;
@@ -21,6 +25,7 @@ type SubscriptionRow = {
   started_at: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
+  ending_at: string | null;
   canceled_at: string | null;
   terminated_at: string | null;
   created_at: string;
@@ -85,6 +90,9 @@ async function updateSubscription(
       throw new ApiError(422, "validation_error", "subscription_at is required when rescheduling");
     }
     assertFutureSubscriptionAt(subscriptionAt, nowDate);
+    if (subscription.ending_at) {
+      assertEndingAtAfterStart(subscription.ending_at, subscriptionAt);
+    }
   }
   const event: DomainEvent = {
     id: `subscription-updated:${subscription.id}:v${subscription.version + 1}`,
@@ -466,7 +474,7 @@ function subscriptionSelect(): string {
                  COALESCE(c.invoice_grace_period, o.invoice_grace_period) AS invoice_grace_period,
                  s.name, s.status, s.subscription_at, s.started_at,
                  s.current_period_start, s.current_period_end, s.canceled_at,
-                 s.terminated_at, s.created_at, s.updated_at, s.version
+                 s.ending_at, s.terminated_at, s.created_at, s.updated_at, s.version
           FROM subscriptions s
           JOIN customers c ON c.id = s.customer_id
           JOIN plans p ON p.id = s.plan_id
@@ -514,6 +522,7 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     started_at: subscription.started_at,
     terminated_at: subscription.terminated_at,
     canceled_at: subscription.canceled_at,
+    ending_at: subscription.ending_at,
     created_at: subscription.created_at,
     current_billing_period_started_at: subscription.current_period_start,
     current_billing_period_ending_at: subscription.current_period_end,

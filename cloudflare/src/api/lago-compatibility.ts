@@ -36,7 +36,12 @@ import {
 import { paymentDueDate } from "../billing/payment-terms";
 import { finalizeInvoice } from "../billing/finalize-invoice";
 import { refreshSubscriptionDraft } from "../billing/refresh-draft-invoice";
-import { assertFutureSubscriptionAt, normalizeSubscriptionAt } from "../subscriptions/time";
+import {
+  assertEndingAtAfterStart,
+  assertFutureSubscriptionAt,
+  normalizeEndingAt,
+  normalizeSubscriptionAt,
+} from "../subscriptions/time";
 
 type CustomerRow = {
   id: string;
@@ -70,6 +75,7 @@ type SubscriptionRow = {
   started_at: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
+  ending_at: string | null;
   canceled_at: string | null;
   terminated_at: string | null;
   created_at: string;
@@ -531,13 +537,12 @@ async function createSubscription(
   const now = new Date();
   const timestamp = now.toISOString();
   const subscriptionAt = normalizeSubscriptionAt(input.subscription_at);
-  const requestHash = await sha256Hex(
-    JSON.stringify(
-      subscriptionAt
-        ? { externalCustomerId, externalId, name, planCode, subscriptionAt }
-        : { externalCustomerId, externalId, name, planCode },
-    ),
-  );
+  const endingAt = normalizeEndingAt(input.ending_at);
+  const requestIdentity: Record<string, unknown> = subscriptionAt
+    ? { externalCustomerId, externalId, name, planCode, subscriptionAt }
+    : { externalCustomerId, externalId, name, planCode };
+  if (endingAt) requestIdentity.endingAt = endingAt;
+  const requestHash = await sha256Hex(JSON.stringify(requestIdentity));
 
   const existing = await findSubscription(database, auth.organizationId, externalId);
   if (existing) {
@@ -547,10 +552,12 @@ async function createSubscription(
       planCode,
       requestHash,
       subscriptionAt,
+      endingAt,
     });
     return json({ subscription: serializeSubscription(existing) }, { requestId });
   }
   if (subscriptionAt) assertFutureSubscriptionAt(subscriptionAt, now);
+  if (endingAt) assertEndingAtAfterStart(endingAt, subscriptionAt ?? timestamp);
 
   const customer = await findCustomer(database, auth.organizationId, externalCustomerId);
   if (!customer) throw new ApiError(404, "customer_not_found", "Customer was not found");
@@ -581,6 +588,16 @@ async function createSubscription(
       pay_in_advance: number;
     }>();
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  if (endingAt) {
+    await assertScheduledTerminationPlanSupported(
+      database,
+      auth.organizationId,
+      plan.id,
+      plan.pay_in_advance,
+      plan.interval,
+      invoiceGracePeriod,
+    );
+  }
 
   const netPaymentTerm = customer.net_payment_term ?? organizationBilling?.net_payment_term ?? 0;
   const commandKey = `${auth.organizationId}:${externalId}`;
@@ -604,6 +621,7 @@ async function createSubscription(
         planCode,
         status: "pending",
         subscriptionAt,
+        endingAt,
         startedAt: null,
       },
     };
@@ -613,9 +631,10 @@ async function createSubscription(
           .prepare(
             `INSERT INTO subscriptions
              (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
+              ending_at,
               started_at, current_period_start, current_period_end, version, created_at,
               updated_at, name, request_sha256)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, 1, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, NULL, NULL, NULL, 1, ?, ?, ?, ?)`,
           )
           .bind(
             subscriptionId,
@@ -624,6 +643,7 @@ async function createSubscription(
             plan.id,
             externalId,
             subscriptionAt,
+            endingAt,
             timestamp,
             timestamp,
             name,
@@ -657,6 +677,7 @@ async function createSubscription(
         planCode,
         requestHash,
         subscriptionAt,
+        endingAt,
       });
       return json({ subscription: serializeSubscription(concurrent) }, { requestId });
     }
@@ -685,6 +706,7 @@ async function createSubscription(
         planCode,
         status: "active",
         subscriptionAt: timestamp,
+        endingAt,
         startedAt: timestamp,
         initialInvoiceGenerated: false,
       },
@@ -704,6 +726,7 @@ async function createSubscription(
         subscriptionId,
         externalSubscriptionId: externalId,
         subscriptionAt: timestamp,
+        endingAt,
         startedAt: timestamp,
         initialInvoiceGenerated: false,
       },
@@ -714,9 +737,10 @@ async function createSubscription(
           .prepare(
             `INSERT INTO subscriptions
              (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
+              ending_at,
               started_at, current_period_start, current_period_end, version, created_at,
               updated_at, name, request_sha256)
-             VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
           )
           .bind(
             subscriptionId,
@@ -725,6 +749,7 @@ async function createSubscription(
             plan.id,
             externalId,
             timestamp,
+            endingAt,
             timestamp,
             timestamp,
             periodEnd,
@@ -779,6 +804,7 @@ async function createSubscription(
         planCode,
         requestHash,
         subscriptionAt,
+        endingAt,
       });
       return json({ subscription: serializeSubscription(concurrent) }, { requestId });
     }
@@ -856,6 +882,7 @@ async function createSubscription(
       externalCustomerId,
       planCode,
       startedAt: timestamp,
+      endingAt,
     },
   };
   const startedEvent = {
@@ -868,6 +895,7 @@ async function createSubscription(
       subscriptionId,
       externalSubscriptionId: externalId,
       subscriptionAt: timestamp,
+      endingAt,
       startedAt: timestamp,
       initialInvoiceGenerated: true,
     },
@@ -900,11 +928,12 @@ async function createSubscription(
       database
         .prepare(
           `INSERT INTO subscriptions
-         (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
+          (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
+          ending_at,
           started_at,
           current_period_start, current_period_end, version, created_at, updated_at,
           name, request_sha256)
-         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
         )
         .bind(
           subscriptionId,
@@ -913,6 +942,7 @@ async function createSubscription(
           plan.id,
           externalId,
           timestamp,
+          endingAt,
           timestamp,
           timestamp,
           periodEnd,
@@ -1081,6 +1111,7 @@ async function createSubscription(
       planCode,
       requestHash,
       subscriptionAt,
+      endingAt,
     });
     return json({ subscription: serializeSubscription(concurrent) }, { requestId });
   }
@@ -1093,6 +1124,7 @@ async function createSubscription(
     planCode,
     requestHash,
     subscriptionAt,
+    endingAt,
   });
   await Promise.all([
     env.DOMAIN_EVENTS.send({
@@ -1131,7 +1163,6 @@ function rejectUnsupportedSubscriptionCreate(
     "billing_entity_code",
     "billing_entity_id",
     "billing_time",
-    "ending_at",
     "progressive_billing_disabled",
     "invoice_custom_section",
     "activation_rules",
@@ -1152,6 +1183,47 @@ function rejectUnsupportedSubscriptionCreate(
       "unsupported_subscription_feature",
       "Payment authorization during subscription creation is not implemented",
     );
+}
+
+async function assertScheduledTerminationPlanSupported(
+  database: D1Database,
+  organizationId: string,
+  planId: string,
+  payInAdvance: number,
+  interval: string,
+  invoiceGracePeriod: number,
+): Promise<void> {
+  if (payInAdvance === 1 || interval === "one_time") {
+    throw new ApiError(
+      422,
+      "unsupported_scheduled_termination",
+      "ending_at is not implemented for pay-in-advance or one-time plans",
+    );
+  }
+  if (invoiceGracePeriod !== 0) {
+    throw new ApiError(
+      422,
+      "unsupported_scheduled_termination",
+      "ending_at requires a zero invoice grace period",
+    );
+  }
+  const unsupported = await database
+    .prepare(
+      `SELECT
+         EXISTS(SELECT 1 FROM fixed_charges
+                WHERE organization_id = ? AND plan_id = ? AND pay_in_advance = 0) AS fixed_charges,
+         EXISTS(SELECT 1 FROM minimum_commitments
+                WHERE organization_id = ? AND plan_id = ?) AS minimum_commitment`,
+    )
+    .bind(organizationId, planId, organizationId, planId)
+    .first<{ fixed_charges: number; minimum_commitment: number }>();
+  if (unsupported?.fixed_charges === 1 || unsupported?.minimum_commitment === 1) {
+    throw new ApiError(
+      422,
+      "unsupported_scheduled_termination",
+      "ending_at is not implemented for plans with fixed charges or minimum commitments",
+    );
+  }
 }
 
 function safeAddMinor(left: number, right: number): number {
@@ -2285,7 +2357,7 @@ async function findSubscription(
               p.currency AS plan_currency, p.interval AS plan_interval,
               s.name, s.request_sha256,
               s.status, s.subscription_at, s.started_at, s.current_period_start,
-              s.current_period_end,
+              s.current_period_end, s.ending_at,
               s.canceled_at, s.terminated_at, s.created_at
        FROM subscriptions s
        JOIN customers c ON c.id = s.customer_id
@@ -2333,6 +2405,7 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     started_at: subscription.started_at,
     terminated_at: subscription.terminated_at,
     canceled_at: subscription.canceled_at,
+    ending_at: subscription.ending_at,
     created_at: subscription.created_at,
     current_billing_period_started_at: subscription.current_period_start,
     current_billing_period_ending_at: subscription.current_period_end,
@@ -2626,6 +2699,7 @@ function assertSubscriptionReplay(
     planCode: string;
     requestHash: string;
     subscriptionAt: string | null;
+    endingAt: string | null;
   },
 ): void {
   const matchesSubscriptionAt =
@@ -2636,7 +2710,8 @@ function assertSubscriptionReplay(
     subscription.customer_external_id === input.externalCustomerId &&
     subscription.plan_code === input.planCode &&
     subscription.name === input.name &&
-    matchesSubscriptionAt;
+    matchesSubscriptionAt &&
+    subscription.ending_at === input.endingAt;
   if (
     (subscription.request_sha256 && subscription.request_sha256 !== input.requestHash) ||
     !matchesLegacyFields

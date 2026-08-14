@@ -8,7 +8,8 @@ export type ScheduleExecutor =
   | "finalize_invoices"
   | "mark_invoices_overdue"
   | "refresh_draft_invoices"
-  | "reconcile_provider_receipts";
+  | "reconcile_provider_receipts"
+  | "terminate_ended_subscriptions";
 
 export type ScheduleParity = "implemented" | "partial" | "not_started";
 
@@ -91,7 +92,8 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     legacyJob: "Clock::TerminateEndedSubscriptionsJob",
     cadence: hourly(5),
     owner: "subscription lifecycle workflow",
-    parity: "not_started",
+    parity: "partial",
+    executor: "terminate_ended_subscriptions",
   },
   {
     key: "schedule:bill_customers",
