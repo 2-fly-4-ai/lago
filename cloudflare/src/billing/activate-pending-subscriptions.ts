@@ -16,7 +16,6 @@ import { walletAllocationStatements } from "./wallet-credits";
 type PendingSubscription = BillableSubscription & {
   subscription_at: string;
   version: number;
-  plan_pay_in_advance: number;
 };
 
 export async function activatePendingSubscriptions(

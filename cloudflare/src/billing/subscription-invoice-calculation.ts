@@ -24,6 +24,7 @@ export type BillableSubscription = {
   plan_name: string;
   subscription_name: string | null;
   plan_amount_minor: number;
+  plan_pay_in_advance: number;
   net_payment_term: number;
   invoice_grace_period: number;
 };
@@ -107,6 +108,7 @@ async function findSubscriptionForCalculation(
               s.current_period_start, s.current_period_end, p.interval, p.currency,
               p.name AS plan_name, s.name AS subscription_name,
               p.amount_minor AS plan_amount_minor,
+              p.pay_in_advance AS plan_pay_in_advance,
               COALESCE(c.net_payment_term, o.net_payment_term) AS net_payment_term,
               COALESCE(c.invoice_grace_period, o.invoice_grace_period) AS invoice_grace_period
        FROM subscriptions s JOIN plans p ON p.id = s.plan_id
@@ -222,6 +224,12 @@ export async function calculateSubscriptionInvoice(
     throw new Error("invalid_billing_period");
   }
   const cycleKey = `${subscription.id}:${periodStart}:${periodEnd}`;
+  const followingPeriodEnd = nextPeriodEnd(
+    new Date(periodEnd),
+    subscription.interval,
+  ).toISOString();
+  const planPeriodStart = subscription.plan_pay_in_advance === 1 ? periodEnd : periodStart;
+  const planPeriodEnd = subscription.plan_pay_in_advance === 1 ? followingPeriodEnd : periodEnd;
   const lines: SubscriptionInvoiceLine[] = [];
   let subtotalMinor = subscription.plan_amount_minor;
   lines.push({
@@ -233,7 +241,12 @@ export async function calculateSubscriptionInvoice(
     sourceId: subscription.plan_id,
     lineType: "subscription",
     sourceType: "plan",
-    metadataJson: stableJson({ billingCycleId, periodStart, periodEnd }),
+    metadataJson: stableJson({
+      billingCycleId,
+      billingMode: subscription.plan_pay_in_advance === 1 ? "in_advance" : "in_arrears",
+      periodStart: planPeriodStart,
+      periodEnd: planPeriodEnd,
+    }),
   });
 
   for (const charge of await loadCharges(database, subscription)) {
@@ -395,7 +408,7 @@ export async function calculateSubscriptionInvoice(
     prepaidCreditMinor,
     creditsMinor,
     totalDueMinor: subtotalMinor + taxMinor - creditsMinor,
-    nextPeriodEnd: nextPeriodEnd(new Date(periodEnd), subscription.interval).toISOString(),
+    nextPeriodEnd: followingPeriodEnd,
   };
 }
 

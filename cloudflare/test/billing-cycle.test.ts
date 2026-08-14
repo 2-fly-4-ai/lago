@@ -317,6 +317,36 @@ describe("billing period close", () => {
         quantity_decimal: "0.3",
       },
     ]);
+    const periods = await env.BILLING_DB.prepare(
+      `SELECT line_type, metadata_json FROM invoice_lines
+       WHERE invoice_id = ? AND line_type IN ('subscription', 'usage') ORDER BY line_type`,
+    )
+      .bind(first.invoiceId)
+      .all<{ line_type: string; metadata_json: string }>();
+    expect(
+      periods.results.map((line) => ({
+        line_type: line.line_type,
+        ...JSON.parse(line.metadata_json),
+      })),
+    ).toEqual([
+      {
+        line_type: "subscription",
+        billingCycleId: first.billingCycleId,
+        billingMode: "in_advance",
+        periodStart: "2026-08-31T00:00:00.000Z",
+        periodEnd: "2026-09-30T00:00:00.000Z",
+      },
+      {
+        line_type: "usage",
+        billingCycleId: first.billingCycleId,
+        billableMetricCode: "units",
+        chargeCode: "unit-charge",
+        chargeModel: "standard",
+        eventCount: 2,
+        periodStart: "2026-07-31T00:00:00.000Z",
+        periodEnd: "2026-08-31T00:00:00.000Z",
+      },
+    ]);
 
     const shown = await invoiceRequest(`/api/v1/invoices/${first.invoiceId}`);
     expect(shown.status).toBe(200);
