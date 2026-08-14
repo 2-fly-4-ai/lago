@@ -3,6 +3,7 @@ import {
   activeBillingPeriod,
   addTrialDays,
   assertBillingTimezone,
+  billingPeriodDurationDays,
   firstPeriodEnd,
   followingPeriodEnd,
   initialPlanProration,
@@ -31,6 +32,18 @@ describe("timezone-aware billing periods", () => {
         "Europe/Paris",
       ),
     ).toEqual({ billableDays: 17, fullPeriodDays: 31 });
+  });
+
+  it("keeps the full calendar duration for a mid-period weighted usage window", () => {
+    expect(
+      billingPeriodDurationDays(
+        new Date("2026-03-15T00:00:00.000Z"),
+        new Date("2026-03-31T22:00:00.000Z"),
+        "calendar",
+        "monthly",
+        "Europe/Paris",
+      ),
+    ).toBe(31);
   });
 
   it("preserves anniversary behavior and rejects unknown zones", () => {

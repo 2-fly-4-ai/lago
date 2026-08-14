@@ -551,7 +551,6 @@ describe("Lago-compatible metered usage", () => {
   it("rejects metric options the current usage engine cannot honor", async () => {
     for (const [suffix, unsupported] of [
       ["recurring", { recurring: true }],
-      ["weighted", { weighted_interval: "seconds" }],
       ["filters", { filters: [{ key: "region", values: ["us"] }] }],
     ] as const) {
       const response = await api("/api/v1/billable_metrics", {
@@ -571,6 +570,143 @@ describe("Lago-compatible metered usage", () => {
         code: "unsupported_billable_metric_feature",
       });
     }
+    const misplacedWeightedInterval = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Misplaced weighted interval",
+          code: "misplaced_weighted_interval",
+          aggregation_type: "sum_agg",
+          field_name: "tokens",
+          weighted_interval: "seconds",
+        },
+      },
+    });
+    expect(misplacedWeightedInterval.status).toBe(422);
+    await expect(misplacedWeightedInterval.json()).resolves.toMatchObject({
+      code: "validation_error",
+    });
+  });
+
+  it("rates recurring weighted sums with a historical baseline and exact period normalization", async () => {
+    const now = "2026-09-15T00:00:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, email, name, currency, metadata_json,
+          created_at, updated_at)
+         VALUES ('customer-weighted-usage', 'org-usage', 'customer-weighted-external',
+                 'weighted@example.test', 'Weighted Customer', 'USD', '{}', ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, version, created_at, updated_at)
+         VALUES ('subscription-weighted-usage', 'org-usage', 'customer-weighted-usage',
+                 'plan-usage', 'subscription-weighted-external', 'active',
+                 '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z',
+                 '2026-10-01T00:00:00.000Z', 1, ?, ?)`,
+      ).bind(now, now),
+    ]);
+    const metricResponse = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Active seats",
+          code: "active_seats_weighted",
+          aggregation_type: "weighted_sum_agg",
+          field_name: "delta",
+          recurring: true,
+          weighted_interval: "seconds",
+        },
+      },
+    });
+    expect(metricResponse.status).toBe(200);
+    const metric = await metricResponse.json<{
+      billable_metric: { lago_id: string; recurring: boolean; weighted_interval: string };
+    }>();
+    expect(metric.billable_metric).toMatchObject({ recurring: true, weighted_interval: "seconds" });
+
+    const rejectedTarget = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metric.billable_metric.lago_id,
+          code: "weighted-targeted",
+          charge_model: "standard",
+          accepts_target_wallet: true,
+          properties: { amount: "1" },
+        },
+      },
+    });
+    expect(rejectedTarget.status).toBe(422);
+    await expect(rejectedTarget.json()).resolves.toMatchObject({
+      code: "unsupported_charge_feature",
+    });
+
+    const charge = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metric.billable_metric.lago_id,
+          code: "weighted-seat-charge",
+          charge_model: "standard",
+          properties: { amount: "1" },
+        },
+      },
+    });
+    expect(charge.status).toBe(200);
+
+    const createWeightedEvent = async (transactionId: string, timestamp: string, delta: string) =>
+      api("/api/v1/events", {
+        method: "POST",
+        body: {
+          event: {
+            transaction_id: transactionId,
+            code: "active_seats_weighted",
+            external_subscription_id: "subscription-weighted-external",
+            timestamp: Date.parse(timestamp) / 1000,
+            properties: { delta },
+          },
+        },
+      });
+    expect(
+      (await createWeightedEvent("weighted-baseline", "2026-08-15T00:00:00.000Z", "1000")).status,
+    ).toBe(200);
+
+    for (const [transactionId, timestamp, delta] of [
+      ["weighted-a", "2026-09-01T00:00:00.000Z", "2"],
+      ["weighted-b", "2026-09-01T01:00:00.000Z", "3"],
+      ["weighted-c", "2026-09-01T01:30:00.000Z", "1"],
+      ["weighted-d", "2026-09-01T02:00:00.000Z", "-4"],
+      ["weighted-e", "2026-09-01T04:00:00.000Z", "-2"],
+      ["weighted-f", "2026-09-01T05:00:00.000Z", "10"],
+      ["weighted-g", "2026-09-01T05:30:00.000Z", "-10"],
+    ] as const) {
+      expect((await createWeightedEvent(transactionId, timestamp, delta)).status).toBe(200);
+    }
+
+    const usage = await api(
+      "/api/v1/customers/customer-weighted-external/current_usage?external_subscription_id=subscription-weighted-external",
+    );
+    expect(usage.status).toBe(200);
+    const body = await usage.json<{
+      customer_usage: {
+        charges_usage: Array<{
+          units: string;
+          total_aggregated_units: string;
+          billable_metric: { code: string };
+        }>;
+      };
+    }>();
+    expect(
+      body.customer_usage.charges_usage.find(
+        (candidate) => candidate.billable_metric.code === "active_seats_weighted",
+      ),
+    ).toMatchObject({
+      units: "1000.02291666666666666667",
+      total_aggregated_units: "1000",
+    });
   });
 
   it("persists metric rounding and applies it before current-usage rating", async () => {

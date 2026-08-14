@@ -7,7 +7,7 @@ import { stableJson } from "../json";
 import { rateCharge } from "../rating/charge-models";
 import { Decimal } from "../rating/decimal";
 import {
-  aggregateUsage,
+  aggregateUsageResult,
   applyAggregationRounding,
   type AggregationRoundingFunction,
   type SupportedAggregationType,
@@ -18,6 +18,7 @@ import {
   UsageExpressionError,
   validateUsageExpression,
 } from "../usage/expression";
+import { billingPeriodDurationDays, type BillingTime } from "../billing/periods";
 
 type MetricRow = {
   id: string;
@@ -53,12 +54,16 @@ type EventRow = {
 
 type SubscriptionUsageRow = {
   id: string;
+  organization_id: string;
   customer_id: string;
   plan_id: string;
   external_id: string;
   current_period_start: string;
   current_period_end: string;
   currency: string;
+  interval: string;
+  billing_time: BillingTime;
+  billing_timezone: string;
 };
 
 type ChargeUsageRow = {
@@ -73,6 +78,8 @@ type ChargeUsageRow = {
   metric_name: string;
   aggregation_type: string;
   field_name: string | null;
+  recurring: number;
+  weighted_interval: string | null;
   rounding_function: AggregationRoundingFunction | null;
   rounding_precision: number | null;
   accepts_target_wallet: number;
@@ -123,6 +130,7 @@ const SUPPORTED_AGGREGATIONS = new Set<SupportedAggregationType>([
   "sum_agg",
   "max_agg",
   "unique_count_agg",
+  "weighted_sum_agg",
   "latest_agg",
 ]);
 const SUPPORTED_CHARGE_MODELS = new Set([
@@ -303,7 +311,7 @@ async function createBillableMetric(
        (id, organization_id, code, name, description, aggregation_type, field_name,
         recurring, rounding_function, rounding_precision, weighted_interval, expression,
         properties_json, version, active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, '{}', ?, 1, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, 1, ?, ?)`,
         )
         .bind(
           identity.id,
@@ -313,8 +321,10 @@ async function createBillableMetric(
           normalized.description,
           normalized.aggregationType,
           normalized.fieldName,
+          normalized.recurring,
           normalized.roundingFunction,
           normalized.roundingPrecision,
+          normalized.weightedInterval,
           normalized.expression,
           identity.version,
           now,
@@ -393,7 +403,6 @@ async function updateBillableMetric(
   if (!metric)
     throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
   const input = objectAt(await parseJsonObject(request), "billable_metric");
-  rejectUnsupportedMetricFeatures(input);
   if (input.filters !== undefined)
     throw new ApiError(
       422,
@@ -414,6 +423,16 @@ async function updateBillableMetric(
     input.field_name === undefined ? metric.field_name : optionalString(input, "field_name");
   const nextExpression =
     input.expression === undefined ? metric.expression : optionalString(input, "expression");
+  const nextRecurring =
+    input.recurring === undefined
+      ? metric.recurring === 1
+        ? 1
+        : 0
+      : booleanInteger(input.recurring, metric.recurring === 1);
+  const nextWeightedInterval =
+    input.weighted_interval === undefined
+      ? normalizeStoredWeightedInterval(metric.weighted_interval)
+      : normalizeWeightedInterval(input.weighted_interval);
   const nextRoundingFunction =
     input.rounding_function === undefined
       ? normalizeStoredRoundingFunction(metric.rounding_function)
@@ -422,7 +441,13 @@ async function updateBillableMetric(
     input.rounding_precision === undefined
       ? metric.rounding_precision
       : normalizeRoundingPrecision(input.rounding_precision);
-  validateMetricConfiguration(nextAggregation, nextFieldName, nextExpression);
+  validateMetricConfiguration(
+    nextAggregation,
+    nextFieldName,
+    nextExpression,
+    nextRecurring,
+    nextWeightedInterval,
+  );
   if (
     attached &&
     (nextCode !== metric.code ||
@@ -468,8 +493,9 @@ async function updateBillableMetric(
       metricMutationGuardStatement(env.BILLING_DB, requestId, auth.organizationId, metric, 1, now),
       env.BILLING_DB.prepare(
         `UPDATE billable_metrics SET code = ?, name = ?, description = ?,
-         aggregation_type = ?, field_name = ?, rounding_function = ?, rounding_precision = ?,
-         expression = ?, version = version + 1, updated_at = ?
+         aggregation_type = ?, field_name = ?, recurring = ?, rounding_function = ?,
+         rounding_precision = ?, weighted_interval = ?, expression = ?,
+         version = version + 1, updated_at = ?
          WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?
            AND EXISTS (SELECT 1 FROM billable_metric_mutation_guards
                        WHERE request_id = ? AND billable_metric_id = ?)`,
@@ -479,8 +505,10 @@ async function updateBillableMetric(
         next.description,
         next.aggregationType,
         next.fieldName,
+        nextRecurring,
         nextRoundingFunction,
         nextRoundingPrecision,
+        nextWeightedInterval,
         nextExpression,
         now,
         metric.id,
@@ -644,11 +672,11 @@ async function createCharge(
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
   const metric = await database
     .prepare(
-      `SELECT id FROM billable_metrics
+      `SELECT id, aggregation_type FROM billable_metrics
        WHERE organization_id = ? AND id = ? AND active = 1 LIMIT 1`,
     )
     .bind(auth.organizationId, metricId)
-    .first<{ id: string }>();
+    .first<{ id: string; aggregation_type: string }>();
   if (!metric)
     throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
   const normalized = {
@@ -657,6 +685,7 @@ async function createCharge(
     minAmountMinor: optionalNonNegativeInteger(input.min_amount_cents, 0),
     acceptsTargetWallet: booleanInteger(input.accepts_target_wallet, false),
   };
+  assertWeightedTargetWalletCompatibility(metric.aggregation_type, normalized.acceptsTargetWallet);
   const existing = await findCatalogCharge(database, plan.id, code);
   if (existing) {
     if (sameCatalogCharge(existing, metric.id, chargeModel, properties, normalized))
@@ -797,13 +826,14 @@ async function updateCharge(
   };
   const metric = await database
     .prepare(
-      `SELECT id FROM billable_metrics
+      `SELECT id, aggregation_type FROM billable_metrics
        WHERE organization_id = ? AND id = ? AND active = 1 LIMIT 1`,
     )
     .bind(auth.organizationId, next.metricId)
-    .first<{ id: string }>();
+    .first<{ id: string; aggregation_type: string }>();
   if (!metric)
     throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
+  assertWeightedTargetWalletCompatibility(metric.aggregation_type, next.acceptsTargetWallet);
   if (next.code !== charge.code) {
     const duplicate = await findCatalogCharge(database, plan.id, next.code);
     if (duplicate) throw new ApiError(422, "value_already_exist", "Charge code already exists");
@@ -1568,7 +1598,8 @@ async function currentUsage(
   const subscription = await database
     .prepare(
       `SELECT s.id, s.customer_id, s.plan_id, s.external_id, s.current_period_start,
-              s.current_period_end, p.currency
+              s.current_period_end, s.organization_id, s.billing_time, s.billing_timezone,
+              p.currency, p.interval
        FROM subscriptions s
        JOIN customers c ON c.id = s.customer_id
        JOIN plans p ON p.id = s.plan_id
@@ -1586,7 +1617,8 @@ async function currentUsage(
               ch.properties_json, ch.min_amount_minor, ch.accepts_target_wallet,
               bm.id AS metric_id,
               bm.code AS metric_code, bm.name AS metric_name,
-              bm.aggregation_type, bm.field_name, bm.rounding_function, bm.rounding_precision
+              bm.aggregation_type, bm.field_name, bm.recurring, bm.weighted_interval,
+              bm.rounding_function, bm.rounding_precision
        FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id
        WHERE ch.organization_id = ? AND ch.plan_id = ? AND ch.active = 1
          AND ch.invoiceable = 1 AND ch.pay_in_advance = 0
@@ -1599,8 +1631,45 @@ async function currentUsage(
   const chargeUsage: Array<Record<string, unknown>> = [];
   for (const charge of charges.results) {
     const events = await usageEventsForPeriod(database, subscription, charge.metric_id);
+    const aggregationType = supportedAggregation(charge.aggregation_type);
+    assertStoredWeightedConfiguration(aggregationType, charge.weighted_interval);
+    if (aggregationType === "weighted_sum_agg" && charge.accepts_target_wallet === 1) {
+      throw new ApiError(
+        422,
+        "unsupported_charge_feature",
+        "Weighted-sum charges cannot target wallets",
+      );
+    }
+    const periodStartMs = Date.parse(subscription.current_period_start);
+    const periodEndMs = Date.parse(subscription.current_period_end);
+    const initialValue =
+      aggregationType === "weighted_sum_agg" && charge.recurring === 1
+        ? await recurringWeightedBaseline(
+            database,
+            subscription.organization_id,
+            subscription.external_id,
+            charge.metric_id,
+            charge.field_name,
+            periodStartMs,
+          )
+        : Decimal.zero();
+    const aggregation = aggregateUsageResult(aggregationType, charge.field_name, events, {
+      periodStartMs,
+      periodEndMs,
+      periodDurationDays:
+        aggregationType === "weighted_sum_agg"
+          ? billingPeriodDurationDays(
+              new Date(periodStartMs),
+              new Date(periodEndMs),
+              subscription.billing_time,
+              subscription.interval,
+              subscription.billing_timezone,
+            )
+          : undefined,
+      initialValue,
+    });
     const units = applyAggregationRounding(
-      aggregateUsage(supportedAggregation(charge.aggregation_type), charge.field_name, events),
+      aggregation.units,
       charge.rounding_function,
       charge.rounding_precision,
     );
@@ -1614,7 +1683,10 @@ async function currentUsage(
     total = total.add(amount);
     chargeUsage.push({
       units: units.toString(),
-      total_aggregated_units: units.toString(),
+      total_aggregated_units:
+        aggregationType === "weighted_sum_agg"
+          ? aggregation.totalAggregatedUnits.toString()
+          : units.toString(),
       events_count: events.length,
       amount_cents: jsonDecimal(amount),
       amount_currency: subscription.currency,
@@ -1682,6 +1754,37 @@ async function usageEventsForPeriod(
     timestampMs: event.timestamp_ms,
     properties: parseStoredObject(event.properties_json),
   }));
+}
+
+async function recurringWeightedBaseline(
+  database: D1Database,
+  organizationId: string,
+  externalSubscriptionId: string,
+  metricId: string,
+  fieldName: string | null,
+  periodStartMs: number,
+): Promise<Decimal> {
+  if (!fieldName) throw new ApiError(500, "invalid_metric", "Metric field_name is missing");
+  const result = await database
+    .prepare(
+      `SELECT properties_json FROM usage_events
+       WHERE organization_id = ? AND external_subscription_id = ? AND billable_metric_id = ?
+         AND deleted_at IS NULL AND timestamp_ms < ?
+       ORDER BY timestamp_ms, id LIMIT 10001`,
+    )
+    .bind(organizationId, externalSubscriptionId, metricId, periodStartMs)
+    .all<{ properties_json: string }>();
+  if (result.results.length > 10000) {
+    throw new ApiError(
+      503,
+      "usage_baseline_too_large",
+      "Recurring usage requires asynchronous aggregation",
+    );
+  }
+  return result.results.reduce((total, event) => {
+    const properties = parseStoredObject(event.properties_json);
+    return total.add(Decimal.parse(validateDecimalValue(properties[fieldName], fieldName)));
+  }, Decimal.zero());
 }
 
 async function findEventContext(
@@ -2075,13 +2178,14 @@ type NormalizedMetric = {
   description: string | null;
   aggregationType: SupportedAggregationType;
   fieldName: string | null;
+  recurring: 0 | 1;
+  weightedInterval: "seconds" | null;
   expression: string | null;
   roundingFunction: AggregationRoundingFunction | null;
   roundingPrecision: number | null;
 };
 
 function normalizeMetricInput(input: Record<string, unknown>): NormalizedMetric {
-  rejectUnsupportedMetricFeatures(input);
   if (input.filters !== undefined)
     throw new ApiError(
       422,
@@ -2090,16 +2194,20 @@ function normalizeMetricInput(input: Record<string, unknown>): NormalizedMetric 
     );
   const aggregationType = supportedMetricAggregation(input.aggregation_type);
   const fieldName = optionalString(input, "field_name");
+  const recurring = booleanInteger(input.recurring, false);
+  const weightedInterval = normalizeWeightedInterval(input.weighted_interval);
   const expression = optionalString(input, "expression");
   const roundingFunction = normalizeRoundingFunction(input.rounding_function);
   const roundingPrecision = normalizeRoundingPrecision(input.rounding_precision);
-  validateMetricConfiguration(aggregationType, fieldName, expression);
+  validateMetricConfiguration(aggregationType, fieldName, expression, recurring, weightedInterval);
   return {
     code: requiredString(input, "code"),
     name: requiredString(input, "name"),
     description: optionalString(input, "description"),
     aggregationType,
     fieldName,
+    recurring,
+    weightedInterval,
     expression,
     roundingFunction,
     roundingPrecision,
@@ -2139,10 +2247,23 @@ function normalizeRoundingPrecision(value: unknown): number | null {
   return value as number;
 }
 
+function normalizeWeightedInterval(value: unknown): "seconds" | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (value === "seconds") return value;
+  throw new ApiError(422, "validation_error", "weighted_interval must be seconds");
+}
+
+function normalizeStoredWeightedInterval(value: string | null): "seconds" | null {
+  if (value === null || value === "seconds") return value;
+  throw new ApiError(500, "invalid_metric", "Stored weighted_interval is invalid");
+}
+
 function validateMetricConfiguration(
   aggregationType: SupportedAggregationType,
   fieldName: string | null,
   expression: string | null,
+  recurring: 0 | 1,
+  weightedInterval: "seconds" | null,
 ): void {
   if (aggregationType !== "count_agg" && !fieldName)
     throw new ApiError(422, "validation_error", "field_name is required");
@@ -2155,18 +2276,23 @@ function validateMetricConfiguration(
       throw new ApiError(422, "invalid_expression", "expression is invalid");
     }
   }
-}
-
-function rejectUnsupportedMetricFeatures(input: Record<string, unknown>): void {
-  for (const field of ["recurring", "weighted_interval"]) {
-    const value = input[field];
-    if (value === undefined || value === null || value === false) continue;
+  if (aggregationType === "weighted_sum_agg") {
+    if (weightedInterval !== "seconds")
+      throw new ApiError(422, "validation_error", "weighted_interval is required");
+    return;
+  }
+  if (weightedInterval !== null)
+    throw new ApiError(
+      422,
+      "validation_error",
+      "weighted_interval is only valid for weighted_sum_agg",
+    );
+  if (recurring === 1)
     throw new ApiError(
       422,
       "unsupported_billable_metric_feature",
-      `${field} is not implemented by the Cloudflare usage engine`,
+      "recurring is currently supported only for weighted_sum_agg",
     );
-  }
 }
 
 function rejectUnsupportedChargeInput(input: Record<string, unknown>): void {
@@ -2188,6 +2314,28 @@ function rejectUnsupportedChargeInput(input: Record<string, unknown>): void {
     );
 }
 
+function assertWeightedTargetWalletCompatibility(
+  aggregationType: string,
+  acceptsTargetWallet: number,
+): void {
+  if (aggregationType === "weighted_sum_agg" && acceptsTargetWallet === 1) {
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      "Weighted-sum charges cannot target wallets until grouped recurring baselines are ported",
+    );
+  }
+}
+
+function assertStoredWeightedConfiguration(
+  aggregationType: SupportedAggregationType,
+  weightedInterval: string | null,
+): void {
+  if (aggregationType === "weighted_sum_agg" && weightedInterval !== "seconds") {
+    throw new ApiError(500, "invalid_metric", "Weighted metric interval is invalid");
+  }
+}
+
 function sameMetric(metric: MetricRow, normalized: NormalizedMetric): boolean {
   return (
     metric.code === normalized.code &&
@@ -2195,10 +2343,10 @@ function sameMetric(metric: MetricRow, normalized: NormalizedMetric): boolean {
     metric.description === normalized.description &&
     metric.aggregation_type === normalized.aggregationType &&
     metric.field_name === normalized.fieldName &&
-    metric.recurring === 0 &&
+    metric.recurring === normalized.recurring &&
     metric.rounding_function === normalized.roundingFunction &&
     metric.rounding_precision === normalized.roundingPrecision &&
-    metric.weighted_interval === null &&
+    metric.weighted_interval === normalized.weightedInterval &&
     metric.expression === normalized.expression
   );
 }

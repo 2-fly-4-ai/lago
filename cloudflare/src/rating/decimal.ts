@@ -43,6 +43,19 @@ export class Decimal {
     return new Decimal(quotient, this.scale + precision).normalize();
   }
 
+  divideByIntegerCeilToScale(divisor: bigint, targetScale: number): Decimal {
+    if (divisor <= 0n)
+      throw new Error(divisor === 0n ? "division_by_zero" : "positive_divisor_required");
+    if (!Number.isSafeInteger(targetScale) || targetScale < 0 || targetScale > 100) {
+      throw new Error("invalid_decimal_scale");
+    }
+    const numerator = this.coefficient * powerOfTen(targetScale);
+    const denominator = divisor * powerOfTen(this.scale);
+    let quotient = numerator / denominator;
+    if (numerator > 0n && numerator % denominator !== 0n) quotient += 1n;
+    return new Decimal(quotient, targetScale).normalize();
+  }
+
   divide(other: Decimal, precision = 18): Decimal {
     if (other.coefficient === 0n) throw new Error("division_by_zero");
     const numerator = this.coefficient * powerOfTen(precision + other.scale);

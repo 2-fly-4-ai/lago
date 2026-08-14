@@ -741,6 +741,102 @@ describe("billing period close", () => {
     ).resolves.toEqual({ quantity_decimal: "2.5", precise_amount_minor: "25", amount_minor: 25 });
   });
 
+  it("persists recurring weighted units and the carried end-of-period state", async () => {
+    const now = "2026-09-15T00:00:00.000Z";
+    const externalSubscriptionId = "subscription-weighted-cycle-external";
+    const weightedEvents = [
+      ["a", "2026-09-01T00:00:00.000Z", "2"],
+      ["b", "2026-09-01T01:00:00.000Z", "3"],
+      ["c", "2026-09-01T01:30:00.000Z", "1"],
+      ["d", "2026-09-01T02:00:00.000Z", "-4"],
+      ["e", "2026-09-01T04:00:00.000Z", "-2"],
+      ["f", "2026-09-01T05:00:00.000Z", "10"],
+      ["g", "2026-09-01T05:30:00.000Z", "-10"],
+    ] as const;
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO plans
+         (id, organization_id, code, name, interval, amount_minor, currency, version,
+          active, created_at, updated_at)
+         VALUES ('plan-weighted-cycle', 'org-cycle', 'weighted-cycle-plan',
+                 'Weighted cycle plan', 'monthly', 0, 'USD', 1, 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO billable_metrics
+         (id, organization_id, code, name, aggregation_type, field_name, recurring,
+          weighted_interval, properties_json, version, active, created_at, updated_at)
+         VALUES ('metric-weighted-cycle', 'org-cycle', 'weighted-cycle-units',
+                 'Weighted cycle units', 'weighted_sum_agg', 'delta', 1, 'seconds', '{}',
+                 1, 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, terminated_at, version, created_at, updated_at)
+         VALUES ('subscription-weighted-cycle-prior', 'org-cycle', 'customer-cycle',
+                 'plan-weighted-cycle', ?, 'terminated', '2026-08-01T00:00:00.000Z',
+                 '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z',
+                 '2026-09-01T00:00:00.000Z', 1, ?, ?)`,
+      ).bind(externalSubscriptionId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, version, created_at, updated_at,
+          previous_subscription_id, transition_kind, transition_at, generation)
+         VALUES ('subscription-weighted-cycle', 'org-cycle', 'customer-cycle',
+                 'plan-weighted-cycle', ?, 'active', '2026-09-01T00:00:00.000Z',
+                 '2026-09-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', 1, ?, ?,
+                 'subscription-weighted-cycle-prior', 'upgrade',
+                 '2026-09-01T00:00:00.000Z', 2)`,
+      ).bind(externalSubscriptionId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO charges
+         (id, organization_id, plan_id, billable_metric_id, code, charge_model,
+          properties_json, invoiceable, pay_in_advance, prorated, min_amount_minor,
+          version, active, created_at, updated_at)
+         VALUES ('charge-weighted-cycle', 'org-cycle', 'plan-weighted-cycle',
+                 'metric-weighted-cycle', 'weighted-cycle-charge', 'standard',
+                 '{"amount":"1"}', 1, 0, 0, 0, 1, 1, ?, ?)`,
+      ).bind(now, now),
+      weightedEventStatement(
+        "baseline",
+        "2026-08-15T00:00:00.000Z",
+        "1000",
+        externalSubscriptionId,
+        now,
+        "subscription-weighted-cycle-prior",
+      ),
+      ...weightedEvents.map(([suffix, timestamp, delta]) =>
+        weightedEventStatement(suffix, timestamp, delta, externalSubscriptionId, now),
+      ),
+    ]);
+
+    const result = await closeBillingPeriod(
+      env,
+      "subscription-weighted-cycle",
+      "2026-10-01T00:00:00.000Z",
+      "cycle-weighted",
+    );
+    expect(result).toMatchObject({ totalDueMinor: 1000, lineCount: 2 });
+    const line = await env.BILLING_DB.prepare(
+      `SELECT quantity_decimal, precise_amount_minor, amount_minor, metadata_json
+       FROM invoice_lines WHERE invoice_id = ? AND line_type = 'usage'`,
+    )
+      .bind(result.invoiceId)
+      .first<{
+        quantity_decimal: string;
+        precise_amount_minor: string;
+        amount_minor: number;
+        metadata_json: string;
+      }>();
+    expect(line).toMatchObject({
+      quantity_decimal: "1000.02291666666666666667",
+      precise_amount_minor: "1000.02291666666666666667",
+      amount_minor: 1000,
+    });
+    expect(JSON.parse(line!.metadata_json)).toMatchObject({ totalAggregatedUnits: "1000" });
+  });
+
   it("creates a non-consuming draft, refreshes flagged late usage, and allocates credits only when finalized", async () => {
     const now = "2026-08-13T00:00:00.000Z";
     await env.BILLING_DB.batch([
@@ -1064,5 +1160,34 @@ function eventStatement(
     `hash-${id}`,
     `test/${id}.json`,
     createdAt,
+  );
+}
+
+function weightedEventStatement(
+  suffix: string,
+  timestamp: string,
+  delta: string,
+  externalSubscriptionId: string,
+  createdAt: string,
+  subscriptionId = "subscription-weighted-cycle",
+): D1PreparedStatement {
+  return env.BILLING_DB.prepare(
+    `INSERT INTO usage_events
+     (id, organization_id, subscription_id, customer_id, billable_metric_id,
+      transaction_id, code, timestamp, timestamp_ms, properties_json, request_sha256,
+      archive_key, created_at, external_subscription_id)
+     VALUES (?, 'org-cycle', ?, 'customer-cycle',
+             'metric-weighted-cycle', ?, 'weighted-cycle-units', ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    `event-weighted-cycle-${suffix}`,
+    subscriptionId,
+    `weighted-cycle-${suffix}`,
+    timestamp,
+    Date.parse(timestamp),
+    JSON.stringify({ delta }),
+    `weighted-cycle-hash-${suffix}`,
+    `weighted-cycle/${suffix}.json`,
+    createdAt,
+    externalSubscriptionId,
   );
 }

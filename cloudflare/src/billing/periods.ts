@@ -109,6 +109,18 @@ export function billingPeriodProration(
   return { billableDays, fullPeriodDays };
 }
 
+export function billingPeriodDurationDays(
+  periodStart: Date,
+  periodEnd: Date,
+  billingTime: BillingTime,
+  interval: string,
+  timezone: string,
+): number {
+  return billingTime === "calendar"
+    ? initialPlanProration(periodStart, periodEnd, billingTime, interval, timezone).fullPeriodDays
+    : billingPeriodProration(periodStart, periodStart, periodEnd, timezone).fullPeriodDays;
+}
+
 export function localDate(value: Date, timezone: string): LocalDate {
   if (!Number.isFinite(value.getTime())) throw new Error("invalid_billing_timestamp");
   const parts = formatter(timezone).formatToParts(value);

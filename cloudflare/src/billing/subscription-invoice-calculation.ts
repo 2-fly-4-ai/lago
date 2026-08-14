@@ -3,7 +3,7 @@ import { stableJson } from "../json";
 import { rateCharge } from "../rating/charge-models";
 import { Decimal } from "../rating/decimal";
 import {
-  aggregateUsage,
+  aggregateUsageResult,
   applyAggregationRounding,
   type AggregationRoundingFunction,
   type SupportedAggregationType,
@@ -14,6 +14,7 @@ import { calculateCreditNoteAllocations, type CreditNoteAllocation } from "./cre
 import { calculateManualTaxes, totalManualTaxMinor, type InvoiceTax } from "./manual-taxes";
 import { calculateMinimumCommitmentLine } from "./minimum-commitment";
 import {
+  billingPeriodDurationDays,
   billingPeriodProration,
   followingPeriodEnd,
   initialPlanProration,
@@ -57,6 +58,8 @@ type ChargeRow = {
   metric_name: string;
   aggregation_type: string;
   field_name: string | null;
+  recurring: number;
+  weighted_interval: string | null;
   rounding_function: AggregationRoundingFunction | null;
   rounding_precision: number | null;
   accepts_target_wallet: number;
@@ -471,13 +474,41 @@ export async function calculateSubscriptionInvoice(
       periodStartMs,
       calculationPeriodEndMs,
     );
+    const aggregationType = supportedAggregation(charge.aggregation_type);
+    if (aggregationType === "weighted_sum_agg" && charge.weighted_interval !== "seconds") {
+      throw new Error("invalid_weighted_interval");
+    }
+    if (aggregationType === "weighted_sum_agg" && charge.accepts_target_wallet === 1) {
+      throw new Error("weighted_sum_target_wallet_unsupported");
+    }
+    const initialValue =
+      aggregationType === "weighted_sum_agg" && charge.recurring === 1
+        ? await recurringWeightedBaseline(
+            database,
+            subscription,
+            charge.metric_id,
+            charge.field_name,
+            periodStartMs,
+          )
+        : Decimal.zero();
     for (const group of targetWalletEventGroups(events, charge.accepts_target_wallet === 1)) {
+      const aggregation = aggregateUsageResult(aggregationType, charge.field_name, group.events, {
+        periodStartMs,
+        periodEndMs: calculationPeriodEndMs,
+        periodDurationDays:
+          aggregationType === "weighted_sum_agg"
+            ? billingPeriodDurationDays(
+                new Date(periodStartMs),
+                new Date(periodEndMs),
+                subscription.billing_time,
+                subscription.interval,
+                subscription.billing_timezone,
+              )
+            : undefined,
+        initialValue,
+      });
       const units = applyAggregationRounding(
-        aggregateUsage(
-          supportedAggregation(charge.aggregation_type),
-          charge.field_name,
-          group.events,
-        ),
+        aggregation.units,
         charge.rounding_function,
         charge.rounding_precision,
       );
@@ -517,6 +548,9 @@ export async function calculateSubscriptionInvoice(
           chargeCode: charge.code,
           chargeModel: charge.charge_model,
           eventCount: group.events.length,
+          ...(aggregationType === "weighted_sum_agg"
+            ? { totalAggregatedUnits: aggregation.totalAggregatedUnits.toString() }
+            : {}),
           periodStart,
           periodEnd: calculationPeriodEnd,
           ...(targeted
@@ -785,8 +819,8 @@ async function loadCharges(
       `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
               ch.properties_json, ch.min_amount_minor, bm.id AS metric_id,
               bm.code AS metric_code, bm.name AS metric_name,
-              bm.aggregation_type, bm.field_name, bm.rounding_function,
-              bm.rounding_precision, ch.accepts_target_wallet
+              bm.aggregation_type, bm.field_name, bm.recurring, bm.weighted_interval,
+              bm.rounding_function, bm.rounding_precision, ch.accepts_target_wallet
        FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id
        WHERE ch.organization_id = ? AND ch.plan_id = ? AND ch.active = 1
          AND ch.invoiceable = 1 AND ch.pay_in_advance = 0
@@ -908,6 +942,33 @@ async function loadEvents(
   }));
 }
 
+async function recurringWeightedBaseline(
+  database: D1Database,
+  subscription: BillableSubscription,
+  metricId: string,
+  fieldName: string | null,
+  periodStartMs: number,
+): Promise<Decimal> {
+  if (!fieldName) throw new Error("aggregation_field_name_required");
+  const result = await database
+    .prepare(
+      `SELECT properties_json FROM usage_events
+       WHERE organization_id = ? AND external_subscription_id = ? AND billable_metric_id = ?
+         AND deleted_at IS NULL AND timestamp_ms < ?
+       ORDER BY timestamp_ms, id LIMIT 10001`,
+    )
+    .bind(subscription.organization_id, subscription.external_id, metricId, periodStartMs)
+    .all<{ properties_json: string }>();
+  if (result.results.length > 10000) throw new Error("usage_baseline_too_large");
+  return result.results.reduce((total, event) => {
+    const value = parseObject(event.properties_json)[fieldName];
+    if (typeof value !== "string" && typeof value !== "number") {
+      throw new Error("aggregation_property_must_be_numeric");
+    }
+    return total.add(Decimal.parse(value));
+  }, Decimal.zero());
+}
+
 type RatedUsageEvent = Awaited<ReturnType<typeof loadEvents>>[number];
 
 function targetWalletEventGroups(
@@ -951,6 +1012,7 @@ function supportedAggregation(value: string): SupportedAggregationType {
     value === "sum_agg" ||
     value === "max_agg" ||
     value === "unique_count_agg" ||
+    value === "weighted_sum_agg" ||
     value === "latest_agg"
   ) {
     return value;
