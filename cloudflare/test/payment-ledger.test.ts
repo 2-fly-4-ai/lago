@@ -40,7 +40,7 @@ beforeEach(async () => {
        AND event_type IN ('payment.recorded', 'invoice.payment_status_updated')`,
     ),
     env.BILLING_DB.prepare(
-      `UPDATE invoices SET payment_status = 'pending', version = 1, updated_at = ?
+      `UPDATE invoices SET payment_status = 'pending', payment_overdue = 1, version = 1, updated_at = ?
        WHERE id = 'invoice-payment-ledger'`,
     ).bind(now),
   ]);
@@ -143,9 +143,10 @@ describe("payment ledger", () => {
     });
     await expect(
       env.BILLING_DB.prepare(
-        "SELECT payment_status, version FROM invoices WHERE id = 'invoice-payment-ledger'",
+        `SELECT payment_status, payment_overdue, version FROM invoices
+         WHERE id = 'invoice-payment-ledger'`,
       ).first(),
-    ).resolves.toEqual({ payment_status: "pending", version: 2 });
+    ).resolves.toEqual({ payment_status: "pending", payment_overdue: 1, version: 2 });
     const partialInvoice = await SELF.fetch(
       "https://lago.test/api/v1/invoices/invoice-payment-ledger",
       { headers },
@@ -166,9 +167,10 @@ describe("payment ledger", () => {
     expect(final?.status).toBe(200);
     await expect(
       env.BILLING_DB.prepare(
-        "SELECT payment_status, version FROM invoices WHERE id = 'invoice-payment-ledger'",
+        `SELECT payment_status, payment_overdue, version FROM invoices
+         WHERE id = 'invoice-payment-ledger'`,
       ).first(),
-    ).resolves.toEqual({ payment_status: "succeeded", version: 3 });
+    ).resolves.toEqual({ payment_status: "succeeded", payment_overdue: 0, version: 3 });
     const settledInvoice = await SELF.fetch(
       "https://lago.test/api/v1/invoices/invoice-payment-ledger",
       { headers },

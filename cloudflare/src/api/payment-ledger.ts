@@ -195,9 +195,18 @@ async function recordManualPayment(
       : null;
   const statements = [
     env.BILLING_DB.prepare(
-      `UPDATE invoices SET payment_status = ?, version = version + 1, updated_at = ?
+      `UPDATE invoices SET payment_status = ?,
+       payment_overdue = CASE WHEN ? = 'succeeded' THEN 0 ELSE payment_overdue END,
+       version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ? AND payment_status <> 'succeeded'`,
-    ).bind(nextInvoiceStatus, now, invoice.id, auth.organizationId, invoice.version),
+    ).bind(
+      nextInvoiceStatus,
+      nextInvoiceStatus,
+      now,
+      invoice.id,
+      auth.organizationId,
+      invoice.version,
+    ),
     env.BILLING_DB.prepare(
       `INSERT INTO payment_attempts
        (id, organization_id, invoice_id, provider, provider_account_code,

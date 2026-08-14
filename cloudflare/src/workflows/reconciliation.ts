@@ -2,7 +2,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { reconcileAuthorizeNetReceipt } from "../reconciliation/authorize-net";
 import type { DomainEvent } from "../domain-events";
 import { closeBillingPeriod } from "../billing/close-period";
-import { expireCoupons, expireWallets } from "../schedules/maintenance";
+import { expireCoupons, expireWallets, markInvoicesOverdue } from "../schedules/maintenance";
 import { dueLegacySchedules, scheduleInstanceId } from "../schedules/registry";
 
 type ReconciliationParams = {
@@ -120,6 +120,14 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           )
         : 0;
 
+      const overdueInvoices = executors.has("mark_invoices_overdue")
+        ? await step.do(
+            "mark invoices overdue",
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => markInvoicesOverdue(this.env, triggeredAtIso, runId),
+          )
+        : 0;
+
       const publishedEvents = await step.do(
         "publish pending outbox events",
         { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" }, timeout: "1 minute" },
@@ -140,6 +148,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         closedBillingPeriods,
         expiredCoupons,
         expiredWallets,
+        overdueInvoices,
         publishedEvents,
       };
       await step.do("complete schedule run", async () => {

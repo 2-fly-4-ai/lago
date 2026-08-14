@@ -2,6 +2,7 @@ export type ScheduleExecutor =
   | "close_billing_periods"
   | "expire_coupons"
   | "expire_wallets"
+  | "mark_invoices_overdue"
   | "reconcile_provider_receipts";
 
 export type ScheduleParity = "implemented" | "partial" | "not_started";
@@ -118,8 +119,9 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     key: "schedule:mark_invoices_as_payment_overdue",
     legacyJob: "Clock::MarkInvoicesAsPaymentOverdueJob",
     cadence: hourly(25),
-    owner: "payment status workflow",
-    parity: "not_started",
+    owner: "reconciliation workflow",
+    parity: "implemented",
+    executor: "mark_invoices_overdue",
   },
   {
     key: "schedule:terminate_coupons",

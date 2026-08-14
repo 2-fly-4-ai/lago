@@ -19,9 +19,10 @@ beforeEach(async () => {
     ).bind(await sha256Hex(apiKey), now),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO customers
-       (id, organization_id, external_id, name, currency, metadata_json, version, created_at, updated_at)
+       (id, organization_id, external_id, name, currency, metadata_json, net_payment_term,
+        version, created_at, updated_at)
        VALUES ('customer-one-off', 'org-one-off', 'customer-one-off', 'One-off Customer',
-               'EUR', '{}', 1, ?, ?)`,
+               'EUR', '{}', 14, 1, ?, ?)`,
     ).bind(now, now),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO add_ons
@@ -75,6 +76,10 @@ describe("one-off invoice ledger", () => {
         fees_amount_cents: number;
         taxes_amount_cents: number;
         total_amount_cents: number;
+        issuing_date: string;
+        payment_due_date: string;
+        payment_overdue: boolean;
+        net_payment_term: number;
         fees: Array<{ item: { code: string; invoice_display_name: string } }>;
         applied_taxes: Array<{ tax_code: string }>;
       };
@@ -84,8 +89,13 @@ describe("one-off invoice ledger", () => {
       fees_amount_cents: 2800,
       taxes_amount_cents: 560,
       total_amount_cents: 3360,
+      net_payment_term: 14,
+      payment_overdue: false,
       applied_taxes: [{ tax_code: "vat-20" }],
     });
+    const expectedDueDate = new Date(`${firstBody.invoice.issuing_date}T00:00:00.000Z`);
+    expectedDueDate.setUTCDate(expectedDueDate.getUTCDate() + 14);
+    expect(firstBody.invoice.payment_due_date).toBe(expectedDueDate.toISOString().slice(0, 10));
     expect(firstBody.invoice.fees).toEqual([
       expect.objectContaining({
         item: expect.objectContaining({ code: "first", invoice_display_name: "Invoice item #1" }),

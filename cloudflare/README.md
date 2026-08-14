@@ -10,7 +10,8 @@ remaining Lago feature inventory is dispositioned and ported.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
-  pay-in-arrears fixed charges, payment attempts, outbox state, and webhook receipt metadata;
+  pay-in-arrears fixed charges, customer payment terms, immutable invoice due-date snapshots,
+  overdue state, payment attempts, outbox state, and webhook receipt metadata;
   plan-level minimum commitments are reconciled as auditable period true-up lines after recurring
   subscription, usage, and fixed-charge fees.
 - Plan catalog: idempotent creation and optimistic scalar updates with transactional versioned
@@ -19,9 +20,10 @@ remaining Lago feature inventory is dispositioned and ported.
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
-  of all 27 legacy Clockwork schedules. It runs the retained billing-close, Authorize.Net receipt
-  retry, coupon-expiration, and wallet-expiration paths on their original slots, records each run in
-  D1, publishes the outbox, and reports due schedules whose behavior is not yet ported.
+  of all 27 legacy Clockwork schedules. It runs the retained billing-close, invoice-overdue,
+  Authorize.Net receipt retry, coupon-expiration, and wallet-expiration paths on their original
+  slots, records each run in D1, publishes the outbox, and reports due schedules whose behavior is
+  not yet ported.
 - R2: immutable provider webhook, usage-event, and invoice-document archives.
 - Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
 

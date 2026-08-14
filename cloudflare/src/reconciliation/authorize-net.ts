@@ -190,10 +190,13 @@ export async function reconcileAuthorizeNetReceipt(
       statements.push(
         env.BILLING_DB.prepare(
           `UPDATE invoices
-           SET payment_status = ?, version = version + 1, updated_at = ?
+           SET payment_status = ?,
+               payment_overdue = CASE WHEN ? = 'succeeded' THEN 0 ELSE payment_overdue END,
+               version = version + 1, updated_at = ?
            WHERE id = ? AND organization_id = ? AND version = ?
              AND payment_status <> 'succeeded' AND payment_status <> ?`,
         ).bind(
+          nextInvoiceStatus,
           nextInvoiceStatus,
           timestamp,
           invoice.id,

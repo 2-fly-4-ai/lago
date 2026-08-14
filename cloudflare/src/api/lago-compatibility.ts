@@ -33,6 +33,7 @@ import {
   manualTaxStatements,
   totalManualTaxMinor,
 } from "../billing/manual-taxes";
+import { paymentDueDate } from "../billing/payment-terms";
 
 type CustomerRow = {
   id: string;
@@ -43,6 +44,7 @@ type CustomerRow = {
   metadata_json: string;
   payment_provider: string | null;
   payment_provider_code: string | null;
+  net_payment_term: number | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -87,6 +89,9 @@ type InvoiceRow = {
   prepaid_credit_minor: number;
   total_due_minor: number;
   total_paid_minor: number;
+  net_payment_term: number;
+  payment_due_date: string | null;
+  payment_overdue: number;
   invoice_type: "subscription" | "one_off";
   version: number;
   finalized_at: string | null;
@@ -236,6 +241,12 @@ async function upsertCustomer(
       billingConfiguration === null
         ? (existing?.payment_provider_code ?? null)
         : optionalString(billingConfiguration, "payment_provider_code"),
+    netPaymentTerm:
+      input.net_payment_term === undefined
+        ? (existing?.net_payment_term ?? null)
+        : input.net_payment_term === null
+          ? null
+          : nonNegativeInteger(input.net_payment_term, "net_payment_term"),
   };
   validateCustomerProvider(normalized.paymentProvider, normalized.paymentProviderCode);
 
@@ -263,8 +274,8 @@ async function upsertCustomer(
         .prepare(
           `INSERT INTO customers
            (id, organization_id, external_id, email, name, currency, metadata_json,
-            payment_provider, payment_provider_code, version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+            payment_provider, payment_provider_code, net_payment_term, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .bind(
           id,
@@ -276,6 +287,7 @@ async function upsertCustomer(
           stableJson(normalized.metadata),
           normalized.paymentProvider,
           normalized.paymentProviderCode,
+          normalized.netPaymentTerm,
           now,
           now,
         ),
@@ -302,6 +314,7 @@ type NormalizedCustomer = {
   metadata: Array<{ key: string; value: string; display_in_invoice: boolean }>;
   paymentProvider: string | null;
   paymentProviderCode: string | null;
+  netPaymentTerm: number | null;
 };
 
 async function updateCustomer(
@@ -327,7 +340,7 @@ async function updateCustomer(
     env.BILLING_DB.prepare(
       `UPDATE customers
        SET email = ?, name = ?, currency = ?, metadata_json = ?, payment_provider = ?,
-           payment_provider_code = ?, version = version + 1, updated_at = ?
+           payment_provider_code = ?, net_payment_term = ?, version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?`,
     ).bind(
       normalized.email,
@@ -336,6 +349,7 @@ async function updateCustomer(
       stableJson(normalized.metadata),
       normalized.paymentProvider,
       normalized.paymentProviderCode,
+      normalized.netPaymentTerm,
       now,
       customer.id,
       auth.organizationId,
@@ -400,7 +414,7 @@ async function listCustomers(
   const result = await database
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
-              payment_provider_code, version, created_at, updated_at
+              payment_provider_code, net_payment_term, version, created_at, updated_at
        FROM customers WHERE ${where}
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     )
@@ -473,6 +487,8 @@ async function createSubscription(
 
   const now = new Date();
   const timestamp = now.toISOString();
+  const netPaymentTerm = customer.net_payment_term ?? 0;
+  const dueDate = paymentDueDate(timestamp, netPaymentTerm);
   const periodEnd = nextPeriodEnd(now, plan.interval).toISOString();
   const commandKey = `${auth.organizationId}:${externalId}`;
   const subscriptionId = await deterministicUuid("subscription", commandKey);
@@ -592,8 +608,8 @@ async function createSubscription(
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
           finalized_at, created_at, updated_at, coupons_minor, prepaid_credit_minor,
-          credit_notes_minor)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+          credit_notes_minor, net_payment_term, payment_due_date, payment_overdue)
+         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
         )
         .bind(
           invoiceId,
@@ -612,6 +628,8 @@ async function createSubscription(
           couponsMinor,
           prepaidCreditMinor,
           creditNotesMinor,
+          netPaymentTerm,
+          dueDate,
         ),
       database
         .prepare(
@@ -867,6 +885,7 @@ async function listInvoices(
               i.total_due_minor,
               COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
                         WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
+              i.net_payment_term, i.payment_due_date, i.payment_overdue,
               i.version, i.finalized_at,
               i.voided_at, i.created_at, i.updated_at
        FROM invoices i JOIN customers c ON c.id = i.customer_id
@@ -1050,6 +1069,8 @@ async function createOneOffInvoice(
     `${auth.organizationId}:${requestHash}`,
   );
   const now = new Date().toISOString();
+  const netPaymentTerm = customer.net_payment_term ?? 0;
+  const dueDate = paymentDueDate(now, netPaymentTerm);
   const lines = await Promise.all(
     normalizedFees.map(async (fee, index) => ({
       ...fee,
@@ -1083,8 +1104,9 @@ async function createOneOffInvoice(
       `INSERT INTO invoices
        (id, organization_id, customer_id, subscription_id, number, status, payment_status,
         currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
-        finalized_at, created_at, updated_at, invoice_type, request_sha256)
-       VALUES (?, ?, ?, NULL, ?, 'finalized', ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, 'one_off', ?)`,
+        finalized_at, created_at, updated_at, invoice_type, request_sha256,
+        net_payment_term, payment_due_date, payment_overdue)
+       VALUES (?, ?, ?, NULL, ?, 'finalized', ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, 'one_off', ?, ?, ?, 0)`,
     ).bind(
       invoiceId,
       auth.organizationId,
@@ -1099,6 +1121,8 @@ async function createOneOffInvoice(
       now,
       now,
       requestHash,
+      netPaymentTerm,
+      dueDate,
     ),
     ...lines.map((line, index) =>
       env.BILLING_DB.prepare(
@@ -1404,7 +1428,7 @@ async function findInvoice(
               i.total_due_minor,
               COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
                         WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
-              i.version,
+              i.net_payment_term, i.payment_due_date, i.payment_overdue, i.version,
               i.finalized_at, i.voided_at, i.created_at, i.updated_at
        FROM invoices i JOIN customers c ON c.id = i.customer_id
        WHERE i.organization_id = ? AND i.id = ? LIMIT 1`,
@@ -1664,6 +1688,7 @@ async function generateInvoicePaymentUrl(
             i.total_due_minor,
             COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
                       WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
+            i.net_payment_term, i.payment_due_date, i.payment_overdue,
             i.version, i.finalized_at,
             i.voided_at, i.created_at, i.updated_at
      FROM invoices i JOIN customers c ON c.id = i.customer_id
@@ -1825,7 +1850,7 @@ async function findCustomer(
   return database
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
-              payment_provider_code, version, created_at, updated_at
+              payment_provider_code, net_payment_term, version, created_at, updated_at
        FROM customers WHERE organization_id = ? AND external_id = ? LIMIT 1`,
     )
     .bind(organizationId, externalId)
@@ -1862,6 +1887,7 @@ function serializeCustomer(customer: CustomerRow): Record<string, unknown> {
     name: customer.name,
     email: customer.email,
     currency: customer.currency,
+    net_payment_term: customer.net_payment_term,
     version_number: customer.version,
     created_at: customer.created_at,
     updated_at: customer.updated_at,
@@ -1901,7 +1927,9 @@ function serializeInvoice(invoice: InvoiceRow): Record<string, unknown> {
     lago_id: invoice.id,
     number: invoice.number,
     issuing_date: invoice.finalized_at?.slice(0, 10) ?? null,
-    payment_due_date: null,
+    payment_due_date: invoice.payment_due_date,
+    payment_overdue: invoice.payment_overdue === 1,
+    net_payment_term: invoice.net_payment_term,
     invoice_type: invoice.invoice_type,
     status: invoice.status,
     payment_status: invoice.payment_status,
@@ -1966,6 +1994,7 @@ function rejectUnsupportedCustomerFields(input: Record<string, unknown>): void {
     "currency",
     "metadata",
     "billing_configuration",
+    "net_payment_term",
     "tax_codes",
     "tax_provider_code",
   ]);
@@ -2000,6 +2029,7 @@ function customerMatches(customer: CustomerRow, normalized: NormalizedCustomer):
     customer.currency === normalized.currency &&
     customer.payment_provider === normalized.paymentProvider &&
     customer.payment_provider_code === normalized.paymentProviderCode &&
+    customer.net_payment_term === normalized.netPaymentTerm &&
     stableJson(parseCustomerMetadata(customer.metadata_json)) === stableJson(normalized.metadata)
   );
 }
@@ -2047,6 +2077,7 @@ function customerEvent(
       currency: normalized.currency,
       paymentProvider: normalized.paymentProvider,
       paymentProviderCode: normalized.paymentProviderCode,
+      netPaymentTerm: normalized.netPaymentTerm,
       metadata: normalized.metadata,
     },
   };

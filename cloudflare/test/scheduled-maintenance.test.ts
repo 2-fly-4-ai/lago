@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { expireCoupons, expireWallets } from "../src/schedules/maintenance";
+import { expireCoupons, expireWallets, markInvoicesOverdue } from "../src/schedules/maintenance";
 import {
   dueLegacySchedules,
   LEGACY_SCHEDULES,
@@ -23,6 +23,8 @@ beforeEach(async () => {
     couponStatement("coupon-future", "future", "2026-08-14T00:30:01.000Z", now),
     walletStatement("wallet-expired", "expired", "2026-08-14T00:44:59.000Z", now),
     walletStatement("wallet-future", "future", "2026-08-14T00:45:01.000Z", now),
+    invoiceStatement("invoice-overdue", "INV-OVERDUE", "2026-08-13", now),
+    invoiceStatement("invoice-future", "INV-FUTURE", "2026-08-15", now),
   ]);
 });
 
@@ -34,6 +36,7 @@ describe("legacy schedule ownership", () => {
       LEGACY_SCHEDULES.filter((schedule) => schedule.executor).map((schedule) => schedule.key),
     ).toEqual([
       "schedule:bill_customers",
+      "schedule:mark_invoices_as_payment_overdue",
       "schedule:terminate_coupons",
       "schedule:terminate_wallets",
       "schedule:retry_inbound_webhooks",
@@ -58,6 +61,29 @@ describe("legacy schedule ownership", () => {
 });
 
 describe("scheduled ledger maintenance", () => {
+  it("marks due invoices overdue exactly once with outbox evidence", async () => {
+    const cutoff = "2026-08-14T00:25:00.000Z";
+    await expect(markInvoicesOverdue(env, cutoff, "schedule-test")).resolves.toBe(1);
+    await expect(markInvoicesOverdue(env, cutoff, "schedule-test-replay")).resolves.toBe(0);
+
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT
+           (SELECT payment_overdue FROM invoices WHERE id = 'invoice-overdue') AS overdue_invoice,
+           (SELECT version FROM invoices WHERE id = 'invoice-overdue') AS overdue_version,
+           (SELECT payment_overdue FROM invoices WHERE id = 'invoice-future') AS future_invoice,
+           (SELECT COUNT(*) FROM outbox_events
+              WHERE event_type = 'invoice.payment_overdue'
+                AND aggregate_id = 'invoice-overdue') AS events`,
+      ).first(),
+    ).resolves.toEqual({
+      overdue_invoice: 1,
+      overdue_version: 2,
+      future_invoice: 0,
+      events: 1,
+    });
+  });
+
   it("terminates expired coupons and wallets exactly once with outbox evidence", async () => {
     const couponCutoff = "2026-08-14T00:30:00.000Z";
     const walletCutoff = "2026-08-14T00:45:00.000Z";
@@ -103,6 +129,22 @@ function couponStatement(
      VALUES (?, 'org-schedule', ?, ?, 'fixed_amount', 100, 'USD', NULL, 'once', NULL,
              'time_limit', ?, 1, 'active', ?, ?, ?)`,
   ).bind(id, code, code, expirationAt, `hash-${id}`, now, now);
+}
+
+function invoiceStatement(
+  id: string,
+  number: string,
+  paymentDueDate: string,
+  now: string,
+): D1PreparedStatement {
+  return env.BILLING_DB.prepare(
+    `INSERT OR IGNORE INTO invoices
+     (id, organization_id, customer_id, number, status, payment_status, currency,
+      subtotal_minor, tax_minor, credits_minor, total_due_minor, version, finalized_at,
+      net_payment_term, payment_due_date, payment_overdue, created_at, updated_at)
+     VALUES (?, 'org-schedule', 'customer-schedule', ?, 'finalized', 'pending', 'USD',
+             100, 0, 0, 100, 1, ?, 0, ?, 0, ?, ?)`,
+  ).bind(id, number, now, paymentDueDate, now, now);
 }
 
 function walletStatement(

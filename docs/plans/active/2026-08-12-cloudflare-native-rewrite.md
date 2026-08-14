@@ -329,6 +329,10 @@ Acceptance:
       leased, idempotent recurring period-close finalization path now produces plan and usage lines,
       and unpaid finalized invoices can be shown with lines and voided idempotently; manual
       draft/finalize, paid-invoice credit/refund voids, and broader retry transitions remain pending.
+      Customer net-payment terms now snapshot onto finalized initial, recurring, and one-off
+      invoices with deterministic due dates. The legacy hourly overdue transition is replay-safe,
+      emits a transactional outbox event, and successful manual or Authorize.Net settlement clears
+      overdue state. Lost-dispute exclusion remains pending until dispute state is ported.
       Subscription creation now atomically records `subscription.created` and the initial
       `invoice.finalized` outbox events with the monetary ledger. Name-only subscription update
       emits a versioned `subscription.updated`; scheduling, calendar billing, ending rules,
@@ -365,8 +369,8 @@ Acceptance:
       All 27 legacy entries now have an exhaustive code-level ownership registry. A deterministic
       five-minute Cron dispatches a versioned Workflow instance and records due/unimplemented
       schedules in D1. The retained recurring billing, Authorize.Net receipt retry, coupon expiry,
-      and wallet expiry paths run on their legacy slots; the other entries remain explicitly
-      `not_started` until their underlying feature families are ported.
+      wallet expiry, and invoice-overdue paths run on their legacy slots; the other entries remain
+      explicitly `not_started` until their underlying feature families are ported.
 - [x] Add outbox publication and dead-letter handling for the implemented payment events.
 - [x] Add outbound HMAC webhook signing, endpoint filters, idempotency, bounded retry, URL safety,
       and delivery audit state. Deployment remains disabled until a signing secret is separately
@@ -799,3 +803,8 @@ resource and mutation described.
   zero organizations and zero schedule runs before the first new trigger. The stack remains
   unseeded with no production route or provider secret, and payment, provider-read, and
   outbound-webhook flags remain disabled.
+- 2026-08-14: Added customer/organization net-payment terms, immutable invoice due-date snapshots,
+  replay-safe overdue marking on the legacy hourly `:25` slot, and automatic overdue clearing after
+  successful manual or Authorize.Net settlement. All 70 Workers-runtime tests pass across 21 files;
+  all 20 migrations replay from an empty D1 database, generated bindings and the cross-repository
+  inventory are current, and the dry-run bundle is 420.49 KiB.

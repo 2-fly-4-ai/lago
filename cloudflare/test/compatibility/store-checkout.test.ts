@@ -251,6 +251,37 @@ describe("store-new Lago checkout compatibility", () => {
     await expect(response.json()).resolves.toMatchObject({ code: "unsupported_payment_provider" });
   });
 
+  it("stores and returns a nullable customer net payment term", async () => {
+    const response = await SELF.fetch("https://lago.test/api/v1/customers", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({
+        customer: {
+          external_id: "customer-with-payment-term",
+          name: "Payment Terms Customer",
+          net_payment_term: 30,
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      customer: { external_id: "customer-with-payment-term", net_payment_term: 30 },
+    });
+
+    const invalid = await SELF.fetch("https://lago.test/api/v1/customers", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({
+        customer: { external_id: "customer-with-invalid-term", net_payment_term: -1 },
+      }),
+    });
+    expect(invalid.status).toBe(422);
+    await expect(invalid.json()).resolves.toMatchObject({
+      code: "validation_error",
+      message: "net_payment_term must be a non-negative integer",
+    });
+  });
+
   it("rejects an invalid API key without revealing whether resources exist", async () => {
     const response = await SELF.fetch("https://lago.test/api/v1/invoices", {
       headers: { Authorization: "Bearer incorrect" },

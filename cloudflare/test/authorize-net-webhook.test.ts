@@ -98,9 +98,9 @@ describe("Authorize.Net webhooks", () => {
         `INSERT INTO invoices
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
-          finalized_at, created_at, updated_at)
+          finalized_at, payment_overdue, created_at, updated_at)
          VALUES ('invoice-webhook', 'org-webhook', 'customer-webhook', NULL, 'INV-WEBHOOK',
-                 'finalized', 'pending', 'USD', 1999, 0, 0, 1999, 1, ?, ?, ?)`,
+                 'finalized', 'pending', 'USD', 1999, 0, 0, 1999, 1, ?, 1, ?, ?)`,
       ).bind(now, now, now),
     ]);
 
@@ -156,9 +156,9 @@ describe("Authorize.Net webhooks", () => {
     expect(firstResult.retryMessages).toEqual([]);
 
     const invoice = await env.BILLING_DB.prepare(
-      `SELECT payment_status, version FROM invoices WHERE id = 'invoice-webhook'`,
-    ).first<{ payment_status: string; version: number }>();
-    expect(invoice).toEqual({ payment_status: "succeeded", version: 2 });
+      `SELECT payment_status, payment_overdue, version FROM invoices WHERE id = 'invoice-webhook'`,
+    ).first<{ payment_status: string; payment_overdue: number; version: number }>();
+    expect(invoice).toEqual({ payment_status: "succeeded", payment_overdue: 0, version: 2 });
     const attemptCount = await env.BILLING_DB.prepare(
       `SELECT COUNT(*) AS count FROM payment_attempts WHERE provider_transaction_id = 'transaction-reconcile'`,
     ).first<{ count: number }>();
@@ -203,9 +203,13 @@ describe("Authorize.Net webhooks", () => {
     const replayResult = await dispatchQueue(event);
     expect(replayResult.retryMessages).toEqual([]);
     const replayInvoice = await env.BILLING_DB.prepare(
-      `SELECT payment_status, version FROM invoices WHERE id = 'invoice-webhook'`,
-    ).first<{ payment_status: string; version: number }>();
-    expect(replayInvoice).toEqual({ payment_status: "succeeded", version: 2 });
+      `SELECT payment_status, payment_overdue, version FROM invoices WHERE id = 'invoice-webhook'`,
+    ).first<{ payment_status: string; payment_overdue: number; version: number }>();
+    expect(replayInvoice).toEqual({
+      payment_status: "succeeded",
+      payment_overdue: 0,
+      version: 2,
+    });
 
     const regressionBody = JSON.stringify({
       notificationId: "notification-reconcile-regression",

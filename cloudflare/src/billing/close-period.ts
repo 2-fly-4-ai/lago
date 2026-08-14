@@ -15,6 +15,7 @@ import {
 } from "./credit-note-credits";
 import { calculateManualTaxes, manualTaxStatements, totalManualTaxMinor } from "./manual-taxes";
 import { calculateMinimumCommitmentLine } from "./minimum-commitment";
+import { paymentDueDate } from "./payment-terms";
 
 type SubscriptionRow = {
   id: string;
@@ -28,6 +29,7 @@ type SubscriptionRow = {
   currency: string;
   plan_name: string;
   plan_amount_minor: number;
+  net_payment_term: number;
 };
 
 type ChargeRow = {
@@ -346,6 +348,7 @@ export async function closeBillingPeriod(
     const totalDue = subtotal + taxMinor - creditsMinor;
     const nextEnd = nextPeriodEnd(new Date(periodEnd), subscription.interval).toISOString();
     const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
+    const dueDate = paymentDueDate(now, subscription.net_payment_term);
     const domainEvent: DomainEvent = {
       id: `invoice-finalized:${invoiceId}:v1`,
       type: "invoice.finalized",
@@ -376,8 +379,8 @@ export async function closeBillingPeriod(
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
           finalized_at, created_at, updated_at, coupons_minor, prepaid_credit_minor,
-          credit_notes_minor)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+          credit_notes_minor, net_payment_term, payment_due_date, payment_overdue)
+         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       ).bind(
         invoiceId,
         subscription.organization_id,
@@ -395,6 +398,8 @@ export async function closeBillingPeriod(
         couponsMinor,
         prepaidCreditMinor,
         creditNotesMinor,
+        subscription.net_payment_term,
+        dueDate,
       ),
       ...lines.map((line) =>
         env.BILLING_DB.prepare(
@@ -552,8 +557,11 @@ async function findSubscription(database: D1Database, id: string): Promise<Subsc
     .prepare(
       `SELECT s.id, s.organization_id, s.customer_id, s.plan_id, s.external_id,
               s.current_period_start, s.current_period_end, p.interval, p.currency,
-              p.name AS plan_name, p.amount_minor AS plan_amount_minor
+              p.name AS plan_name, p.amount_minor AS plan_amount_minor,
+              COALESCE(c.net_payment_term, o.net_payment_term) AS net_payment_term
        FROM subscriptions s JOIN plans p ON p.id = s.plan_id
+       JOIN customers c ON c.id = s.customer_id
+       JOIN organizations o ON o.id = s.organization_id
        WHERE s.id = ? AND s.status IN ('active', 'past_due') LIMIT 1`,
     )
     .bind(id)
