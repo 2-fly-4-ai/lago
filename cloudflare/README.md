@@ -43,7 +43,11 @@ remaining Lago feature inventory is dispositioned and ported.
   In-arrears termination with a positive grace period instead creates a non-consuming draft from an
   immutable termination context; manual or scheduled refresh uses the original period boundaries,
   and finalization alone allocates coupon, credit-note, and wallet balances. Pay-in-advance grace
-  termination remains guarded until draft credit-note finalization is ported.
+  termination now couples two drafts: the unused-period note remains non-allocatable while its
+  prepaid source invoice is draft, refreshes proportionally with that source, and becomes available
+  only after the source finalizes. The termination draft cannot finalize early and then applies the
+  new balance before wallet credits. Coupon, tax, wallet, or finalized-credit adjustments on the
+  still-draft source remain explicitly guarded.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.

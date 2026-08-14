@@ -348,9 +348,12 @@ Acceptance:
       command. Positive-grace in-arrears termination now uses a distinct immutable termination
       context, creates a non-consuming draft for immediate or scheduled termination, refreshes from
       the original period after the subscription transition, and allocates balances only while
-      finalizing. Pay-in-advance grace termination, paid-invoice refund/offset voids,
-      allocated-source adjustments, destructive plan/charge graph replacement, and broader retry
-      transitions remain pending.
+      finalizing. Positive-grace pay-in-advance termination now persists a non-allocatable draft
+      unused-period note beside the termination draft, reprices it with its draft prepaid source,
+      finalizes it only after that source, and applies it before wallets while finalizing the
+      termination invoice. Adjusted draft sources, paid-invoice refund/offset voids, allocated-source
+      adjustments, destructive plan/charge graph replacement, and broader retry transitions remain
+      pending.
       Customer net-payment terms now snapshot onto finalized initial, recurring, and one-off
       invoices with deterministic due dates. The legacy hourly overdue transition is replay-safe,
       emits a transactional outbox event, and successful manual or Authorize.Net settlement clears
@@ -1172,3 +1175,17 @@ resource and mutation described.
   verification confirmed the new termination-context column, zero organizations, subscriptions,
   invoices, invoice lines, invoice contexts, and outbox events plus 53 Cron audits. No route,
   secret, seeded billing data, or disabled external flag changed.
+- 2026-08-14: Ported Lago's positive-grace pay-in-advance termination coupling. Migration
+  `0030_draft_termination_credit_notes.sql` adds a non-allocatable credit-note state and immutable
+  source/ratio context without exposing draft balances to the general credit allocator. Termination
+  creates the source-linked draft note and termination invoice atomically; source refresh preserves
+  item identity and creation time while recomputing the exact unused/full-period ratio, and source
+  finalization writes the invoice event before making the note allocatable and emitting
+  `credit_note.created`. The termination draft rejects early finalization, then applies the note
+  before any wallet lot. Hourly due-invoice ordering handles the same source-before-termination
+  dependency. Evidence covers deliberate 422 guards, repricing, non-consuming refresh, injected
+  late-batch rollback, event order, wallet precedence, replay, and scheduled finalization. All 90
+  tests pass across 23 files; all 30 migrations replay from an empty local D1, and formatting,
+  strict lint, generated inventory/types, TypeScript, and the dry-run bundle are green at 529.07 KiB
+  (94.51 KiB gzip). The still-draft source remains guarded when its calculation contains coupon,
+  tax, wallet, or finalized-credit adjustments.
