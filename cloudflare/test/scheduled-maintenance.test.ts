@@ -5,6 +5,7 @@ import {
   cleanupOutboundWebhookDeliveries,
   expireCoupons,
   expireWallets,
+  finalizeDueInvoices,
   markInvoicesOverdue,
   webhookRetentionCutoff,
 } from "../src/schedules/maintenance";
@@ -17,6 +18,28 @@ import {
 beforeEach(async () => {
   const now = "2026-08-14T00:00:00.000Z";
   await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `DELETE FROM outbox_events WHERE aggregate_id IN
+       ('invoice-overdue', 'invoice-future', 'invoice-draft-due', 'invoice-draft-future',
+        'coupon-expired', 'coupon-future', 'wallet-expired', 'wallet-future')`,
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM outbound_webhook_deliveries WHERE webhook_endpoint_id = 'endpoint-schedule'",
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM webhook_receipts WHERE id IN
+       ('receipt-old', 'receipt-recent', 'receipt-retry')`,
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM artifact_cleanup_tasks WHERE resource_type = 'webhook_receipt'",
+    ),
+    env.BILLING_DB.prepare("DELETE FROM webhook_endpoints WHERE id = 'endpoint-schedule'"),
+    env.BILLING_DB.prepare(
+      `DELETE FROM invoices WHERE id IN
+       ('invoice-overdue', 'invoice-future', 'invoice-draft-due', 'invoice-draft-future')`,
+    ),
+    env.BILLING_DB.prepare("DELETE FROM coupons WHERE id IN ('coupon-expired', 'coupon-future')"),
+    env.BILLING_DB.prepare("DELETE FROM wallets WHERE id IN ('wallet-expired', 'wallet-future')"),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO organizations (id, external_id, name, created_at, updated_at)
        VALUES ('org-schedule', 'schedule-test', 'Schedule Test', ?, ?)`,
@@ -32,6 +55,8 @@ beforeEach(async () => {
     walletStatement("wallet-future", "future", "2026-08-14T00:45:01.000Z", now),
     invoiceStatement("invoice-overdue", "INV-OVERDUE", "2026-08-13", now),
     invoiceStatement("invoice-future", "INV-FUTURE", "2026-08-15", now),
+    draftInvoiceStatement("invoice-draft-due", "INV-DRAFT-DUE", "2026-08-14", now),
+    draftInvoiceStatement("invoice-draft-future", "INV-DRAFT-FUTURE", "2026-08-15", now),
   ]);
 });
 
@@ -43,6 +68,7 @@ describe("legacy schedule ownership", () => {
       LEGACY_SCHEDULES.filter((schedule) => schedule.executor).map((schedule) => schedule.key),
     ).toEqual([
       "schedule:bill_customers",
+      "schedule:finalize_invoices",
       "schedule:mark_invoices_as_payment_overdue",
       "schedule:terminate_coupons",
       "schedule:terminate_wallets",
@@ -70,6 +96,32 @@ describe("legacy schedule ownership", () => {
 });
 
 describe("scheduled ledger maintenance", () => {
+  it("finalizes due drafts exactly once without changing their issuing date", async () => {
+    const cutoff = "2026-08-14T00:20:00.000Z";
+    await expect(finalizeDueInvoices(env, cutoff, "schedule-test")).resolves.toBe(1);
+    await expect(finalizeDueInvoices(env, cutoff, "schedule-test-replay")).resolves.toBe(0);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT
+           (SELECT status FROM invoices WHERE id = 'invoice-draft-due') AS due_status,
+           (SELECT issuing_date FROM invoices WHERE id = 'invoice-draft-due') AS issuing_date,
+           (SELECT payment_due_date FROM invoices WHERE id = 'invoice-draft-due') AS payment_due_date,
+           (SELECT version FROM invoices WHERE id = 'invoice-draft-due') AS due_version,
+           (SELECT status FROM invoices WHERE id = 'invoice-draft-future') AS future_status,
+           (SELECT COUNT(*) FROM outbox_events
+              WHERE event_type = 'invoice.finalized'
+                AND aggregate_id = 'invoice-draft-due') AS events`,
+      ).first(),
+    ).resolves.toEqual({
+      due_status: "finalized",
+      due_version: 2,
+      events: 1,
+      future_status: "draft",
+      issuing_date: "2026-08-10",
+      payment_due_date: "2026-08-10",
+    });
+  });
+
   it("deletes webhook records after 90 days and drains archived payloads exactly once", async () => {
     const oldAt = "2026-05-15T00:00:00.000Z";
     const recentAt = "2026-08-13T00:00:00.000Z";
@@ -228,6 +280,23 @@ function invoiceStatement(
      VALUES (?, 'org-schedule', 'customer-schedule', ?, 'finalized', 'pending', 'USD',
              100, 0, 0, 100, 1, ?, 0, ?, 0, ?, ?)`,
   ).bind(id, number, now, paymentDueDate, now, now);
+}
+
+function draftInvoiceStatement(
+  id: string,
+  number: string,
+  expectedFinalizationDate: string,
+  now: string,
+): D1PreparedStatement {
+  return env.BILLING_DB.prepare(
+    `INSERT OR IGNORE INTO invoices
+     (id, organization_id, customer_id, number, status, payment_status, currency,
+      subtotal_minor, tax_minor, credits_minor, total_due_minor, version, finalized_at,
+      net_payment_term, payment_due_date, payment_overdue, issuing_date,
+      expected_finalization_date, created_at, updated_at)
+     VALUES (?, 'org-schedule', 'customer-schedule', ?, 'draft', 'pending', 'USD',
+             100, 0, 0, 100, 1, NULL, 0, NULL, 0, '2026-08-10', ?, ?, ?)`,
+  ).bind(id, number, expectedFinalizationDate, now, now);
 }
 
 function walletStatement(

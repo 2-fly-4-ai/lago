@@ -4,6 +4,7 @@ export type ScheduleExecutor =
   | "close_billing_periods"
   | "expire_coupons"
   | "expire_wallets"
+  | "finalize_invoices"
   | "mark_invoices_overdue"
   | "reconcile_provider_receipts";
 
@@ -114,8 +115,9 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     key: "schedule:finalize_invoices",
     legacyJob: "Clock::FinalizeInvoicesJob",
     cadence: hourly(20),
-    owner: "invoice finalization workflow",
-    parity: "not_started",
+    owner: "reconciliation workflow",
+    parity: "implemented",
+    executor: "finalize_invoices",
   },
   {
     key: "schedule:mark_invoices_as_payment_overdue",

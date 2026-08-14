@@ -378,9 +378,9 @@ export async function closeBillingPeriod(
         `INSERT INTO invoices
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
-          finalized_at, created_at, updated_at, coupons_minor, prepaid_credit_minor,
+          finalized_at, issuing_date, created_at, updated_at, coupons_minor, prepaid_credit_minor,
           credit_notes_minor, net_payment_term, payment_due_date, payment_overdue)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       ).bind(
         invoiceId,
         subscription.organization_id,
@@ -393,6 +393,7 @@ export async function closeBillingPeriod(
         creditsMinor,
         totalDue,
         now,
+        now.slice(0, 10),
         now,
         now,
         couponsMinor,

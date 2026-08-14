@@ -1,4 +1,5 @@
 import type { DomainEvent } from "../domain-events";
+import { finalizeInvoice } from "../billing/finalize-invoice";
 
 type ExpiringCoupon = {
   id: string;
@@ -185,6 +186,26 @@ export async function markInvoicesOverdue(
     overdue += results[1]?.meta.changes ?? 0;
   }
   return overdue;
+}
+
+export async function finalizeDueInvoices(
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
+  cutoff: string,
+  correlationId: string,
+): Promise<number> {
+  const cutoffDate = cutoff.slice(0, 10);
+  const rows = await env.BILLING_DB.prepare(
+    `SELECT id FROM invoices WHERE status = 'draft'
+       AND COALESCE(expected_finalization_date, issuing_date) <= ?
+     ORDER BY COALESCE(expected_finalization_date, issuing_date), id LIMIT 100`,
+  )
+    .bind(cutoffDate)
+    .all<{ id: string }>();
+  let finalized = 0;
+  for (const row of rows.results) {
+    if (await finalizeInvoice(env, row.id, null, cutoff, correlationId)) finalized += 1;
+  }
+  return finalized;
 }
 
 export function webhookRetentionCutoff(triggeredAt: string): string {

@@ -22,9 +22,9 @@ beforeEach(async () => {
       `INSERT OR IGNORE INTO invoices
        (id, organization_id, customer_id, number, status, payment_status, currency,
         subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
-        finalized_at, created_at, updated_at)
+        finalized_at, issuing_date, created_at, updated_at)
        VALUES ('invoice-document', 'org-document', 'customer-document', 'INV-<&>',
-               'finalized', 'pending', 'USD', 1250, 0, 0, 1250, 1, ?, ?, ?)`,
+               'finalized', 'pending', 'USD', 1250, 0, 0, 1250, 1, ?, '2026-08-13', ?, ?)`,
     ).bind(now, now, now),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO invoice_lines
@@ -51,6 +51,7 @@ describe("invoice documents", () => {
         total_due_minor: 1250,
         version: 1,
         finalized_at: "2026-08-13T00:00:00.000Z",
+        issuing_date: "2026-08-12",
         customer_external_id: "customer",
         customer_name: "Customer <Example>",
         customer_email: "person@example.test",

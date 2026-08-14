@@ -7,6 +7,7 @@ import {
   cleanupOutboundWebhookDeliveries,
   expireCoupons,
   expireWallets,
+  finalizeDueInvoices,
   markInvoicesOverdue,
   webhookRetentionCutoff,
 } from "../schedules/maintenance";
@@ -135,6 +136,14 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           )
         : 0;
 
+      const finalizedInvoices = executors.has("finalize_invoices")
+        ? await step.do(
+            "finalize due invoices",
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => finalizeDueInvoices(this.env, triggeredAtIso, runId),
+          )
+        : 0;
+
       const retentionCutoff = webhookRetentionCutoff(triggeredAtIso);
       const deletedOutboundWebhooks = executors.has("cleanup_outbound_webhooks")
         ? await step.do(
@@ -172,6 +181,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         expiredCoupons,
         expiredWallets,
         overdueInvoices,
+        finalizedInvoices,
         deletedOutboundWebhooks,
         deletedInboundWebhooks,
         publishedEvents,

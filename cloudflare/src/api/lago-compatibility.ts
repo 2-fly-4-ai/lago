@@ -34,6 +34,7 @@ import {
   totalManualTaxMinor,
 } from "../billing/manual-taxes";
 import { paymentDueDate } from "../billing/payment-terms";
+import { finalizeInvoice } from "../billing/finalize-invoice";
 
 type CustomerRow = {
   id: string;
@@ -92,6 +93,8 @@ type InvoiceRow = {
   net_payment_term: number;
   payment_due_date: string | null;
   payment_overdue: number;
+  issuing_date: string | null;
+  expected_finalization_date: string | null;
   invoice_type: "subscription" | "one_off";
   version: number;
   finalized_at: string | null;
@@ -178,6 +181,11 @@ export async function handleLagoCompatibilityRequest(
   const invoiceVoidMatch = url.pathname.match(/^\/api\/v1\/invoices\/([^/]+)\/void$/);
   if (request.method === "POST" && invoiceVoidMatch?.[1]) {
     return voidInvoice(request, decodeURIComponent(invoiceVoidMatch[1]), env, auth, requestId);
+  }
+
+  const invoiceFinalizeMatch = url.pathname.match(/^\/api\/v1\/invoices\/([^/]+)\/finalize$/);
+  if (request.method === "PUT" && invoiceFinalizeMatch?.[1]) {
+    return finalizeDraftInvoice(decodeURIComponent(invoiceFinalizeMatch[1]), env, auth, requestId);
   }
 
   const invoiceDownloadMatch = url.pathname.match(
@@ -607,9 +615,9 @@ async function createSubscription(
           `INSERT INTO invoices
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
-          finalized_at, created_at, updated_at, coupons_minor, prepaid_credit_minor,
+          finalized_at, issuing_date, created_at, updated_at, coupons_minor, prepaid_credit_minor,
           credit_notes_minor, net_payment_term, payment_due_date, payment_overdue)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
         )
         .bind(
           invoiceId,
@@ -623,6 +631,7 @@ async function createSubscription(
           creditsMinor,
           totalDueMinor,
           timestamp,
+          timestamp.slice(0, 10),
           timestamp,
           timestamp,
           couponsMinor,
@@ -886,6 +895,7 @@ async function listInvoices(
               COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
                         WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
               i.net_payment_term, i.payment_due_date, i.payment_overdue,
+              i.issuing_date, i.expected_finalization_date,
               i.version, i.finalized_at,
               i.voided_at, i.created_at, i.updated_at
        FROM invoices i JOIN customers c ON c.id = i.customer_id
@@ -1104,9 +1114,9 @@ async function createOneOffInvoice(
       `INSERT INTO invoices
        (id, organization_id, customer_id, subscription_id, number, status, payment_status,
         currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
-        finalized_at, created_at, updated_at, invoice_type, request_sha256,
+        finalized_at, issuing_date, created_at, updated_at, invoice_type, request_sha256,
         net_payment_term, payment_due_date, payment_overdue)
-       VALUES (?, ?, ?, NULL, ?, 'finalized', ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, 'one_off', ?, ?, ?, 0)`,
+       VALUES (?, ?, ?, NULL, ?, 'finalized', ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, ?, 'one_off', ?, ?, ?, 0)`,
     ).bind(
       invoiceId,
       auth.organizationId,
@@ -1118,6 +1128,7 @@ async function createOneOffInvoice(
       taxMinor,
       totalDueMinor,
       now,
+      now.slice(0, 10),
       now,
       now,
       requestHash,
@@ -1363,6 +1374,34 @@ async function voidInvoice(
   );
 }
 
+async function finalizeDraftInvoice(
+  invoiceId: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const invoice = await findInvoice(env.BILLING_DB, auth.organizationId, invoiceId);
+  if (!invoice) throw new ApiError(404, "invoice_not_found", "Invoice was not found");
+  if (invoice.status !== "draft") {
+    throw new ApiError(422, "invoice_not_draft", "Only draft invoices can be finalized");
+  }
+  try {
+    await finalizeInvoice(
+      env,
+      invoice.id,
+      auth.organizationId,
+      new Date().toISOString(),
+      requestId,
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message === "invoice_version_conflict") {
+      throw new ApiError(409, "invoice_version_conflict", "Invoice changed concurrently");
+    }
+    throw error;
+  }
+  return showInvoice(invoice.id, env.BILLING_DB, auth, requestId);
+}
+
 async function requestInvoicePdf(
   invoiceId: string,
   env: Env,
@@ -1428,7 +1467,8 @@ async function findInvoice(
               i.total_due_minor,
               COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
                         WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
-              i.net_payment_term, i.payment_due_date, i.payment_overdue, i.version,
+              i.net_payment_term, i.payment_due_date, i.payment_overdue,
+              i.issuing_date, i.expected_finalization_date, i.version,
               i.finalized_at, i.voided_at, i.created_at, i.updated_at
        FROM invoices i JOIN customers c ON c.id = i.customer_id
        WHERE i.organization_id = ? AND i.id = ? LIMIT 1`,
@@ -1689,6 +1729,7 @@ async function generateInvoicePaymentUrl(
             COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
                       WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
             i.net_payment_term, i.payment_due_date, i.payment_overdue,
+            i.issuing_date, i.expected_finalization_date,
             i.version, i.finalized_at,
             i.voided_at, i.created_at, i.updated_at
      FROM invoices i JOIN customers c ON c.id = i.customer_id
@@ -1926,7 +1967,7 @@ function serializeInvoice(invoice: InvoiceRow): Record<string, unknown> {
   return {
     lago_id: invoice.id,
     number: invoice.number,
-    issuing_date: invoice.finalized_at?.slice(0, 10) ?? null,
+    issuing_date: invoice.issuing_date,
     payment_due_date: invoice.payment_due_date,
     payment_overdue: invoice.payment_overdue === 1,
     net_payment_term: invoice.net_payment_term,

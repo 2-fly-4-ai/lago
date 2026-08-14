@@ -333,6 +333,9 @@ Acceptance:
       invoices with deterministic due dates. The legacy hourly overdue transition is replay-safe,
       emits a transactional outbox event, and successful manual or Authorize.Net settlement clears
       overdue state. Lost-dispute exclusion remains pending until dispute state is ported.
+      Immutable issuing dates and expected-finalization dates now support tenant-scoped manual
+      finalization plus the legacy hourly `:20` transition with replay-safe version/outbox evidence.
+      Draft creation and recalculation remain pending; the finalizer does not substitute stale math.
       Subscription creation now atomically records `subscription.created` and the initial
       `invoice.finalized` outbox events with the monetary ledger. Name-only subscription update
       emits a versioned `subscription.updated`; scheduling, calendar billing, ending rules,
@@ -828,3 +831,9 @@ resource and mutation described.
   `401`, and direct aggregate-only counts confirmed zero organizations, receipts, deliveries, and
   cleanup tasks. The stack remains unseeded with no route, provider secret, or enabled mutation,
   provider-read, or outbound-delivery flag.
+- 2026-08-14: Added immutable invoice issuing/expected-finalization dates, tenant-scoped
+  `PUT /api/v1/invoices/:id/finalize`, and the replay-safe legacy hourly finalization executor.
+  Invoice due dates and PDFs retain the issuing date instead of substituting the later processing
+  time. All 74 Workers-runtime tests pass across 22 files; all 22 migrations replay from empty D1
+  state, generated bindings and cross-repository inventory are current, and the dry-run bundle is
+  429.15 KiB.
