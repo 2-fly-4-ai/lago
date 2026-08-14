@@ -1,0 +1,292 @@
+import { env, SELF } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
+import { sha256Hex } from "../src/auth/api-key";
+
+const apiKey = "subscription-filter-test-key";
+const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+const originalFilter = {
+  lagoId: "filter-subscription-parent",
+  invoiceDisplayName: "Parent Europe",
+  properties: { amount: "2" },
+  values: { region: ["eu"] },
+};
+
+beforeEach(async () => {
+  const now = "2026-08-15T00:00:00.000Z";
+  await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `UPDATE subscriptions SET plan_id = 'plan-sub-filter', version = 1, updated_at = ?
+       WHERE id = 'subscription-sub-filter'`,
+    ).bind(now),
+    env.BILLING_DB.prepare(
+      "DELETE FROM fixed_charges WHERE organization_id = 'org-sub-filter' AND parent_id IS NOT NULL",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM charges WHERE organization_id = 'org-sub-filter' AND parent_id IS NOT NULL",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM plans WHERE organization_id = 'org-sub-filter' AND parent_id IS NOT NULL",
+    ),
+    env.BILLING_DB.prepare("DELETE FROM outbox_events WHERE organization_id = 'org-sub-filter'"),
+    env.BILLING_DB.prepare(
+      `UPDATE charges SET properties_json = '{"amount":"1"}', filters_json = ?, version = 1,
+                          active = 1, updated_at = ?
+       WHERE id = 'charge-sub-filter'`,
+    ).bind(JSON.stringify([originalFilter]), now),
+  ]);
+  await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO organizations (id, external_id, name, created_at, updated_at)
+       VALUES ('org-sub-filter', 'subscription-filter', 'Subscription Filter', ?, ?)`,
+    ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO api_keys
+       (id, organization_id, key_prefix, key_hash, created_at, revoked_at)
+       VALUES ('key-sub-filter', 'org-sub-filter', 'sub-filt', ?, ?, NULL)`,
+    ).bind(await sha256Hex(apiKey), now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO customers
+       (id, organization_id, external_id, email, name, currency, metadata_json, created_at, updated_at)
+       VALUES ('customer-sub-filter', 'org-sub-filter', 'customer-sub-filter',
+               'filter@example.test', 'Filter Customer', 'USD', '{}', ?, ?)`,
+    ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO plans
+       (id, organization_id, code, name, interval, amount_minor, currency, version, active,
+        created_at, updated_at)
+       VALUES ('plan-sub-filter', 'org-sub-filter', 'filter-plan', 'Filter Plan', 'monthly',
+               1000, 'USD', 1, 1, ?, ?)`,
+    ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO billable_metrics
+       (id, organization_id, code, name, aggregation_type, field_name, recurring,
+        properties_json, filters_json, version, active, created_at, updated_at)
+       VALUES ('metric-sub-filter', 'org-sub-filter', 'requests', 'Requests', 'count_agg',
+               NULL, 0, '{}', '[{"key":"region","values":["eu","us"]}]', 1, 1, ?, ?)`,
+    ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO billable_metrics
+       (id, organization_id, code, name, aggregation_type, field_name, recurring,
+        properties_json, filters_json, version, active, created_at, updated_at)
+       VALUES ('metric-sub-filter-two', 'org-sub-filter', 'storage', 'Storage', 'sum_agg',
+               'gb', 0, '{}', '[]', 1, 1, ?, ?)`,
+    ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO charges
+       (id, organization_id, plan_id, billable_metric_id, code, charge_model,
+        properties_json, filters_json, version, active, created_at, updated_at)
+       VALUES ('charge-sub-filter', 'org-sub-filter', 'plan-sub-filter', 'metric-sub-filter',
+               'requests-charge', 'standard', '{"amount":"1"}', ?, 1, 1, ?, ?)`,
+    ).bind(JSON.stringify([originalFilter]), now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO charges
+       (id, organization_id, plan_id, billable_metric_id, code, charge_model,
+        properties_json, filters_json, version, active, created_at, updated_at)
+       VALUES ('charge-sub-filter-two', 'org-sub-filter', 'plan-sub-filter',
+               'metric-sub-filter-two', 'storage-charge', 'standard', '{"amount":"3"}',
+               '[]', 1, 1, ?, ?)`,
+    ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO add_ons
+       (id, organization_id, code, name, amount_minor, currency, status, version,
+        request_sha256, created_at, updated_at)
+       VALUES ('addon-sub-filter', 'org-sub-filter', 'support', 'Support', 500, 'USD',
+               'active', 1, 'setup', ?, ?)`,
+    ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO fixed_charges
+       (id, organization_id, plan_id, add_on_id, code, charge_model, properties_json,
+        units, version, active, created_at, updated_at)
+       VALUES ('fixed-sub-filter', 'org-sub-filter', 'plan-sub-filter', 'addon-sub-filter',
+               'support-fixed', 'standard', '{"amount":"500"}', '1', 1, 1, ?, ?)`,
+    ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO subscriptions
+       (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+        current_period_start, current_period_end, version, created_at, updated_at)
+       VALUES ('subscription-sub-filter', 'org-sub-filter', 'customer-sub-filter',
+               'plan-sub-filter', 'subscription-sub-filter', 'active',
+               '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z',
+               '2026-09-01T00:00:00.000Z', 1, ?, ?)`,
+    ).bind(now, now),
+  ]);
+});
+
+describe("subscription charge-filter overrides", () => {
+  it("clones the complete pricing graph once and keeps the catalog root isolated", async () => {
+    const created = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters",
+      "POST",
+      {
+        filter: {
+          invoice_display_name: "Subscriber US",
+          properties: { amount: "7" },
+          values: { region: ["us"] },
+        },
+      },
+    );
+    expect(created.status).toBe(200);
+    const body = await created.json<{ filter: { lago_id: string } }>();
+    expect(body.filter.lago_id).not.toBe(originalFilter.lagoId);
+
+    const graph = await env.BILLING_DB.prepare(
+      `SELECT s.plan_id, s.version AS subscription_version, child.parent_id,
+              (SELECT COUNT(*) FROM charges WHERE plan_id = child.id AND active = 1) AS charges,
+              (SELECT COUNT(*) FROM fixed_charges WHERE plan_id = child.id AND active = 1) AS fixed_charges,
+              (SELECT COUNT(*) FROM minimum_commitments WHERE plan_id = child.id) AS commitments,
+              (SELECT COUNT(*) FROM charges WHERE plan_id = child.id AND parent_id IS NOT NULL) AS parented_charges,
+              (SELECT COUNT(*) FROM fixed_charges WHERE plan_id = child.id AND parent_id IS NOT NULL) AS parented_fixed
+       FROM subscriptions s JOIN plans child ON child.id = s.plan_id
+       WHERE s.id = 'subscription-sub-filter'`,
+    ).first();
+    expect(graph).toMatchObject({
+      parent_id: "plan-sub-filter",
+      subscription_version: 2,
+      charges: 2,
+      fixed_charges: 1,
+      commitments: 0,
+      parented_charges: 2,
+      parented_fixed: 1,
+    });
+
+    const catalog = await api("/api/v1/plans");
+    await expect(catalog.json()).resolves.toMatchObject({
+      meta: { total_count: 1 },
+      plans: [{ lago_id: "plan-sub-filter", code: "filter-plan" }],
+    });
+    const listed = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters",
+    );
+    const listedBody = await listed.json<{
+      filters: Array<{ lago_id: string; values: Record<string, string[]> }>;
+    }>();
+    expect(listedBody.filters).toHaveLength(2);
+    expect(listedBody.filters.map((filter) => filter.lago_id)).not.toContain(originalFilter.lagoId);
+    expect(listedBody.filters).toContainEqual(
+      expect.objectContaining({ lago_id: body.filter.lago_id, values: { region: ["us"] } }),
+    );
+
+    await env.BILLING_DB.prepare(
+      `UPDATE charges SET properties_json = '{"amount":"99"}', filters_json = '[]'
+       WHERE id = 'charge-sub-filter'`,
+    ).run();
+    const childCharge = await env.BILLING_DB.prepare(
+      `SELECT properties_json, filters_json FROM charges
+       WHERE parent_id = 'charge-sub-filter' AND active = 1`,
+    ).first<{ properties_json: string; filters_json: string }>();
+    expect(childCharge?.properties_json).toBe('{"amount":"1"}');
+    expect(JSON.parse(childCharge?.filters_json ?? "[]")).toHaveLength(2);
+
+    const event = await api("/api/v1/events", "POST", {
+      event: {
+        transaction_id: "subscription-filter-base-event",
+        code: "requests",
+        external_subscription_id: "subscription-sub-filter",
+        timestamp: 1786579200,
+        properties: {},
+      },
+    });
+    expect(event.status).toBe(200);
+    const usage = await api(
+      "/api/v1/customers/customer-sub-filter/current_usage?external_subscription_id=subscription-sub-filter",
+    );
+    const usageBody = await usage.json<{
+      customer_usage: {
+        amount_cents: number;
+        charges_usage: Array<{
+          amount_cents: number;
+          units: string;
+          billable_metric: { code: string };
+        }>;
+      };
+    }>();
+    expect(usageBody.customer_usage.amount_cents).toBe(1);
+    expect(
+      usageBody.customer_usage.charges_usage.find(
+        (charge) => charge.billable_metric.code === "requests",
+      ),
+    ).toMatchObject({ amount_cents: 1, units: "1" });
+
+    const deletion = await api("/api/v1/plans/filter-plan", "DELETE");
+    expect(deletion.status).toBe(409);
+    await expect(deletion.json()).resolves.toMatchObject({
+      code: "plan_has_overridden_subscriptions",
+    });
+
+    const updated = await api(
+      `/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters/${body.filter.lago_id}`,
+      "PUT",
+      { filter: { invoice_display_name: "Subscriber US updated", properties: { amount: "8" } } },
+    );
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      filter: {
+        lago_id: body.filter.lago_id,
+        invoice_display_name: "Subscriber US updated",
+        properties: { amount: "8" },
+        values: { region: ["us"] },
+      },
+    });
+    const counts = await env.BILLING_DB.prepare(
+      `SELECT (SELECT COUNT(*) FROM plans WHERE organization_id = 'org-sub-filter') AS plans,
+              (SELECT COUNT(*) FROM charges WHERE organization_id = 'org-sub-filter') AS charges,
+              (SELECT version FROM charges WHERE parent_id = 'charge-sub-filter') AS child_version`,
+    ).first();
+    expect(counts).toEqual({ plans: 2, charges: 4, child_version: 2 });
+  });
+
+  it("maps parent filter IDs onto fresh child IDs for update and delete", async () => {
+    const updated = await api(
+      `/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters/${originalFilter.lagoId}`,
+      "PUT",
+      { filter: { invoice_display_name: "Subscriber Europe", properties: { amount: "5" } } },
+    );
+    expect(updated.status).toBe(200);
+    const updatedBody = await updated.json<{ filter: { lago_id: string } }>();
+    expect(updatedBody.filter.lago_id).not.toBe(originalFilter.lagoId);
+    await expect(updatedBody).toMatchObject({
+      filter: {
+        invoice_display_name: "Subscriber Europe",
+        properties: { amount: "5" },
+        values: { region: ["eu"] },
+      },
+    });
+
+    const deleted = await api(
+      `/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters/${updatedBody.filter.lago_id}`,
+      "DELETE",
+    );
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toMatchObject({
+      filter: { lago_id: updatedBody.filter.lago_id, values: { region: ["eu"] } },
+    });
+    await expect(
+      api("/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters").then(
+        (response) => response.json(),
+      ),
+    ).resolves.toMatchObject({ filters: [], meta: { total_count: 0 } });
+  });
+
+  it("rejects duplicate values without creating an override graph", async () => {
+    const response = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters",
+      "POST",
+      { filter: { properties: { amount: "4" }, values: { region: ["eu"] } } },
+    );
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ code: "value_already_exist" });
+    const counts = await env.BILLING_DB.prepare(
+      `SELECT (SELECT COUNT(*) FROM plans WHERE organization_id = 'org-sub-filter') AS plans,
+              (SELECT COUNT(*) FROM charges WHERE organization_id = 'org-sub-filter') AS charges`,
+    ).first();
+    expect(counts).toEqual({ plans: 1, charges: 2 });
+  });
+});
+
+function api(path: string, method = "GET", body?: Record<string, unknown>): Promise<Response> {
+  return SELF.fetch(`https://lago.test${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}

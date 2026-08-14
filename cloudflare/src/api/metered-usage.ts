@@ -752,6 +752,7 @@ async function createCharge(
     .prepare(
       `SELECT id FROM plans
        WHERE organization_id = ? AND code = ? AND active = 1 AND pending_deletion = 0
+         AND parent_id IS NULL
        ORDER BY version DESC LIMIT 1`,
     )
     .bind(auth.organizationId, planCode)
@@ -1354,7 +1355,7 @@ function findPlanId(database: D1Database, organizationId: string, code: string) 
   return database
     .prepare(
       `SELECT id, pending_deletion FROM plans
-       WHERE organization_id = ? AND code = ? AND active = 1
+       WHERE organization_id = ? AND code = ? AND active = 1 AND parent_id IS NULL
        ORDER BY version DESC LIMIT 1`,
     )
     .bind(organizationId, code)

@@ -22,6 +22,7 @@ import {
 
 type PlanRow = {
   id: string;
+  parent_id: string | null;
   code: string;
   name: string;
   invoice_display_name: string | null;
@@ -424,11 +425,13 @@ async function listPlans(
   const perPage = Math.min(positiveInteger(url.searchParams.get("per_page"), 20), 100);
   const offset = (page - 1) * perPage;
   const count = await database
-    .prepare("SELECT COUNT(*) AS total FROM plans WHERE organization_id = ? AND active = 1")
+    .prepare(
+      "SELECT COUNT(*) AS total FROM plans WHERE organization_id = ? AND active = 1 AND parent_id IS NULL",
+    )
     .bind(auth.organizationId)
     .first<{ total: number }>();
   const result = await database
-    .prepare(`${planSelect()} WHERE organization_id = ? AND active = 1
+    .prepare(`${planSelect()} WHERE organization_id = ? AND active = 1 AND parent_id IS NULL
               ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
     .bind(auth.organizationId, perPage, offset)
     .all<PlanRow>();
@@ -943,6 +946,22 @@ async function deletePlan(
     return json({ plan: { ...serialized, pending_deletion: true } }, { requestId });
   }
 
+  const overriddenSubscription = await database
+    .prepare(
+      `SELECT s.id FROM subscriptions s JOIN plans child ON child.id = s.plan_id
+       WHERE s.organization_id = ? AND child.parent_id = ?
+         AND s.status IN ('pending', 'active', 'past_due') LIMIT 1`,
+    )
+    .bind(auth.organizationId, plan.id)
+    .first();
+  if (overriddenSubscription) {
+    throw new ApiError(
+      409,
+      "plan_has_overridden_subscriptions",
+      "Plan deletion must wait until its subscription overrides are retired",
+    );
+  }
+
   const subscription = await database
     .prepare("SELECT id FROM subscriptions WHERE organization_id = ? AND plan_id = ? LIMIT 1")
     .bind(auth.organizationId, plan.id)
@@ -1045,7 +1064,7 @@ async function deletePlan(
 }
 
 function planSelect(): string {
-  return `SELECT id, code, name, invoice_display_name, description, interval, amount_minor,
+  return `SELECT id, parent_id, code, name, invoice_display_name, description, interval, amount_minor,
                  currency, trial_period, pay_in_advance, bill_charges_monthly,
                  bill_fixed_charges_monthly, metadata_json, request_sha256,
                  pending_deletion, version, created_at, updated_at FROM plans`;
@@ -1054,6 +1073,7 @@ function planSelect(): string {
 async function findPlan(database: D1Database, organizationId: string, code: string) {
   return database
     .prepare(`${planSelect()} WHERE organization_id = ? AND code = ? AND active = 1
+              AND parent_id IS NULL
               ORDER BY version DESC LIMIT 1`)
     .bind(organizationId, code)
     .first<PlanRow>();

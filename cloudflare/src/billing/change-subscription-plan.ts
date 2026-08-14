@@ -896,6 +896,7 @@ async function findTargetPlan(
       `SELECT id, code, name, interval, amount_minor, currency, pay_in_advance, trial_period
        FROM plans
        WHERE organization_id = ? AND code = ? AND active = 1 AND pending_deletion = 0
+         AND parent_id IS NULL
        ORDER BY version DESC LIMIT 1`,
     )
     .bind(organizationId, planCode)

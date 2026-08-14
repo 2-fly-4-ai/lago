@@ -37,6 +37,7 @@ import { handleAddOnLedgerRequest } from "./add-on-ledger";
 import { handlePaymentLedgerRequest } from "./payment-ledger";
 import { normalizeSubscriptionPaymentMethod } from "./subscription-payment-method";
 import { handleInvoiceCustomSectionRequest } from "./invoice-custom-sections";
+import { handleSubscriptionChargeFilterRequest } from "./subscription-charge-filters";
 import {
   customSectionLinkStatements,
   normalizeCustomerCustomSections,
@@ -172,6 +173,14 @@ export async function handleLagoCompatibilityRequest(
 
   const lifecycleResponse = await handleSubscriptionLifecycleRequest(request, env, auth, requestId);
   if (lifecycleResponse) return lifecycleResponse;
+
+  const subscriptionChargeFilterResponse = await handleSubscriptionChargeFilterRequest(
+    request,
+    env,
+    auth,
+    requestId,
+  );
+  if (subscriptionChargeFilterResponse) return subscriptionChargeFilterResponse;
 
   const meteredUsageResponse = await handleMeteredUsageRequest(request, env, auth, requestId);
   if (meteredUsageResponse) return meteredUsageResponse;
@@ -710,6 +719,7 @@ async function createSubscription(
       `SELECT id, code, name, interval, amount_minor, currency, pay_in_advance, trial_period
        FROM plans
        WHERE organization_id = ? AND code = ? AND active = 1 AND pending_deletion = 0
+         AND parent_id IS NULL
        ORDER BY version DESC LIMIT 1`,
     )
     .bind(auth.organizationId, planCode)
