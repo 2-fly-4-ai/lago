@@ -20,6 +20,12 @@ this document does not silently redefine that behavior.
 - Use `Decimal` for quantities, rates, proration, aggregation, and other intermediate arithmetic.
   It uses a `bigint` coefficient, a maximum scale of 100, and rounds exact halves away from zero.
   Do not use binary floating point for a monetary calculation.
+- Billable-metric expressions use the pinned Lago grammar through the bounded TypeScript parser;
+  never use JavaScript `eval` or `Function`. Limit expression length, tokens, nesting, and function
+  arguments. Evaluate before aggregation validation and replay hashing, overwrite the configured
+  metric field as Lago does, and persist/archive only the derived event. Batch evaluation remains
+  all-before-write. Property lookup must use own properties so expression names cannot traverse an
+  object prototype.
 - Snapshot quantity, unit amount, taxable base, tax rate, and computed amount on invoice lines or
   tax rows. Re-reading a mutable plan, charge, tax, coupon, or wallet must not change an issued
   invoice.

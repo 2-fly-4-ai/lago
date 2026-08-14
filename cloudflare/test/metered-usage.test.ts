@@ -345,12 +345,214 @@ describe("Lago-compatible metered usage", () => {
     });
   });
 
+  it("evaluates metric expressions before atomic single and batch ingestion", async () => {
+    const metric = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Expression tokens",
+          code: "expression_tokens",
+          aggregation_type: "sum_agg",
+          field_name: "result",
+          expression: "event.properties.left + event.properties.right",
+        },
+      },
+    });
+    expect(metric.status).toBe(200);
+    const metricBody = await metric.json<{ billable_metric: { lago_id: string } }>();
+    const metricReplay = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Expression tokens",
+          code: "expression_tokens",
+          aggregation_type: "sum_agg",
+          field_name: "result",
+          expression: "event.properties.left + event.properties.right",
+        },
+      },
+    });
+    await expect(metricReplay.json()).resolves.toMatchObject({
+      billable_metric: { lago_id: metricBody.billable_metric.lago_id },
+    });
+    const shownMetric = await api("/api/v1/billable_metrics/expression_tokens");
+    await expect(shownMetric.json()).resolves.toMatchObject({
+      billable_metric: { expression: "event.properties.left + event.properties.right" },
+    });
+    const charge = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metricBody.billable_metric.lago_id,
+          code: "expression-charge",
+          charge_model: "standard",
+          properties: { amount: "2" },
+        },
+      },
+    });
+    expect(charge.status).toBe(200);
+
+    const evaluated = await api("/api/v1/billable_metrics/evaluate_expression", {
+      method: "POST",
+      body: {
+        expression: "round(event.properties.units * 2, 1)",
+        event: { code: "preview", timestamp: 1786579200.9, properties: { units: "1.26" } },
+      },
+    });
+    expect(evaluated.status).toBe(200);
+    await expect(evaluated.json()).resolves.toEqual({ expression_result: { value: "2.5" } });
+    const evaluatedTimestamp = await api("/api/v1/billable_metrics/evaluate_expression", {
+      method: "POST",
+      body: { expression: "event.timestamp", event: { timestamp: 1786579200.9 } },
+    });
+    await expect(evaluatedTimestamp.json()).resolves.toEqual({
+      expression_result: { value: "1786579200.0" },
+    });
+
+    const singlePayload = {
+      event: {
+        transaction_id: "expression-single",
+        code: "expression_tokens",
+        external_subscription_id: "subscription-external",
+        timestamp: 1786579200,
+        properties: { left: "1.25", right: "2.75" },
+      },
+    };
+    const single = await api("/api/v1/events", { method: "POST", body: singlePayload });
+    expect(single.status).toBe(200);
+    await expect(single.json()).resolves.toMatchObject({
+      event: { properties: { left: "1.25", right: "2.75", result: "4.0" } },
+    });
+    const archivedSingle = await env.BILLING_DB.prepare(
+      `SELECT archive_key FROM usage_events WHERE transaction_id = 'expression-single'`,
+    ).first<{ archive_key: string }>();
+    expect(archivedSingle).not.toBeNull();
+    const archivedBody = await env.BILLING_ARTIFACTS.get(archivedSingle!.archive_key);
+    expect(archivedBody).not.toBeNull();
+    expect(JSON.parse(await archivedBody!.text())).toMatchObject({
+      event: { properties: { result: "4.0" } },
+    });
+    const replay = await api("/api/v1/events", { method: "POST", body: singlePayload });
+    expect(replay.status).toBe(200);
+
+    const failedSingle = await api("/api/v1/events", {
+      method: "POST",
+      body: {
+        event: {
+          transaction_id: "expression-single-invalid",
+          code: "expression_tokens",
+          external_subscription_id: "subscription-external",
+          timestamp: 1786579230,
+          properties: { left: "1" },
+        },
+      },
+    });
+    expect(failedSingle.status).toBe(422);
+    await expect(failedSingle.json()).resolves.toMatchObject({
+      code: "expression_evaluation_failed",
+      message: "Variable: right not found",
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT COUNT(*) AS total FROM usage_events WHERE transaction_id = 'expression-single-invalid'",
+      ).first(),
+    ).resolves.toEqual({ total: 0 });
+
+    const failedBatch = await api("/api/v1/events/batch", {
+      method: "POST",
+      body: {
+        events: [
+          {
+            transaction_id: "expression-batch-valid",
+            code: "expression_tokens",
+            external_subscription_id: "subscription-external",
+            timestamp: 1786579260,
+            properties: { left: "3", right: "4" },
+          },
+          {
+            transaction_id: "expression-batch-invalid",
+            code: "expression_tokens",
+            external_subscription_id: "subscription-external",
+            timestamp: 1786579320,
+            properties: { left: "3" },
+          },
+        ],
+      },
+    });
+    expect(failedBatch.status).toBe(422);
+    await expect(failedBatch.json()).resolves.toMatchObject({
+      code: "batch_validation_error",
+      error_details: {
+        "1": { code: "expression_evaluation_failed", message: "Variable: right not found" },
+      },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total FROM usage_events
+         WHERE transaction_id IN ('expression-batch-valid', 'expression-batch-invalid')`,
+      ).first(),
+    ).resolves.toEqual({ total: 0 });
+
+    const batch = await api("/api/v1/events/batch", {
+      method: "POST",
+      body: {
+        events: [
+          {
+            transaction_id: "expression-batch-valid",
+            code: "expression_tokens",
+            external_subscription_id: "subscription-external",
+            timestamp: 1786579260,
+            properties: { left: "3", right: "4" },
+          },
+        ],
+      },
+    });
+    expect(batch.status).toBe(200);
+    await expect(batch.json()).resolves.toMatchObject({
+      events: [{ properties: { result: "7.0" } }],
+    });
+    const usage = await api(
+      "/api/v1/customers/customer-external/current_usage?external_subscription_id=subscription-external",
+    );
+    const usageBody = await usage.json<{
+      customer_usage: {
+        charges_usage: Array<{
+          units: string;
+          amount_cents: number;
+          billable_metric: { code: string };
+        }>;
+      };
+    }>();
+    expect(
+      usageBody.customer_usage.charges_usage.find(
+        (item) => item.billable_metric.code === "expression_tokens",
+      ),
+    ).toMatchObject({
+      units: "11",
+      amount_cents: 22,
+    });
+
+    const invalidMetric = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Invalid expression",
+          code: "invalid_expression",
+          aggregation_type: "sum_agg",
+          field_name: "result",
+          expression: "1+",
+        },
+      },
+    });
+    expect(invalidMetric.status).toBe(422);
+    await expect(invalidMetric.json()).resolves.toMatchObject({ code: "invalid_expression" });
+  });
+
   it("rejects metric options the current usage engine cannot honor", async () => {
     for (const [suffix, unsupported] of [
       ["recurring", { recurring: true }],
       ["rounding", { rounding_function: "round", rounding_precision: 2 }],
       ["weighted", { weighted_interval: "seconds" }],
-      ["expression", { expression: "event.properties.tokens" }],
       ["filters", { filters: [{ key: "region", values: ["us"] }] }],
     ] as const) {
       const response = await api("/api/v1/billable_metrics", {

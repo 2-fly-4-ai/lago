@@ -8,6 +8,11 @@ import { rateCharge } from "../rating/charge-models";
 import { Decimal } from "../rating/decimal";
 import { aggregateUsage, type SupportedAggregationType } from "../usage/aggregation";
 import { parseChargeModel } from "../usage/charge-properties";
+import {
+  evaluateUsageExpression,
+  UsageExpressionError,
+  validateUsageExpression,
+} from "../usage/expression";
 
 type MetricRow = {
   id: string;
@@ -91,6 +96,7 @@ type EventContext = {
   metric_id: string;
   aggregation_type: string;
   field_name: string | null;
+  expression: string | null;
   accepts_target_wallet: number;
 };
 
@@ -134,6 +140,12 @@ export async function handleMeteredUsageRequest(
   }
   if (request.method === "GET" && url.pathname === "/api/v1/billable_metrics") {
     return listBillableMetrics(url, env.BILLING_DB, auth, requestId);
+  }
+  if (
+    request.method === "POST" &&
+    url.pathname === "/api/v1/billable_metrics/evaluate_expression"
+  ) {
+    return evaluateBillableMetricExpression(request, requestId);
   }
   const metricMatch = url.pathname.match(/^\/api\/v1\/billable_metrics\/([^/]+)$/);
   if (request.method === "GET" && metricMatch?.[1]) {
@@ -206,6 +218,47 @@ export async function handleMeteredUsageRequest(
   return null;
 }
 
+async function evaluateBillableMetricExpression(
+  request: Request,
+  requestId: string,
+): Promise<Response> {
+  const body = await parseJsonObject(request);
+  const expression = requiredString(body, "expression");
+  const rawEvent = body.event;
+  if (
+    rawEvent !== undefined &&
+    (!rawEvent || typeof rawEvent !== "object" || Array.isArray(rawEvent))
+  ) {
+    throw new ApiError(422, "validation_error", "event must be an object");
+  }
+  const event = (rawEvent ?? {}) as Record<string, unknown>;
+  const rawProperties = event.properties;
+  if (
+    rawProperties !== undefined &&
+    (!rawProperties || typeof rawProperties !== "object" || Array.isArray(rawProperties))
+  ) {
+    throw new ApiError(422, "validation_error", "event.properties must be an object");
+  }
+  const timestamp = event.timestamp ?? Date.now() / 1000;
+  if (typeof timestamp !== "string" && typeof timestamp !== "number") {
+    throw new ApiError(422, "invalid_event", "event.timestamp must be numeric");
+  }
+  const timestampSeconds = Number(timestamp);
+  if (!Number.isFinite(timestampSeconds)) {
+    throw new ApiError(422, "invalid_event", "event.timestamp must be numeric");
+  }
+  try {
+    const value = evaluateUsageExpression(expression, {
+      code: event.code === undefined ? "" : String(event.code),
+      timestamp: Math.trunc(timestampSeconds),
+      properties: (rawProperties ?? {}) as Record<string, unknown>,
+    });
+    return json({ expression_result: { value } }, { requestId });
+  } catch (error) {
+    throw expressionApiError(error);
+  }
+}
+
 async function createBillableMetric(
   request: Request,
   env: Env,
@@ -243,7 +296,7 @@ async function createBillableMetric(
        (id, organization_id, code, name, description, aggregation_type, field_name,
         recurring, rounding_function, rounding_precision, weighted_interval, expression,
         properties_json, version, active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, NULL, '{}', ?, 1, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, '{}', ?, 1, ?, ?)`,
         )
         .bind(
           identity.id,
@@ -253,6 +306,7 @@ async function createBillableMetric(
           normalized.description,
           normalized.aggregationType,
           normalized.fieldName,
+          normalized.expression,
           identity.version,
           now,
           now,
@@ -349,7 +403,9 @@ async function updateBillableMetric(
       : supportedMetricAggregation(input.aggregation_type);
   const nextFieldName =
     input.field_name === undefined ? metric.field_name : optionalString(input, "field_name");
-  validateMetricField(nextAggregation, nextFieldName);
+  const nextExpression =
+    input.expression === undefined ? metric.expression : optionalString(input, "expression");
+  validateMetricConfiguration(nextAggregation, nextFieldName, nextExpression);
   if (
     attached &&
     (nextCode !== metric.code ||
@@ -395,7 +451,8 @@ async function updateBillableMetric(
       metricMutationGuardStatement(env.BILLING_DB, requestId, auth.organizationId, metric, 1, now),
       env.BILLING_DB.prepare(
         `UPDATE billable_metrics SET code = ?, name = ?, description = ?,
-         aggregation_type = ?, field_name = ?, version = version + 1, updated_at = ?
+         aggregation_type = ?, field_name = ?, expression = ?, version = version + 1,
+         updated_at = ?
          WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?
            AND EXISTS (SELECT 1 FROM billable_metric_mutation_guards
                        WHERE request_id = ? AND billable_metric_id = ?)`,
@@ -405,6 +462,7 @@ async function updateBillableMetric(
         next.description,
         next.aggregationType,
         next.fieldName,
+        nextExpression,
         now,
         metric.id,
         auth.organizationId,
@@ -1122,6 +1180,7 @@ async function prepareBatchEvent(
       ? new ApiError(404, "subscription_not_found", "Subscription was not found")
       : new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
   }
+  input = applyMetricExpression(input, context);
   validateAggregationProperties(context.aggregation_type, context.field_name, input.properties);
   const normalized = normalizedEvent(input);
   const requestHash = await sha256Hex(stableJson(normalized));
@@ -1262,7 +1321,7 @@ async function createUsageEvent(
   requestId: string,
 ): Promise<Response> {
   const body = await parseJsonObject(request);
-  const input = normalizeEventInput(objectAt(body, "event"));
+  let input = normalizeEventInput(objectAt(body, "event"));
   const context = await findEventContext(env.BILLING_DB, auth.organizationId, input);
   if (!context) {
     const metric = await findMetric(env.BILLING_DB, auth.organizationId, input.code);
@@ -1270,6 +1329,7 @@ async function createUsageEvent(
       ? new ApiError(404, "subscription_not_found", "Subscription was not found")
       : new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
   }
+  input = applyMetricExpression(input, context);
   validateAggregationProperties(context.aggregation_type, context.field_name, input.properties);
 
   const normalized = normalizedEvent(input);
@@ -1613,7 +1673,7 @@ async function findEventContext(
   return database
     .prepare(
       `SELECT s.id AS subscription_id, s.customer_id, bm.id AS metric_id,
-              bm.aggregation_type, bm.field_name,
+              bm.aggregation_type, bm.field_name, bm.expression,
               EXISTS(SELECT 1 FROM charges charge
                      WHERE charge.plan_id = s.plan_id
                        AND charge.billable_metric_id = bm.id AND charge.active = 1
@@ -1646,6 +1706,33 @@ function normalizedEvent(input: EventInput): Record<string, unknown> {
     preciseTotalAmountMinor: input.preciseTotalAmountMinor,
     properties: input.properties,
   };
+}
+
+function applyMetricExpression(input: EventInput, context: EventContext): EventInput {
+  if (!context.expression) return input;
+  if (!context.field_name) {
+    throw new ApiError(500, "invalid_metric", "Expression metric field_name is missing");
+  }
+  try {
+    const value = evaluateUsageExpression(context.expression, {
+      code: input.code,
+      timestamp: Math.trunc(input.timestampMs / 1000),
+      properties: input.properties,
+    });
+    return {
+      ...input,
+      properties: { ...input.properties, [context.field_name]: value },
+    };
+  } catch (error) {
+    throw expressionApiError(error);
+  }
+}
+
+function expressionApiError(error: unknown): ApiError {
+  if (error instanceof UsageExpressionError) {
+    return new ApiError(422, error.code, error.message);
+  }
+  return new ApiError(422, "expression_evaluation_failed", "Expression could not be evaluated");
 }
 
 function normalizeEventInput(input: Record<string, unknown>): EventInput {
@@ -1969,6 +2056,7 @@ type NormalizedMetric = {
   description: string | null;
   aggregationType: SupportedAggregationType;
   fieldName: string | null;
+  expression: string | null;
 };
 
 function normalizeMetricInput(input: Record<string, unknown>): NormalizedMetric {
@@ -1981,13 +2069,15 @@ function normalizeMetricInput(input: Record<string, unknown>): NormalizedMetric 
     );
   const aggregationType = supportedMetricAggregation(input.aggregation_type);
   const fieldName = optionalString(input, "field_name");
-  validateMetricField(aggregationType, fieldName);
+  const expression = optionalString(input, "expression");
+  validateMetricConfiguration(aggregationType, fieldName, expression);
   return {
     code: requiredString(input, "code"),
     name: requiredString(input, "name"),
     description: optionalString(input, "description"),
     aggregationType,
     fieldName,
+    expression,
   };
 }
 
@@ -2001,12 +2091,22 @@ function supportedMetricAggregation(value: unknown): SupportedAggregationType {
   return value as SupportedAggregationType;
 }
 
-function validateMetricField(
+function validateMetricConfiguration(
   aggregationType: SupportedAggregationType,
   fieldName: string | null,
+  expression: string | null,
 ): void {
   if (aggregationType !== "count_agg" && !fieldName)
     throw new ApiError(422, "validation_error", "field_name is required");
+  if (expression && !fieldName)
+    throw new ApiError(422, "validation_error", "field_name is required for expression");
+  if (expression) {
+    try {
+      validateUsageExpression(expression);
+    } catch {
+      throw new ApiError(422, "invalid_expression", "expression is invalid");
+    }
+  }
 }
 
 function rejectUnsupportedMetricFeatures(input: Record<string, unknown>): void {
@@ -2015,7 +2115,6 @@ function rejectUnsupportedMetricFeatures(input: Record<string, unknown>): void {
     "rounding_function",
     "rounding_precision",
     "weighted_interval",
-    "expression",
   ]) {
     const value = input[field];
     if (value === undefined || value === null || value === false) continue;
@@ -2057,7 +2156,7 @@ function sameMetric(metric: MetricRow, normalized: NormalizedMetric): boolean {
     metric.rounding_function === null &&
     metric.rounding_precision === null &&
     metric.weighted_interval === null &&
-    metric.expression === null
+    metric.expression === normalized.expression
   );
 }
 

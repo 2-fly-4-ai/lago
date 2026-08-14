@@ -28,6 +28,10 @@ export class Decimal {
     return new Decimal(left - right, scale).normalize();
   }
 
+  negate(): Decimal {
+    return new Decimal(-this.coefficient, this.scale);
+  }
+
   multiply(other: Decimal): Decimal {
     return new Decimal(this.coefficient * other.coefficient, this.scale + other.scale).normalize();
   }
@@ -60,6 +64,34 @@ export class Decimal {
   round(): bigint {
     if (this.scale === 0) return this.coefficient;
     return divideRoundedHalfAwayFromZero(this.coefficient, powerOfTen(this.scale));
+  }
+
+  truncate(): bigint {
+    return this.scale === 0 ? this.coefficient : this.coefficient / powerOfTen(this.scale);
+  }
+
+  roundToScale(targetScale: number, mode: "half_up" | "ceiling" | "floor"): Decimal {
+    if (!Number.isSafeInteger(targetScale) || targetScale < -100 || targetScale > 100) {
+      throw new Error("invalid_decimal_scale");
+    }
+    const shift = this.scale - targetScale;
+    if (shift <= 0) return this;
+    const divisor = powerOfTen(shift);
+    let quotient = this.coefficient / divisor;
+    const remainder = this.coefficient % divisor;
+    if (remainder !== 0n) {
+      if (mode === "half_up") {
+        const absoluteRemainder = remainder < 0n ? -remainder : remainder;
+        if (absoluteRemainder * 2n >= divisor) quotient += this.coefficient < 0n ? -1n : 1n;
+      } else if (mode === "ceiling" && this.coefficient > 0n) {
+        quotient += 1n;
+      } else if (mode === "floor" && this.coefficient < 0n) {
+        quotient -= 1n;
+      }
+    }
+    return targetScale >= 0
+      ? new Decimal(quotient, targetScale).normalize()
+      : new Decimal(quotient * powerOfTen(-targetScale), 0).normalize();
   }
 
   compare(other: Decimal): number {

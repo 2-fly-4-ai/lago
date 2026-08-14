@@ -493,10 +493,12 @@ Acceptance:
       events before writing, caps requests at 100, rejects duplicate/existing transaction IDs,
       stores deterministic archives, and commits all event/outbox rows atomically.
 - [x] Port count, sum, maximum, latest, and add/remove unique-count aggregations plus six core
-      charge models; weighted/custom aggregation, expressions, filters, rounding configuration,
+      charge models; weighted/custom aggregation, filters, rounding configuration,
       and advanced adjustments remain pending.
 - [ ] Replace the Ruby subprocess and Go/Rust native library with a restricted TypeScript parser or
-      a supported precompiled Wasm module.
+      a supported precompiled Wasm module. The pinned `lago-expression` Rust extension is now
+      replaced by a bounded TypeScript parser/evaluator with no dynamic evaluation; the separately
+      configurable Ruby custom-aggregation program remains explicitly unsupported.
 - [ ] Add usage projections and reconciliation against invoice lines. A synchronous
       Lago-compatible current-usage projection now covers bounded billing windows.
 - [ ] Select D1, Durable Object SQL, R2/Pipelines, or Analytics Engine by verified query and volume
