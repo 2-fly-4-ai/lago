@@ -325,9 +325,11 @@ Acceptance:
       Standalone fixed-charge list/show routes expose the same ledger; standalone create/update/
       delete remain guarded because they require per-subscription unit-event and rebilling flows.
       Plan creation now emits transactional versioned outbox events, and scalar plan updates
-      support the Rails-safe mutable subset for attached plans with optimistic concurrency.
+      support the Rails-safe mutable subset for attached plans with optimistic concurrency. The
+      base plan’s `pay_in_advance` mode is accepted at creation and can change only before a
+      subscription attaches to that plan.
       Charge/fixed-charge/commitment/tax/threshold graph replacement, deletion, one-time plans,
-      trials, pay-in-advance, and monthly split billing remain explicit rejections.
+      trials, and monthly split billing remain explicit rejections.
 - [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
       leased, idempotent recurring period-close path now produces finalized invoices at zero grace
       or non-consuming preview drafts at positive grace. Usage events flag the owning draft; manual
@@ -352,11 +354,12 @@ Acceptance:
       flag existing initial and renewal drafts without changing their issuing-date anchor. D1
       triggers also flag the affected drafts after supported subscription, plan/rating, applied
       coupon, tax, credit-note, wallet, and usage mutations.
-      Immediate subscription creation atomically records `subscription.created` and the initial
-      invoice event with the monetary ledger. A normalized future UTC `subscription_at` instead
-      persists a replay-safe pending subscription without an invoice; the five-minute activation
-      owner atomically starts it, seeds its billing period, creates the same zero-grace or
-      grace-period initial invoice, and emits `subscription.started`. Pending subscriptions can be
+      Immediate subscription creation atomically records `subscription.created`; pay-in-advance
+      plans create the initial invoice event and monetary ledger in that same batch, while
+      in-arrears plans correctly create no initial invoice. A normalized future UTC
+      `subscription_at` instead persists a replay-safe pending subscription without an invoice; the
+      five-minute activation owner atomically starts it, seeds its billing period, applies the same
+      initial billing-mode rule, and emits `subscription.started`. Pending subscriptions can be
       renamed and rescheduled to another future instant with the same optimistic version/outbox
       guards, or canceled idempotently without creating an invoice; canceled rows cannot later be
       activated. Active/past-due name updates emit the same versioned `subscription.updated`.
@@ -975,3 +978,15 @@ resource and mutation described.
   unauthenticated pending update returned `401`, and aggregate-only verification confirmed zero
   organizations, subscriptions, and invoices plus 28 Cron audits. No route, secret, seeded billing
   data, or disabled external flag changed.
+- 2026-08-14: Corrected initial subscription billing ownership to honor the plan’s persisted
+  `pay_in_advance` mode. Plan create/update now accepts the base-plan flag before attachment;
+  immediate and scheduled in-arrears starts create no initial invoice, while pay-in-advance starts
+  retain the atomic finalized/draft invoice, credit, tax, wallet, and frozen Store behavior. All 82
+  Workers-runtime tests pass across 22 files; formatting, lint, generated bindings, TypeScript,
+  inventory, and the dry-run bundle are green at 484.06 KiB (87.18 KiB gzip). No migration is
+  required because `plans.pay_in_advance` already exists in the applied schema.
+- 2026-08-14: Confirmed no remote migration was pending and deployed initial billing-mode ownership
+  as isolated Worker version `b793bf99-d555-46a6-86ac-d01120d24ee1`. Remote health/readiness
+  returned `200`, unauthenticated plan creation returned `401`, and aggregate-only verification
+  confirmed zero organizations, plans, subscriptions, and invoices plus 30 Cron audits. No route,
+  secret, seeded billing data, or disabled external flag changed.
