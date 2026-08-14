@@ -792,3 +792,10 @@ resource and mutation described.
   recorded as partial runs instead of being silently skipped. All 68 Workers-runtime tests pass
   across 21 files; all 19 migrations replay from an empty D1 database, generated bindings and the
   cross-repository inventory are current, and the dry-run bundle is 415.26 KiB.
+- 2026-08-14: Applied only migration `0019_schedule_runs.sql` to the isolated development D1 and
+  deployed Worker version `495c9174-bc2f-47b7-a907-48c4a403927a` with the deterministic
+  `*/5 * * * *` trigger. Follow-up migration inventory was empty; remote health/readiness returned
+  `200`, unauthenticated invoice access returned `401`, and direct aggregate-only counts confirmed
+  zero organizations and zero schedule runs before the first new trigger. The stack remains
+  unseeded with no production route or provider secret, and payment, provider-read, and
+  outbound-webhook flags remain disabled.
