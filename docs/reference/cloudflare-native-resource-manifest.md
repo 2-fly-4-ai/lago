@@ -1,6 +1,6 @@
 # Cloudflare-Native Lago Resource Manifest
 
-Last verified: 2026-08-14
+Last verified: 2026-08-15
 
 This manifest covers the isolated, non-production stack created for the Cloudflare-native rewrite.
 It is not a production inventory and contains no secrets or customer data.
@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `943b9159-4f62-4f52-9061-a3424f578e0c`
+- Latest verified version: `a0c0ab74-b4bc-4493-94af-b8128d0535f9`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -34,7 +34,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0034_subscription_payment_policy.sql`.
+`0037_wallet_invoice_custom_sections.sql`.
 
 ## Verified behavior
 
@@ -288,6 +288,17 @@ Applied D1 migrations: `0001_foundation.sql` through
   catalog sections, customer/default links, snapshots, and outbox events plus 113 schedule audits.
   All three external-action flags remain disabled, with no route, secret, provider action, or
   billing/catalog/default data added.
+- The wallet invoice custom-section deployment applied only
+  `0037_wallet_invoice_custom_sections.sql`; follow-up inventory reported no pending migrations.
+  Schema verification found 37 migrations, seven section tables, 25 related triggers including
+  all four wallet guards, both wallet skip columns, and no foreign-key violations. Isolated Worker
+  version `a0c0ab74-b4bc-4493-94af-b8128d0535f9` retained only the existing workers.dev URL,
+  `*/5` Cron, D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow bindings.
+  Health/readiness returned `200`/`200`; unauthenticated section-catalog and wallet access both
+  returned `401`; aggregate-only verification found zero organizations, customers, invoices,
+  catalog sections, wallets, wallet transactions, either wallet-section relationship, and outbox
+  events plus 118 schedule audits. All three external-action flags remain disabled, with no route,
+  secret, provider action, customer data, or billing/catalog/wallet data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
