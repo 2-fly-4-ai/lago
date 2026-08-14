@@ -48,9 +48,11 @@ this document does not silently redefine that behavior.
   exact `Decimal` division before minor-unit rounding. Usage remains half-open and is bounded by the
   start of the next UTC day, capped at the original period end. This is not tenant-local timezone
   parity. Supported non-prorated, pay-in-arrears fixed charges remain full on both immediate and
-  scheduled termination, matching Lago's explicit non-prorated contract. A persisted `ending_at`
-  uses this exact UTC subset and is executed by the hourly `:05` owner; customer-local dates require
-  separate timezone evidence.
+  scheduled termination, matching Lago's explicit non-prorated contract. In-arrears minimum-
+  commitment targets use the same inclusive UTC coefficient, round to minor units before fee
+  subtraction, and cover only the unsplit single-invoice window admitted by the catalog. A
+  persisted `ending_at` uses this exact UTC subset and is executed by the hourly `:05` owner;
+  customer-local dates require separate timezone evidence.
 - Tenant-local time zones, daylight-saving behavior, and Rails time-zone parity are not implemented
   unless a feature's executable evidence says otherwise. A port that depends on local civil time
   must add the time-zone field, transition tests, and migration notes before it can be called parity.
@@ -146,17 +148,17 @@ Required evidence for a new aggregate or a boundary change:
   credit notes, and wallet lots only while finalizing. Supported subscription, plan/rating, coupon,
   tax, credit-note, wallet, and usage mutations flag affected drafts through D1 triggers.
   Explicit skip-invoice/skip-credit termination keeps an existing draft refreshable from its
-  immutable context. Final termination invoices currently cover only zero-grace in-arrears plans
-  without minimum commitments, using explicit UTC civil-day semantics and full supported
-  non-prorated fixed charges. Those plans may also persist a future UTC `ending_at`, which the
-  hourly owner executes before billing close.
+  immutable context. Final termination invoices currently cover zero-grace in-arrears plans using
+  explicit UTC civil-day semantics, full supported non-prorated fixed charges, and a prorated
+  minimum-commitment target for the catalog's unsplit billing window. Those plans may also persist a
+  future UTC `ending_at`, which the hourly owner executes before billing close.
   Credit-only pay-in-advance termination may issue an unused-period balance against a finalized base
   line only when the source invoice has no coupon, tax, wallet, or prior credit-note allocation.
   A separate pay-in-advance mode may finalize only the bounded in-arrears usage invoice when credit
   creation is explicitly skipped; it never repeats the prepaid base line. Positive-grace
   termination drafts, tenant-local termination dates, prorated or pay-in-advance fixed charges,
-  commitment proration, the atomic combined invoice-and-credit command, allocated-source
-  adjustments, refunds, and offsets still need explicit lifecycle rules.
+  split-window or pay-in-advance commitment reconciliation, the atomic combined invoice-and-credit
+  command, allocated-source adjustments, refunds, and offsets still need explicit lifecycle rules.
 - A base subscription creates an initial invoice only when its plan snapshots
   `pay_in_advance = 1`; in-arrears starts seed the billing period without an invoice. Recurring
   pay-in-advance base lines snapshot the next period, while in-arrears base lines, usage, fixed

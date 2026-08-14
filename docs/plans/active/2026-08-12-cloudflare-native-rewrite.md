@@ -1105,3 +1105,16 @@ resource and mutation described.
   aggregate-only verification confirmed zero organizations, subscriptions, invoices, invoice
   lines, fixed charges, and minimum commitments plus 44 Cron audits. No route, secret, seeded
   billing data, or disabled external flag changed.
+- 2026-08-14: Added in-arrears minimum-commitment reconciliation to immediate and scheduled final
+  termination invoices. The catalog already rejects usage split billing and fixed-charge split
+  billing for plans carrying fixed fees, so the supported commitment window has exactly one final
+  invoice. The Worker applies the same inclusive UTC service-day coefficient as the base line,
+  rounds the commitment target before subtracting rounded and precise subscription/usage/fixed
+  fees, and records the target and coefficient in immutable line metadata. Exact evidence turns a
+  6,000-cent threshold into 400 cents for two of 30 days and writes the remaining 53-cent rounded /
+  53.333333333333333333-cent precise true-up after 346.666666666666666667 cents of fees. Scheduled
+  execution writes one commitment line exactly once. Pay-in-advance commitments remain guarded
+  before command reservation for every termination mode because their previous-invoice ownership
+  differs. All 85 tests pass across 22 files; formatting, strict lint, inventory, generated
+  bindings, TypeScript, and the dry-run bundle are green at 516.31 KiB (92.03 KiB gzip). No
+  migration is required.
