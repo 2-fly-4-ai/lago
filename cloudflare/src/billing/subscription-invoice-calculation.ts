@@ -103,6 +103,40 @@ export type InvoiceAllocationCalculation = Omit<
   "lines" | "nextPeriodEnd"
 >;
 
+export type SubscriptionInvoiceReason =
+  | "subscription_starting"
+  | "subscription_periodic"
+  | "subscription_terminating"
+  | "upgrading";
+
+export function invoiceSubscriptionStatement(
+  database: D1Database,
+  invoiceId: string,
+  subscriptionId: string,
+  organizationId: string,
+  invoicingReason: SubscriptionInvoiceReason,
+  periodStart: string | null,
+  periodEnd: string | null,
+  createdAt: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO invoice_subscriptions
+       (invoice_id, subscription_id, organization_id, invoicing_reason,
+        period_start, period_end, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      invoiceId,
+      subscriptionId,
+      organizationId,
+      invoicingReason,
+      periodStart,
+      periodEnd,
+      createdAt,
+    );
+}
+
 export type TerminationBillingWindow = {
   billableDays: number;
   fullPeriodDays: number;

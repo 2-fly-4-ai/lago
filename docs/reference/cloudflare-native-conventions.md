@@ -186,7 +186,8 @@ Required evidence for a new aggregate or a boundary change:
   remain guarded. Pay-in-advance scheduled endings require stored skip-credit; eligible manual
   unused-period crediting remains separate.
   Credit-only pay-in-advance termination may issue an unused-period balance against a finalized base
-  line only when the source invoice has no coupon, tax, wallet, or prior credit-note allocation.
+  line only when the source invoice has no coupon, tax, or wallet allocation. A prior invoice-level
+  credit-note application does not reduce a distinct plan line's creditable amount.
   The default combined mode creates that unused-period note before finalizing bounded in-arrears
   usage, applies the new credit before wallet lots, never repeats the prepaid base line, and commits
   both ledgers plus the subscription transition and ordered outbox evidence in one D1 batch. A
@@ -194,8 +195,11 @@ Required evidence for a new aggregate or a boundary change:
   prepaid source invoice has a separate non-allocatable state. Source refresh preserves the original
   unused/full-period ratio and item identity, source finalization makes the note allocatable and
   emits its event after the invoice event, and a guard prevents the termination draft from
-  finalizing first. The hourly finalizer orders initial/renewal source drafts ahead of termination
-  drafts. Coupon, tax, wallet, or finalized-credit adjustments on that still-draft source,
+  finalizing first. The hourly finalizer prioritizes sources, defers blocked dependents, and repeats
+  until a source chain is drained or no dependency can progress. The same ownership graph supports
+  successive prepaid upgrades, including a combined invoice whose header points at an earlier
+  generation; credit repricing matches the exact source plan line. Coupon, tax, or wallet
+  adjustments on that still-draft source,
   tenant-local termination dates, prorated or pay-in-advance fixed charges, split-window or
   pay-in-advance commitment reconciliation, allocated-source adjustments, refunds, and offsets
   still need explicit lifecycle rules.

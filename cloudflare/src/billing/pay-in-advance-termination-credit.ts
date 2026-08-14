@@ -59,6 +59,7 @@ type DraftTerminationCreditRow = {
   source_invoice_id: string;
   item_id: string;
   item_created_at: string;
+  line_source_id: string;
   currency: string;
   version: number;
   unused_days: number;
@@ -165,8 +166,12 @@ export async function preparePayInAdvanceTerminationCredit(
              SELECT COALESCE(MAX(sequential_id), 0) + 1 AS next_id
              FROM credit_notes WHERE invoice_id = ?
            ) sequence
-           JOIN subscriptions s ON s.id = i.subscription_id
-           WHERE i.id = ? AND i.status IN ('draft', 'finalized') AND s.id = ?
+           JOIN subscriptions s ON s.id = ?
+           WHERE i.id = ? AND i.status IN ('draft', 'finalized')
+             AND (i.subscription_id = s.id OR EXISTS (
+               SELECT 1 FROM invoice_subscriptions ins
+               WHERE ins.invoice_id = i.id AND ins.subscription_id = s.id
+             ))
              AND s.organization_id = ? AND s.version = ? AND s.status IN ('active', 'past_due')`,
         )
         .bind(
@@ -184,8 +189,8 @@ export async function preparePayInAdvanceTerminationCredit(
           terminatedAt,
           allocationState,
           source.invoice_id,
-          source.invoice_id,
           subscriptionId,
+          source.invoice_id,
           source.organization_id,
           expectedVersion,
         ),
@@ -258,7 +263,8 @@ export async function prepareDraftTerminationCreditChanges(
   const rows = await database
     .prepare(
       `SELECT cn.id, cn.organization_id, tc.subscription_id, tc.source_invoice_id,
-              cni.id AS item_id, cni.created_at AS item_created_at, cn.currency, cn.version,
+              cni.id AS item_id, cni.created_at AS item_created_at,
+              source_line.source_id AS line_source_id, cn.currency, cn.version,
               tc.unused_days, tc.full_period_days, tc.correlation_id,
               COALESCE((
                 SELECT SUM(other_item.amount_minor)
@@ -270,6 +276,7 @@ export async function prepareDraftTerminationCreditChanges(
        FROM termination_credit_note_contexts tc
        JOIN credit_notes cn ON cn.id = tc.credit_note_id
        JOIN credit_note_items cni ON cni.credit_note_id = cn.id
+       JOIN invoice_lines source_line ON source_line.id = cni.invoice_line_id
        WHERE tc.source_invoice_id = ? AND cn.allocation_state = 'draft'
        ORDER BY cn.created_at, cn.id`,
     )
@@ -286,17 +293,16 @@ export async function prepareDraftTerminationCreditChanges(
   if (
     calculation.couponsMinor !== 0 ||
     calculation.taxMinor !== 0 ||
-    calculation.creditNotesMinor !== 0 ||
     calculation.prepaidCreditMinor !== 0
   ) {
     throw new Error("unsupported_draft_termination_credit_adjustment");
   }
-  const sourceLine = requireSubscriptionLine(calculation.lines);
   const beforeLineReplacement: D1PreparedStatement[] = [];
   const afterLineReplacement: D1PreparedStatement[] = [];
   const eventStatements: D1PreparedStatement[] = [];
   const events: DomainEvent[] = [];
   for (const row of rows.results) {
+    const sourceLine = requireSubscriptionLine(calculation.lines, row.line_source_id);
     const precise = Decimal.parse(sourceLine.precise)
       .multiply(Decimal.parse(row.unused_days))
       .divideByInteger(BigInt(row.full_period_days));
@@ -491,13 +497,18 @@ async function findCreditSource(
                 AS credited_minor
        FROM subscriptions s
        JOIN plans p ON p.id = s.plan_id
-       JOIN invoices i ON i.subscription_id = s.id
+       JOIN invoices i ON (
+         i.subscription_id = s.id OR EXISTS (
+           SELECT 1 FROM invoice_subscriptions ins
+           WHERE ins.invoice_id = i.id AND ins.subscription_id = s.id
+         )
+       )
        JOIN invoice_lines il ON il.invoice_id = i.id AND il.line_type = 'subscription'
+         AND il.source_type = 'plan' AND il.source_id = s.plan_id
        LEFT JOIN subscription_invoice_contexts sic ON sic.invoice_id = i.id
        WHERE s.id = ? AND s.version = ? AND s.status IN ('active', 'past_due')
          AND p.pay_in_advance = 1 AND i.status IN ('draft', 'finalized')
          AND i.coupons_minor = 0 AND i.tax_minor = 0 AND i.prepaid_credit_minor = 0
-         AND i.credit_notes_minor = 0
          AND (
            (sic.context_type = 'initial' AND sic.period_start = s.current_period_start
              AND sic.period_end = s.current_period_end)
@@ -511,8 +522,13 @@ async function findCreditSource(
     .first<CreditSource>();
 }
 
-function requireSubscriptionLine(lines: SubscriptionInvoiceLine[]): SubscriptionInvoiceLine {
-  const line = lines.find((candidate) => candidate.lineType === "subscription");
+function requireSubscriptionLine(
+  lines: SubscriptionInvoiceLine[],
+  sourceId: string,
+): SubscriptionInvoiceLine {
+  const line = lines.find(
+    (candidate) => candidate.lineType === "subscription" && candidate.sourceId === sourceId,
+  );
   if (!line) throw new Error("draft_termination_credit_source_line_not_found");
   return line;
 }

@@ -9,6 +9,7 @@ import { paymentDueDate } from "./payment-terms";
 import { followingPeriodEnd, localDateString } from "./periods";
 import {
   calculateInitialSubscriptionInvoice,
+  invoiceSubscriptionStatement,
   type BillableSubscription,
   subscriptionInvoiceLineStatements,
 } from "./subscription-invoice-calculation";
@@ -187,6 +188,16 @@ async function billEndedTrialSubscription(
       invoiceId,
       subscription.organization_id,
       subscription.id,
+      trialEndAt,
+      calculationPeriodEnd,
+      billedAt,
+    ),
+    invoiceSubscriptionStatement(
+      env.BILLING_DB,
+      invoiceId,
+      subscription.id,
+      subscription.organization_id,
+      "subscription_starting",
       trialEndAt,
       calculationPeriodEnd,
       billedAt,

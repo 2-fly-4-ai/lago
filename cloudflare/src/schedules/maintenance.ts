@@ -199,16 +199,53 @@ export async function finalizeDueInvoices(
     `SELECT i.id FROM invoices i WHERE i.status = 'draft'
        AND COALESCE(expected_finalization_date, issuing_date) <= ?
      ORDER BY COALESCE(expected_finalization_date, issuing_date),
-              CASE (SELECT context_type FROM subscription_invoice_contexts sic
-                    WHERE sic.invoice_id = i.id)
-                WHEN 'initial' THEN 0 WHEN 'termination' THEN 2 ELSE 1 END,
+              CASE
+                WHEN EXISTS (
+                  SELECT 1 FROM termination_credit_note_contexts tc
+                  JOIN credit_notes cn ON cn.id = tc.credit_note_id
+                  WHERE tc.source_invoice_id = i.id AND cn.allocation_state = 'draft'
+                ) THEN 0
+                WHEN EXISTS (
+                  SELECT 1 FROM plan_change_invoice_contexts pc
+                  JOIN termination_credit_note_contexts tc
+                    ON tc.subscription_id = pc.previous_subscription_id
+                  JOIN credit_notes cn ON cn.id = tc.credit_note_id
+                  WHERE pc.invoice_id = i.id AND cn.allocation_state = 'draft'
+                ) OR EXISTS (
+                  SELECT 1 FROM subscription_invoice_contexts sic
+                  JOIN termination_credit_note_contexts tc
+                    ON tc.subscription_id = sic.subscription_id
+                  JOIN credit_notes cn ON cn.id = tc.credit_note_id
+                  WHERE sic.invoice_id = i.id AND sic.context_type = 'termination'
+                    AND cn.allocation_state = 'draft'
+                ) THEN 2
+                ELSE 1
+              END,
               i.id LIMIT 100`,
   )
     .bind(cutoffDate)
     .all<{ id: string }>();
   let finalized = 0;
-  for (const row of rows.results) {
-    if (await finalizeInvoice(env, row.id, null, cutoff, correlationId)) finalized += 1;
+  let pending = [...rows.results];
+  while (pending.length > 0) {
+    const deferred: typeof pending = [];
+    let progressed = false;
+    for (const row of pending) {
+      try {
+        if (await finalizeInvoice(env, row.id, null, cutoff, correlationId)) {
+          finalized += 1;
+          progressed = true;
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message === "termination_credit_note_not_finalized") {
+          deferred.push(row);
+          continue;
+        }
+        throw error;
+      }
+    }
+    if (!progressed) break;
+    pending = deferred;
   }
   return finalized;
 }

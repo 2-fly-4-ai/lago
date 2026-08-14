@@ -2,6 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
 import { closeBillingPeriod } from "../src/billing/close-period";
+import { finalizeDueInvoices } from "../src/schedules/maintenance";
 
 const apiKey = "subscription-plan-change-key";
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
@@ -29,6 +30,7 @@ beforeEach(async () => {
     ...[
       ["plan-change-base", "plan-change-base", 1200],
       ["plan-change-upgrade", "plan-change-upgrade", 2400],
+      ["plan-change-upgrade-two", "plan-change-upgrade-two", 3600],
       ["plan-change-downgrade", "plan-change-downgrade", 600],
     ].map(([id, code, amount]) =>
       env.BILLING_DB.prepare(
@@ -282,6 +284,208 @@ describe("subscription plan generations", () => {
     expect(state?.owners).toBe(2);
     expect(state?.credit_notes_minor).toBeGreaterThan(0);
     expect(state?.total_due_minor).toBe(state!.subtotal_minor - state!.credit_notes_minor);
+  });
+
+  it("finalizes a draft prepaid source before applying its upgrade credit", async () => {
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE plans SET pay_in_advance = 1
+         WHERE id IN ('plan-change-base', 'plan-change-upgrade')`,
+      ),
+      env.BILLING_DB.prepare(
+        "UPDATE customers SET invoice_grace_period = 2 WHERE id = 'customer-plan-change'",
+      ),
+    ]);
+    const created = await createSubscription(
+      "subscription-upgrade-prepaid-draft",
+      "plan-change-base",
+    );
+    const createdBody = await created.json<{ subscription: { lago_id: string } }>();
+    const upgraded = await createSubscription(
+      "subscription-upgrade-prepaid-draft",
+      "plan-change-upgrade",
+    );
+    expect(upgraded.status).toBe(200);
+
+    const invoices = await env.BILLING_DB.prepare(
+      `SELECT
+         (SELECT sic.invoice_id FROM subscription_invoice_contexts sic
+          WHERE sic.subscription_id = ? AND sic.context_type = 'initial') AS source_id,
+         (SELECT pc.invoice_id FROM plan_change_invoice_contexts pc
+          WHERE pc.previous_subscription_id = ?) AS upgrade_id`,
+    )
+      .bind(createdBody.subscription.lago_id, createdBody.subscription.lago_id)
+      .first<{ source_id: string; upgrade_id: string }>();
+    expect(invoices?.source_id).toBeTruthy();
+    expect(invoices?.upgrade_id).toBeTruthy();
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT cn.allocation_state,
+                (SELECT COUNT(*) FROM invoice_subscriptions ins
+                 WHERE ins.invoice_id = ?) AS source_owners,
+                (SELECT COUNT(*) FROM invoice_subscriptions ins
+                 WHERE ins.invoice_id = ?) AS upgrade_owners
+         FROM termination_credit_note_contexts tc
+         JOIN credit_notes cn ON cn.id = tc.credit_note_id
+         WHERE tc.subscription_id = ?`,
+      )
+        .bind(invoices!.source_id, invoices!.upgrade_id, createdBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({ allocation_state: "draft", source_owners: 1, upgrade_owners: 2 });
+
+    const premature = await api(`/api/v1/invoices/${invoices!.upgrade_id}/finalize`, "PUT");
+    expect(premature.status).toBe(422);
+    await expect(premature.json()).resolves.toMatchObject({
+      code: "termination_credit_note_not_finalized",
+    });
+    expect((await api(`/api/v1/invoices/${invoices!.source_id}/finalize`, "PUT")).status).toBe(200);
+    await env.BILLING_DB.prepare(
+      `CREATE TRIGGER abort_upgrade_credit_application
+       BEFORE INSERT ON credit_note_applications
+       WHEN NEW.invoice_id = '${invoices!.upgrade_id}'
+       BEGIN SELECT RAISE(ABORT, 'synthetic_upgrade_credit_failure'); END`,
+    ).run();
+    const rolledBack = await api(`/api/v1/invoices/${invoices!.upgrade_id}/finalize`, "PUT");
+    expect(rolledBack.status).toBe(500);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT i.status, cn.credit_status, cn.allocation_state,
+                (SELECT COUNT(*) FROM credit_note_applications cna
+                 WHERE cna.invoice_id = i.id) AS applications
+         FROM invoices i
+         JOIN termination_credit_note_contexts tc ON tc.subscription_id = ?
+         JOIN credit_notes cn ON cn.id = tc.credit_note_id
+         WHERE i.id = ?`,
+      )
+        .bind(createdBody.subscription.lago_id, invoices!.upgrade_id)
+        .first(),
+    ).resolves.toEqual({
+      status: "draft",
+      credit_status: "available",
+      allocation_state: "finalized",
+      applications: 0,
+    });
+    await env.BILLING_DB.prepare("DROP TRIGGER abort_upgrade_credit_application").run();
+    const finalized = await api(`/api/v1/invoices/${invoices!.upgrade_id}/finalize`, "PUT");
+    expect(finalized.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT i.status, i.subtotal_minor, i.credit_notes_minor, i.total_due_minor,
+                cn.allocation_state,
+                (SELECT COUNT(*) FROM credit_note_applications cna
+                 WHERE cna.invoice_id = i.id) AS applications,
+                (SELECT COUNT(*) FROM outbox_events o
+                 WHERE o.aggregate_id = cn.id AND o.event_type = 'credit_note.created') AS events
+         FROM invoices i
+         JOIN termination_credit_note_contexts tc ON tc.subscription_id = ?
+         JOIN credit_notes cn ON cn.id = tc.credit_note_id
+         WHERE i.id = ?`,
+      )
+        .bind(createdBody.subscription.lago_id, invoices!.upgrade_id)
+        .first<{
+          status: string;
+          subtotal_minor: number;
+          credit_notes_minor: number;
+          total_due_minor: number;
+          allocation_state: string;
+          applications: number;
+          events: number;
+        }>(),
+    ).resolves.toMatchObject({
+      status: "finalized",
+      allocation_state: "finalized",
+      applications: 1,
+      events: 1,
+    });
+    const totals = await env.BILLING_DB.prepare(
+      "SELECT subtotal_minor, credit_notes_minor, total_due_minor FROM invoices WHERE id = ?",
+    )
+      .bind(invoices!.upgrade_id)
+      .first<{ subtotal_minor: number; credit_notes_minor: number; total_due_minor: number }>();
+    expect(totals!.credit_notes_minor).toBeGreaterThan(0);
+    expect(totals!.total_due_minor).toBe(totals!.subtotal_minor - totals!.credit_notes_minor);
+  });
+
+  it("uses the ownership graph to credit and finalize a second upgrade", async () => {
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE plans SET pay_in_advance = CASE WHEN id = 'plan-change-base' THEN 0 ELSE 1 END
+         WHERE id IN ('plan-change-base', 'plan-change-upgrade', 'plan-change-upgrade-two')`,
+      ),
+      env.BILLING_DB.prepare(
+        "UPDATE customers SET invoice_grace_period = 2 WHERE id = 'customer-plan-change'",
+      ),
+    ]);
+    expect(
+      (await createSubscription("subscription-upgrade-chain", "plan-change-base")).status,
+    ).toBe(200);
+    const firstUpgrade = await createSubscription(
+      "subscription-upgrade-chain",
+      "plan-change-upgrade",
+    );
+    const firstBody = await firstUpgrade.json<{ subscription: { lago_id: string } }>();
+    expect(firstUpgrade.status).toBe(200);
+    const secondUpgrade = await createSubscription(
+      "subscription-upgrade-chain",
+      "plan-change-upgrade-two",
+    );
+    expect(secondUpgrade.status).toBe(200);
+
+    const pair = await env.BILLING_DB.prepare(
+      `SELECT source.invoice_id AS source_id, dependent.invoice_id AS dependent_id
+       FROM plan_change_invoice_contexts source
+       JOIN plan_change_invoice_contexts dependent
+         ON dependent.previous_subscription_id = source.next_subscription_id
+       WHERE source.next_subscription_id = ?`,
+    )
+      .bind(firstBody.subscription.lago_id)
+      .first<{ source_id: string; dependent_id: string }>();
+    expect(pair?.source_id).toBeTruthy();
+    expect(pair?.dependent_id).toBeTruthy();
+    const cutoff = new Date().toISOString();
+    await env.BILLING_DB.prepare(
+      "UPDATE invoices SET expected_finalization_date = date(?) WHERE id IN (?, ?)",
+    )
+      .bind(cutoff, pair!.source_id, pair!.dependent_id)
+      .run();
+    await expect(finalizeDueInvoices(env, cutoff, "upgrade-chain-finalize")).resolves.toBe(2);
+    await expect(finalizeDueInvoices(env, cutoff, "upgrade-chain-replay")).resolves.toBe(0);
+
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM invoices WHERE id IN (?, ?) AND status = 'finalized') AS finalized,
+           (SELECT COUNT(*) FROM invoice_subscriptions WHERE invoice_id IN (?, ?)) AS owners,
+           cn.allocation_state, source_line.source_id,
+           (SELECT COUNT(*) FROM credit_note_applications cna
+            WHERE cna.invoice_id = ?) AS applications
+         FROM termination_credit_note_contexts tc
+         JOIN credit_notes cn ON cn.id = tc.credit_note_id
+         JOIN credit_note_items cni ON cni.credit_note_id = cn.id
+         JOIN invoice_lines source_line ON source_line.id = cni.invoice_line_id
+         WHERE tc.subscription_id = ?`,
+      )
+        .bind(
+          pair!.source_id,
+          pair!.dependent_id,
+          pair!.source_id,
+          pair!.dependent_id,
+          pair!.dependent_id,
+          firstBody.subscription.lago_id,
+        )
+        .first(),
+    ).resolves.toEqual({
+      finalized: 2,
+      owners: 4,
+      allocation_state: "finalized",
+      source_id: "plan-change-upgrade",
+      applications: 1,
+    });
+    await expect(generationState("subscription-upgrade-chain")).resolves.toMatchObject([
+      { status: "terminated", generation: 1 },
+      { status: "terminated", generation: 2 },
+      { status: "active", generation: 3 },
+    ]);
   });
 
   it("anchors a later plan trial to the first generation and defers its prepaid base", async () => {

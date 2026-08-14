@@ -70,6 +70,9 @@ export async function refreshSubscriptionDraft(
   if (finalize && invoice.context_type === "termination") {
     await assertTerminationCreditsFinalized(env.BILLING_DB, invoice.subscription_id);
   }
+  if (finalize && invoice.context_type === "plan_change" && invoice.previous_subscription_id) {
+    await assertTerminationCreditsFinalized(env.BILLING_DB, invoice.previous_subscription_id);
+  }
 
   const subscription = await findRefreshableSubscription(env.BILLING_DB, invoice.subscription_id);
   if (!subscription || subscription.organization_id !== invoice.organization_id) {

@@ -43,6 +43,7 @@ import { paymentDueDate } from "../billing/payment-terms";
 import { finalizeInvoice } from "../billing/finalize-invoice";
 import { refreshSubscriptionDraft } from "../billing/refresh-draft-invoice";
 import { changeSubscriptionPlan } from "../billing/change-subscription-plan";
+import { invoiceSubscriptionStatement } from "../billing/subscription-invoice-calculation";
 import {
   assertEndingAtAfterStart,
   assertFutureSubscriptionAt,
@@ -677,10 +678,6 @@ async function createSubscription(
             422,
             "The current prepaid generation has no creditable finalized base invoice",
           ],
-          unsupported_plan_change_draft_prepaid_credit: [
-            422,
-            "Prepaid upgrades with invoice grace require source-credit draft coordination",
-          ],
         };
         const detail = mapped[error.message];
         if (detail) throw new ApiError(detail[0], error.message, detail[1]);
@@ -1215,6 +1212,18 @@ async function createSubscription(
         );
       }
     }
+    statements.push(
+      invoiceSubscriptionStatement(
+        database,
+        invoiceId,
+        subscriptionId,
+        auth.organizationId,
+        "subscription_starting",
+        timestamp,
+        periodEnd,
+        timestamp,
+      ),
+    );
     for (const event of [subscriptionEvent, startedEvent, invoiceEvent]) {
       statements.push(
         database
@@ -1973,7 +1982,7 @@ async function finalizeDraftInvoice(
       throw new ApiError(
         422,
         "termination_credit_note_not_finalized",
-        "Finalize the pay-in-advance source invoice before its termination invoice",
+        "Finalize the pay-in-advance source invoice before its dependent invoice",
       );
     }
     if (

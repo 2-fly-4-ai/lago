@@ -8,6 +8,7 @@ import { paymentDueDate } from "./payment-terms";
 import { firstPeriodEnd, localDateString } from "./periods";
 import {
   calculateInitialSubscriptionInvoice,
+  invoiceSubscriptionStatement,
   type BillableSubscription,
   subscriptionInvoiceLineStatements,
 } from "./subscription-invoice-calculation";
@@ -207,6 +208,16 @@ async function activatePendingSubscription(
        (invoice_id, organization_id, subscription_id, context_type, period_start,
         period_end, created_at) VALUES (?, ?, ?, 'initial', ?, ?, ?)`,
     ).bind(invoiceId, pending.organization_id, pending.id, effectiveStart, periodEnd, activatedAt),
+    invoiceSubscriptionStatement(
+      env.BILLING_DB,
+      invoiceId,
+      pending.id,
+      pending.organization_id,
+      "subscription_starting",
+      effectiveStart,
+      periodEnd,
+      activatedAt,
+    ),
   ];
   if (!draft) {
     statements.push(

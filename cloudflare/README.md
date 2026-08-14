@@ -40,7 +40,8 @@ remaining Lago feature inventory is dispositioned and ported.
   finalizable from its immutable invoice context. At renewal, pay-in-advance base fees snapshot the
   next period while in-arrears base fees and usage snapshot the closed period. Credit-only
   pay-in-advance termination can return exact unused UTC service days when its source base invoice
-  is finalized and has no discount, tax, wallet, or prior credit allocation. The default combined
+  is finalized and has no discount, tax, or wallet allocation. Prior invoice-level credit-note
+  applications do not reduce the creditable source line. The default combined
   command creates that credit, finalizes bounded in-arrears usage without rebilling the base, and
   applies the new balance before wallet credits in one ordered D1 batch. The usage invoice can also
   be generated while explicitly skipping unused-period crediting. Backdating, tenant-local
@@ -52,8 +53,9 @@ remaining Lago feature inventory is dispositioned and ported.
   termination now couples two drafts: the unused-period note remains non-allocatable while its
   prepaid source invoice is draft, refreshes proportionally with that source, and becomes available
   only after the source finalizes. The termination draft cannot finalize early and then applies the
-  new balance before wallet credits. Coupon, tax, wallet, or finalized-credit adjustments on the
-  still-draft source remain explicitly guarded. Calendar and anniversary subscription billing are
+  new balance before wallet credits. Coupon, tax, or wallet adjustments on the still-draft source
+  remain explicitly guarded; finalized credit-note balances can chain across successive drafts.
+  Calendar and anniversary subscription billing are
   persisted explicitly; calendar boundaries and invoice dates use the snapshotted customer IANA
   timezone and remain half-open UTC instants in D1. Positive trials defer the initial base invoice.
   The hourly `:35` owner closes missed trial-covered periods, coordinates with the `:10` billing
@@ -68,9 +70,10 @@ remaining Lago feature inventory is dispositioned and ported.
   closes, when the same cycle command bills the old plan, starts the new generation, and records one
   replay-safe combined invoice. Grace drafts retain both immutable period snapshots; termination
   cancels a queued downgrade in the same D1 batch. Usage-event ownership uses half-open generation
-  timestamps, while transaction IDs remain unique across the shared external subscription. A
-  prepaid upgrade whose source invoice is still draft fails explicitly until cross-draft source
-  credit coordination is ported.
+  timestamps, while transaction IDs remain unique across the shared external subscription. Prepaid
+  upgrades can also chain while source invoices remain in grace: each unused-period note stays
+  non-allocatable until its exact source draft finalizes, dependent drafts refuse premature manual
+  finalization, and the scheduler resolves source-first chains before applying each balance.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.

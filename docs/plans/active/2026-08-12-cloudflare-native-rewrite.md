@@ -383,7 +383,9 @@ Acceptance:
       transition at period close through the same replay-safe billing-cycle owner. Both paths retain
       immutable draft contexts, queued downgrades cancel with their current generation, and usage
       events resolve against half-open generation windows with external-chain transaction
-      uniqueness. Prepaid upgrades whose source invoice is still draft remain explicitly guarded.
+      uniqueness. Prepaid grace upgrades retain non-allocatable source-credit contexts, finalize
+      source-first manually or through the scheduler, and support repeated generation changes
+      through the multi-subscription invoice graph.
       Backdating, payment-method, custom-section, and threshold inputs fail explicitly. Calendar
       billing and trial dates use a snapshotted customer IANA
       timezone; the retained termination subset remains UTC-specific.
@@ -1306,3 +1308,16 @@ resource and mutation described.
   flags still `0`. Remote health/readiness returned `200`/`200`, unauthenticated subscription access
   returned `401`, and aggregate-only verification remained empty for every billing entity. No
   production route, domain, secret, provider action, or billing record changed.
+- 2026-08-14: Completed prepaid grace-period upgrade coordination without a schema change. Every
+  initial, trial-end, recurring, termination, and plan-change subscription invoice now records its
+  `invoice_subscriptions` ownership edge. Unused-period credit source lookup follows that graph and
+  the exact plan line, so a later prepaid generation can be upgraded again even when the prior
+  combined invoice header belongs to an older generation. Draft credit-note repricing preserves the
+  source plan line across refresh, allows earlier finalized credit-note applications without
+  treating them as line discounts, blocks premature dependent finalization, and lets the hourly
+  owner defer/retry source chains in one run. Evidence covers manual source-first finalization,
+  scheduled second-upgrade finalization, ownership, replay, and dependent application rollback. All
+  119 tests pass across 27 files; formatting, strict lint, generated inventory/types, TypeScript,
+  and a 618.32 KiB (108.87 KiB gzip) dry-run bundle are green. This is a code-only local checkpoint;
+  isolated remote D1 remains on migration `0033` and Worker version
+  `6f198ceb-959d-486a-ba64-6b7ca88a6fa3`.

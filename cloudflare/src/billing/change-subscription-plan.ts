@@ -370,9 +370,6 @@ async function upgradeActiveGeneration(
   if (!previous || !current.current_period_start || !current.current_period_end) {
     throw new Error("subscription_period_missing");
   }
-  if (previous.plan_pay_in_advance === 1 && current.invoice_grace_period > 0) {
-    throw new Error("unsupported_plan_change_draft_prepaid_credit");
-  }
   const changedAt = new Date().toISOString();
   const nextGeneration = await nextGenerationNumber(env.BILLING_DB, current);
   const nextId = await deterministicUuid(

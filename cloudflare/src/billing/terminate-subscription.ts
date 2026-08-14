@@ -12,6 +12,7 @@ import {
 import {
   calculateTerminationSubscriptionInvoice,
   findBillableSubscription,
+  invoiceSubscriptionStatement,
   subscriptionInvoiceLineStatements,
 } from "./subscription-invoice-calculation";
 import { walletAllocationStatements } from "./wallet-credits";
@@ -254,6 +255,16 @@ export async function terminateSubscriptionWithInvoice(
           ),
         ]
       : []),
+    invoiceSubscriptionStatement(
+      env.BILLING_DB,
+      invoiceId,
+      subscription.id,
+      subscription.organization_id,
+      "subscription_terminating",
+      subscription.current_period_start,
+      terminatedAt,
+      now,
+    ),
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
        SET status = 'canceled', canceled_at = ?, version = version + 1, updated_at = ?
