@@ -1310,7 +1310,7 @@ async function normalizeCharges(
       chargeModel,
       id,
     );
-    assertChargeFilterCompatibility(metric.aggregation_type, acceptsTargetWallet, filters);
+    assertWeightedTargetWalletCompatibility(metric.aggregation_type, acceptsTargetWallet);
     charges.push({
       id,
       metricId,
@@ -1348,24 +1348,15 @@ function rejectUnsupportedChargeFeatures(input: Record<string, unknown>): void {
     );
 }
 
-function assertChargeFilterCompatibility(
+function assertWeightedTargetWalletCompatibility(
   aggregationType: string,
   acceptsTargetWallet: number,
-  filters: ChargeFilter[],
 ): void {
   if (aggregationType === "weighted_sum_agg" && acceptsTargetWallet === 1) {
     throw new ApiError(
       422,
       "unsupported_charge_feature",
       "Weighted-sum charges cannot target wallets",
-    );
-  }
-  if (filters.length === 0) return;
-  if (aggregationType === "weighted_sum_agg") {
-    throw new ApiError(
-      422,
-      "unsupported_charge_feature",
-      "Charge filters cannot yet be combined with weighted usage",
     );
   }
 }

@@ -780,10 +780,9 @@ async function createCharge(
       chargeModel,
       existing.id,
     );
-    assertChargeFilterCompatibility(
+    assertWeightedTargetWalletCompatibility(
       metric.aggregation_type,
       normalized.acceptsTargetWallet,
-      filters,
     );
     if (sameCatalogCharge(existing, metric.id, chargeModel, properties, filters, normalized))
       return json({ charge: serializeCatalogCharge(existing) }, { requestId });
@@ -798,7 +797,7 @@ async function createCharge(
     chargeModel,
     id,
   );
-  assertChargeFilterCompatibility(metric.aggregation_type, normalized.acceptsTargetWallet, filters);
+  assertWeightedTargetWalletCompatibility(metric.aggregation_type, normalized.acceptsTargetWallet);
   const event = catalogEvent(
     "charge.created",
     "charge",
@@ -955,7 +954,7 @@ async function updateCharge(
           nextChargeModel,
           charge.id,
         );
-  assertChargeFilterCompatibility(metric.aggregation_type, next.acceptsTargetWallet, nextFilters);
+  assertWeightedTargetWalletCompatibility(metric.aggregation_type, next.acceptsTargetWallet);
   if (next.code !== charge.code) {
     const duplicate = await findCatalogCharge(database, plan.id, next.code);
     if (duplicate) throw new ApiError(422, "value_already_exist", "Charge code already exists");
@@ -1190,10 +1189,7 @@ async function createChargeFilter(
   if (filters.some((filter) => stableJson(filter.values) === stableJson(created.values))) {
     throw new ApiError(422, "value_already_exist", "Charge filter values already exist");
   }
-  assertChargeFilterCompatibility(charge.aggregation_type, charge.accepts_target_wallet, [
-    ...filters,
-    created,
-  ]);
+  assertWeightedTargetWalletCompatibility(charge.aggregation_type, charge.accepts_target_wallet);
   await persistChargeFilters(charge, [...filters, created], planCode, env, auth, requestId);
   return json({ filter: serializeChargeFilter(created, charge.code) }, { requestId });
 }
@@ -2016,10 +2012,10 @@ async function currentUsage(
       charge.charge_model,
       charge.id,
     );
-    assertChargeFilterCompatibility(aggregationType, charge.accepts_target_wallet, filters);
+    assertWeightedTargetWalletCompatibility(aggregationType, charge.accepts_target_wallet);
     const periodStartMs = Date.parse(subscription.current_period_start);
     const periodEndMs = Date.parse(subscription.current_period_end);
-    const initialValue =
+    const initialValues =
       aggregationType === "weighted_sum_agg" && charge.recurring === 1
         ? await recurringWeightedBaseline(
             database,
@@ -2028,10 +2024,15 @@ async function currentUsage(
             charge.metric_id,
             charge.field_name,
             periodStartMs,
+            filters,
           )
-        : Decimal.zero();
+        : zeroWeightedBaselines(filters);
     const partitions = partitionUsageEvents(events, filters);
-    const ratePartition = (partitionEvents: typeof events, properties: Record<string, unknown>) => {
+    const ratePartition = (
+      partitionEvents: typeof events,
+      properties: Record<string, unknown>,
+      initialValue: Decimal,
+    ) => {
       const aggregation = aggregateUsageResult(
         aggregationType,
         charge.field_name,
@@ -2067,11 +2068,12 @@ async function currentUsage(
     const rateTargetGroups = (
       partitionEvents: typeof events,
       properties: Record<string, unknown>,
+      initialValue: Decimal,
     ) => {
       const rated = targetWalletUsageEventGroups(
         partitionEvents,
         charge.accepts_target_wallet === 1,
-      ).map((groupEvents) => ratePartition(groupEvents, properties));
+      ).map((groupEvents) => ratePartition(groupEvents, properties, initialValue));
       return {
         amount: rated.reduce((sum, group) => sum.add(group.amount), Decimal.zero()),
         events: partitionEvents,
@@ -2082,10 +2084,18 @@ async function currentUsage(
         units: rated.reduce((sum, group) => sum.add(group.units), Decimal.zero()),
       };
     };
-    const base = rateTargetGroups(partitions.base, parseStoredObject(charge.properties_json));
+    const base = rateTargetGroups(
+      partitions.base,
+      parseStoredObject(charge.properties_json),
+      initialValues.base,
+    );
     const ratedFilters = partitions.filters.map(({ filter, events: filterEvents }) => ({
       filter,
-      ...rateTargetGroups(filterEvents, filter.properties),
+      ...rateTargetGroups(
+        filterEvents,
+        filter.properties,
+        initialValues.filters.get(filter.lagoId) ?? Decimal.zero(),
+      ),
     }));
     const units = ratedFilters.reduce((sum, filter) => sum.add(filter.units), base.units);
     const totalAggregatedUnits = ratedFilters.reduce(
@@ -2198,6 +2208,18 @@ function targetWalletUsageEventGroups<T extends { properties: Record<string, unk
     .map(([, grouped]) => grouped);
 }
 
+type WeightedBaselines = {
+  base: Decimal;
+  filters: Map<string, Decimal>;
+};
+
+function zeroWeightedBaselines(filters: ChargeFilter[]): WeightedBaselines {
+  return {
+    base: Decimal.zero(),
+    filters: new Map(filters.map((filter) => [filter.lagoId, Decimal.zero()])),
+  };
+}
+
 async function recurringWeightedBaseline(
   database: D1Database,
   organizationId: string,
@@ -2205,17 +2227,18 @@ async function recurringWeightedBaseline(
   metricId: string,
   fieldName: string | null,
   periodStartMs: number,
-): Promise<Decimal> {
+  filters: ChargeFilter[],
+): Promise<WeightedBaselines> {
   if (!fieldName) throw new ApiError(500, "invalid_metric", "Metric field_name is missing");
   const result = await database
     .prepare(
-      `SELECT properties_json FROM usage_events
+      `SELECT id, timestamp_ms, properties_json FROM usage_events
        WHERE organization_id = ? AND external_subscription_id = ? AND billable_metric_id = ?
          AND deleted_at IS NULL AND timestamp_ms < ?
        ORDER BY timestamp_ms, id LIMIT 10001`,
     )
     .bind(organizationId, externalSubscriptionId, metricId, periodStartMs)
-    .all<{ properties_json: string }>();
+    .all<{ id: string; timestamp_ms: number; properties_json: string }>();
   if (result.results.length > 10000) {
     throw new ApiError(
       503,
@@ -2223,10 +2246,27 @@ async function recurringWeightedBaseline(
       "Recurring usage requires asynchronous aggregation",
     );
   }
-  return result.results.reduce((total, event) => {
-    const properties = parseStoredObject(event.properties_json);
-    return total.add(Decimal.parse(validateDecimalValue(properties[fieldName], fieldName)));
-  }, Decimal.zero());
+  const events = result.results.map((event) => ({
+    id: event.id,
+    timestampMs: event.timestamp_ms,
+    properties: parseStoredObject(event.properties_json),
+  }));
+  const partitions = partitionUsageEvents(events, filters);
+  const sum = (partitionEvents: typeof events) =>
+    partitionEvents.reduce(
+      (total, event) =>
+        total.add(Decimal.parse(validateDecimalValue(event.properties[fieldName], fieldName))),
+      Decimal.zero(),
+    );
+  return {
+    base: sum(partitions.base),
+    filters: new Map(
+      partitions.filters.map(({ filter, events: filterEvents }) => [
+        filter.lagoId,
+        sum(filterEvents),
+      ]),
+    ),
+  };
 }
 
 async function findEventContext(
@@ -2751,22 +2791,6 @@ function rejectUnsupportedChargeInput(input: Record<string, unknown>): void {
       "unsupported_tax_target",
       "Charge-specific tax targeting is not implemented",
     );
-}
-
-function assertChargeFilterCompatibility(
-  aggregationType: string,
-  acceptsTargetWallet: number,
-  filters: ChargeFilter[],
-): void {
-  assertWeightedTargetWalletCompatibility(aggregationType, acceptsTargetWallet);
-  if (filters.length === 0) return;
-  if (aggregationType === "weighted_sum_agg") {
-    throw new ApiError(
-      422,
-      "unsupported_charge_feature",
-      "Weighted-sum charge filters require per-filter recurring baselines",
-    );
-  }
 }
 
 function assertWeightedTargetWalletCompatibility(

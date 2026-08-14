@@ -495,8 +495,7 @@ export async function calculateSubscriptionInvoice(
       charge.charge_model,
       charge.id,
     );
-    assertChargeFilterCompatibility(charge, filters);
-    const initialValue =
+    const initialValues =
       aggregationType === "weighted_sum_agg" && charge.recurring === 1
         ? await recurringWeightedBaseline(
             database,
@@ -504,8 +503,9 @@ export async function calculateSubscriptionInvoice(
             charge.metric_id,
             charge.field_name,
             periodStartMs,
+            filters,
           )
-        : Decimal.zero();
+        : zeroWeightedBaselines(filters);
     const filtered = partitionUsageEvents(events, filters);
     const groups =
       filters.length > 0
@@ -534,6 +534,9 @@ export async function calculateSubscriptionInvoice(
           }));
     const chargeLineStart = lines.length;
     for (const group of groups) {
+      const initialValue = group.filter
+        ? (initialValues.filters.get(group.filter.lagoId) ?? Decimal.zero())
+        : initialValues.base;
       const aggregation = aggregateUsageResult(aggregationType, charge.field_name, group.events, {
         periodStartMs,
         periodEndMs: calculationPeriodEndMs,
@@ -1046,31 +1049,60 @@ async function loadEvents(
   }));
 }
 
+type WeightedBaselines = {
+  base: Decimal;
+  filters: Map<string, Decimal>;
+};
+
+function zeroWeightedBaselines(filters: ChargeFilter[]): WeightedBaselines {
+  return {
+    base: Decimal.zero(),
+    filters: new Map(filters.map((filter) => [filter.lagoId, Decimal.zero()])),
+  };
+}
+
 async function recurringWeightedBaseline(
   database: D1Database,
   subscription: BillableSubscription,
   metricId: string,
   fieldName: string | null,
   periodStartMs: number,
-): Promise<Decimal> {
+  filters: ChargeFilter[],
+): Promise<WeightedBaselines> {
   if (!fieldName) throw new Error("aggregation_field_name_required");
   const result = await database
     .prepare(
-      `SELECT properties_json FROM usage_events
+      `SELECT id, timestamp_ms, properties_json FROM usage_events
        WHERE organization_id = ? AND external_subscription_id = ? AND billable_metric_id = ?
          AND deleted_at IS NULL AND timestamp_ms < ?
        ORDER BY timestamp_ms, id LIMIT 10001`,
     )
     .bind(subscription.organization_id, subscription.external_id, metricId, periodStartMs)
-    .all<{ properties_json: string }>();
+    .all<{ id: string; timestamp_ms: number; properties_json: string }>();
   if (result.results.length > 10000) throw new Error("usage_baseline_too_large");
-  return result.results.reduce((total, event) => {
-    const value = parseObject(event.properties_json)[fieldName];
-    if (typeof value !== "string" && typeof value !== "number") {
-      throw new Error("aggregation_property_must_be_numeric");
-    }
-    return total.add(Decimal.parse(value));
-  }, Decimal.zero());
+  const events = result.results.map((event) => ({
+    id: event.id,
+    timestampMs: event.timestamp_ms,
+    properties: parseObject(event.properties_json),
+  }));
+  const partitions = partitionUsageEvents(events, filters);
+  const sum = (partitionEvents: typeof events) =>
+    partitionEvents.reduce((total, event) => {
+      const value = event.properties[fieldName];
+      if (typeof value !== "string" && typeof value !== "number") {
+        throw new Error("aggregation_property_must_be_numeric");
+      }
+      return total.add(Decimal.parse(value));
+    }, Decimal.zero());
+  return {
+    base: sum(partitions.base),
+    filters: new Map(
+      partitions.filters.map(({ filter, events: filterEvents }) => [
+        filter.lagoId,
+        sum(filterEvents),
+      ]),
+    ),
+  };
 }
 
 type RatedUsageEvent = Awaited<ReturnType<typeof loadEvents>>[number];
@@ -1100,13 +1132,6 @@ function targetWalletEventGroups(
       targetWalletCode,
       events: groupedEvents,
     }));
-}
-
-function assertChargeFilterCompatibility(charge: ChargeRow, filters: ChargeFilter[]): void {
-  if (filters.length === 0) return;
-  if (charge.aggregation_type === "weighted_sum_agg") {
-    throw new Error("weighted_sum_charge_filters_unsupported");
-  }
 }
 
 function proratedChargeMinimum(minimumMinor: number, options: SubscriptionInvoiceOptions): Decimal {
