@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `b0a3bd59-f583-4a8c-82dc-84f1119c8b5a`
+- Latest verified version: `58bf3a55-d194-4762-a390-a6794c360194`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -30,10 +30,12 @@ It is not a production inventory and contains no secrets or customer data.
 | Workflow          | `serp-dev-lago-checkout`                                           | `CHECKOUT_WORKFLOW`       | Checkout orchestration target                                      |
 | Workflow          | `serp-dev-lago-reconciliation`                                     | `RECONCILIATION_WORKFLOW` | Provider and outbox reconciliation                                 |
 | Workflow          | `serp-dev-lago-documents`                                          | `DOCUMENT_WORKFLOW`       | Retryable invoice PDF generation and R2 archival                   |
+| Workflow          | `serp-dev-lago-plan-deletion`                                      | `PLAN_DELETION_WORKFLOW`  | Durable subscription-bearing plan retirement                      |
 | Cron              | `*/5 * * * *`                                                      | Worker scheduled handler  | Deterministic legacy-schedule dispatch                             |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
-Applied D1 migrations: `0001_foundation.sql` through `0044_standalone_plan_lifecycle.sql`.
+Applied D1 migrations: `0001_foundation.sql` through
+`0051_pay_in_advance_fixed_charges.sql`.
 
 ## Verified behavior
 
@@ -433,6 +435,18 @@ Applied D1 migrations: `0001_foundation.sql` through `0044_standalone_plan_lifec
   and zero organizations, customers, plans, subscriptions, invoices, and usage events plus 171
   schedule audits. All three external-action flags remain disabled, with no route, secret,
   provider action, customer data, or billing data added.
+- The pay-in-advance fixed-charge deployment applied only
+  `0051_pay_in_advance_fixed_charges.sql`. Remote schema verification found the widened checked
+  timing field, all three immediate-billing/repair columns, the pending-repair index, all eight
+  restored fixed-charge triggers, zero foreign-key violations, and no remaining migration. Worker
+  version `58bf3a55-d194-4762-a390-a6794c360194` retained only the existing workers.dev URL,
+  `*/5` Cron, D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The deployed
+  bundle was 1015.84 KiB (175.71 KiB gzip) with a 5 ms startup. Health/readiness returned
+  `200`/`200`, and unauthenticated fixed-charge access returned `401`. Aggregate-only verification
+  found zero organizations, customers, plans, subscriptions, invoices, fixed charges,
+  fixed-charge unit events, usage events, wallets, outbox rows, and plan-deletion tasks plus 246
+  schedule audits. All three external-action flags remain `0`; no resource provisioning,
+  production route/domain, secret, provider action, customer data, or billing row changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

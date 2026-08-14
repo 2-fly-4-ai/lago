@@ -2194,3 +2194,14 @@ resource and mutation described.
   and all eight restored triggers. Strict format/lint, inventory, generated types, TypeScript, and
   Wrangler dry run pass; the serial suite passes all 207 tests across 37 files in 114.79 seconds.
   The dry-run bundle is 1015.84 KiB (175.71 KiB gzip). Feature checkpoint: `c9642d7`.
+- 2026-08-15: Remote preflight found only `0051_pay_in_advance_fixed_charges.sql` pending and zero
+  organizations, customers, plans, subscriptions, invoices, fixed charges, fixed-charge unit
+  events, usage events, wallets, outbox rows, and plan-deletion tasks, with zero foreign-key
+  violations. Applied only that migration to the isolated non-production D1, then verified the
+  widened timing check, all three event billing/repair columns, the repair index, all eight restored
+  triggers, zero foreign-key violations, and no remaining migration. Deployed only the isolated
+  Worker as version `58bf3a55-d194-4762-a390-a6794c360194` with a 5 ms startup. Health/readiness
+  returned `200`/`200`, unauthenticated fixed-charge access returned `401`, and post-deploy
+  aggregate-only verification stayed empty apart from 246 schedule audits. All three external-
+  action flags remain `0`; no resource provisioning, production route/domain, secret, provider
+  action, customer data, or billing row changed.
