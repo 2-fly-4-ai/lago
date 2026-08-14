@@ -5,7 +5,13 @@ import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import type { DomainEvent } from "../domain-events";
 import { createAuthorizeNetPaymentUrl } from "../providers/authorize-net";
-import { nextPeriodEnd } from "../billing/periods";
+import {
+  addTrialDays,
+  assertBillingTimezone,
+  firstPeriodEnd,
+  localDateString,
+  type BillingTime,
+} from "../billing/periods";
 import { calculateCouponCredits, couponCreditStatements } from "../billing/coupon-credits";
 import {
   calculateWalletAllocations,
@@ -54,6 +60,7 @@ type CustomerRow = {
   payment_provider_code: string | null;
   net_payment_term: number | null;
   invoice_grace_period: number | null;
+  timezone: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -81,6 +88,11 @@ type SubscriptionRow = {
   canceled_at: string | null;
   terminated_at: string | null;
   created_at: string;
+  billing_time: BillingTime;
+  billing_timezone: string;
+  trial_started_at: string | null;
+  trial_end_at: string | null;
+  trial_ended_at: string | null;
 };
 
 type InvoiceRow = {
@@ -283,6 +295,10 @@ async function upsertCustomer(
           ? null
           : nonNegativeInteger(value, "billing_configuration.invoice_grace_period");
     })(),
+    timezone:
+      input.timezone === undefined
+        ? (existing?.timezone ?? null)
+        : normalizeBillingTimezone(optionalString(input, "timezone")),
   };
   validateCustomerProvider(normalized.paymentProvider, normalized.paymentProviderCode);
 
@@ -311,8 +327,8 @@ async function upsertCustomer(
           `INSERT INTO customers
            (id, organization_id, external_id, email, name, currency, metadata_json,
             payment_provider, payment_provider_code, net_payment_term, invoice_grace_period,
-            version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+            timezone, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .bind(
           id,
@@ -326,6 +342,7 @@ async function upsertCustomer(
           normalized.paymentProviderCode,
           normalized.netPaymentTerm,
           normalized.invoiceGracePeriod,
+          normalized.timezone,
           now,
           now,
         ),
@@ -354,6 +371,7 @@ type NormalizedCustomer = {
   paymentProviderCode: string | null;
   netPaymentTerm: number | null;
   invoiceGracePeriod: number | null;
+  timezone: string | null;
 };
 
 async function updateCustomer(
@@ -379,7 +397,7 @@ async function updateCustomer(
     env.BILLING_DB.prepare(
       `UPDATE customers
        SET email = ?, name = ?, currency = ?, metadata_json = ?, payment_provider = ?,
-           payment_provider_code = ?, net_payment_term = ?, invoice_grace_period = ?,
+           payment_provider_code = ?, net_payment_term = ?, invoice_grace_period = ?, timezone = ?,
            version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?`,
     ).bind(
@@ -391,6 +409,7 @@ async function updateCustomer(
       normalized.paymentProviderCode,
       normalized.netPaymentTerm,
       normalized.invoiceGracePeriod,
+      normalized.timezone,
       now,
       customer.id,
       auth.organizationId,
@@ -495,7 +514,7 @@ async function listCustomers(
   const result = await database
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
-              payment_provider_code, net_payment_term, invoice_grace_period, version,
+              payment_provider_code, net_payment_term, invoice_grace_period, timezone, version,
               created_at, updated_at
        FROM customers WHERE ${where}
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
@@ -539,14 +558,15 @@ async function createSubscription(
   const now = new Date();
   const timestamp = now.toISOString();
   const subscriptionAt = normalizeSubscriptionAt(input.subscription_at);
+  const billingTime = normalizeBillingTime(input.billing_time);
   const endingAt = normalizeEndingAt(input.ending_at);
   const onTerminationCreditNote = normalizeTerminationCreditAction(
     input.on_termination_credit_note,
   );
   const onTerminationInvoice = normalizeTerminationInvoiceAction(input.on_termination_invoice);
   const requestIdentity: Record<string, unknown> = subscriptionAt
-    ? { externalCustomerId, externalId, name, planCode, subscriptionAt }
-    : { externalCustomerId, externalId, name, planCode };
+    ? { billingTime, externalCustomerId, externalId, name, planCode, subscriptionAt }
+    : { billingTime, externalCustomerId, externalId, name, planCode };
   if (endingAt) requestIdentity.endingAt = endingAt;
   if (onTerminationCreditNote) requestIdentity.onTerminationCreditNote = onTerminationCreditNote;
   if (onTerminationInvoice) requestIdentity.onTerminationInvoice = onTerminationInvoice;
@@ -573,16 +593,18 @@ async function createSubscription(
   if (!customer) throw new ApiError(404, "customer_not_found", "Customer was not found");
   const organizationBilling = await database
     .prepare(
-      "SELECT net_payment_term, invoice_grace_period FROM organizations WHERE id = ? LIMIT 1",
+      `SELECT net_payment_term, invoice_grace_period, timezone
+       FROM organizations WHERE id = ? LIMIT 1`,
     )
     .bind(auth.organizationId)
-    .first<{ net_payment_term: number; invoice_grace_period: number }>();
+    .first<{ net_payment_term: number; invoice_grace_period: number; timezone: string }>();
+  const billingTimezone = customer.timezone ?? organizationBilling?.timezone ?? "UTC";
   const invoiceGracePeriod =
     customer.invoice_grace_period ?? organizationBilling?.invoice_grace_period ?? 0;
 
   const plan = await database
     .prepare(
-      `SELECT id, code, name, interval, amount_minor, currency, pay_in_advance
+      `SELECT id, code, name, interval, amount_minor, currency, pay_in_advance, trial_period
        FROM plans
        WHERE organization_id = ? AND code = ? AND active = 1
        ORDER BY version DESC LIMIT 1`,
@@ -596,6 +618,7 @@ async function createSubscription(
       amount_minor: number;
       currency: string;
       pay_in_advance: number;
+      trial_period: number | null;
     }>();
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
   assertSupportedTerminationActions(plan.pay_in_advance, onTerminationCreditNote);
@@ -610,6 +633,11 @@ async function createSubscription(
   const netPaymentTerm = customer.net_payment_term ?? organizationBilling?.net_payment_term ?? 0;
   const commandKey = `${auth.organizationId}:${externalId}`;
   const subscriptionId = await deterministicUuid("subscription", commandKey);
+  const effectiveStart = subscriptionAt ?? timestamp;
+  const trialEndAt =
+    plan.trial_period !== null && plan.trial_period > 0
+      ? addTrialDays(new Date(effectiveStart), plan.trial_period, billingTimezone).toISOString()
+      : null;
   if (subscriptionAt) {
     const event: DomainEvent = {
       id: `subscription-created:${subscriptionId}:v1`,
@@ -628,7 +656,10 @@ async function createSubscription(
         externalCustomerId,
         planCode,
         status: "pending",
+        billingTime,
+        billingTimezone,
         subscriptionAt,
+        trialEndAt,
         endingAt,
         onTerminationCreditNote,
         onTerminationInvoice,
@@ -643,8 +674,9 @@ async function createSubscription(
              (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
               ending_at, on_termination_credit_note, on_termination_invoice,
               started_at, current_period_start, current_period_end, version, created_at,
-              updated_at, name, request_sha256)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, NULL, NULL, 1, ?, ?, ?, ?)`,
+              updated_at, name, request_sha256, billing_time, billing_timezone,
+              trial_started_at, trial_end_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, NULL, NULL, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             subscriptionId,
@@ -660,6 +692,10 @@ async function createSubscription(
             timestamp,
             name,
             requestHash,
+            billingTime,
+            billingTimezone,
+            trialEndAt ? effectiveStart : null,
+            trialEndAt,
           ),
         database
           .prepare(
@@ -700,8 +736,13 @@ async function createSubscription(
     if (!pending) throw new ApiError(500, "persistence_error", "Subscription was not persisted");
     return json({ subscription: serializeSubscription(pending) }, { requestId });
   }
-  if (plan.pay_in_advance !== 1) {
-    const periodEnd = nextPeriodEnd(now, plan.interval).toISOString();
+  if (plan.pay_in_advance !== 1 || trialEndAt !== null) {
+    const periodEnd = firstPeriodEnd(
+      now,
+      plan.interval,
+      billingTime,
+      billingTimezone,
+    ).toISOString();
     const event: DomainEvent = {
       id: `subscription-created:${subscriptionId}:v1`,
       type: "subscription.created",
@@ -719,7 +760,10 @@ async function createSubscription(
         externalCustomerId,
         planCode,
         status: "active",
+        billingTime,
+        billingTimezone,
         subscriptionAt: timestamp,
+        trialEndAt,
         endingAt,
         onTerminationCreditNote,
         onTerminationInvoice,
@@ -755,8 +799,9 @@ async function createSubscription(
              (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
               ending_at, on_termination_credit_note, on_termination_invoice,
               started_at, current_period_start, current_period_end, version, created_at,
-              updated_at, name, request_sha256)
-             VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+              updated_at, name, request_sha256, billing_time, billing_timezone,
+              trial_started_at, trial_end_at)
+             VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             subscriptionId,
@@ -775,6 +820,10 @@ async function createSubscription(
             timestamp,
             name,
             requestHash,
+            billingTime,
+            billingTimezone,
+            trialEndAt ? timestamp : null,
+            trialEndAt,
           ),
         database
           .prepare(
@@ -834,10 +883,12 @@ async function createSubscription(
     return json({ subscription: serializeSubscription(active) }, { requestId });
   }
   const draft = invoiceGracePeriod > 0;
-  const issuingDate = shiftCalendarDate(timestamp.slice(0, 10), invoiceGracePeriod);
+  const issuingDate = shiftCalendarDate(localDateString(now, billingTimezone), invoiceGracePeriod);
   const expectedFinalizationDate = issuingDate;
   const dueDate = paymentDueDate(issuingDate, netPaymentTerm);
-  const periodEnd = nextPeriodEnd(now, plan.interval).toISOString();
+  const periodEnd = firstPeriodEnd(now, plan.interval, billingTime, billingTimezone).toISOString();
+  const precisePlanAmount = Decimal.parse(plan.amount_minor);
+  const initialPlanAmountMinor = plan.amount_minor;
   const invoiceId = await deterministicUuid("initial-invoice", commandKey);
   const invoiceLineId = await deterministicUuid("initial-invoice-line", invoiceId);
   const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
@@ -847,7 +898,7 @@ async function createSubscription(
     customer.id,
     invoiceId,
     plan.currency,
-    plan.amount_minor,
+    initialPlanAmountMinor,
   );
   const couponsMinor = couponCredits.reduce(
     (total, credit) => safeAddMinor(total, credit.amountMinor),
@@ -857,7 +908,7 @@ async function createSubscription(
     database,
     auth.organizationId,
     invoiceId,
-    [{ id: invoiceLineId, amountMinor: plan.amount_minor }],
+    [{ id: invoiceLineId, amountMinor: initialPlanAmountMinor }],
     couponsMinor,
   );
   const taxMinor = totalManualTaxMinor(invoiceTaxes);
@@ -867,7 +918,7 @@ async function createSubscription(
     customer.id,
     invoiceId,
     plan.currency,
-    plan.amount_minor + taxMinor - couponsMinor,
+    initialPlanAmountMinor + taxMinor - couponsMinor,
   );
   const creditNotesMinor = creditNoteAllocations.reduce(
     (total, allocation) => safeAddMinor(total, allocation.amountMinor),
@@ -879,7 +930,7 @@ async function createSubscription(
     customer.id,
     invoiceId,
     plan.currency,
-    plan.amount_minor + taxMinor - couponsMinor - creditNotesMinor,
+    initialPlanAmountMinor + taxMinor - couponsMinor - creditNotesMinor,
   );
   const prepaidCreditMinor = walletAllocations.reduce(
     (total, allocation) => safeAddMinor(total, allocation.amountMinor),
@@ -889,7 +940,7 @@ async function createSubscription(
     safeAddMinor(couponsMinor, creditNotesMinor),
     prepaidCreditMinor,
   );
-  const totalDueMinor = plan.amount_minor + taxMinor - creditsMinor;
+  const totalDueMinor = initialPlanAmountMinor + taxMinor - creditsMinor;
   const subscriptionEvent = {
     id: `subscription-created:${subscriptionId}:v1`,
     type: "subscription.created",
@@ -901,6 +952,8 @@ async function createSubscription(
       externalSubscriptionId: externalId,
       externalCustomerId,
       planCode,
+      billingTime,
+      billingTimezone,
       startedAt: timestamp,
       endingAt,
       onTerminationCreditNote,
@@ -954,8 +1007,8 @@ async function createSubscription(
           ending_at, on_termination_credit_note, on_termination_invoice,
           started_at,
           current_period_start, current_period_end, version, created_at, updated_at,
-          name, request_sha256)
-         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+          name, request_sha256, billing_time, billing_timezone)
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           subscriptionId,
@@ -974,6 +1027,8 @@ async function createSubscription(
           timestamp,
           name,
           requestHash,
+          billingTime,
+          billingTimezone,
         ),
       database
         .prepare(
@@ -995,7 +1050,7 @@ async function createSubscription(
           invoiceNumber,
           draft ? "draft" : "finalized",
           plan.currency,
-          plan.amount_minor,
+          initialPlanAmountMinor,
           taxMinor,
           creditsMinor,
           totalDueMinor,
@@ -1017,15 +1072,22 @@ async function createSubscription(
           `INSERT INTO invoice_lines
          (id, invoice_id, line_type, description, quantity_decimal, unit_amount_decimal,
           amount_minor, source_type, source_id, metadata_json, created_at)
-         VALUES (?, ?, 'subscription', ?, '1', ?, ?, 'plan', ?, '{}', ?)`,
+         VALUES (?, ?, 'subscription', ?, '1', ?, ?, 'plan', ?, ?, ?)`,
         )
         .bind(
           invoiceLineId,
           invoiceId,
           name ?? plan.name,
-          String(plan.amount_minor),
-          plan.amount_minor,
+          precisePlanAmount.toString(),
+          initialPlanAmountMinor,
           plan.id,
+          stableJson({
+            contextType: "initial",
+            billingTime,
+            billingTimezone,
+            periodStart: timestamp,
+            periodEnd,
+          }),
           timestamp,
         ),
       database
@@ -1190,7 +1252,6 @@ function rejectUnsupportedSubscriptionCreate(
   for (const field of [
     "billing_entity_code",
     "billing_entity_id",
-    "billing_time",
     "progressive_billing_disabled",
     "invoice_custom_section",
     "activation_rules",
@@ -2401,7 +2462,7 @@ async function findCustomer(
   return database
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
-              payment_provider_code, net_payment_term, invoice_grace_period, version,
+              payment_provider_code, net_payment_term, invoice_grace_period, timezone, version,
               created_at, updated_at
        FROM customers WHERE organization_id = ? AND external_id = ? LIMIT 1`,
     )
@@ -2423,7 +2484,8 @@ async function findSubscription(
               s.status, s.subscription_at, s.started_at, s.current_period_start,
               s.current_period_end, s.ending_at, s.on_termination_credit_note,
               s.on_termination_invoice,
-              s.canceled_at, s.terminated_at, s.created_at
+              s.canceled_at, s.terminated_at, s.created_at, s.billing_time,
+              s.billing_timezone, s.trial_started_at, s.trial_end_at, s.trial_ended_at
        FROM subscriptions s
        JOIN customers c ON c.id = s.customer_id
        JOIN plans p ON p.id = s.plan_id
@@ -2441,6 +2503,7 @@ function serializeCustomer(customer: CustomerRow): Record<string, unknown> {
     name: customer.name,
     email: customer.email,
     currency: customer.currency,
+    timezone: customer.timezone,
     net_payment_term: customer.net_payment_term,
     version_number: customer.version,
     created_at: customer.created_at,
@@ -2465,7 +2528,8 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     plan_amount_cents: subscription.plan_amount_minor,
     plan_amount_currency: subscription.plan_currency,
     status: subscription.status,
-    billing_time: "anniversary",
+    billing_time: subscription.billing_time,
+    billing_timezone: subscription.billing_timezone,
     subscription_at: subscription.subscription_at,
     started_at: subscription.started_at,
     terminated_at: subscription.terminated_at,
@@ -2476,6 +2540,8 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     created_at: subscription.created_at,
     current_billing_period_started_at: subscription.current_period_start,
     current_billing_period_ending_at: subscription.current_period_end,
+    trial_started_at: subscription.trial_started_at,
+    trial_ended_at: subscription.trial_ended_at,
     payment_method: { payment_method_id: null, payment_method_type: null },
   };
 }
@@ -2556,6 +2622,7 @@ function rejectUnsupportedCustomerFields(input: Record<string, unknown>): void {
     "billing_configuration",
     "net_payment_term",
     "invoice_grace_period",
+    "timezone",
     "tax_codes",
     "tax_provider_code",
   ]);
@@ -2583,6 +2650,22 @@ function validateCustomerProvider(provider: string | null, code: string | null):
     );
 }
 
+function normalizeBillingTimezone(value: string | null): string | null {
+  if (value === null) return null;
+  try {
+    return assertBillingTimezone(value);
+  } catch {
+    throw new ApiError(422, "validation_error", "timezone must be a valid IANA timezone");
+  }
+}
+
+function normalizeBillingTime(value: unknown): BillingTime {
+  if (value === undefined || value === null || value === "") return "calendar";
+  if (value !== "calendar" && value !== "anniversary")
+    throw new ApiError(422, "validation_error", "billing_time must be calendar or anniversary");
+  return value;
+}
+
 function customerMatches(customer: CustomerRow, normalized: NormalizedCustomer): boolean {
   return (
     customer.name === normalized.name &&
@@ -2592,6 +2675,7 @@ function customerMatches(customer: CustomerRow, normalized: NormalizedCustomer):
     customer.payment_provider_code === normalized.paymentProviderCode &&
     customer.net_payment_term === normalized.netPaymentTerm &&
     customer.invoice_grace_period === normalized.invoiceGracePeriod &&
+    customer.timezone === normalized.timezone &&
     stableJson(parseCustomerMetadata(customer.metadata_json)) === stableJson(normalized.metadata)
   );
 }
@@ -2641,6 +2725,7 @@ function customerEvent(
       paymentProviderCode: normalized.paymentProviderCode,
       netPaymentTerm: normalized.netPaymentTerm,
       invoiceGracePeriod: normalized.invoiceGracePeriod,
+      timezone: normalized.timezone,
       metadata: normalized.metadata,
     },
   };

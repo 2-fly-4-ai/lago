@@ -191,8 +191,6 @@ async function createPlan(
       "unsupported_plan_feature",
       "Monthly split billing for usage charges is not implemented",
     );
-  if (input.trial_period !== undefined && input.trial_period !== null)
-    throw new ApiError(422, "unsupported_plan_feature", "Trial-period billing is not implemented");
   const metadata = optionalObject(input.metadata, "metadata");
   if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
     throw new ApiError(
@@ -503,8 +501,6 @@ async function updatePlan(
       : requiredString(input, "amount_currency").toUpperCase();
   if (!/^[A-Z]{3}$/.test(nextCurrency))
     throw new ApiError(422, "validation_error", "amount_currency must be an ISO currency code");
-  if (input.trial_period !== undefined && input.trial_period !== null)
-    throw new ApiError(422, "unsupported_plan_feature", "Trial-period billing is not implemented");
   if (nextCode !== plan.code) {
     const duplicate = await findPlan(env.BILLING_DB, auth.organizationId, nextCode);
     if (duplicate) throw new ApiError(422, "value_already_exist", "Plan code already exists");

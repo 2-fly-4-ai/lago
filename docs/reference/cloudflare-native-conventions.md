@@ -36,13 +36,26 @@ this document does not silently redefine that behavior.
 - Store calendar dates as `YYYY-MM-DD`. An invoice's `issuing_date` is an immutable commercial date;
   `finalized_at` is the later processing instant. Payment due date is issuing date plus the invoice's
   snapshotted non-negative net-payment term.
-- Calculate billing periods using UTC calendar arithmetic. The five-minute Worker Cron is UTC and
-  dispatches deterministic legacy schedule slots from its supplied scheduled time, not wall-clock
-  invocation time.
+- Persist each subscription's `billing_time` (`calendar` or `anniversary`) and resolved IANA
+  `billing_timezone`. Anniversary periods retain clamped UTC month arithmetic. Calendar periods
+  resolve local weekly/monthly/quarterly/yearly boundaries through `Intl.DateTimeFormat`, then
+  persist those boundaries as half-open UTC instants. Local civil-day coefficients, not elapsed
+  24-hour blocks, drive trial proration across daylight-saving changes.
+- The five-minute Worker Cron is UTC and dispatches deterministic legacy schedule slots from its
+  supplied scheduled time, not wall-clock invocation time. The customer timezone is snapshotted on
+  subscription creation (organization timezone, then UTC, is the fallback); changing the customer
+  later does not reinterpret an existing subscription's persisted boundaries.
 - The retained future-start subset accepts an explicit instant, persists its normalized UTC value
-  as `subscription_at`, creates no invoice while pending, and uses the supplied Workflow trigger
-  instant for both activation and the initial billing-period anchor. Backdated starts and
-  tenant-local civil-date interpretation remain unsupported.
+  as `subscription_at`, creates no invoice while pending, and uses that exact supplied instant for
+  the initial billing-period and trial anchor even if the activation Workflow runs later.
+  Backdated starts remain unsupported.
+- A positive plan `trial_period` snapshots `trial_started_at` and `trial_end_at` on the
+  subscription. The hourly `:35` owner closes any missed trial-covered periods first, atomically
+  sets `trial_ended_at`, and emits `subscription.trial_ended`. In-arrears plans wait until period
+  close for a locally prorated base; pay-in-advance plans create one locally prorated base at trial
+  end. A base already issued for that window wins, including the exact `:10` boundary case. Trial
+  drafts reuse an immutable initial context, remain non-consuming during refresh, and allocate
+  credits only at finalization.
 - The retained termination-invoice subset uses UTC civil dates. Its in-arrears base line includes
   both the period-start date and termination date, caps the result at the full period, and uses
   exact `Decimal` division before minor-unit rounding. Usage remains half-open and is bounded by the
@@ -57,10 +70,9 @@ this document does not silently redefine that behavior.
   credit-note action. Manual query parameters override those stored actions and the hourly owner
   uses them when no query exists. A pay-in-advance `ending_at` is admitted only when the persisted
   credit action is `skip`; scheduled unused-source crediting remains guarded. Customer-local dates
-  require separate timezone evidence.
-- Tenant-local time zones, daylight-saving behavior, and Rails time-zone parity are not implemented
-  unless a feature's executable evidence says otherwise. A port that depends on local civil time
-  must add the time-zone field, transition tests, and migration notes before it can be called parity.
+  require separate termination-specific timezone evidence. Calendar subscription billing and free
+  trials do have UTC, Europe/Paris DST, and Asia/Tokyo executable evidence; that evidence does not
+  silently extend to termination, refunds, or other date-sensitive families.
 
 ### Identifiers
 
@@ -124,7 +136,7 @@ concurrent request, or replay converge on one valid result.
 | Organization and API keys | authenticated admin/bootstrap boundary                               | organization and key rows                                                                       | unique external ID/key hash; all child reads require organization scope                                   |
 | Customer billing account  | `BillingAccount` Durable Object plus customer API                    | customer version and outbox                                                                     | per-customer command reservation; unique external ID; optimistic version; replay hash                     |
 | Plan catalog              | plan, charge, fixed-charge, add-on, metric, and tax APIs             | one catalog mutation and outbox                                                                 | tenant/code/version uniqueness; attached-plan restrictions; optimistic version                            |
-| Subscription              | compatibility API and lifecycle API                                  | subscription state transition, billing-cycle seed, initial/final invoice event rows, and outbox | unique tenant external ID; request hash; customer DO reservation; transition/version guards               |
+| Subscription              | compatibility API, lifecycle API, and trial-ending owner             | subscription/trial transition, billing-cycle seed, initial/final invoice event rows, and outbox | unique tenant external ID; request hash; immutable trial trigger; customer DO reservation; version guards |
 | Usage event               | metered-usage API                                                    | one event/outbox or an atomic batch; R2 archives are content-addressed                          | tenant transaction ID uniqueness; canonical request hash; replay/conflict and batch rollback tests        |
 | Billing cycle             | `closeBillingPeriod`                                                 | cycle lease/result, invoice graph, credits, next period, and outbox                             | deterministic cycle key; cycle request hash; customer DO reservation; D1 batch; version predicates        |
 | Invoice                   | one-off, billing-cycle, refresh/finalize, void, and payment services | invoice header/version, lines/taxes/credits, linked ledgers, and outbox                         | immutable source IDs; line uniqueness; total `CHECK`; optimistic version; deterministic event IDs         |
@@ -180,8 +192,11 @@ Required evidence for a new aggregate or a boundary change:
 - A base subscription creates an initial invoice only when its plan snapshots
   `pay_in_advance = 1`; in-arrears starts seed the billing period without an invoice. Recurring
   pay-in-advance base lines snapshot the next period, while in-arrears base lines, usage, fixed
-  charges, and commitments snapshot the period being closed.
-- Tenant-local billing time zones and daylight-saving transitions are not yet parity-proven.
+  charges, and commitments snapshot the period being closed. A positive trial defers that initial
+  base, permits usage-period close while the trial remains active, and uses the separate hourly
+  trial owner plus local-day proration described above. Ordinary `store-new` checkout retains its
+  verified full initial base amount even though its omitted billing-time field now resolves to
+  Lago's `calendar` default.
 - Provider reads, payment mutations, and outbound webhook delivery are implemented only behind
   disabled safety gates in the isolated stack.
 - Advanced tax providers, multi-provider payment behavior, refunds, and several document families

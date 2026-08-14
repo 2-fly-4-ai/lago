@@ -7,6 +7,7 @@ import { walletAllocationStatements } from "./wallet-credits";
 import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
 import { paymentDueDate } from "./payment-terms";
+import { localDateString } from "./periods";
 import {
   calculateSubscriptionInvoice,
   findBillableSubscription,
@@ -152,7 +153,7 @@ export async function closeBillingPeriod(
     } = calculation;
     const draft = subscription.invoice_grace_period > 0;
     const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
-    const billingDate = periodEnd.slice(0, 10);
+    const billingDate = localDateString(new Date(periodEnd), subscription.billing_timezone);
     const issuingDate = shiftCalendarDate(billingDate, -1);
     const expectedFinalizationDate = shiftCalendarDate(
       billingDate,

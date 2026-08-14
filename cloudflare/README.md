@@ -13,12 +13,13 @@ remaining Lago feature inventory is dispositioned and ported.
   pay-in-arrears fixed charges, customer payment terms, immutable invoice due-date snapshots,
   customer invoice-grace settings, distinct initial/renewal invoice contexts, refreshable draft
   state, dependency-invalidation triggers and mutation guards, immutable issuing/finalization dates,
+  customer time zones, subscription billing mode/timezone snapshots, immutable trial boundaries,
   overdue state, payment attempts, outbox state, and webhook receipt metadata;
   plan-level minimum commitments are reconciled as auditable period true-up lines after recurring
   subscription, usage, and fixed-charge fees.
 - Plan catalog: idempotent creation and optimistic scalar updates with transactional versioned
-  outbox events, including the base subscription’s pay-in-advance mode. Catalog graph replacement
-  and destructive plan lifecycle remain guarded.
+  outbox events, including the base subscription’s pay-in-advance mode and non-negative trial
+  period. Catalog graph replacement and destructive plan lifecycle remain guarded.
 - Subscription lifecycle: pay-in-advance starts create their initial invoice atomically, while
   in-arrears starts create no initial invoice. A supported future UTC `subscription_at` creates a
   pending subscription with no invoice, and the five-minute activation owner applies the same
@@ -42,8 +43,8 @@ remaining Lago feature inventory is dispositioned and ported.
   is finalized and has no discount, tax, wallet, or prior credit allocation. The default combined
   command creates that credit, finalizes bounded in-arrears usage without rebilling the base, and
   applies the new balance before wallet credits in one ordered D1 batch. The usage invoice can also
-  be generated while explicitly skipping unused-period crediting. Backdating, calendar billing,
-  tenant-local termination dates, refund/offset modes, allocated source invoices,
+  be generated while explicitly skipping unused-period crediting. Backdating, tenant-local
+  termination dates, refund/offset modes, allocated source invoices,
   prorated/pay-in-advance fixed charges, and pay-in-advance commitment termination remain guarded.
   In-arrears termination with a positive grace period instead creates a non-consuming draft from an
   immutable termination context; manual or scheduled refresh uses the original period boundaries,
@@ -52,7 +53,13 @@ remaining Lago feature inventory is dispositioned and ported.
   prepaid source invoice is draft, refreshes proportionally with that source, and becomes available
   only after the source finalizes. The termination draft cannot finalize early and then applies the
   new balance before wallet credits. Coupon, tax, wallet, or finalized-credit adjustments on the
-  still-draft source remain explicitly guarded.
+  still-draft source remain explicitly guarded. Calendar and anniversary subscription billing are
+  persisted explicitly; calendar boundaries and invoice dates use the snapshotted customer IANA
+  timezone and remain half-open UTC instants in D1. Positive trials defer the initial base invoice.
+  The hourly `:35` owner closes missed trial-covered periods, coordinates with the `:10` billing
+  owner at exact boundaries, emits one trial-ended transition, and creates one locally prorated
+  pay-in-advance base (or leaves in-arrears base proration to period close). Grace-period trial
+  invoices refresh and finalize from the same immutable initial context without adding charges.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.
@@ -60,7 +67,7 @@ remaining Lago feature inventory is dispositioned and ported.
   with atomic D1 event/outbox rows and deterministic immutable R2 evidence.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
-  flagged-draft refresh, draft-finalization, invoice-overdue, Authorize.Net receipt retry,
+  flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,
   coupon-expiration, and wallet-expiration paths on their original slots, performs 90-day
   inbound/outbound webhook retention, records each run in D1, publishes the outbox, and reports due
   schedules whose behavior is not yet ported. Inbound retention records R2 deletion tasks

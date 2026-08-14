@@ -1,5 +1,6 @@
 export type ScheduleExecutor =
   | "activate_subscriptions"
+  | "bill_ended_trials"
   | "cleanup_inbound_webhooks"
   | "cleanup_outbound_webhooks"
   | "close_billing_periods"
@@ -146,7 +147,8 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     legacyJob: "Clock::FreeTrialSubscriptionsBillerJob",
     cadence: hourly(35),
     owner: "subscription lifecycle workflow",
-    parity: "not_started",
+    parity: "implemented",
+    executor: "bill_ended_trials",
   },
   {
     key: "schedule:terminate_wallets",

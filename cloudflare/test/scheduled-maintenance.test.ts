@@ -74,6 +74,7 @@ describe("legacy schedule ownership", () => {
       "schedule:finalize_invoices",
       "schedule:mark_invoices_as_payment_overdue",
       "schedule:terminate_coupons",
+      "schedule:bill_ended_trial_subscriptions",
       "schedule:terminate_wallets",
       "schedule:clean_webhooks",
       "schedule:clean_inbound_webhooks",

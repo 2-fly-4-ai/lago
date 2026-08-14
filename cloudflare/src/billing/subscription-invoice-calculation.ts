@@ -8,7 +8,12 @@ import { calculateCouponCredits, type CouponCredit } from "./coupon-credits";
 import { calculateCreditNoteAllocations, type CreditNoteAllocation } from "./credit-note-credits";
 import { calculateManualTaxes, totalManualTaxMinor, type InvoiceTax } from "./manual-taxes";
 import { calculateMinimumCommitmentLine } from "./minimum-commitment";
-import { nextPeriodEnd } from "./periods";
+import {
+  billingPeriodProration,
+  followingPeriodEnd,
+  initialPlanProration,
+  type BillingTime,
+} from "./periods";
 import { calculateWalletAllocations, type WalletAllocation } from "./wallet-credits";
 
 export type BillableSubscription = {
@@ -27,6 +32,11 @@ export type BillableSubscription = {
   plan_pay_in_advance: number;
   net_payment_term: number;
   invoice_grace_period: number;
+  billing_time: BillingTime;
+  billing_timezone: string;
+  trial_started_at: string | null;
+  trial_end_at: string | null;
+  trial_ended_at: string | null;
 };
 
 type ChargeRow = {
@@ -127,6 +137,8 @@ async function findSubscriptionForCalculation(
               p.name AS plan_name, s.name AS subscription_name,
               p.amount_minor AS plan_amount_minor,
               p.pay_in_advance AS plan_pay_in_advance,
+              s.billing_time, s.billing_timezone, s.trial_started_at, s.trial_end_at,
+              s.trial_ended_at,
               COALESCE(c.net_payment_term, o.net_payment_term) AS net_payment_term,
               COALESCE(c.invoice_grace_period, o.invoice_grace_period) AS invoice_grace_period
        FROM subscriptions s JOIN plans p ON p.id = s.plan_id
@@ -149,19 +161,42 @@ export async function calculateInitialSubscriptionInvoice(
   if (!Number.isFinite(Date.parse(periodStart)) || !Number.isFinite(Date.parse(periodEnd))) {
     throw new Error("invalid_billing_period");
   }
+  const trialEndInvoice =
+    subscription.trial_end_at !== null && periodStart === subscription.trial_end_at;
+  const proration = trialEndInvoice
+    ? initialPlanProration(
+        new Date(periodStart),
+        new Date(periodEnd),
+        subscription.billing_time,
+        subscription.interval,
+        subscription.billing_timezone,
+      )
+    : { billableDays: 1, fullPeriodDays: 1 };
+  const preciseAmount = Decimal.parse(subscription.plan_amount_minor)
+    .multiply(Decimal.parse(proration.billableDays))
+    .divideByInteger(BigInt(proration.fullPeriodDays));
+  const roundedAmount = safeMinorInteger(preciseAmount);
   const line: SubscriptionInvoiceLine = {
     id: await deterministicUuid("initial-invoice-line", invoiceId),
     description: subscription.subscription_name ?? subscription.plan_name,
     units: "1",
-    precise: String(subscription.plan_amount_minor),
-    rounded: subscription.plan_amount_minor,
+    precise: preciseAmount.toString(),
+    rounded: roundedAmount,
     sourceId: subscription.plan_id,
     lineType: "subscription",
     sourceType: "plan",
-    metadataJson: stableJson({ contextType: "initial", periodStart, periodEnd }),
+    metadataJson: stableJson({
+      contextType: "initial",
+      periodStart,
+      periodEnd,
+      billingTime: subscription.billing_time,
+      billingTimezone: subscription.billing_timezone,
+      billableDays: proration.billableDays,
+      fullPeriodDays: proration.fullPeriodDays,
+    }),
   };
   const lines = [line];
-  const subtotalMinor = subscription.plan_amount_minor;
+  const subtotalMinor = roundedAmount;
   const couponCredits = await calculateCouponCredits(
     database,
     subscription.organization_id,
@@ -252,9 +287,11 @@ export async function calculateSubscriptionInvoice(
     options.context === "renewal"
       ? `${subscription.id}:${periodStart}:${periodEnd}`
       : `${subscription.id}:${periodStart}:${calculationPeriodEnd}:termination`;
-  const followingPeriodEnd = nextPeriodEnd(
+  const nextEnd = followingPeriodEnd(
     new Date(periodEnd),
     subscription.interval,
+    subscription.billing_time,
+    subscription.billing_timezone,
   ).toISOString();
   const planPeriodStart =
     options.context === "renewal" && subscription.plan_pay_in_advance === 1
@@ -264,20 +301,43 @@ export async function calculateSubscriptionInvoice(
     options.context === "termination"
       ? calculationPeriodEnd
       : subscription.plan_pay_in_advance === 1
-        ? followingPeriodEnd
+        ? nextEnd
         : periodEnd;
   const lines: SubscriptionInvoiceLine[] = [];
-  const includePlanLine = !(
+  let includePlanLine = !(
     options.context === "termination" && subscription.plan_pay_in_advance === 1
   );
+  let renewalProration: { billableDays: number; fullPeriodDays: number } | null = null;
+  if (options.context === "renewal" && subscription.trial_end_at) {
+    const trialEndMs = Date.parse(subscription.trial_end_at);
+    if (!Number.isFinite(trialEndMs)) throw new Error("invalid_trial_end_at");
+    if (subscription.plan_pay_in_advance === 1) {
+      if (subscription.trial_ended_at === null && trialEndMs > periodEndMs) includePlanLine = false;
+    } else {
+      const billableStartMs = Math.max(periodStartMs, trialEndMs);
+      if (billableStartMs >= periodEndMs) includePlanLine = false;
+      else {
+        renewalProration = billingPeriodProration(
+          new Date(billableStartMs),
+          new Date(periodStartMs),
+          new Date(periodEndMs),
+          subscription.billing_timezone,
+        );
+      }
+    }
+  }
   const precisePlanAmount =
     options.context === "termination" && includePlanLine
       ? Decimal.parse(subscription.plan_amount_minor)
           .multiply(Decimal.parse(options.window.billableDays))
           .divideByInteger(BigInt(options.window.fullPeriodDays))
-      : includePlanLine
+      : includePlanLine && renewalProration
         ? Decimal.parse(subscription.plan_amount_minor)
-        : Decimal.zero();
+            .multiply(Decimal.parse(renewalProration.billableDays))
+            .divideByInteger(BigInt(renewalProration.fullPeriodDays))
+        : includePlanLine
+          ? Decimal.parse(subscription.plan_amount_minor)
+          : Decimal.zero();
   const roundedPlanAmount = includePlanLine ? safeMinorInteger(precisePlanAmount) : 0;
   let subtotalMinor = roundedPlanAmount;
   if (includePlanLine) {
@@ -295,6 +355,19 @@ export async function calculateSubscriptionInvoice(
         billingMode: subscription.plan_pay_in_advance === 1 ? "in_advance" : "in_arrears",
         periodStart: planPeriodStart,
         periodEnd: planPeriodEnd,
+        ...(subscription.billing_time === "calendar"
+          ? {
+              billingTime: subscription.billing_time,
+              billingTimezone: subscription.billing_timezone,
+            }
+          : {}),
+        ...(renewalProration
+          ? {
+              billableDays: renewalProration.billableDays,
+              fullPeriodDays: renewalProration.fullPeriodDays,
+              trialEndAt: subscription.trial_end_at,
+            }
+          : {}),
         ...(options.context === "termination"
           ? {
               contextType: "termination",
@@ -509,7 +582,7 @@ export async function calculateSubscriptionInvoice(
     prepaidCreditMinor,
     creditsMinor,
     totalDueMinor: subtotalMinor + taxMinor - creditsMinor,
-    nextPeriodEnd: options.context === "renewal" ? followingPeriodEnd : calculationPeriodEnd,
+    nextPeriodEnd: options.context === "renewal" ? nextEnd : calculationPeriodEnd,
   };
 }
 

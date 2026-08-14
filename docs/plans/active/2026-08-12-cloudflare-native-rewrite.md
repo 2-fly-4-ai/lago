@@ -330,8 +330,10 @@ Acceptance:
       support the Rails-safe mutable subset for attached plans with optimistic concurrency. The
       base plan’s `pay_in_advance` mode is accepted at creation and can change only before a
       subscription attaches to that plan.
-      Charge/fixed-charge/commitment/tax/threshold graph replacement, deletion, one-time plans,
-      trials, and monthly split billing remain explicit rejections.
+      Positive plan trials, persisted customer timezones, and subscription calendar/anniversary
+      billing are now supported by the dedicated trial-ending slice. Charge/fixed-charge/
+      commitment/tax/threshold graph replacement, deletion, one-time plans, and monthly split
+      billing remain explicit rejections.
 - [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
       leased, idempotent recurring period-close path now produces finalized invoices at zero grace
       or non-consuming preview drafts at positive grace. Usage events flag the owning draft; manual
@@ -375,8 +377,9 @@ Acceptance:
       activated. Active/past-due name updates emit the same versioned `subscription.updated`.
       Recurring close snapshots the pay-in-advance base line against the next billing period while
       keeping in-arrears base, usage, fixed-charge, and commitment evidence on the closed period.
-      Backdating, tenant-local calendar interpretation, calendar billing, ending rules, overrides,
-      payment-method, custom-section, and threshold inputs fail explicitly.
+      Backdating, subscription upgrades/downgrades, payment-method, custom-section, and threshold
+      inputs fail explicitly. Calendar billing and trial dates use a snapshotted customer IANA
+      timezone; the retained termination subset remains UTC-specific.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
 - [ ] Add deterministic replay and total reconciliation.
 
@@ -1241,3 +1244,21 @@ resource and mutation described.
   subscriptions, invoices, credit notes, and outbox events plus 70 Cron audits. The deployed version
   retained the three disabled external-action flags and only the existing isolated
   bindings/triggers. No route, secret, migration, or billing data changed.
+- 2026-08-14: Ported the coordinated calendar/timezone/free-trial lifecycle. Migration
+  `0032_calendar_trial_billing.sql` adds organization/customer timezones, explicit subscription
+  billing mode/timezone, immutable trial start/end/ended state, the due index, transition guards,
+  and draft invalidation. Subscription creation now uses Lago's calendar default while retaining
+  the verified full `store-new` initial checkout amount; anniversary remains explicit. Pending
+  activation anchors periods and trials to the supplied start rather than scheduler latency.
+  Calendar boundaries are half-open UTC instants derived from local civil dates, including DST.
+  The hourly `:35` owner closes missed trial-covered periods, defers in-arrears base fees to period
+  close, creates one locally prorated pay-in-advance base, coordinates with the `:10` owner at an
+  exact boundary, recognizes a base already issued on day one, and persists the trial transition,
+  invoice graph, immutable refresh context, and outbox evidence atomically. Evidence covers UTC,
+  Europe/Paris DST, Asia/Tokyo grace refresh/finalization, long trials spanning periods, exact and
+  missed boundary ordering, in-arrears proration, existing-base suppression, replay, invalid
+  timezone/mode rejection, and D1 immutability rollback. All 107 tests pass across 26 files; all 32
+  migrations replay from an empty local D1, and formatting, strict lint, generated inventory/types,
+  TypeScript, and the dry-run bundle are green at 567.01 KiB (100.26 KiB gzip). At this
+  pre-deployment checkpoint, the isolated remote stack remains on migration `0031` and Worker
+  version `fb10cb7a-a2e1-4dca-a097-3ce9f58de222`.

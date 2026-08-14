@@ -7,6 +7,7 @@ import {
   type TerminationActions,
 } from "../billing/terminate-subscription";
 import { terminatePayInAdvanceWithCredit } from "../billing/pay-in-advance-termination-credit";
+import type { BillingTime } from "../billing/periods";
 import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../http";
 import { stableJson } from "../json";
 import {
@@ -42,6 +43,11 @@ type SubscriptionRow = {
   updated_at: string;
   version: number;
   invoice_grace_period: number;
+  billing_time: BillingTime;
+  billing_timezone: string;
+  trial_started_at: string | null;
+  trial_end_at: string | null;
+  trial_ended_at: string | null;
 };
 
 export async function handleSubscriptionLifecycleRequest(
@@ -528,7 +534,9 @@ function subscriptionSelect(): string {
                  s.name, s.status, s.subscription_at, s.started_at,
                  s.current_period_start, s.current_period_end, s.canceled_at,
                  s.ending_at, s.on_termination_credit_note, s.on_termination_invoice,
-                 s.terminated_at, s.created_at, s.updated_at, s.version
+                 s.terminated_at, s.created_at, s.updated_at, s.version,
+                 s.billing_time, s.billing_timezone, s.trial_started_at, s.trial_end_at,
+                 s.trial_ended_at
           FROM subscriptions s
           JOIN customers c ON c.id = s.customer_id
           JOIN plans p ON p.id = s.plan_id
@@ -571,7 +579,8 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     plan_amount_cents: subscription.plan_amount_minor,
     plan_amount_currency: subscription.plan_currency,
     status: subscription.status,
-    billing_time: "anniversary",
+    billing_time: subscription.billing_time,
+    billing_timezone: subscription.billing_timezone,
     subscription_at: subscription.subscription_at,
     started_at: subscription.started_at,
     terminated_at: subscription.terminated_at,
@@ -582,6 +591,8 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     created_at: subscription.created_at,
     current_billing_period_started_at: subscription.current_period_start,
     current_billing_period_ending_at: subscription.current_period_end,
+    trial_started_at: subscription.trial_started_at,
+    trial_ended_at: subscription.trial_ended_at,
     payment_method: { payment_method_id: null, payment_method_type: null },
   };
 }

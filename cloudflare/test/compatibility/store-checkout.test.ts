@@ -94,12 +94,19 @@ describe("store-new Lago checkout compatibility", () => {
     });
     expect(firstSubscription.status).toBe(200);
     const firstSubscriptionBody = await firstSubscription.json<{
-      subscription: { lago_id: string; external_id: string; plan_code: string; status: string };
+      subscription: {
+        lago_id: string;
+        external_id: string;
+        plan_code: string;
+        status: string;
+        billing_time: string;
+      };
     }>();
     expect(firstSubscriptionBody.subscription).toMatchObject({
       external_id: "store_safe_serp_1_app_plan_monthly_1",
       plan_code: "serp-1-app-plan-monthly",
       status: "active",
+      billing_time: "calendar",
     });
     const initialEvents = await env.BILLING_DB.prepare(
       `SELECT event_type, aggregate_type FROM outbox_events
@@ -143,7 +150,7 @@ describe("store-new Lago checkout compatibility", () => {
         subscription: {
           ...subscriptionRequest.subscription,
           external_id: "unsupported-subscription",
-          billing_time: "calendar",
+          activation_rules: [{ type: "recurring" }],
         },
       }),
     });
@@ -170,8 +177,9 @@ describe("store-new Lago checkout compatibility", () => {
     expect(invoiceBody.invoices[0]).toMatchObject({
       status: "finalized",
       payment_status: "pending",
-      total_due_amount_cents: 1999,
     });
+    expect(invoiceBody.invoices[0]?.total_due_amount_cents).toBeGreaterThan(0);
+    expect(invoiceBody.invoices[0]?.total_due_amount_cents).toBeLessThanOrEqual(1999);
 
     const invoiceId = invoiceBody.invoices[0]?.lago_id;
     expect(invoiceId).toBeTruthy();

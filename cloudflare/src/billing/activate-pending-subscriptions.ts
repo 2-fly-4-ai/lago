@@ -5,7 +5,7 @@ import { couponCreditStatements } from "./coupon-credits";
 import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
 import { paymentDueDate } from "./payment-terms";
-import { nextPeriodEnd } from "./periods";
+import { firstPeriodEnd, localDateString } from "./periods";
 import {
   calculateInitialSubscriptionInvoice,
   type BillableSubscription,
@@ -27,6 +27,8 @@ export async function activatePendingSubscriptions(
     `SELECT s.id, s.organization_id, s.customer_id, s.plan_id, s.external_id,
             s.subscription_at, s.version, p.interval, p.currency, p.name AS plan_name,
             p.pay_in_advance AS plan_pay_in_advance,
+            s.billing_time, s.billing_timezone, s.trial_started_at, s.trial_end_at,
+            s.trial_ended_at,
             s.name AS subscription_name, p.amount_minor AS plan_amount_minor,
             COALESCE(c.net_payment_term, o.net_payment_term) AS net_payment_term,
             COALESCE(c.invoice_grace_period, o.invoice_grace_period) AS invoice_grace_period,
@@ -55,28 +57,44 @@ async function activatePendingSubscription(
   activatedAt: string,
   correlationId: string,
 ): Promise<boolean> {
-  const periodEnd = nextPeriodEnd(new Date(activatedAt), pending.interval).toISOString();
+  const effectiveStart = pending.subscription_at;
+  const periodEnd = firstPeriodEnd(
+    new Date(effectiveStart),
+    pending.interval,
+    pending.billing_time,
+    pending.billing_timezone,
+  ).toISOString();
   const subscription: BillableSubscription = {
     ...pending,
-    current_period_start: activatedAt,
+    current_period_start: effectiveStart,
     current_period_end: periodEnd,
   };
   const invoiceId = await deterministicUuid(
     "initial-invoice",
     `${pending.organization_id}:${pending.external_id}`,
   );
-  if (pending.plan_pay_in_advance !== 1) {
-    return activateWithoutInitialInvoice(env, pending, activatedAt, periodEnd, correlationId);
+  if (pending.plan_pay_in_advance !== 1 || pending.trial_end_at !== null) {
+    return activateWithoutInitialInvoice(
+      env,
+      pending,
+      effectiveStart,
+      activatedAt,
+      periodEnd,
+      correlationId,
+    );
   }
   const calculation = await calculateInitialSubscriptionInvoice(
     env.BILLING_DB,
     subscription,
     invoiceId,
-    activatedAt,
+    effectiveStart,
     periodEnd,
   );
   const draft = pending.invoice_grace_period > 0;
-  const issuingDate = shiftCalendarDate(activatedAt.slice(0, 10), pending.invoice_grace_period);
+  const issuingDate = shiftCalendarDate(
+    localDateString(new Date(effectiveStart), pending.billing_timezone),
+    pending.invoice_grace_period,
+  );
   const paymentDue = paymentDueDate(issuingDate, pending.net_payment_term);
   const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
   const subscriptionVersion = pending.version + 1;
@@ -95,7 +113,7 @@ async function activatePendingSubscription(
       subscriptionId: pending.id,
       externalSubscriptionId: pending.external_id,
       subscriptionAt: pending.subscription_at,
-      startedAt: activatedAt,
+      startedAt: effectiveStart,
     },
   };
   const invoiceEvent: DomainEvent = {
@@ -118,7 +136,7 @@ async function activatePendingSubscription(
       prepaidCreditMinor: calculation.prepaidCreditMinor,
       totalDueMinor: calculation.totalDueMinor,
       currency: pending.currency,
-      periodStart: activatedAt,
+      periodStart: effectiveStart,
       periodEnd,
       issuingDate,
       expectedFinalizationDate: issuingDate,
@@ -133,8 +151,8 @@ async function activatePendingSubscription(
        WHERE id = ? AND organization_id = ? AND status = 'pending' AND version = ?
          AND subscription_at <= ?`,
     ).bind(
-      activatedAt,
-      activatedAt,
+      effectiveStart,
+      effectiveStart,
       periodEnd,
       activatedAt,
       pending.id,
@@ -187,7 +205,7 @@ async function activatePendingSubscription(
       `INSERT INTO subscription_invoice_contexts
        (invoice_id, organization_id, subscription_id, context_type, period_start,
         period_end, created_at) VALUES (?, ?, ?, 'initial', ?, ?, ?)`,
-    ).bind(invoiceId, pending.organization_id, pending.id, activatedAt, periodEnd, activatedAt),
+    ).bind(invoiceId, pending.organization_id, pending.id, effectiveStart, periodEnd, activatedAt),
   ];
   if (!draft) {
     statements.push(
@@ -267,6 +285,7 @@ async function activatePendingSubscription(
 async function activateWithoutInitialInvoice(
   env: Env,
   pending: PendingSubscription,
+  effectiveStart: string,
   activatedAt: string,
   periodEnd: string,
   correlationId: string,
@@ -287,7 +306,7 @@ async function activateWithoutInitialInvoice(
       subscriptionId: pending.id,
       externalSubscriptionId: pending.external_id,
       subscriptionAt: pending.subscription_at,
-      startedAt: activatedAt,
+      startedAt: effectiveStart,
       initialInvoiceGenerated: false,
     },
   };
@@ -299,8 +318,8 @@ async function activateWithoutInitialInvoice(
        WHERE id = ? AND organization_id = ? AND status = 'pending' AND version = ?
          AND subscription_at <= ?`,
     ).bind(
-      activatedAt,
-      activatedAt,
+      effectiveStart,
+      effectiveStart,
       periodEnd,
       activatedAt,
       pending.id,
@@ -312,7 +331,7 @@ async function activateWithoutInitialInvoice(
       env.BILLING_DB,
       pending.organization_id,
       event,
-      activatedAt,
+      effectiveStart,
     ),
   ]);
   if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
@@ -332,7 +351,7 @@ function conditionalActivationOutboxStatement(
   database: D1Database,
   organizationId: string,
   event: DomainEvent,
-  activatedAt: string,
+  startedAt: string,
 ): D1PreparedStatement {
   return database
     .prepare(
@@ -361,7 +380,7 @@ function conditionalActivationOutboxStatement(
       event.aggregateId,
       organizationId,
       event.aggregateVersion,
-      activatedAt,
+      startedAt,
     );
 }
 
