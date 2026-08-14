@@ -113,9 +113,9 @@ function topLevelCounts(files, prefix) {
 const portRules = [
   {
     pattern:
-      /app\/(?:models\/(?:applied_invoice_custom_section|invoice_custom_section|subscription\/applied_invoice_custom_section)\.rb|services\/(?:invoice_custom_sections\/(?:attach_to_resource|create|destroy|update)_service|invoices\/apply_invoice_custom_sections_service)\.rb|serializers\/v1\/(?:applied_invoice_custom_section_serializer|invoice_custom_section_serializer|invoices\/applied_invoice_custom_section_serializer)\.rb|graphql\/.*invoice_custom_section)/i,
+      /app\/(?:models\/(?:applied_invoice_custom_section|invoice_custom_section|(?:billing_entity|customer|subscription)\/applied_invoice_custom_section)\.rb|services\/(?:customers\/manage_invoice_custom_sections_service|invoice_custom_sections\/(?:attach_to_resource|create|deselect_all|destroy|update)_service|invoices\/apply_invoice_custom_sections_service)\.rb|serializers\/v1\/(?:applied_invoice_custom_section_serializer|invoice_custom_section_serializer|invoices\/applied_invoice_custom_section_serializer)\.rb|graphql\/.*invoice_custom_section)/i,
     target:
-      "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+      "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
     evidence: [
       "cloudflare/test/invoice-custom-sections.test.ts",
       "cloudflare/test/invoice-document.test.ts",

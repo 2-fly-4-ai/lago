@@ -39,6 +39,7 @@ import { normalizeSubscriptionPaymentMethod } from "./subscription-payment-metho
 import { handleInvoiceCustomSectionRequest } from "./invoice-custom-sections";
 import {
   customSectionLinkStatements,
+  normalizeCustomerCustomSections,
   normalizeSubscriptionCustomSections,
   resolveCustomSectionIds,
   serializeAppliedCustomSections,
@@ -71,6 +72,7 @@ type CustomerRow = {
   net_payment_term: number | null;
   invoice_grace_period: number | null;
   timezone: string | null;
+  skip_invoice_custom_sections: number;
   version: number;
   created_at: string;
   updated_at: string;
@@ -204,6 +206,9 @@ export async function handleLagoCompatibilityRequest(
   if (request.method === "GET" && customerMatch?.[1]) {
     return showCustomer(decodeURIComponent(customerMatch[1]), env.BILLING_DB, auth, requestId);
   }
+  if (request.method === "PUT" && customerMatch?.[1]) {
+    return upsertCustomer(request, decodeURIComponent(customerMatch[1]), env, auth, requestId);
+  }
   if (request.method === "DELETE" && customerMatch?.[1]) {
     throw new ApiError(
       422,
@@ -282,6 +287,17 @@ async function upsertCustomer(
       "Customer external_id must match the request path",
     );
   const existing = await findCustomer(database, auth.organizationId, externalId);
+  const customSections = normalizeCustomerCustomSections(input);
+  const customSectionIds = await resolveCustomSectionIds(
+    database,
+    auth.organizationId,
+    customSections.codes,
+  );
+  const replaceCustomSections = customSections.codes !== undefined || customSections.skip === true;
+  const nextSkipInvoiceCustomSections =
+    customSections.codes !== undefined
+      ? false
+      : (customSections.skip ?? existing?.skip_invoice_custom_sections === 1);
   const billingConfiguration = readCustomerBillingConfiguration(input.billing_configuration);
   const normalized = {
     name: input.name === undefined ? (existing?.name ?? null) : optionalString(input, "name"),
@@ -326,12 +342,26 @@ async function upsertCustomer(
       input.timezone === undefined
         ? (existing?.timezone ?? null)
         : normalizeBillingTimezone(optionalString(input, "timezone")),
+    skipInvoiceCustomSections: nextSkipInvoiceCustomSections,
+    customSectionIds: customSections.skip === true ? [] : customSectionIds,
+    replaceCustomSections,
+    clearAllCustomSections: customSections.skip === true,
   };
   validateCustomerProvider(normalized.paymentProvider, normalized.paymentProviderCode);
 
   if (existing) {
-    if (customerMatches(existing, normalized))
-      return json({ customer: serializeCustomer(existing) }, { requestId });
+    const currentSectionIds = replaceCustomSections
+      ? await selectedCustomerCustomSectionIds(database, existing.id)
+      : [];
+    if (
+      customerMatches(existing, normalized) &&
+      (!replaceCustomSections ||
+        sameStringSets(currentSectionIds, normalized.customSectionIds ?? []))
+    )
+      return json(
+        { customer: await serializeCustomer(database, existing, auth.organizationId) },
+        { requestId },
+      );
     return updateCustomer(existing, normalized, env, auth, requestId);
   }
 
@@ -354,8 +384,8 @@ async function upsertCustomer(
           `INSERT INTO customers
            (id, organization_id, external_id, email, name, currency, metadata_json,
             payment_provider, payment_provider_code, net_payment_term, invoice_grace_period,
-            timezone, version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+            timezone, skip_invoice_custom_sections, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .bind(
           id,
@@ -370,15 +400,35 @@ async function upsertCustomer(
           normalized.netPaymentTerm,
           normalized.invoiceGracePeriod,
           normalized.timezone,
+          normalized.skipInvoiceCustomSections ? 1 : 0,
           now,
           now,
         ),
+      ...customerCustomSectionLinkStatements(
+        database,
+        auth.organizationId,
+        id,
+        normalized.customSectionIds,
+        now,
+        false,
+      ),
       customerOutboxStatement(database, auth.organizationId, event),
     ]);
   } catch (error) {
     const concurrent = await findCustomer(database, auth.organizationId, externalId);
-    if (concurrent && customerMatches(concurrent, normalized))
-      return json({ customer: serializeCustomer(concurrent) }, { requestId });
+    if (concurrent && customerMatches(concurrent, normalized)) {
+      const concurrentSectionIds = replaceCustomSections
+        ? await selectedCustomerCustomSectionIds(database, concurrent.id)
+        : [];
+      if (
+        !replaceCustomSections ||
+        sameStringSets(concurrentSectionIds, normalized.customSectionIds ?? [])
+      )
+        return json(
+          { customer: await serializeCustomer(database, concurrent, auth.organizationId) },
+          { requestId },
+        );
+    }
     if (!concurrent) throw error;
     throw new ApiError(409, "customer_version_conflict", "Customer changed concurrently");
   }
@@ -386,7 +436,10 @@ async function upsertCustomer(
   const customer = await findCustomer(database, auth.organizationId, externalId);
   if (!customer) throw new ApiError(500, "persistence_error", "Customer was not persisted");
   await env.DOMAIN_EVENTS.send(event);
-  return json({ customer: serializeCustomer(customer) }, { requestId });
+  return json(
+    { customer: await serializeCustomer(database, customer, auth.organizationId) },
+    { requestId },
+  );
 }
 
 type NormalizedCustomer = {
@@ -399,6 +452,10 @@ type NormalizedCustomer = {
   netPaymentTerm: number | null;
   invoiceGracePeriod: number | null;
   timezone: string | null;
+  skipInvoiceCustomSections: boolean;
+  customSectionIds: string[] | undefined;
+  replaceCustomSections: boolean;
+  clearAllCustomSections: boolean;
 };
 
 async function updateCustomer(
@@ -420,12 +477,12 @@ async function updateCustomer(
     requestId,
     now,
   );
-  const results = await env.BILLING_DB.batch([
+  const statements: D1PreparedStatement[] = [
     env.BILLING_DB.prepare(
       `UPDATE customers
        SET email = ?, name = ?, currency = ?, metadata_json = ?, payment_provider = ?,
            payment_provider_code = ?, net_payment_term = ?, invoice_grace_period = ?, timezone = ?,
-           version = version + 1, updated_at = ?
+           skip_invoice_custom_sections = ?, version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?`,
     ).bind(
       normalized.email,
@@ -437,11 +494,28 @@ async function updateCustomer(
       normalized.netPaymentTerm,
       normalized.invoiceGracePeriod,
       normalized.timezone,
+      normalized.skipInvoiceCustomSections ? 1 : 0,
       now,
       customer.id,
       auth.organizationId,
       customer.version,
     ),
+  ];
+  if (normalized.replaceCustomSections) {
+    statements.push(
+      ...guardedCustomerCustomSectionLinkStatements(
+        env.BILLING_DB,
+        auth.organizationId,
+        customer.id,
+        normalized.customSectionIds ?? [],
+        now,
+        nextVersion,
+        normalized.clearAllCustomSections,
+      ),
+    );
+  }
+  const outboxIndex = statements.length;
+  statements.push(
     env.BILLING_DB.prepare(
       `INSERT INTO outbox_events
        (event_id, organization_id, event_type, event_version, aggregate_type,
@@ -504,13 +578,17 @@ async function updateCustomer(
       nextVersion,
       now,
     ),
-  ]);
-  if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+  );
+  const results = await env.BILLING_DB.batch(statements);
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[outboxIndex]?.meta.changes !== 1)
     throw new ApiError(409, "customer_version_conflict", "Customer changed concurrently");
   await env.DOMAIN_EVENTS.send(event);
   const updated = await findCustomer(env.BILLING_DB, auth.organizationId, customer.external_id);
   if (!updated) throw new ApiError(500, "persistence_error", "Customer disappeared");
-  return json({ customer: serializeCustomer(updated) }, { requestId });
+  return json(
+    { customer: await serializeCustomer(env.BILLING_DB, updated, auth.organizationId) },
+    { requestId },
+  );
 }
 
 async function listCustomers(
@@ -542,15 +620,20 @@ async function listCustomers(
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
               payment_provider_code, net_payment_term, invoice_grace_period, timezone, version,
-              created_at, updated_at
+              skip_invoice_custom_sections, created_at, updated_at
        FROM customers WHERE ${where}
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     )
     .bind(...bindings, perPage, offset)
     .all<CustomerRow>();
+  const serializedCustomers = await serializeCustomers(
+    database,
+    result.results,
+    auth.organizationId,
+  );
   return json(
     {
-      customers: result.results.map(serializeCustomer),
+      customers: serializedCustomers,
       meta: pagination(totalCount(count), page, perPage),
     },
     { requestId },
@@ -565,7 +648,10 @@ async function showCustomer(
 ): Promise<Response> {
   const customer = await findCustomer(database, auth.organizationId, externalId);
   if (!customer) throw new ApiError(404, "customer_not_found", "Customer was not found");
-  return json({ customer: serializeCustomer(customer) }, { requestId });
+  return json(
+    { customer: await serializeCustomer(database, customer, auth.organizationId) },
+    { requestId },
+  );
 }
 
 async function createSubscription(
@@ -2646,7 +2732,7 @@ async function findCustomer(
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
               payment_provider_code, net_payment_term, invoice_grace_period, timezone, version,
-              created_at, updated_at
+              skip_invoice_custom_sections, created_at, updated_at
        FROM customers WHERE organization_id = ? AND external_id = ? LIMIT 1`,
     )
     .bind(organizationId, externalId)
@@ -2730,7 +2816,34 @@ async function findSubscriptionById(
     .first<SubscriptionRow>();
 }
 
-function serializeCustomer(customer: CustomerRow): Record<string, unknown> {
+async function serializeCustomer(
+  database: D1Database,
+  customer: CustomerRow,
+  organizationId: string,
+): Promise<Record<string, unknown>> {
+  const serialized = await serializeCustomers(database, [customer], organizationId);
+  return serialized[0]!;
+}
+
+async function serializeCustomers(
+  database: D1Database,
+  customers: CustomerRow[],
+  organizationId: string,
+): Promise<Record<string, unknown>[]> {
+  const applicable = await applicableCustomSectionsForCustomers(
+    database,
+    customers,
+    organizationId,
+  );
+  return customers.map((customer) =>
+    serializeCustomerRow(customer, applicable.get(customer.id) ?? []),
+  );
+}
+
+function serializeCustomerRow(
+  customer: CustomerRow,
+  applicableInvoiceCustomSections: SerializedCustomerCustomSection[],
+): Record<string, unknown> {
   const metadata = parseCustomerMetadata(customer.metadata_json);
   return {
     lago_id: customer.id,
@@ -2740,6 +2853,8 @@ function serializeCustomer(customer: CustomerRow): Record<string, unknown> {
     currency: customer.currency,
     timezone: customer.timezone,
     net_payment_term: customer.net_payment_term,
+    skip_invoice_custom_sections: customer.skip_invoice_custom_sections === 1,
+    applicable_invoice_custom_sections: applicableInvoiceCustomSections,
     version_number: customer.version,
     created_at: customer.created_at,
     updated_at: customer.updated_at,
@@ -2750,6 +2865,81 @@ function serializeCustomer(customer: CustomerRow): Record<string, unknown> {
     },
     metadata,
   };
+}
+
+type SerializedCustomerCustomSection = {
+  lago_id: string;
+  organization_id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  details: string | null;
+  display_name: string | null;
+};
+
+type CustomerCustomSectionRow = SerializedCustomerCustomSection & {
+  customer_id: string;
+  section_type: "manual" | "system_generated";
+};
+
+async function applicableCustomSectionsForCustomers(
+  database: D1Database,
+  customers: CustomerRow[],
+  organizationId: string,
+): Promise<Map<string, SerializedCustomerCustomSection[]>> {
+  const result = new Map<string, SerializedCustomerCustomSection[]>();
+  if (customers.length === 0) return result;
+  const placeholders = customers.map(() => "?").join(", ");
+  const selected = await database
+    .prepare(
+      `SELECT link.customer_id, cs.id AS lago_id, cs.organization_id, cs.code, cs.name,
+              cs.description, cs.details, cs.display_name, cs.section_type
+       FROM customers_invoice_custom_sections link
+       JOIN invoice_custom_sections cs ON cs.id = link.invoice_custom_section_id
+       WHERE link.customer_id IN (${placeholders}) AND cs.status = 'active'
+       ORDER BY cs.name, cs.code`,
+    )
+    .bind(...customers.map((customer) => customer.id))
+    .all<CustomerCustomSectionRow>();
+  const defaults = await database
+    .prepare(
+      `SELECT '' AS customer_id, cs.id AS lago_id, cs.organization_id, cs.code, cs.name,
+              cs.description, cs.details, cs.display_name, cs.section_type
+       FROM organization_invoice_custom_sections link
+       JOIN invoice_custom_sections cs ON cs.id = link.invoice_custom_section_id
+       WHERE link.organization_id = ? AND cs.status = 'active' AND cs.section_type = 'manual'
+       ORDER BY cs.name, cs.code`,
+    )
+    .bind(organizationId)
+    .all<CustomerCustomSectionRow>();
+  const grouped = new Map<string, CustomerCustomSectionRow[]>();
+  for (const section of selected.results) {
+    const sections = grouped.get(section.customer_id) ?? [];
+    sections.push(section);
+    grouped.set(section.customer_id, sections);
+  }
+  for (const customer of customers) {
+    if (customer.skip_invoice_custom_sections === 1) {
+      result.set(customer.id, []);
+      continue;
+    }
+    const customerSections = grouped.get(customer.id) ?? [];
+    const manual = customerSections.filter((section) => section.section_type === "manual");
+    const systemGenerated = customerSections.filter(
+      (section) => section.section_type === "system_generated",
+    );
+    const applicable = [...(manual.length > 0 ? manual : defaults.results), ...systemGenerated]
+      .filter(
+        (section, index, sections) =>
+          sections.findIndex((candidate) => candidate.lago_id === section.lago_id) === index,
+      )
+      .sort(
+        (left, right) => left.name.localeCompare(right.name) || left.code.localeCompare(right.code),
+      )
+      .map(({ customer_id: _customerId, section_type: _sectionType, ...section }) => section);
+    result.set(customer.id, applicable);
+  }
+  return result;
 }
 
 async function serializeSubscription(
@@ -2931,6 +3121,8 @@ function rejectUnsupportedCustomerFields(input: Record<string, unknown>): void {
     "timezone",
     "tax_codes",
     "tax_provider_code",
+    "skip_invoice_custom_sections",
+    "invoice_custom_section_codes",
   ]);
   const unsupported = Object.keys(input).find((key) => !supported.has(key));
   if (unsupported)
@@ -2982,8 +3174,117 @@ function customerMatches(customer: CustomerRow, normalized: NormalizedCustomer):
     customer.net_payment_term === normalized.netPaymentTerm &&
     customer.invoice_grace_period === normalized.invoiceGracePeriod &&
     customer.timezone === normalized.timezone &&
+    (customer.skip_invoice_custom_sections === 1) === normalized.skipInvoiceCustomSections &&
     stableJson(parseCustomerMetadata(customer.metadata_json)) === stableJson(normalized.metadata)
   );
+}
+
+async function selectedCustomerCustomSectionIds(database: D1Database, customerId: string) {
+  const rows = await database
+    .prepare(
+      `SELECT link.invoice_custom_section_id
+       FROM customers_invoice_custom_sections link
+       JOIN invoice_custom_sections cs ON cs.id = link.invoice_custom_section_id
+       WHERE link.customer_id = ? AND cs.section_type = 'manual' AND cs.status = 'active'
+       ORDER BY link.invoice_custom_section_id`,
+    )
+    .bind(customerId)
+    .all<{ invoice_custom_section_id: string }>();
+  return rows.results.map((row) => row.invoice_custom_section_id);
+}
+
+function sameStringSets(left: string[], right: string[]) {
+  const leftSorted = [...left].sort();
+  const rightSorted = [...right].sort();
+  return (
+    leftSorted.length === rightSorted.length &&
+    leftSorted.every((value, index) => value === rightSorted[index])
+  );
+}
+
+function customerCustomSectionLinkStatements(
+  database: D1Database,
+  organizationId: string,
+  customerId: string,
+  sectionIds: string[] | undefined,
+  createdAt: string,
+  replace: boolean,
+): D1PreparedStatement[] {
+  if (sectionIds === undefined) return [];
+  const statements: D1PreparedStatement[] = [];
+  if (replace) {
+    statements.push(
+      database
+        .prepare(
+          `DELETE FROM customers_invoice_custom_sections
+           WHERE customer_id = ? AND organization_id = ?
+             AND invoice_custom_section_id IN (
+               SELECT id FROM invoice_custom_sections WHERE section_type = 'manual'
+             )`,
+        )
+        .bind(customerId, organizationId),
+    );
+  }
+  for (const sectionId of sectionIds) {
+    statements.push(
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO customers_invoice_custom_sections
+           (customer_id, invoice_custom_section_id, organization_id, created_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .bind(customerId, sectionId, organizationId, createdAt),
+    );
+  }
+  return statements;
+}
+
+function guardedCustomerCustomSectionLinkStatements(
+  database: D1Database,
+  organizationId: string,
+  customerId: string,
+  sectionIds: string[],
+  createdAt: string,
+  expectedVersion: number,
+  clearAll: boolean,
+): D1PreparedStatement[] {
+  const manualOnly = clearAll
+    ? ""
+    : "AND invoice_custom_section_id IN (SELECT id FROM invoice_custom_sections WHERE section_type = 'manual')";
+  const statements: D1PreparedStatement[] = [
+    database
+      .prepare(
+        `DELETE FROM customers_invoice_custom_sections
+         WHERE customer_id = ? AND organization_id = ? ${manualOnly}
+           AND EXISTS (
+             SELECT 1 FROM customers
+             WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?
+           )`,
+      )
+      .bind(customerId, organizationId, customerId, organizationId, expectedVersion, createdAt),
+  ];
+  for (const sectionId of sectionIds) {
+    statements.push(
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO customers_invoice_custom_sections
+           (customer_id, invoice_custom_section_id, organization_id, created_at)
+           SELECT ?, ?, ?, ? FROM customers
+           WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
+        )
+        .bind(
+          customerId,
+          sectionId,
+          organizationId,
+          createdAt,
+          customerId,
+          organizationId,
+          expectedVersion,
+          createdAt,
+        ),
+    );
+  }
+  return statements;
 }
 
 function parseCustomerMetadata(
@@ -3032,6 +3333,8 @@ function customerEvent(
       netPaymentTerm: normalized.netPaymentTerm,
       invoiceGracePeriod: normalized.invoiceGracePeriod,
       timezone: normalized.timezone,
+      skipInvoiceCustomSections: normalized.skipInvoiceCustomSections,
+      invoiceCustomSectionIds: normalized.customSectionIds,
       metadata: normalized.metadata,
     },
   };

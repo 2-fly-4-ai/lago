@@ -5,6 +5,34 @@ export type SubscriptionCustomSections = {
   codes: string[] | undefined;
 };
 
+export type CustomerCustomSections = {
+  skip: boolean | undefined;
+  codes: string[] | undefined;
+};
+
+export function normalizeCustomerCustomSections(
+  input: Record<string, unknown>,
+): CustomerCustomSections {
+  const rawSkip = input.skip_invoice_custom_sections;
+  if (rawSkip !== undefined && typeof rawSkip !== "boolean")
+    throw new ApiError(422, "validation_error", "skip_invoice_custom_sections must be a boolean");
+  const codes = normalizeCustomSectionCodes(input.invoice_custom_section_codes);
+  if (rawSkip === true && input.invoice_custom_section_codes !== undefined)
+    throw new ApiError(
+      422,
+      "validation_error",
+      "skip_invoice_custom_sections cannot be combined with invoice_custom_section_codes",
+    );
+  return { skip: rawSkip as boolean | undefined, codes };
+}
+
+export function normalizeCustomSectionCodes(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value))
+    throw new ApiError(422, "validation_error", "invoice_custom_section_codes must be an array");
+  return [...new Set(value.map(normalizeCode))].sort();
+}
+
 export function normalizeSubscriptionCustomSections(
   value: unknown,
 ): SubscriptionCustomSections | undefined {
@@ -25,13 +53,7 @@ export function normalizeSubscriptionCustomSections(
   const rawSkip = input.skip_invoice_custom_sections;
   if (rawSkip !== undefined && typeof rawSkip !== "boolean")
     throw new ApiError(422, "validation_error", "skip_invoice_custom_sections must be a boolean");
-  const rawCodes = input.invoice_custom_section_codes;
-  let codes: string[] | undefined;
-  if (rawCodes !== undefined) {
-    if (!Array.isArray(rawCodes))
-      throw new ApiError(422, "validation_error", "invoice_custom_section_codes must be an array");
-    codes = [...new Set(rawCodes.map(normalizeCode))].sort();
-  }
+  const codes = normalizeCustomSectionCodes(input.invoice_custom_section_codes);
   return { skip: rawSkip as boolean | undefined, codes: rawSkip === true ? [] : codes };
 }
 

@@ -389,6 +389,192 @@ describe("invoice custom sections", () => {
     });
   });
 
+  it("applies organization defaults, customer overrides, skip, and resource precedence", async () => {
+    const organizationDefault = await createSection(
+      "organization-default",
+      "Organization default",
+      "Organization terms",
+      null,
+    );
+    await createSection("customer-override", "Customer override", "Customer terms", null);
+    await createSection("resource-override", "Resource override", "Resource terms", null);
+
+    const defaultPayload = {
+      billing_entity: {
+        invoice_custom_section_codes: ["unknown-is-ignored", "organization-default"],
+      },
+    };
+    expect(
+      (await api("/api/v1/billing_entities/default/invoice_custom_sections", "PUT", defaultPayload))
+        .status,
+    ).toBe(200);
+    expect(
+      (await api("/api/v1/billing_entities/default/invoice_custom_sections", "PUT", defaultPayload))
+        .status,
+    ).toBe(200);
+    await expect(
+      apiJson("/api/v1/billing_entities/default/invoice_custom_sections"),
+    ).resolves.toMatchObject({
+      billing_entity: {
+        lago_id: "org-sections",
+        code: "default",
+        version_number: 1,
+        invoice_custom_sections: [{ code: "organization-default" }],
+      },
+    });
+    const unsupportedBillingEntity = await api(
+      "/api/v1/billing_entities/not-default/invoice_custom_sections",
+    );
+    expect(unsupportedBillingEntity.status).toBe(422);
+    await expect(unsupportedBillingEntity.json()).resolves.toMatchObject({
+      code: "unsupported_billing_entity",
+    });
+    await expect(apiJson("/api/v1/customers/customer-sections")).resolves.toMatchObject({
+      customer: {
+        skip_invoice_custom_sections: false,
+        applicable_invoice_custom_sections: [{ code: "organization-default" }],
+      },
+    });
+
+    expect(
+      (await createSubscription("customer-fallback", "customer-sections", "sections-prepaid"))
+        .status,
+    ).toBe(200);
+    const fallbackInvoice = await invoiceFor("customer-fallback");
+    await expect(snapshotCodes(fallbackInvoice!.id)).resolves.toEqual(["organization-default"]);
+
+    const customerOverride = await api("/api/v1/customers/customer-sections", "PUT", {
+      customer: { invoice_custom_section_codes: ["customer-override", "unknown-is-ignored"] },
+    });
+    expect(customerOverride.status).toBe(200);
+    await expect(customerOverride.json()).resolves.toMatchObject({
+      customer: {
+        skip_invoice_custom_sections: false,
+        applicable_invoice_custom_sections: [{ code: "customer-override" }],
+      },
+    });
+    await expect(invoiceFor("customer-fallback")).resolves.toMatchObject({
+      ready_to_be_refreshed: 1,
+    });
+    expect((await api(`/api/v1/invoices/${fallbackInvoice!.id}/refresh`, "PUT")).status).toBe(200);
+    await expect(snapshotCodes(fallbackInvoice!.id)).resolves.toEqual(["customer-override"]);
+
+    expect(
+      (
+        await createSubscription("resource-wins", "customer-sections", "sections-prepaid", {
+          invoice_custom_section_codes: ["resource-override"],
+        })
+      ).status,
+    ).toBe(200);
+    const resourceInvoice = await invoiceFor("resource-wins");
+    await expect(snapshotCodes(resourceInvoice!.id)).resolves.toEqual(["resource-override"]);
+
+    const invalidSkip = await api("/api/v1/customers/customer-sections", "PUT", {
+      customer: {
+        skip_invoice_custom_sections: true,
+        invoice_custom_section_codes: [],
+      },
+    });
+    expect(invalidSkip.status).toBe(422);
+    const skipped = await api("/api/v1/customers/customer-sections", "PUT", {
+      customer: { skip_invoice_custom_sections: true },
+    });
+    expect(skipped.status).toBe(200);
+    await expect(skipped.json()).resolves.toMatchObject({
+      customer: {
+        skip_invoice_custom_sections: true,
+        applicable_invoice_custom_sections: [],
+      },
+    });
+    expect((await api(`/api/v1/invoices/${fallbackInvoice!.id}/refresh`, "PUT")).status).toBe(200);
+    await expect(snapshotCodes(fallbackInvoice!.id)).resolves.toEqual([]);
+    expect((await api(`/api/v1/invoices/${resourceInvoice!.id}/refresh`, "PUT")).status).toBe(200);
+    await expect(snapshotCodes(resourceInvoice!.id)).resolves.toEqual(["resource-override"]);
+
+    const restored = await api("/api/v1/customers/customer-sections", "PUT", {
+      customer: { skip_invoice_custom_sections: false, invoice_custom_section_codes: [] },
+    });
+    expect(restored.status).toBe(200);
+    await expect(restored.json()).resolves.toMatchObject({
+      customer: {
+        skip_invoice_custom_sections: false,
+        applicable_invoice_custom_sections: [{ code: "organization-default" }],
+      },
+    });
+
+    expect(
+      (
+        await api("/api/v1/add_ons", "POST", {
+          add_on: {
+            name: "One-off section test",
+            code: "one-off-section",
+            amount_cents: 100,
+            amount_currency: "USD",
+          },
+        })
+      ).status,
+    ).toBe(200);
+    const oneOff = await api("/api/v1/invoices", "POST", {
+      invoice: {
+        external_customer_id: "customer-sections",
+        currency: "USD",
+        skip_psp: true,
+        fees: [{ add_on_code: "one-off-section" }],
+      },
+    });
+    expect(oneOff.status).toBe(200);
+    await expect(oneOff.json()).resolves.toMatchObject({
+      invoice: {
+        status: "finalized",
+        applied_invoice_custom_sections: [{ code: "organization-default" }],
+      },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS count FROM outbox_events
+         WHERE organization_id = 'org-sections'
+           AND event_type = 'billing_entity.invoice_custom_sections_updated'`,
+      ).first(),
+    ).resolves.toEqual({ count: 1 });
+    expect(organizationDefault.lago_id).toBeTruthy();
+  });
+
+  it("rolls default-selection changes back atomically with their outbox event", async () => {
+    await createSection("default-original", "Default original", "Original", null);
+    await createSection("default-replacement", "Default replacement", "Replacement", null);
+    const original = await api("/api/v1/billing_entities/default/invoice_custom_sections", "PUT", {
+      billing_entity: { invoice_custom_section_codes: ["default-original"] },
+    });
+    expect(original.status).toBe(200);
+    const originalBody = await original.json<{
+      billing_entity: { version_number: number };
+    }>();
+    await env.BILLING_DB.prepare(
+      `CREATE TRIGGER fail_billing_entity_section_outbox
+       BEFORE INSERT ON outbox_events
+       WHEN NEW.event_type = 'billing_entity.invoice_custom_sections_updated'
+       BEGIN
+         SELECT RAISE(ABORT, 'injected_billing_entity_section_outbox_failure');
+       END`,
+    ).run();
+    try {
+      const failed = await api("/api/v1/billing_entities/default/invoice_custom_sections", "PUT", {
+        billing_entity: { invoice_custom_section_codes: ["default-replacement"] },
+      });
+      expect(failed.status).toBe(500);
+    } finally {
+      await env.BILLING_DB.prepare("DROP TRIGGER fail_billing_entity_section_outbox").run();
+    }
+    await expect(
+      apiJson("/api/v1/billing_entities/default/invoice_custom_sections"),
+    ).resolves.toMatchObject({
+      billing_entity: {
+        version_number: originalBody.billing_entity.version_number,
+        invoice_custom_sections: [{ code: "default-original" }],
+      },
+    });
+  });
+
   it("rejects cross-tenant relationship injection at the D1 boundary", async () => {
     const section = await createSection("tenant-guard", "Tenant guard", "Guard", null);
     await expect(
@@ -400,6 +586,24 @@ describe("invoice custom sections", () => {
         .bind(section.lago_id, "2026-08-13T00:00:00.000Z")
         .run(),
     ).rejects.toThrow("invalid_subscription_invoice_custom_section_tenant");
+    await expect(
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers_invoice_custom_sections
+         (customer_id, invoice_custom_section_id, organization_id, created_at)
+         VALUES ('customer-sections-other', ?, 'org-sections-other', ?)`,
+      )
+        .bind(section.lago_id, "2026-08-13T00:00:00.000Z")
+        .run(),
+    ).rejects.toThrow("invalid_customer_invoice_custom_section_tenant");
+    await expect(
+      env.BILLING_DB.prepare(
+        `INSERT INTO organization_invoice_custom_sections
+         (organization_id, invoice_custom_section_id, created_at)
+         VALUES ('org-sections-other', ?, ?)`,
+      )
+        .bind(section.lago_id, "2026-08-13T00:00:00.000Z")
+        .run(),
+    ).rejects.toThrow("invalid_organization_invoice_custom_section_tenant");
     await expect(
       env.BILLING_DB.prepare(
         "SELECT COUNT(*) AS count FROM subscriptions_invoice_custom_sections WHERE subscription_id = 'subscription-sections-other'",
@@ -543,6 +747,16 @@ function snapshotState(invoiceId: string) {
       code: string | null;
       details: string | null;
     }>();
+}
+
+async function snapshotCodes(invoiceId: string) {
+  const rows = await env.BILLING_DB.prepare(
+    `SELECT code FROM applied_invoice_custom_sections
+     WHERE invoice_id = ? ORDER BY name, code`,
+  )
+    .bind(invoiceId)
+    .all<{ code: string }>();
+  return rows.results.map((row) => row.code);
 }
 
 async function linkCount(externalId: string) {

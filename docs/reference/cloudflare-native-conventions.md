@@ -154,7 +154,7 @@ concurrent request, or replay converge on one valid result.
 | Organization and API keys | authenticated admin/bootstrap boundary                                        | organization and key rows                                                                    | unique external ID/key hash; all child reads require organization scope                                                 |
 | Customer billing account  | `BillingAccount` Durable Object plus customer API                             | customer version and outbox                                                                  | per-customer command reservation; unique external ID; optimistic version; replay hash                                   |
 | Plan catalog              | plan, charge, fixed-charge, add-on, metric, and tax APIs                      | one catalog mutation and outbox                                                              | tenant/code/version uniqueness; attached-plan restrictions; optimistic version                                          |
-| Invoice custom section    | invoice custom-section catalog and subscription lifecycle APIs                | catalog/version event or subscription selection replacement and outbox                       | tenant active-code uniqueness; relationship tenant trigger; optimistic version; immutable invoice snapshot              |
+| Invoice custom section    | catalog, customer, default billing-entity, and subscription APIs              | catalog/default/customer/subscription version event plus selection replacement and outbox    | tenant active-code uniqueness; relationship tenant triggers; optimistic versions; immutable precedence snapshot         |
 | Subscription              | compatibility API, lifecycle API, billing-close owner, and trial-ending owner | immutable generation transition, combined invoice ownership/context, trial state, and outbox | one active plus one pending partial uniqueness; generation/previous link; request hash; version guards; atomic D1 batch |
 | Usage event               | metered-usage API                                                             | one event/outbox or an atomic batch; R2 archives are content-addressed                       | tenant transaction ID uniqueness; canonical request hash; replay/conflict and batch rollback tests                      |
 | Billing cycle             | `closeBillingPeriod`                                                          | cycle lease/result, invoice graph, credits, next period, and outbox                          | deterministic cycle key; cycle request hash; customer DO reservation; D1 batch; version predicates                      |
@@ -224,8 +224,11 @@ Required evidence for a new aggregate or a boundary change:
   disabled safety gates in the isolated stack.
 - Manual invoice custom sections have a tenant-scoped REST catalog equivalent for the retained
   operator workflow. Explicit subscription selections follow Lago's attach/skip semantics and are
-  copied into draft/final invoice snapshots used by the API and PDF renderer. Customer and billing
-  entity defaults, system-generated sections, wallet/transaction targets, and a broader operator UI
-  remain pending; absence of those defaults is not treated as an implicit selection.
+  copied into draft/final invoice snapshots used by the API and PDF renderer. The retained
+  single-billing-entity subset maps billing-entity defaults to the organization, with explicit
+  customer replace/skip semantics. One D1 precedence projection selects subscription overrides,
+  subscription/customer skip, customer selections, then organization defaults for recurring and
+  one-off snapshots. Multi-billing-entity routing, system-generated sections, wallet/transaction
+  targets, and a broader operator UI remain pending.
 - Advanced tax providers, multi-provider payment behavior, refunds, and several document families
   remain explicitly unsupported or incomplete in the generated feature inventory.

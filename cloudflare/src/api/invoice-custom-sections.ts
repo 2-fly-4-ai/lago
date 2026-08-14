@@ -3,6 +3,10 @@ import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { stableJson } from "../json";
+import {
+  normalizeCustomSectionCodes,
+  resolveCustomSectionIds,
+} from "../subscriptions/custom-sections";
 
 type SectionRow = {
   id: string;
@@ -28,6 +32,19 @@ export async function handleInvoiceCustomSectionRequest(
   requestId: string,
 ): Promise<Response | null> {
   const url = new URL(request.url);
+  const billingEntityMatch = url.pathname.match(
+    /^\/api\/v1\/billing_entities\/([^/]+)\/invoice_custom_sections$/,
+  );
+  if (billingEntityMatch?.[1]) {
+    if (decodeURIComponent(billingEntityMatch[1]) !== "default")
+      throw new ApiError(
+        422,
+        "unsupported_billing_entity",
+        "Multiple billing entities are not implemented by the Cloudflare billing subset",
+      );
+    if (request.method === "GET") return showDefaultSections(env.BILLING_DB, auth, requestId);
+    if (request.method === "PUT") return updateDefaultSections(request, env, auth, requestId);
+  }
   if (url.pathname === "/api/v1/invoice_custom_sections") {
     if (request.method === "POST") return createSection(request, env, auth, requestId);
     if (request.method === "GET") return listSections(url, env.BILLING_DB, auth, requestId);
@@ -39,6 +56,91 @@ export async function handleInvoiceCustomSectionRequest(
   if (request.method === "PUT") return updateSection(code, request, env, auth, requestId);
   if (request.method === "DELETE") return terminateSection(code, env, auth, requestId);
   return null;
+}
+
+async function showDefaultSections(database: D1Database, auth: AuthContext, requestId: string) {
+  const organization = await findOrganizationSectionVersion(database, auth.organizationId);
+  if (!organization)
+    throw new ApiError(404, "organization_not_found", "Organization was not found");
+  const sections = await listLinkedSections(
+    database,
+    "organization_invoice_custom_sections",
+    "organization_id",
+    auth.organizationId,
+  );
+  return json(
+    {
+      billing_entity: {
+        lago_id: auth.organizationId,
+        code: "default",
+        invoice_custom_sections: sections,
+        version_number: organization.invoice_custom_section_version,
+      },
+    },
+    { requestId },
+  );
+}
+
+async function updateDefaultSections(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+) {
+  const input = objectAt(await parseJsonObject(request), "billing_entity");
+  rejectUnsupported(input, ["invoice_custom_section_codes"]);
+  const codes = normalizeCustomSectionCodes(input.invoice_custom_section_codes);
+  if (codes === undefined)
+    throw new ApiError(422, "validation_error", "invoice_custom_section_codes is required");
+  const sectionIds =
+    (await resolveCustomSectionIds(env.BILLING_DB, auth.organizationId, codes)) ?? [];
+  const organization = await findOrganizationSectionVersion(env.BILLING_DB, auth.organizationId);
+  if (!organization)
+    throw new ApiError(404, "organization_not_found", "Organization was not found");
+  const currentIds = await linkedSectionIds(
+    env.BILLING_DB,
+    "organization_invoice_custom_sections",
+    "organization_id",
+    auth.organizationId,
+  );
+  if (sameIds(currentIds, sectionIds)) return showDefaultSections(env.BILLING_DB, auth, requestId);
+
+  const now = new Date().toISOString();
+  const nextVersion = organization.invoice_custom_section_version + 1;
+  const event = defaultSectionsEvent(auth, requestId, nextVersion, now, sectionIds);
+  const statements: D1PreparedStatement[] = [
+    env.BILLING_DB.prepare(
+      `UPDATE organizations
+       SET invoice_custom_section_version = invoice_custom_section_version + 1, updated_at = ?
+       WHERE id = ? AND invoice_custom_section_version = ?`,
+    ).bind(now, auth.organizationId, organization.invoice_custom_section_version),
+    env.BILLING_DB.prepare(
+      `DELETE FROM organization_invoice_custom_sections
+       WHERE organization_id = ?
+         AND EXISTS (SELECT 1 FROM organizations WHERE id = ?
+                     AND invoice_custom_section_version = ? AND updated_at = ?)`,
+    ).bind(auth.organizationId, auth.organizationId, nextVersion, now),
+  ];
+  for (const sectionId of sectionIds) {
+    statements.push(
+      env.BILLING_DB.prepare(
+        `INSERT OR IGNORE INTO organization_invoice_custom_sections
+         (organization_id, invoice_custom_section_id, created_at)
+         SELECT ?, ?, ? FROM organizations
+         WHERE id = ? AND invoice_custom_section_version = ? AND updated_at = ?`,
+      ).bind(auth.organizationId, sectionId, now, auth.organizationId, nextVersion, now),
+    );
+  }
+  statements.push(conditionalOrganizationOutboxStatement(env.BILLING_DB, auth, event, now));
+  const results = await env.BILLING_DB.batch(statements);
+  if ((results[0]?.meta.changes ?? 0) < 1 || results.at(-1)?.meta.changes !== 1)
+    throw new ApiError(
+      409,
+      "billing_entity_version_conflict",
+      "Default billing entity changed concurrently",
+    );
+  await env.DOMAIN_EVENTS.send(event);
+  return showDefaultSections(env.BILLING_DB, auth, requestId);
 }
 
 async function createSection(request: Request, env: Env, auth: AuthContext, requestId: string) {
@@ -258,6 +360,16 @@ async function terminateSection(code: string, env: Env, auth: AuthContext, reque
        WHERE invoice_custom_section_id = ? AND organization_id = ?
          AND EXISTS (SELECT 1 FROM invoice_custom_sections WHERE id = ? AND version = ?)`,
     ).bind(section.id, auth.organizationId, section.id, section.version + 1),
+    env.BILLING_DB.prepare(
+      `DELETE FROM customers_invoice_custom_sections
+       WHERE invoice_custom_section_id = ? AND organization_id = ?
+         AND EXISTS (SELECT 1 FROM invoice_custom_sections WHERE id = ? AND version = ?)`,
+    ).bind(section.id, auth.organizationId, section.id, section.version + 1),
+    env.BILLING_DB.prepare(
+      `DELETE FROM organization_invoice_custom_sections
+       WHERE invoice_custom_section_id = ? AND organization_id = ?
+         AND EXISTS (SELECT 1 FROM invoice_custom_sections WHERE id = ? AND version = ?)`,
+    ).bind(section.id, auth.organizationId, section.id, section.version + 1),
     conditionalOutboxStatement(
       env.BILLING_DB,
       auth.organizationId,
@@ -267,7 +379,7 @@ async function terminateSection(code: string, env: Env, auth: AuthContext, reque
       now,
     ),
   ]);
-  if ((results[0]?.meta.changes ?? 0) < 1 || results[2]?.meta.changes !== 1)
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[4]?.meta.changes !== 1)
     throw new ApiError(
       409,
       "invoice_custom_section_version_conflict",
@@ -286,6 +398,114 @@ async function terminateSection(code: string, env: Env, auth: AuthContext, reque
     },
     { requestId },
   );
+}
+
+function findOrganizationSectionVersion(database: D1Database, organizationId: string) {
+  return database
+    .prepare("SELECT invoice_custom_section_version FROM organizations WHERE id = ? LIMIT 1")
+    .bind(organizationId)
+    .first<{ invoice_custom_section_version: number }>();
+}
+
+async function linkedSectionIds(
+  database: D1Database,
+  table: "organization_invoice_custom_sections" | "customers_invoice_custom_sections",
+  ownerColumn: "organization_id" | "customer_id",
+  ownerId: string,
+) {
+  const rows = await database
+    .prepare(
+      `SELECT invoice_custom_section_id FROM ${table}
+       WHERE ${ownerColumn} = ? ORDER BY invoice_custom_section_id`,
+    )
+    .bind(ownerId)
+    .all<{ invoice_custom_section_id: string }>();
+  return rows.results.map((row) => row.invoice_custom_section_id);
+}
+
+async function listLinkedSections(
+  database: D1Database,
+  table: "organization_invoice_custom_sections" | "customers_invoice_custom_sections",
+  ownerColumn: "organization_id" | "customer_id",
+  ownerId: string,
+) {
+  const rows = await database
+    .prepare(
+      `SELECT cs.id, cs.organization_id, cs.code, cs.name, cs.description, cs.details,
+              cs.display_name, cs.section_type, cs.status, cs.version, cs.request_sha256,
+              cs.created_at, cs.updated_at, cs.terminated_at
+       FROM invoice_custom_sections cs
+       JOIN ${table} link ON link.invoice_custom_section_id = cs.id
+       WHERE link.${ownerColumn} = ? AND cs.status = 'active'
+       ORDER BY cs.name, cs.code`,
+    )
+    .bind(ownerId)
+    .all<SectionRow>();
+  return rows.results.map(serializeSection);
+}
+
+function sameIds(left: string[], right: string[]) {
+  const sortedRight = [...right].sort();
+  return (
+    left.length === sortedRight.length && left.every((value, index) => value === sortedRight[index])
+  );
+}
+
+function defaultSectionsEvent(
+  auth: AuthContext,
+  requestId: string,
+  version: number,
+  occurredAt: string,
+  sectionIds: string[],
+): DomainEvent {
+  return {
+    id: `billing-entity-invoice-custom-sections-updated:${auth.organizationId}:v${version}`,
+    type: "billing_entity.invoice_custom_sections_updated",
+    version: 1,
+    aggregateType: "billing_entity",
+    aggregateId: auth.organizationId,
+    aggregateVersion: version,
+    occurredAt,
+    causationId: requestId,
+    correlationId: requestId,
+    payload: {
+      organizationId: auth.organizationId,
+      code: "default",
+      invoiceCustomSectionIds: sectionIds,
+    },
+  };
+}
+
+function conditionalOrganizationOutboxStatement(
+  database: D1Database,
+  auth: AuthContext,
+  event: DomainEvent,
+  expectedUpdatedAt: string,
+) {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       SELECT ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, NULL FROM organizations
+       WHERE id = ? AND invoice_custom_section_version = ? AND updated_at = ?
+       ON CONFLICT(event_id) DO NOTHING`,
+    )
+    .bind(
+      event.id,
+      auth.organizationId,
+      event.type,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+      auth.organizationId,
+      event.aggregateVersion,
+      expectedUpdatedAt,
+    );
 }
 
 function findActive(database: D1Database, organizationId: string, code: string) {

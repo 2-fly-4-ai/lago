@@ -393,8 +393,11 @@ Acceptance:
       REST equivalent for the operator GraphQL workflow. Explicit subscription attach/skip/replace
       semantics, pending-row preservation, clean or explicitly supplied plan generations, draft
       refresh, immutable finalized snapshots, invoice serialization, and PDF projection are
-      implemented. Customer/billing-entity defaults, system-generated sections, provider-specific
-      method IDs, backdated one-time plans, and threshold inputs remain explicit gaps.
+      implemented. The retained single-billing-entity subset now maps organization defaults and
+      customer replace/skip behavior into one tenant-safe invoice precedence projection shared by
+      recurring and one-off snapshots. Multi-billing-entity routing, provider-created
+      system-generated sections, provider-specific method IDs, backdated one-time plans, and
+      threshold inputs remain explicit gaps.
       Calendar billing and trial dates use a snapshotted customer IANA
       timezone; the retained termination subset remains UTC-specific.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
@@ -1409,3 +1412,22 @@ resource and mutation described.
   verification remained empty with no FK violations. The deployed version retains all three
   external-action flags at `0` and only the existing isolated bindings/triggers. No production
   route, domain, secret, provider action, or billing/catalog record changed.
+- 2026-08-14: Ported customer and retained single-billing-entity custom-section defaults.
+  Migration `0036_customer_invoice_custom_sections.sql` adds customer skip state, versioned
+  organization-default state, tenant-checked customer/default relationships, draft invalidation,
+  and two read-only precedence views shared by recurring and one-off invoice snapshots. Customer
+  upsert/update now supports Lago's top-level replace/skip inputs and returns bulk-loaded applicable
+  sections. Authenticated `GET`/`PUT` on
+  `/api/v1/billing_entities/default/invoice_custom_sections` is the documented equivalent for the
+  current one-entity-per-organization subset; other billing-entity identifiers fail explicitly.
+  Selection precedence is subscription override, subscription/customer skip, customer manual
+  selection, then organization default. Provider-created system sections and multi-entity routing
+  remain guarded rather than inferred. Evidence covers ignored/duplicate codes, idempotent
+  defaults, transactional outbox rollback, customer replace/skip/fallback, resource override,
+  draft invalidation/refresh, one-off finalized snapshots, and cross-tenant injection. All 130
+  tests across 28 files pass in bounded Workers-runtime batches; all 36 migrations replay from an
+  empty local D1 with no foreign-key violations, five section tables, 21 related triggers, and two
+  precedence views. Formatting, strict lint, generated inventory/types, TypeScript, and a 669.37
+  KiB (116.57 KiB gzip) dry-run bundle are green. This is a local pre-deployment checkpoint;
+  isolated remote D1 remains on migration `0035` and Worker version
+  `ce135113-31fc-4078-981f-d439a03db5ae`.

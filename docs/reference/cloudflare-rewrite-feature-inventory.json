@@ -401,7 +401,7 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -502,11 +502,12 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
-          "cloudflare/fixtures/store-new/invoice-list-query.json"
+          "cloudflare/test/invoice-custom-sections.test.ts",
+          "cloudflare/test/invoice-document.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
+        "testFixture": "cloudflare/test/invoice-custom-sections.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -1128,11 +1129,12 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
-          "cloudflare/fixtures/store-new/customer-upsert.json"
+          "cloudflare/test/invoice-custom-sections.test.ts",
+          "cloudflare/test/invoice-document.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/customer-upsert.json",
+        "testFixture": "cloudflare/test/invoice-custom-sections.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -2156,7 +2158,7 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -2991,7 +2993,7 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -8190,11 +8192,12 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
-          "cloudflare/fixtures/store-new/customer-upsert.json"
+          "cloudflare/test/invoice-custom-sections.test.ts",
+          "cloudflare/test/invoice-document.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/customer-upsert.json",
+        "testFixture": "cloudflare/test/invoice-custom-sections.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -12601,7 +12604,7 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -12618,7 +12621,7 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -12635,11 +12638,12 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
-          "cloudflare/fixtures/store-new/invoice-list-query.json"
+          "cloudflare/test/invoice-custom-sections.test.ts",
+          "cloudflare/test/invoice-document.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
+        "testFixture": "cloudflare/test/invoice-custom-sections.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -12651,7 +12655,7 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -12684,7 +12688,7 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -12749,7 +12753,7 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -24687,7 +24691,7 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -24705,7 +24709,7 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -24723,7 +24727,7 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -27580,7 +27584,7 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -27598,7 +27602,7 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -32839,7 +32843,7 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -32857,7 +32861,7 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -32875,7 +32879,7 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"
@@ -32893,7 +32897,7 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/invoice-custom-sections.ts and cloudflare/src/subscriptions/custom-sections.ts",
+        "target": "cloudflare/src/api/invoice-custom-sections.ts, cloudflare/src/api/lago-compatibility.ts, and cloudflare/src/subscriptions/custom-sections.ts",
         "evidence": [
           "cloudflare/test/invoice-custom-sections.test.ts",
           "cloudflare/test/invoice-document.test.ts"

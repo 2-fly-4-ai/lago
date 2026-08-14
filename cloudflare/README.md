@@ -14,7 +14,8 @@ remaining Lago feature inventory is dispositioned and ported.
   customer invoice-grace settings, distinct initial/renewal invoice contexts, refreshable draft
   state, dependency-invalidation triggers and mutation guards, immutable issuing/finalization dates,
   tenant-scoped invoice custom-section catalog records, subscription selections, and immutable
-  invoice section snapshots,
+  invoice section snapshots, organization-level default selections for the retained single billing
+  entity, customer overrides/skip state, and one canonical invoice precedence projection,
   customer time zones, subscription billing mode/timezone snapshots, immutable trial boundaries,
   overdue state, payment attempts, outbox state, and webhook receipt metadata;
   plan-level minimum commitments are reconciled as auditable period true-up lines after recurring
@@ -137,6 +138,20 @@ them. A codes-only subscription selection update does nothing while skip is alre
 re-enables selection.
 Draft invoice snapshots change only after refresh/finalization, and finalized API/PDF content does
 not follow later catalog edits.
+
+Customer create/update accepts top-level `invoice_custom_section_codes` and
+`skip_invoice_custom_sections`. An explicit code list replaces manual customer selections and
+re-enables sections; an empty list falls back to the organization's defaults. Explicit skip clears
+the customer selection and cannot be combined with a code list. Customer reads expose the resolved
+`applicable_invoice_custom_sections` without per-customer D1 queries.
+
+Because the retained Cloudflare subset currently has one billing entity per organization, its
+default selections use `GET` and `PUT` on
+`/api/v1/billing_entities/default/invoice_custom_sections` with a `billing_entity` wrapper and
+`invoice_custom_section_codes`. The invoice precedence is: an explicit subscription selection,
+then subscription skip, then customer skip, then a manual customer selection, then the organization
+default. The same projection drives recurring drafts, finalized snapshots, and one-off invoices.
+Multi-billing-entity routing and provider-created system sections remain explicitly unported.
 
 ## Safety defaults
 
