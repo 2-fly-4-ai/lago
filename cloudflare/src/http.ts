@@ -4,6 +4,7 @@ export type ApiErrorBody = {
   code: string;
   message: string;
   request_id: string;
+  error_details?: unknown;
 };
 
 export class ApiError extends Error {
@@ -11,6 +12,7 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly details?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -25,6 +27,7 @@ export function apiErrorResponse(error: ApiError, requestId: string): Response {
     message: error.message,
     request_id: requestId,
   };
+  if (error.details !== undefined) body.error_details = error.details;
 
   return json(body, { status: error.status, requestId });
 }

@@ -24,6 +24,8 @@ remaining Lago feature inventory is dispositioned and ported.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.
+- Metering: single-event replay/conflict handling and all-before-write batches of up to 100 events,
+  with atomic D1 event/outbox rows and deterministic immutable R2 evidence.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs the retained billing-close, flagged-draft refresh,
   draft-finalization, invoice-overdue, Authorize.Net receipt retry, coupon-expiration, and

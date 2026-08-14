@@ -197,6 +197,93 @@ describe("Lago-compatible metered usage", () => {
     ]);
   });
 
+  it("atomically ingests, archives, and exposes batches while rejecting partial writes", async () => {
+    const metric = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Batch tokens",
+          code: "batch_tokens",
+          aggregation_type: "sum_agg",
+          field_name: "tokens",
+        },
+      },
+    });
+    expect(metric.status).toBe(200);
+    const events = [
+      {
+        transaction_id: "batch-one",
+        code: "batch_tokens",
+        external_subscription_id: "subscription-external",
+        timestamp: 1786579200,
+        properties: { tokens: "1.25" },
+      },
+      {
+        transaction_id: "batch-two",
+        code: "batch_tokens",
+        external_subscription_id: "subscription-external",
+        timestamp: 1786579260,
+        properties: { tokens: "2.75" },
+      },
+    ];
+    const batch = await api("/api/v1/events/batch", { method: "POST", body: { events } });
+    expect(batch.status).toBe(200);
+    await expect(batch.json()).resolves.toMatchObject({
+      events: [
+        { transaction_id: "batch-one", external_subscription_id: "subscription-external" },
+        { transaction_id: "batch-two", external_subscription_id: "subscription-external" },
+      ],
+    });
+    const evidence = await env.BILLING_DB.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM usage_events
+          WHERE transaction_id IN ('batch-one', 'batch-two')) AS events,
+         (SELECT COUNT(*) FROM outbox_events
+          WHERE event_type = 'usage_event.ingested'
+            AND aggregate_id IN (
+              SELECT id FROM usage_events WHERE transaction_id IN ('batch-one', 'batch-two')
+            )) AS outbox_events`,
+    ).first<{ events: number; outbox_events: number }>();
+    expect(evidence).toEqual({ events: 2, outbox_events: 2 });
+    const archives = await env.BILLING_DB.prepare(
+      `SELECT archive_key FROM usage_events
+       WHERE transaction_id IN ('batch-one', 'batch-two') ORDER BY transaction_id`,
+    ).all<{ archive_key: string }>();
+    await expect(
+      Promise.all(archives.results.map((event) => env.BILLING_ARTIFACTS.head(event.archive_key))),
+    ).resolves.toEqual([expect.anything(), expect.anything()]);
+    await expect(
+      api("/api/v1/events/batch-one").then((response) => response.json()),
+    ).resolves.toMatchObject({
+      event: { transaction_id: "batch-one", properties: { tokens: "1.25" } },
+    });
+
+    const replay = await api("/api/v1/events/batch", { method: "POST", body: { events } });
+    expect(replay.status).toBe(422);
+    await expect(replay.json()).resolves.toMatchObject({
+      code: "batch_validation_error",
+      error_details: { "0": { code: "value_already_exist" } },
+    });
+    const invalid = await api("/api/v1/events/batch", {
+      method: "POST",
+      body: {
+        events: [
+          { ...events[0], transaction_id: "batch-valid-but-rolled-back" },
+          { ...events[1], transaction_id: "batch-invalid", timestamp: "not-a-timestamp" },
+        ],
+      },
+    });
+    expect(invalid.status).toBe(422);
+    await expect(invalid.json()).resolves.toMatchObject({
+      error_details: { "1": { code: "invalid_format" } },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT COUNT(*) AS total FROM usage_events WHERE transaction_id = 'batch-valid-but-rolled-back'",
+      ).first(),
+    ).resolves.toEqual({ total: 0 });
+  });
+
   it("rejects unknown subscriptions, metrics, and malformed aggregation properties", async () => {
     const missingMetric = await createEvent("missing-metric", "1", "absent_metric");
     expect(missingMetric.status).toBe(404);

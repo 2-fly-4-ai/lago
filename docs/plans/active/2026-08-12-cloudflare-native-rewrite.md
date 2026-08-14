@@ -427,7 +427,9 @@ Acceptance:
 ### M7: Usage metering and analytics
 
 - [x] Implement single-event validation, semantic deduplication/conflict detection, tenant-scoped
-      reads, Queue/outbox emission, and immutable R2 archives; batch ingestion remains pending.
+      reads, Queue/outbox emission, and immutable R2 archives. Batch ingestion validates all
+      events before writing, caps requests at 100, rejects duplicate/existing transaction IDs,
+      stores deterministic archives, and commits all event/outbox rows atomically.
 - [x] Port count, sum, maximum, latest, and add/remove unique-count aggregations plus six core
       charge models; weighted/custom aggregation, expressions, filters, rounding configuration,
       and advanced adjustments remain pending.
@@ -927,3 +929,10 @@ resource and mutation described.
   `401`, and aggregate-only verification confirmed all 22 invalidation triggers, zero
   organizations/invoices/initial contexts/mutation guards, and 21 Cron audits. No route, secret,
   seeded billing data, or disabled external flag changed.
+- 2026-08-14: Added Lago-compatible `POST /api/v1/events/batch` for 1-100 events with indexed
+  validation errors, in-batch and persisted transaction-ID conflict detection, deterministic R2
+  archives, one atomic D1 event/outbox batch, trigger-backed draft invalidation, and safe cleanup of
+  archives that are not referenced by a concurrent committed event. The event-show route is now
+  covered by executable evidence. All 78 Workers-runtime tests pass across 22 files; all 26
+  migrations replay from empty D1 state, formatting, lint, generated bindings, TypeScript, and the
+  cross-repository inventory are green, and the dry-run bundle is 461.65 KiB (84.09 KiB gzip).

@@ -75,6 +75,24 @@ type EventInput = {
   properties: Record<string, unknown>;
 };
 
+type EventContext = {
+  subscription_id: string;
+  customer_id: string;
+  metric_id: string;
+  aggregation_type: string;
+  field_name: string | null;
+};
+
+type PreparedBatchEvent = {
+  input: EventInput;
+  context: EventContext;
+  normalized: Record<string, unknown>;
+  requestHash: string;
+  archiveKey: string;
+  row: EventRow;
+  domainEvent: DomainEvent;
+};
+
 const SUPPORTED_AGGREGATIONS = new Set<SupportedAggregationType>([
   "count_agg",
   "sum_agg",
@@ -152,6 +170,9 @@ export async function handleMeteredUsageRequest(
     );
   }
 
+  if (request.method === "POST" && url.pathname === "/api/v1/events/batch") {
+    return createUsageEventBatch(request, env, auth, requestId);
+  }
   if (request.method === "POST" && url.pathname === "/api/v1/events") {
     return createUsageEvent(request, env, auth, requestId);
   }
@@ -659,6 +680,246 @@ function serializeCatalogCharge(
   };
 }
 
+async function createUsageEventBatch(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const body = await parseJsonObject(request);
+  const rawEvents = body.events;
+  if (!Array.isArray(rawEvents) || rawEvents.length === 0) {
+    throw new ApiError(422, "no_events", "events must contain at least one event", {
+      events: ["no_events"],
+    });
+  }
+  if (rawEvents.length > 100) {
+    throw new ApiError(422, "too_many_events", "events cannot contain more than 100 events", {
+      events: ["too_many_events"],
+    });
+  }
+
+  const errors: Record<string, unknown> = {};
+  const inputs: EventInput[] = [];
+  const seen = new Set<string>();
+  for (const [index, value] of rawEvents.entries()) {
+    try {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new ApiError(422, "validation_error", "event must be an object");
+      }
+      const input = normalizeEventInput(value as Record<string, unknown>);
+      const duplicateKey = `${input.externalSubscriptionId}\u0000${input.transactionId}`;
+      if (seen.has(duplicateKey)) {
+        throw new ApiError(
+          422,
+          "value_already_exist",
+          "transaction_id is duplicated in this batch",
+        );
+      }
+      seen.add(duplicateKey);
+      inputs.push(input);
+    } catch (error) {
+      errors[String(index)] = batchErrorDetail(error);
+    }
+  }
+  if (Object.keys(errors).length > 0) {
+    throw new ApiError(422, "batch_validation_error", "One or more events are invalid", errors);
+  }
+
+  const createdAt = new Date().toISOString();
+  const prepared: PreparedBatchEvent[] = [];
+  for (const [index, input] of inputs.entries()) {
+    try {
+      prepared.push(await prepareBatchEvent(env, auth, requestId, input, createdAt));
+    } catch (error) {
+      errors[String(index)] = batchErrorDetail(error);
+    }
+  }
+  if (Object.keys(errors).length > 0) {
+    throw new ApiError(422, "batch_validation_error", "One or more events are invalid", errors);
+  }
+
+  const archiveResults = await Promise.allSettled(
+    prepared.map((event) =>
+      env.BILLING_ARTIFACTS.put(event.archiveKey, stableJson({ event: event.normalized }), {
+        httpMetadata: { contentType: "application/json" },
+        customMetadata: { sha256: event.requestHash, schema: "lago-event-v1" },
+      }),
+    ),
+  );
+  if (archiveResults.some((result) => result.status === "rejected")) {
+    await cleanupUncommittedBatchArchives(env, prepared);
+    throw new ApiError(
+      503,
+      "event_archive_failed",
+      "One or more event archives could not be stored",
+    );
+  }
+
+  try {
+    await env.BILLING_DB.batch(
+      prepared.flatMap((event) => batchEventStatements(env.BILLING_DB, auth, requestId, event)),
+    );
+  } catch (error) {
+    await cleanupUncommittedBatchArchives(env, prepared);
+    const conflicts = await Promise.all(
+      prepared.map((event) =>
+        findEvent(
+          env.BILLING_DB,
+          auth.organizationId,
+          event.context.subscription_id,
+          event.input.transactionId,
+        ),
+      ),
+    );
+    if (conflicts.some(Boolean)) {
+      throw new ApiError(
+        409,
+        "batch_event_conflict",
+        "An event transaction_id was created concurrently; retry with a new batch",
+      );
+    }
+    throw error;
+  }
+
+  await Promise.all(prepared.map((event) => env.DOMAIN_EVENTS.send(event.domainEvent)));
+  return json({ events: prepared.map((event) => serializeEvent(event.row)) }, { requestId });
+}
+
+async function prepareBatchEvent(
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+  input: EventInput,
+  createdAt: string,
+): Promise<PreparedBatchEvent> {
+  const context = await findEventContext(env.BILLING_DB, auth.organizationId, input);
+  if (!context) {
+    const metric = await findMetric(env.BILLING_DB, auth.organizationId, input.code);
+    throw metric
+      ? new ApiError(404, "subscription_not_found", "Subscription was not found")
+      : new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
+  }
+  validateAggregationProperties(context.aggregation_type, context.field_name, input.properties);
+  const normalized = normalizedEvent(input);
+  const requestHash = await sha256Hex(stableJson(normalized));
+  const existing = await findEvent(
+    env.BILLING_DB,
+    auth.organizationId,
+    context.subscription_id,
+    input.transactionId,
+  );
+  if (existing) {
+    throw new ApiError(
+      422,
+      "value_already_exist",
+      "transaction_id already exists for this subscription",
+    );
+  }
+  const id = await deterministicUuid(
+    "usage-event",
+    `${auth.organizationId}:${context.subscription_id}:${input.transactionId}`,
+  );
+  const archiveKey = `usage-events/${auth.organizationId}/${input.timestamp.slice(0, 10)}/${id}/${requestHash}.json`;
+  const row: EventRow = {
+    id,
+    transaction_id: input.transactionId,
+    customer_id: context.customer_id,
+    subscription_id: context.subscription_id,
+    external_subscription_id: input.externalSubscriptionId,
+    code: input.code,
+    timestamp: input.timestamp,
+    timestamp_ms: input.timestampMs,
+    precise_total_amount_minor: input.preciseTotalAmountMinor,
+    properties_json: stableJson(input.properties),
+    request_sha256: requestHash,
+    created_at: createdAt,
+  };
+  return {
+    input,
+    context,
+    normalized,
+    requestHash,
+    archiveKey,
+    row,
+    domainEvent: eventDomainMessage(row, auth.organizationId, requestId),
+  };
+}
+
+function batchEventStatements(
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+  event: PreparedBatchEvent,
+): D1PreparedStatement[] {
+  return [
+    database
+      .prepare(
+        `INSERT INTO usage_events
+         (id, organization_id, subscription_id, customer_id, billable_metric_id,
+          transaction_id, code, timestamp, timestamp_ms, precise_total_amount_minor,
+          properties_json, request_sha256, archive_key, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        event.row.id,
+        auth.organizationId,
+        event.context.subscription_id,
+        event.context.customer_id,
+        event.context.metric_id,
+        event.input.transactionId,
+        event.input.code,
+        event.input.timestamp,
+        event.input.timestampMs,
+        event.input.preciseTotalAmountMinor,
+        event.row.properties_json,
+        event.requestHash,
+        event.archiveKey,
+        event.row.created_at,
+      ),
+    database
+      .prepare(
+        `INSERT INTO outbox_events
+         (event_id, organization_id, event_type, event_version, aggregate_type,
+          aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+          occurred_at, published_at)
+         VALUES (?, ?, ?, 1, 'usage_event', ?, 1, ?, ?, ?, ?, NULL)`,
+      )
+      .bind(
+        event.domainEvent.id,
+        auth.organizationId,
+        event.domainEvent.type,
+        event.row.id,
+        requestId,
+        requestId,
+        stableJson(event.domainEvent.payload),
+        event.row.created_at,
+      ),
+  ];
+}
+
+async function cleanupUncommittedBatchArchives(
+  env: Env,
+  events: PreparedBatchEvent[],
+): Promise<void> {
+  await Promise.allSettled(
+    events.map(async (event) => {
+      const committed = await env.BILLING_DB.prepare(
+        "SELECT archive_key FROM usage_events WHERE id = ? LIMIT 1",
+      )
+        .bind(event.row.id)
+        .first<{ archive_key: string }>();
+      if (committed?.archive_key === event.archiveKey) return;
+      await env.BILLING_ARTIFACTS.delete(event.archiveKey);
+    }),
+  );
+}
+
+function batchErrorDetail(error: unknown): Record<string, string> {
+  if (error instanceof ApiError) return { code: error.code, message: error.message };
+  return { code: "validation_error", message: "Event is invalid" };
+}
+
 async function createUsageEvent(
   request: Request,
   env: Env,
@@ -667,32 +928,7 @@ async function createUsageEvent(
 ): Promise<Response> {
   const body = await parseJsonObject(request);
   const input = normalizeEventInput(objectAt(body, "event"));
-  const context = await env.BILLING_DB.prepare(
-    `SELECT s.id AS subscription_id, s.customer_id, bm.id AS metric_id,
-            bm.aggregation_type, bm.field_name
-     FROM subscriptions s
-     JOIN billable_metrics bm
-       ON bm.organization_id = s.organization_id AND bm.code = ? AND bm.active = 1
-     WHERE s.organization_id = ? AND s.external_id = ?
-       AND s.status IN ('active', 'past_due')
-       AND (s.started_at IS NULL OR s.started_at <= ?)
-       AND (s.terminated_at IS NULL OR s.terminated_at >= ?)
-     LIMIT 1`,
-  )
-    .bind(
-      input.code,
-      auth.organizationId,
-      input.externalSubscriptionId,
-      input.timestamp,
-      input.timestamp,
-    )
-    .first<{
-      subscription_id: string;
-      customer_id: string;
-      metric_id: string;
-      aggregation_type: string;
-      field_name: string | null;
-    }>();
+  const context = await findEventContext(env.BILLING_DB, auth.organizationId, input);
   if (!context) {
     const metric = await findMetric(env.BILLING_DB, auth.organizationId, input.code);
     throw metric
@@ -701,14 +937,7 @@ async function createUsageEvent(
   }
   validateAggregationProperties(context.aggregation_type, context.field_name, input.properties);
 
-  const normalized = {
-    transactionId: input.transactionId,
-    code: input.code,
-    externalSubscriptionId: input.externalSubscriptionId,
-    timestamp: input.timestamp,
-    preciseTotalAmountMinor: input.preciseTotalAmountMinor,
-    properties: input.properties,
-  };
+  const normalized = normalizedEvent(input);
   const requestHash = await sha256Hex(stableJson(normalized));
   const existing = await findEvent(
     env.BILLING_DB,
@@ -1017,6 +1246,45 @@ async function usageEventsForPeriod(
     timestampMs: event.timestamp_ms,
     properties: parseStoredObject(event.properties_json),
   }));
+}
+
+async function findEventContext(
+  database: D1Database,
+  organizationId: string,
+  input: EventInput,
+): Promise<EventContext | null> {
+  return database
+    .prepare(
+      `SELECT s.id AS subscription_id, s.customer_id, bm.id AS metric_id,
+              bm.aggregation_type, bm.field_name
+       FROM subscriptions s
+       JOIN billable_metrics bm
+         ON bm.organization_id = s.organization_id AND bm.code = ? AND bm.active = 1
+       WHERE s.organization_id = ? AND s.external_id = ?
+         AND s.status IN ('active', 'past_due')
+         AND (s.started_at IS NULL OR s.started_at <= ?)
+         AND (s.terminated_at IS NULL OR s.terminated_at >= ?)
+       LIMIT 1`,
+    )
+    .bind(
+      input.code,
+      organizationId,
+      input.externalSubscriptionId,
+      input.timestamp,
+      input.timestamp,
+    )
+    .first<EventContext>();
+}
+
+function normalizedEvent(input: EventInput): Record<string, unknown> {
+  return {
+    transactionId: input.transactionId,
+    code: input.code,
+    externalSubscriptionId: input.externalSubscriptionId,
+    timestamp: input.timestamp,
+    preciseTotalAmountMinor: input.preciseTotalAmountMinor,
+    properties: input.properties,
+  };
 }
 
 function normalizeEventInput(input: Record<string, unknown>): EventInput {
