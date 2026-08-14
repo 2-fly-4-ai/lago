@@ -277,6 +277,17 @@ Applied D1 migrations: `0001_foundation.sql` through
   found zero organizations, customers, plans, subscriptions, invoices, credit notes, and outbox
   events plus 98 Cron audits. All three external-action flags remain disabled, with no route,
   secret, provider action, or billing data added.
+- The customer/default invoice custom-section deployment applied only
+  `0036_customer_invoice_custom_sections.sql` in 10.78 ms; follow-up inventory reported no pending
+  migrations. Schema verification found 36 migrations, five section tables, 21 related triggers,
+  two read-only precedence views, and no foreign-key violations. Isolated Worker version
+  `fe2fb69c-b113-438f-884f-b6b5f367b87c` retained only the existing workers.dev URL, `*/5` Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow bindings. Health/readiness returned
+  `200`/`200`; unauthenticated section-catalog and default-selection access both returned `401`;
+  aggregate-only verification found zero organizations, customers, plans, subscriptions, invoices,
+  catalog sections, customer/default links, snapshots, and outbox events plus 113 schedule audits.
+  All three external-action flags remain disabled, with no route, secret, provider action, or
+  billing/catalog/default data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

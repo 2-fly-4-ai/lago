@@ -1431,3 +1431,14 @@ resource and mutation described.
   KiB (116.57 KiB gzip) dry-run bundle are green. This is a local pre-deployment checkpoint;
   isolated remote D1 remains on migration `0035` and Worker version
   `ce135113-31fc-4078-981f-d439a03db5ae`.
+- 2026-08-14: Remote preflight showed exactly
+  `0036_customer_invoice_custom_sections.sql` pending, no foreign-key violations, and zero
+  organizations, customers, plans, subscriptions, invoices, catalog sections, snapshots, and
+  outbox events plus 113 schedule audits. Applied only that migration in 10.78 ms, confirmed the
+  follow-up inventory was empty, and verified 36 migrations, five section tables, 21 related
+  triggers, two precedence views, and no foreign-key violations. Deployed isolated Worker version
+  `fe2fb69c-b113-438f-884f-b6b5f367b87c`; health/readiness returned `200`/`200`, and
+  unauthenticated catalog/default-selection access returned `401`/`401`. Post-deploy
+  aggregate-only verification remained empty. The deployed version retains all three
+  external-action flags at `0` and only the existing isolated bindings/triggers. No production
+  route, domain, secret, provider action, or billing/catalog/default record changed.
