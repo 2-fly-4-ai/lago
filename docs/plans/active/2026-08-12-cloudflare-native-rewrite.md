@@ -363,6 +363,8 @@ Acceptance:
       renamed and rescheduled to another future instant with the same optimistic version/outbox
       guards, or canceled idempotently without creating an invoice; canceled rows cannot later be
       activated. Active/past-due name updates emit the same versioned `subscription.updated`.
+      Recurring close snapshots the pay-in-advance base line against the next billing period while
+      keeping in-arrears base, usage, fixed-charge, and commitment evidence on the closed period.
       Backdating, tenant-local calendar interpretation, calendar billing, ending rules, overrides,
       payment-method, custom-section, and threshold inputs fail explicitly.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
@@ -990,3 +992,15 @@ resource and mutation described.
   returned `200`, unauthenticated plan creation returned `401`, and aggregate-only verification
   confirmed zero organizations, plans, subscriptions, and invoices plus 30 Cron audits. No route,
   secret, seeded billing data, or disabled external flag changed.
+- 2026-08-14: Added distinct recurring line-period evidence for the base subscription fee.
+  Pay-in-advance renewals now snapshot the next period while usage and other in-arrears fees retain
+  the just-closed period; in-arrears base fees also retain the closed period. The focused billing
+  suites passed, an initial full-suite run exposed one existing credit-note timeout under parallel
+  load, and the required isolated rerun plus complete rerun then passed all 82 Workers-runtime tests
+  across 22 files. Formatting, lint, generated bindings, TypeScript, inventory, and the dry-run
+  bundle are green at 484.50 KiB (87.28 KiB gzip). No migration is required.
+- 2026-08-14: Confirmed no remote migration was pending and deployed recurring line-period
+  ownership as isolated Worker version `bd36a099-39a5-445b-b07a-3fd60fed1e9e`. Remote
+  health/readiness returned `200`, unauthenticated invoice access returned `401`, and aggregate-only
+  verification confirmed zero organizations, subscriptions, invoices, and invoice lines plus 31
+  Cron audits. No route, secret, seeded billing data, or disabled external flag changed.

@@ -142,7 +142,8 @@ Required evidence for a new aggregate or a boundary change:
   termination credit notes still need explicit lifecycle rules.
 - A base subscription creates an initial invoice only when its plan snapshots
   `pay_in_advance = 1`; in-arrears starts seed the billing period without an invoice. Recurring
-  pay-in-advance line periods still need distinct next-period evidence before full renewal parity.
+  pay-in-advance base lines snapshot the next period, while in-arrears base lines, usage, fixed
+  charges, and commitments snapshot the period being closed.
 - Tenant-local billing time zones and daylight-saving transitions are not yet parity-proven.
 - Provider reads, payment mutations, and outbound webhook delivery are implemented only behind
   disabled safety gates in the isolated stack.
