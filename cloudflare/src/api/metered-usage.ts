@@ -107,6 +107,53 @@ type CatalogChargeRow = ChargeUsageRow & {
   prorated: number;
 };
 
+type NormalizedCatalogChargeMutation = {
+  code: string;
+  metricId: string;
+  invoiceDisplayName: string | null;
+  chargeModel: string;
+  properties: Record<string, unknown>;
+  invoiceable: number;
+  minAmountMinor: number;
+  acceptsTargetWallet: number;
+};
+
+type PreparedChargeCascadeUpdate = {
+  id: string;
+  code: string;
+  version: number;
+  propertiesJson: string;
+  filtersJson: string;
+};
+
+type PreparedChargeCascade = {
+  enabled: boolean;
+  guards: Array<{ id: string; version: number }>;
+  updates: PreparedChargeCascadeUpdate[];
+};
+
+type PreparedChargeCascadeCreate = {
+  id: string;
+  version: 0;
+  planId: string;
+  planVersion: number;
+  code: string;
+  billableMetricId: string;
+  invoiceDisplayName: string | null;
+  chargeModel: string;
+  propertiesJson: string;
+  filtersJson: string;
+  invoiceable: number;
+  minAmountMinor: number;
+  acceptsTargetWallet: number;
+};
+
+type PreparedChargeCascadeDelete = {
+  id: string;
+  code: string;
+  version: number;
+};
+
 type EventInput = {
   transactionId: string;
   code: string;
@@ -728,6 +775,7 @@ async function createCharge(
   const body = await parseJsonObject(request);
   const input = objectAt(body, "charge");
   rejectUnsupportedChargeInput(input);
+  const cascade = cascadeRequested(input);
   const code = requiredString(input, "code");
   const metricId = requiredString(input, "billable_metric_id");
   const chargeModel = requiredString(input, "charge_model");
@@ -795,6 +843,25 @@ async function createCharge(
     chargeModel,
     id,
   );
+  const cascadeCreates = cascade
+    ? await prepareChargeCreateCascade(database, plan.id, id, {
+        code,
+        metricId: metric.id,
+        invoiceDisplayName: normalized.invoiceDisplayName,
+        chargeModel,
+        properties,
+        filters,
+        invoiceable: normalized.invoiceable,
+        minAmountMinor: normalized.minAmountMinor,
+        acceptsTargetWallet: normalized.acceptsTargetWallet,
+      })
+    : [];
+  const cascadeJson = stableJson(cascadeCreates);
+  const cascadeGuardJson = stableJson(
+    cascadeCreates.map(({ planId, planVersion }) => ({ id: planId, version: planVersion })),
+  );
+  const cascadeEnabled = cascade ? 1 : 0;
+  const cascadeCount = cascadeCreates.length;
   const event = catalogEvent(
     "charge.created",
     "charge",
@@ -805,15 +872,40 @@ async function createCharge(
     now,
     { code, planCode },
   );
+  const childEvents = cascadeCreates.map((child) =>
+    catalogEvent("charge.created", "charge", child.id, 1, auth.organizationId, requestId, now, {
+      code: child.code,
+      planCode,
+      cascadedFromChargeId: id,
+    }),
+  );
   try {
-    await database.batch([
+    const results = await database.batch([
       database
         .prepare(
           `INSERT INTO charges
-       (id, organization_id, plan_id, billable_metric_id, code, invoice_display_name,
-        charge_model, properties_json, filters_json, invoiceable, pay_in_advance, prorated,
-        min_amount_minor, accepts_target_wallet, version, active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
+           (id, organization_id, plan_id, billable_metric_id, code, invoice_display_name,
+            charge_model, properties_json, filters_json, invoiceable, pay_in_advance, prorated,
+            min_amount_minor, accepts_target_wallet, version, active, created_at, updated_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?
+           WHERE ? = 0 OR (
+             ? = (
+               SELECT COUNT(*) FROM json_each(?) expected
+               JOIN plans child ON child.id = json_extract(expected.value, '$.id')
+               WHERE child.organization_id = ? AND child.active = 1
+                 AND child.parent_id = ?
+                 AND child.version = json_extract(expected.value, '$.version')
+             )
+             AND ? = (
+               SELECT COUNT(*) FROM plans child
+               WHERE child.organization_id = ? AND child.active = 1 AND child.parent_id = ?
+                 AND EXISTS (
+                   SELECT 1 FROM subscriptions subscription
+                   WHERE subscription.plan_id = child.id
+                     AND subscription.status IN ('active', 'pending')
+                 )
+             )
+           )`,
         )
         .bind(
           id,
@@ -832,10 +924,59 @@ async function createCharge(
           normalized.acceptsTargetWallet,
           now,
           now,
+          cascadeEnabled,
+          cascadeCount,
+          cascadeGuardJson,
+          auth.organizationId,
+          plan.id,
+          cascadeCount,
+          auth.organizationId,
+          plan.id,
         ),
-      outboxStatement(database, auth.organizationId, event),
+      database
+        .prepare(
+          `INSERT INTO charges
+           (id, organization_id, parent_id, plan_id, billable_metric_id, code,
+            invoice_display_name, charge_model, properties_json, filters_json, invoiceable,
+            pay_in_advance, prorated, min_amount_minor, accepts_target_wallet, version, active,
+            created_at, updated_at)
+           SELECT json_extract(row.value, '$.id'), ?, ?, json_extract(row.value, '$.planId'),
+                  json_extract(row.value, '$.billableMetricId'), json_extract(row.value, '$.code'),
+                  json_extract(row.value, '$.invoiceDisplayName'),
+                  json_extract(row.value, '$.chargeModel'),
+                  json_extract(row.value, '$.propertiesJson'),
+                  json_extract(row.value, '$.filtersJson'),
+                  json_extract(row.value, '$.invoiceable'), 0, 0,
+                  json_extract(row.value, '$.minAmountMinor'),
+                  json_extract(row.value, '$.acceptsTargetWallet'), 1, 1, ?, ?
+           FROM json_each(?) row
+           WHERE EXISTS (
+             SELECT 1 FROM charges parent
+             WHERE parent.id = ? AND parent.organization_id = ? AND parent.active = 1
+               AND parent.version = 1 AND parent.updated_at = ?
+           )`,
+        )
+        .bind(auth.organizationId, id, now, now, cascadeJson, id, auth.organizationId, now),
+      conditionalChargeOutboxStatement(database, auth.organizationId, event, id, 1, now, 1),
+      bulkChargeCascadeOutboxStatement(
+        database,
+        auth.organizationId,
+        childEvents,
+        cascadeCreates,
+        now,
+        1,
+      ),
     ]);
+    if (
+      (results[0]?.meta.changes ?? 0) < 1 ||
+      (results[1]?.meta.changes ?? 0) < cascadeCount ||
+      results[2]?.meta.changes !== 1 ||
+      (results[3]?.meta.changes ?? 0) !== cascadeCount
+    ) {
+      throw new ApiError(409, "charge_version_conflict", "Charge graph changed concurrently");
+    }
   } catch (error) {
+    if (error instanceof ApiError) throw error;
     const concurrent = await findCatalogCharge(database, plan.id, code);
     if (
       concurrent &&
@@ -846,6 +987,7 @@ async function createCharge(
     throw error;
   }
   await env.DOMAIN_EVENTS.send(event);
+  for (const childEvent of childEvents) await env.DOMAIN_EVENTS.send(childEvent);
   const created = await findCatalogCharge(database, plan.id, code);
   if (!created) throw new ApiError(500, "persistence_error", "Charge was not persisted");
   return json({ charge: serializeCatalogCharge(created) }, { requestId });
@@ -868,6 +1010,7 @@ async function updateCharge(
 
   const input = objectAt(await parseJsonObject(request), "charge");
   rejectUnsupportedChargeInput(input);
+  const cascade = cascadeRequested(input);
   if (booleanInteger(input.pay_in_advance, charge.pay_in_advance === 1) === 1)
     throw new ApiError(
       422,
@@ -906,7 +1049,7 @@ async function updateCharge(
       ? parseStoredObject(charge.properties_json)
       : optionalObject(input.properties, "properties");
   parseChargeModel(nextChargeModel, nextProperties);
-  const next = {
+  const next: NormalizedCatalogChargeMutation = {
     code: nextCode,
     metricId: nextMetricId,
     invoiceDisplayName:
@@ -956,11 +1099,27 @@ async function updateCharge(
     if (duplicate) throw new ApiError(422, "value_already_exist", "Charge code already exists");
   }
   if (
-    sameCatalogCharge(charge, next.metricId, next.chargeModel, next.properties, nextFilters, next)
+    sameCatalogCharge(
+      charge,
+      next.metricId,
+      next.chargeModel,
+      next.properties,
+      nextFilters,
+      next,
+    ) &&
+    !cascade
   )
     return json({ charge: serializeCatalogCharge(charge) }, { requestId });
 
   const now = new Date().toISOString();
+  const chargeCascade = cascade
+    ? await prepareChargeUpdateCascade(database, charge, next, nextFilters)
+    : emptyChargeCascade();
+  const cascadeJson = stableJson(chargeCascade.updates);
+  const cascadeGuardJson = stableJson(chargeCascade.guards);
+  const cascadeEnabled = chargeCascade.enabled ? 1 : 0;
+  const cascadeCount = chargeCascade.updates.length;
+  const cascadeGuardCount = chargeCascade.guards.length;
   const event = catalogEvent(
     "charge.updated",
     "charge",
@@ -971,6 +1130,18 @@ async function updateCharge(
     now,
     { code: next.code, planCode },
   );
+  const childEvents = chargeCascade.updates.map((child) =>
+    catalogEvent(
+      "charge.updated",
+      "charge",
+      child.id,
+      child.version + 1,
+      auth.organizationId,
+      requestId,
+      now,
+      { code: child.code, planCode, cascadedFromChargeId: charge.id },
+    ),
+  );
   try {
     const results = await database.batch([
       database
@@ -978,7 +1149,27 @@ async function updateCharge(
           `UPDATE charges SET billable_metric_id = ?, code = ?, invoice_display_name = ?,
            charge_model = ?, properties_json = ?, filters_json = ?, invoiceable = ?, min_amount_minor = ?,
            accepts_target_wallet = ?, version = version + 1, updated_at = ?
-           WHERE id = ? AND organization_id = ? AND plan_id = ? AND active = 1 AND version = ?`,
+           WHERE id = ? AND organization_id = ? AND plan_id = ? AND active = 1 AND version = ?
+             AND (
+               ? = 0 OR (
+                 ? = (
+                   SELECT COUNT(*) FROM json_each(?) expected
+                   JOIN charges child ON child.id = json_extract(expected.value, '$.id')
+                   WHERE child.organization_id = ? AND child.active = 1
+                     AND child.parent_id = ?
+                     AND child.version = json_extract(expected.value, '$.version')
+                 )
+                 AND ? = (
+                   SELECT COUNT(*) FROM charges child
+                   WHERE child.organization_id = ? AND child.active = 1 AND child.parent_id = ?
+                     AND EXISTS (
+                       SELECT 1 FROM subscriptions subscription
+                       WHERE subscription.plan_id = child.plan_id
+                         AND subscription.status IN ('active', 'pending')
+                     )
+                 )
+               )
+             )`,
         )
         .bind(
           next.metricId,
@@ -995,6 +1186,59 @@ async function updateCharge(
           auth.organizationId,
           plan.id,
           charge.version,
+          cascadeEnabled,
+          cascadeGuardCount,
+          cascadeGuardJson,
+          auth.organizationId,
+          charge.id,
+          cascadeGuardCount,
+          auth.organizationId,
+          charge.id,
+        ),
+      database
+        .prepare(
+          `UPDATE charges AS child
+           SET code = (
+                 SELECT json_extract(update_row.value, '$.code') FROM json_each(?) update_row
+                 WHERE json_extract(update_row.value, '$.id') = child.id
+               ),
+               properties_json = (
+                 SELECT json_extract(update_row.value, '$.propertiesJson')
+                 FROM json_each(?) update_row
+                 WHERE json_extract(update_row.value, '$.id') = child.id
+               ),
+               filters_json = (
+                 SELECT json_extract(update_row.value, '$.filtersJson')
+                 FROM json_each(?) update_row
+                 WHERE json_extract(update_row.value, '$.id') = child.id
+               ),
+               version = version + 1,
+               updated_at = ?
+           WHERE child.id IN (SELECT json_extract(value, '$.id') FROM json_each(?))
+             AND child.organization_id = ? AND child.active = 1 AND child.parent_id = ?
+             AND child.version = (
+               SELECT json_extract(update_row.value, '$.version') FROM json_each(?) update_row
+               WHERE json_extract(update_row.value, '$.id') = child.id
+             )
+             AND EXISTS (
+               SELECT 1 FROM charges parent
+               WHERE parent.id = ? AND parent.organization_id = ? AND parent.active = 1
+                 AND parent.version = ? AND parent.updated_at = ?
+             )`,
+        )
+        .bind(
+          cascadeJson,
+          cascadeJson,
+          cascadeJson,
+          now,
+          cascadeJson,
+          auth.organizationId,
+          charge.id,
+          cascadeJson,
+          charge.id,
+          auth.organizationId,
+          charge.version + 1,
+          now,
         ),
       conditionalChargeOutboxStatement(
         database,
@@ -1005,14 +1249,28 @@ async function updateCharge(
         now,
         1,
       ),
+      bulkChargeCascadeOutboxStatement(
+        database,
+        auth.organizationId,
+        childEvents,
+        chargeCascade.updates,
+        now,
+        1,
+      ),
     ]);
-    if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
+    if (
+      (results[0]?.meta.changes ?? 0) < 1 ||
+      (results[1]?.meta.changes ?? 0) < cascadeCount ||
+      results[2]?.meta.changes !== 1 ||
+      (results[3]?.meta.changes ?? 0) !== cascadeCount
+    )
       throw new ApiError(409, "charge_version_conflict", "Charge changed concurrently");
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(422, "value_already_exist", "Charge code already exists");
   }
   await env.DOMAIN_EVENTS.send(event);
+  for (const childEvent of childEvents) await env.DOMAIN_EVENTS.send(childEvent);
   const updated = await findCatalogCharge(database, plan.id, next.code);
   if (!updated) throw new ApiError(500, "persistence_error", "Charge disappeared");
   return json({ charge: serializeCatalogCharge(updated) }, { requestId });
@@ -1032,13 +1290,19 @@ async function deleteCharge(
   assertCatalogPlanMutationAvailable(plan);
   const charge = await findCatalogCharge(database, plan.id, chargeCode);
   if (!charge) throw new ApiError(404, "charge_not_found", "Charge was not found");
+  let cascade = false;
   if (request.body !== null) {
     const body = await parseJsonObject(request);
     const input = objectAt(body, "charge");
     rejectUnsupportedChargeInput(input);
+    cascade = cascadeRequested(input);
   }
 
   const now = new Date().toISOString();
+  const cascadeDeletes = cascade ? await prepareChargeDeleteCascade(database, charge.id) : [];
+  const cascadeJson = stableJson(cascadeDeletes);
+  const cascadeEnabled = cascade ? 1 : 0;
+  const cascadeCount = cascadeDeletes.length;
   const event = catalogEvent(
     "charge.deleted",
     "charge",
@@ -1049,13 +1313,85 @@ async function deleteCharge(
     now,
     { code: charge.code, planCode },
   );
+  const childEvents = cascadeDeletes.map((child) =>
+    catalogEvent(
+      "charge.deleted",
+      "charge",
+      child.id,
+      child.version + 1,
+      auth.organizationId,
+      requestId,
+      now,
+      { code: child.code, planCode, cascadedFromChargeId: charge.id },
+    ),
+  );
   const results = await database.batch([
     database
       .prepare(
         `UPDATE charges SET active = 0, version = version + 1, updated_at = ?
-         WHERE id = ? AND organization_id = ? AND plan_id = ? AND active = 1 AND version = ?`,
+         WHERE id = ? AND organization_id = ? AND plan_id = ? AND active = 1 AND version = ?
+           AND (
+             ? = 0 OR (
+               ? = (
+                 SELECT COUNT(*) FROM json_each(?) expected
+                 JOIN charges child ON child.id = json_extract(expected.value, '$.id')
+                 WHERE child.organization_id = ? AND child.active = 1
+                   AND child.parent_id = ?
+                   AND child.version = json_extract(expected.value, '$.version')
+               )
+               AND ? = (
+                 SELECT COUNT(*) FROM charges child
+                 WHERE child.organization_id = ? AND child.active = 1 AND child.parent_id = ?
+                   AND EXISTS (
+                     SELECT 1 FROM subscriptions subscription
+                     WHERE subscription.plan_id = child.plan_id
+                       AND subscription.status IN ('active', 'pending')
+                   )
+               )
+             )
+           )`,
       )
-      .bind(now, charge.id, auth.organizationId, plan.id, charge.version),
+      .bind(
+        now,
+        charge.id,
+        auth.organizationId,
+        plan.id,
+        charge.version,
+        cascadeEnabled,
+        cascadeCount,
+        cascadeJson,
+        auth.organizationId,
+        charge.id,
+        cascadeCount,
+        auth.organizationId,
+        charge.id,
+      ),
+    database
+      .prepare(
+        `UPDATE charges AS child SET active = 0, version = version + 1, updated_at = ?
+         WHERE child.id IN (SELECT json_extract(value, '$.id') FROM json_each(?))
+           AND child.organization_id = ? AND child.active = 1 AND child.parent_id = ?
+           AND child.version = (
+             SELECT json_extract(delete_row.value, '$.version') FROM json_each(?) delete_row
+             WHERE json_extract(delete_row.value, '$.id') = child.id
+           )
+           AND EXISTS (
+             SELECT 1 FROM charges parent
+             WHERE parent.id = ? AND parent.organization_id = ? AND parent.active = 0
+               AND parent.version = ? AND parent.updated_at = ?
+           )`,
+      )
+      .bind(
+        now,
+        cascadeJson,
+        auth.organizationId,
+        charge.id,
+        cascadeJson,
+        charge.id,
+        auth.organizationId,
+        charge.version + 1,
+        now,
+      ),
     conditionalChargeOutboxStatement(
       database,
       auth.organizationId,
@@ -1065,10 +1401,24 @@ async function deleteCharge(
       now,
       0,
     ),
+    bulkChargeCascadeOutboxStatement(
+      database,
+      auth.organizationId,
+      childEvents,
+      cascadeDeletes,
+      now,
+      0,
+    ),
   ]);
-  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
+  if (
+    (results[0]?.meta.changes ?? 0) < 1 ||
+    (results[1]?.meta.changes ?? 0) < cascadeCount ||
+    results[2]?.meta.changes !== 1 ||
+    (results[3]?.meta.changes ?? 0) !== cascadeCount
+  )
     throw new ApiError(409, "charge_version_conflict", "Charge changed concurrently");
   await env.DOMAIN_EVENTS.send(event);
+  for (const childEvent of childEvents) await env.DOMAIN_EVENTS.send(childEvent);
   return json({ charge: serializeCatalogCharge(charge) }, { requestId });
 }
 
@@ -1464,10 +1814,10 @@ async function persistChargeFilters(
     ),
   ]);
   if (
-    results[0]?.meta.changes !== 1 ||
-    results[1]?.meta.changes !== cascadeCount ||
+    (results[0]?.meta.changes ?? 0) < 1 ||
+    (results[1]?.meta.changes ?? 0) < cascadeCount ||
     results[2]?.meta.changes !== 1 ||
-    results[3]?.meta.changes !== cascadeCount
+    (results[3]?.meta.changes ?? 0) !== cascadeCount
   ) {
     throw new ApiError(409, "charge_version_conflict", "Charge changed concurrently");
   }
@@ -1566,10 +1916,247 @@ async function prepareFilterCascade(
       });
     }
   }
-  return { enabled: true, guards, updates };
+  const prepared = { enabled: true, guards, updates } satisfies PreparedFilterCascade;
+  if (new TextEncoder().encode(stableJson(prepared)).byteLength > MAX_CHARGE_CASCADE_JSON_BYTES) {
+    throw new ApiError(
+      422,
+      "charge_filter_cascade_too_large",
+      "Charge filter cascade pricing data exceeds the supported size",
+    );
+  }
+  return prepared;
 }
 
 function emptyFilterCascade(): PreparedFilterCascade {
+  return { enabled: false, guards: [], updates: [] };
+}
+
+const MAX_CHARGE_CASCADE_CHILDREN = 100;
+const MAX_CHARGE_CASCADE_JSON_BYTES = 512 * 1024;
+
+async function prepareChargeCreateCascade(
+  database: D1Database,
+  parentPlanId: string,
+  parentChargeId: string,
+  charge: {
+    code: string;
+    metricId: string;
+    invoiceDisplayName: string | null;
+    chargeModel: string;
+    properties: Record<string, unknown>;
+    filters: ChargeFilter[];
+    invoiceable: number;
+    minAmountMinor: number;
+    acceptsTargetWallet: number;
+  },
+): Promise<PreparedChargeCascadeCreate[]> {
+  const result = await database
+    .prepare(
+      `SELECT child.id, child.version FROM plans child
+       WHERE child.parent_id = ? AND child.active = 1
+         AND EXISTS (
+           SELECT 1 FROM subscriptions subscription
+           WHERE subscription.plan_id = child.id
+             AND subscription.status IN ('active', 'pending')
+         )
+       ORDER BY child.created_at, child.id LIMIT ?`,
+    )
+    .bind(parentPlanId, MAX_CHARGE_CASCADE_CHILDREN + 1)
+    .all<{ id: string; version: number }>();
+  if (result.results.length > MAX_CHARGE_CASCADE_CHILDREN) {
+    throw new ApiError(
+      422,
+      "charge_cascade_too_large",
+      `Charge cascades support at most ${MAX_CHARGE_CASCADE_CHILDREN} active child plans`,
+    );
+  }
+  const creates: PreparedChargeCascadeCreate[] = [];
+  for (const childPlan of result.results) {
+    const childChargeId = await deterministicUuid(
+      "charge-cascade-create",
+      `${childPlan.id}:${parentChargeId}`,
+    );
+    const filters = await Promise.all(
+      charge.filters.map(async (filter) => ({
+        ...filter,
+        lagoId: await deterministicUuid(
+          "charge-cascade-filter",
+          `${childChargeId}:${filter.lagoId}`,
+        ),
+      })),
+    );
+    creates.push({
+      id: childChargeId,
+      version: 0,
+      planId: childPlan.id,
+      planVersion: childPlan.version,
+      code: charge.code,
+      billableMetricId: charge.metricId,
+      invoiceDisplayName: charge.invoiceDisplayName,
+      chargeModel: charge.chargeModel,
+      propertiesJson: stableJson(charge.properties),
+      filtersJson: stableJson(filters),
+      invoiceable: charge.invoiceable,
+      minAmountMinor: charge.minAmountMinor,
+      acceptsTargetWallet: charge.acceptsTargetWallet,
+    });
+  }
+  if (new TextEncoder().encode(stableJson(creates)).byteLength > MAX_CHARGE_CASCADE_JSON_BYTES) {
+    throw new ApiError(
+      422,
+      "charge_cascade_too_large",
+      "Charge cascade pricing data exceeds the supported size",
+    );
+  }
+  return creates;
+}
+
+async function prepareChargeDeleteCascade(
+  database: D1Database,
+  parentChargeId: string,
+): Promise<PreparedChargeCascadeDelete[]> {
+  const result = await database
+    .prepare(
+      `SELECT child.id, child.code, child.version FROM charges child
+       WHERE child.parent_id = ? AND child.active = 1
+         AND EXISTS (
+           SELECT 1 FROM subscriptions subscription
+           WHERE subscription.plan_id = child.plan_id
+             AND subscription.status IN ('active', 'pending')
+         )
+       ORDER BY child.created_at, child.id LIMIT ?`,
+    )
+    .bind(parentChargeId, MAX_CHARGE_CASCADE_CHILDREN + 1)
+    .all<PreparedChargeCascadeDelete>();
+  if (result.results.length > MAX_CHARGE_CASCADE_CHILDREN) {
+    throw new ApiError(
+      422,
+      "charge_cascade_too_large",
+      `Charge cascades support at most ${MAX_CHARGE_CASCADE_CHILDREN} active child charges`,
+    );
+  }
+  return [...result.results];
+}
+
+async function prepareChargeUpdateCascade(
+  database: D1Database,
+  parent: CatalogChargeRow,
+  next: NormalizedCatalogChargeMutation,
+  nextParentFilters: ChargeFilter[],
+): Promise<PreparedChargeCascade> {
+  const result = await database
+    .prepare(
+      `${chargeSelect()} WHERE ch.parent_id = ? AND ch.active = 1
+       AND EXISTS (
+         SELECT 1 FROM subscriptions subscription
+         WHERE subscription.plan_id = ch.plan_id
+           AND subscription.status IN ('active', 'pending')
+       )
+       ORDER BY ch.created_at, ch.id LIMIT ?`,
+    )
+    .bind(parent.id, MAX_CHARGE_CASCADE_CHILDREN + 1)
+    .all<CatalogChargeRow>();
+  if (result.results.length > MAX_CHARGE_CASCADE_CHILDREN) {
+    throw new ApiError(
+      422,
+      "charge_cascade_too_large",
+      `Charge cascades support at most ${MAX_CHARGE_CASCADE_CHILDREN} active child charges`,
+    );
+  }
+  const guards = result.results.map(({ id, version }) => ({ id, version }));
+  const updates: PreparedChargeCascadeUpdate[] = [];
+  const parentProperties = parseStoredObject(parent.properties_json);
+  const oldParentFilters = catalogChargeFilters(parent);
+  for (const child of result.results) {
+    // Lago does not cascade a charge-model transition into an existing child charge.
+    if (child.charge_model !== next.chargeModel) continue;
+    const childProperties = parseStoredObject(child.properties_json);
+    const properties =
+      parent.charge_model === child.charge_model &&
+      stableJson(parentProperties) === stableJson(childProperties)
+        ? next.properties
+        : childProperties;
+    const filters = await reconcileCascadedChargeFilters(
+      child,
+      oldParentFilters,
+      nextParentFilters,
+    );
+    if (
+      child.code !== next.code ||
+      stableJson(childProperties) !== stableJson(properties) ||
+      stableJson(catalogChargeFilters(child)) !== stableJson(filters)
+    ) {
+      updates.push({
+        id: child.id,
+        code: next.code,
+        version: child.version,
+        propertiesJson: stableJson(properties),
+        filtersJson: stableJson(filters),
+      });
+    }
+  }
+  const prepared = { enabled: true, guards, updates } satisfies PreparedChargeCascade;
+  if (new TextEncoder().encode(stableJson(prepared)).byteLength > MAX_CHARGE_CASCADE_JSON_BYTES) {
+    throw new ApiError(
+      422,
+      "charge_cascade_too_large",
+      "Charge cascade pricing data exceeds the supported size",
+    );
+  }
+  return prepared;
+}
+
+async function reconcileCascadedChargeFilters(
+  child: CatalogChargeRow,
+  oldParentFilters: ChargeFilter[],
+  nextParentFilters: ChargeFilter[],
+): Promise<ChargeFilter[]> {
+  const childFilters = catalogChargeFilters(child);
+  const oldByValues = new Map(
+    oldParentFilters.map((filter) => [stableJson(filter.values), filter]),
+  );
+  const childByValues = new Map(childFilters.map((filter) => [stableJson(filter.values), filter]));
+  const nextFilters: ChargeFilter[] = [];
+  for (const parentFilter of nextParentFilters) {
+    const identity = stableJson(parentFilter.values);
+    const childFilter = childByValues.get(identity);
+    const oldParentFilter = oldByValues.get(identity);
+    if (!childFilter) {
+      nextFilters.push({
+        ...parentFilter,
+        lagoId: await deterministicUuid(
+          "charge-cascade-filter",
+          `${child.id}:${parentFilter.lagoId}`,
+        ),
+      });
+      continue;
+    }
+    if (
+      oldParentFilter &&
+      filterPropertiesCustomized(oldParentFilter.properties, childFilter.properties)
+    ) {
+      nextFilters.push(childFilter);
+      continue;
+    }
+    nextFilters.push({
+      ...childFilter,
+      invoiceDisplayName: parentFilter.invoiceDisplayName,
+      properties: parentFilter.properties,
+    });
+  }
+  for (const childFilter of childFilters) {
+    const identity = stableJson(childFilter.values);
+    if (
+      !oldByValues.has(identity) &&
+      !nextFilters.some((filter) => stableJson(filter.values) === identity)
+    ) {
+      nextFilters.push(childFilter);
+    }
+  }
+  return nextFilters;
+}
+
+function emptyChargeCascade(): PreparedChargeCascade {
   return { enabled: false, guards: [], updates: [] };
 }
 
@@ -3055,7 +3642,7 @@ function validateMetricConfiguration(
 }
 
 function rejectUnsupportedChargeInput(input: Record<string, unknown>): void {
-  for (const field of ["applied_pricing_unit", "regroup_paid_fees", "cascade_updates"]) {
+  for (const field of ["applied_pricing_unit", "regroup_paid_fees"]) {
     const value = input[field];
     if (value === undefined || value === null || value === false) continue;
     if (Array.isArray(value) && value.length === 0) continue;
@@ -3307,6 +3894,51 @@ function bulkCascadeOutboxStatement(
          AND child.updated_at = ?`,
     )
     .bind(organizationId, stableJson(rows), organizationId, updatedAt);
+}
+
+function bulkChargeCascadeOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  events: DomainEvent[],
+  cascades: Array<{ version: number }>,
+  updatedAt: string,
+  expectedActive: 0 | 1,
+): D1PreparedStatement {
+  const rows = events.map((event, index) => ({
+    eventId: event.id,
+    eventType: event.type,
+    eventVersion: event.version,
+    aggregateType: event.aggregateType,
+    aggregateId: event.aggregateId,
+    aggregateVersion: event.aggregateVersion,
+    causationId: event.causationId,
+    correlationId: event.correlationId,
+    payloadJson: stableJson(event.payload),
+    occurredAt: event.occurredAt,
+    expectedVersion: cascades[index]!.version + 1,
+  }));
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       SELECT json_extract(row.value, '$.eventId'), ?,
+              json_extract(row.value, '$.eventType'),
+              json_extract(row.value, '$.eventVersion'),
+              json_extract(row.value, '$.aggregateType'),
+              json_extract(row.value, '$.aggregateId'),
+              json_extract(row.value, '$.aggregateVersion'),
+              json_extract(row.value, '$.causationId'),
+              json_extract(row.value, '$.correlationId'),
+              json_extract(row.value, '$.payloadJson'),
+              json_extract(row.value, '$.occurredAt'), NULL
+       FROM json_each(?) row
+       JOIN charges child ON child.id = json_extract(row.value, '$.aggregateId')
+       WHERE child.organization_id = ? AND child.active = ?
+         AND child.version = json_extract(row.value, '$.expectedVersion')
+         AND child.updated_at = ?`,
+    )
+    .bind(organizationId, stableJson(rows), organizationId, expectedActive, updatedAt);
 }
 
 function optionalNonNegativeInteger(value: unknown, fallback: number): number {

@@ -1454,13 +1454,7 @@ describe("Lago-compatible metered usage", () => {
       method: "DELETE",
       body: { charge: { cascade_updates: true } },
     });
-    expect(cascadeDelete.status).toBe(422);
-    await expect(cascadeDelete.json()).resolves.toMatchObject({
-      code: "unsupported_charge_feature",
-    });
-    expect(
-      (await api("/api/v1/plans/metered-plan/charges/mutable-charge", { method: "DELETE" })).status,
-    ).toBe(200);
+    expect(cascadeDelete.status).toBe(200);
     expect(
       (await api("/api/v1/plans/metered-plan/charges/mutable-charge", { method: "DELETE" })).status,
     ).toBe(404);

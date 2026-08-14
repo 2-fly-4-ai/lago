@@ -25,12 +25,17 @@ beforeEach(async () => {
       "DELETE FROM charges WHERE organization_id = 'org-sub-filter' AND parent_id IS NOT NULL",
     ),
     env.BILLING_DB.prepare(
+      `DELETE FROM charges WHERE organization_id = 'org-sub-filter' AND parent_id IS NULL
+       AND id NOT IN ('charge-sub-filter', 'charge-sub-filter-two')`,
+    ),
+    env.BILLING_DB.prepare(
       "DELETE FROM plans WHERE organization_id = 'org-sub-filter' AND parent_id IS NOT NULL",
     ),
     env.BILLING_DB.prepare("DELETE FROM outbox_events WHERE organization_id = 'org-sub-filter'"),
     env.BILLING_DB.prepare(
-      `UPDATE charges SET properties_json = '{"amount":"1"}', filters_json = ?, version = 1,
-                          active = 1, updated_at = ?
+      `UPDATE charges SET code = 'requests-charge', invoice_display_name = NULL,
+                          charge_model = 'standard', properties_json = '{"amount":"1"}',
+                          filters_json = ?, version = 1, active = 1, updated_at = ?
        WHERE id = 'charge-sub-filter'`,
     ).bind(JSON.stringify([originalFilter]), now),
   ]);
@@ -280,6 +285,173 @@ describe("subscription charge-filter overrides", () => {
               (SELECT COUNT(*) FROM charges WHERE organization_id = 'org-sub-filter') AS charges`,
     ).first();
     expect(counts).toEqual({ plans: 1, charges: 2 });
+  });
+
+  it("cascades inherited charge pricing and filters without overwriting child customizations", async () => {
+    const asia = await api("/api/v1/plans/filter-plan/charges/requests-charge/filters", "POST", {
+      filter: {
+        invoice_display_name: "Parent Asia",
+        properties: { amount: "3" },
+        values: { region: ["asia"] },
+      },
+    });
+    expect(asia.status).toBe(200);
+
+    const override = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters",
+      "POST",
+      { filter: { properties: { amount: "7" }, values: { region: ["us"] } } },
+    );
+    expect(override.status).toBe(200);
+
+    const childEurope = (await subscriptionFilters()).find(
+      (filter) => filter.values.region?.[0] === "eu",
+    );
+    const customized = await api(
+      `/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters/${childEurope?.lago_id}`,
+      "PUT",
+      { filter: { properties: { amount: "99" } } },
+    );
+    expect(customized.status).toBe(200);
+
+    const cascaded = await api("/api/v1/plans/filter-plan/charges/requests-charge", "PUT", {
+      charge: {
+        code: "requests-renamed",
+        invoice_display_name: "Parent display only",
+        charge_model: "standard",
+        properties: { amount: "5" },
+        filters: [
+          {
+            invoice_display_name: "Europe cascaded",
+            properties: { amount: "6" },
+            values: { region: ["eu"] },
+          },
+          {
+            invoice_display_name: "Asia cascaded",
+            properties: { amount: "8" },
+            values: { region: ["asia"] },
+          },
+        ],
+        cascade_updates: true,
+      },
+    });
+    expect(cascaded.status).toBe(200);
+    const child = await env.BILLING_DB.prepare(
+      `SELECT ch.code, ch.invoice_display_name, ch.properties_json, ch.filters_json
+       FROM charges ch JOIN plans child_plan ON child_plan.id = ch.plan_id
+       WHERE child_plan.parent_id = 'plan-sub-filter' AND ch.parent_id = 'charge-sub-filter'`,
+    ).first<{
+      code: string;
+      invoice_display_name: string | null;
+      properties_json: string;
+      filters_json: string;
+    }>();
+    expect(child).toMatchObject({
+      code: "requests-renamed",
+      invoice_display_name: null,
+      properties_json: '{"amount":"5"}',
+    });
+    const filters = JSON.parse(child?.filters_json ?? "[]") as Array<{
+      invoiceDisplayName: string | null;
+      properties: Record<string, unknown>;
+      values: Record<string, string[]>;
+    }>;
+    expect(filters).toEqual([
+      expect.objectContaining({
+        invoiceDisplayName: "Parent Europe",
+        properties: { amount: "99" },
+        values: { region: ["eu"] },
+      }),
+      expect.objectContaining({
+        invoiceDisplayName: "Asia cascaded",
+        properties: { amount: "8" },
+        values: { region: ["asia"] },
+      }),
+      expect.objectContaining({ properties: { amount: "7" }, values: { region: ["us"] } }),
+    ]);
+
+    await env.BILLING_DB.prepare(
+      `UPDATE charges SET properties_json = '{"amount":"99"}'
+       WHERE parent_id = 'charge-sub-filter'`,
+    ).run();
+    const preserved = await api("/api/v1/plans/filter-plan/charges/requests-renamed", "PUT", {
+      charge: {
+        charge_model: "standard",
+        properties: { amount: "8" },
+        cascade_updates: true,
+      },
+    });
+    expect(preserved.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT properties_json FROM charges WHERE parent_id = 'charge-sub-filter'",
+      ).first(),
+    ).resolves.toEqual({ properties_json: '{"amount":"99"}' });
+  });
+
+  it("cascades a new catalog charge into every eligible child plan", async () => {
+    const override = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters",
+      "POST",
+      { filter: { properties: { amount: "7" }, values: { region: ["us"] } } },
+    );
+    expect(override.status).toBe(200);
+
+    const created = await api("/api/v1/plans/filter-plan/charges", "POST", {
+      charge: {
+        billable_metric_id: "metric-sub-filter-two",
+        code: "new-storage-charge",
+        invoice_display_name: "New storage",
+        charge_model: "standard",
+        properties: { amount: "10" },
+        min_amount_cents: 25,
+        cascade_updates: true,
+      },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ charge: { lago_id: string } }>();
+    const rows = await env.BILLING_DB.prepare(
+      `SELECT id, parent_id, plan_id, invoice_display_name, properties_json, min_amount_minor,
+              version, active
+       FROM charges WHERE code = 'new-storage-charge' ORDER BY parent_id IS NOT NULL`,
+    ).all<{
+      id: string;
+      parent_id: string | null;
+      plan_id: string;
+      invoice_display_name: string | null;
+      properties_json: string;
+      min_amount_minor: number;
+      version: number;
+      active: number;
+    }>();
+    expect(rows.results).toHaveLength(2);
+    expect(rows.results[0]).toMatchObject({
+      id: createdBody.charge.lago_id,
+      parent_id: null,
+      plan_id: "plan-sub-filter",
+    });
+    expect(rows.results[1]).toMatchObject({
+      parent_id: createdBody.charge.lago_id,
+      invoice_display_name: "New storage",
+      properties_json: '{"amount":"10"}',
+      min_amount_minor: 25,
+      version: 1,
+      active: 1,
+    });
+    expect(rows.results[1]?.id).not.toBe(createdBody.charge.lago_id);
+
+    const deleted = await api("/api/v1/plans/filter-plan/charges/new-storage-charge", "DELETE", {
+      charge: { cascade_updates: true },
+    });
+    expect(deleted.status).toBe(200);
+    const retired = await env.BILLING_DB.prepare(
+      `SELECT active, version FROM charges WHERE code = 'new-storage-charge'
+       ORDER BY parent_id IS NOT NULL`,
+    ).all<{ active: number; version: number }>();
+    expect(retired.results).toEqual([
+      { active: 0, version: 2 },
+      { active: 0, version: 2 },
+    ]);
   });
 
   it("cascades catalog filter changes while preserving subscriber-customized pricing", async () => {
