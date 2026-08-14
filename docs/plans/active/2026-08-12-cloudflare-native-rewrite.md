@@ -293,13 +293,14 @@ Acceptance:
       remain pending.
       Billable-metric create/list/show and Rails-safe scalar update now emit transactional,
       versioned outbox events; attached metrics allow only name/description mutation. Expression,
-      rounding, recurring weighted-sum, nested metric filters, and deletion workflows are now
-      ported. Generic recurring, custom aggregation, and subscription-level filter overrides
+      rounding, recurring weighted-sum, nested metric filters, deletion workflows, and
+      subscription-level filter overrides are now ported. Generic recurring and custom aggregation
       remain explicit gaps. Standalone plan charge
       create/list/show/update/delete supports the exact in-arrears rating models, nested
       filter-specific price overrides, and standalone filter list/show/create/update/delete.
-      Pay-in-advance, proration, targeted taxes, pricing units, and cascades fail explicitly until
-      their billing and cleanup workflows are ported. Weighted filters reconstruct independent
+      Pay-in-advance, proration, targeted taxes, pricing units, and charge-level cascades fail
+      explicitly until their billing and cleanup workflows are ported. Filter-level cascades across
+      subscription override graphs are ported. Weighted filters reconstruct independent
       recurring baselines per filter/base partition across periods and subscription generations.
       Filter/base partitions can also combine with target-wallet grouping as exact two-dimensional
       current-usage and invoice cells with deterministic identities and wallet allocations.
@@ -342,7 +343,9 @@ Acceptance:
       outbox events, and plans support standard/graduated/volume recurring pay-in-arrears fixed
       charges. Fixed fees enter the exact recurring invoice pipeline before minimum commitments,
       coupons, taxes, credit notes, and wallets. Pay-in-advance charges, proration, unit events,
-      inherited/overridden fixed charges and targeted taxes remain pending and fail explicitly.
+      per-subscription fixed-charge mutation/cascades and targeted taxes remain pending and fail
+      explicitly; subscription filter overrides preserve fixed charges by cloning the full active
+      pricing graph.
       Standalone fixed-charge list/show routes expose the same ledger; standalone create/update/
       delete remain guarded because they require per-subscription unit-event and rebilling flows.
       Plan creation now emits transactional versioned outbox events, and scalar plan updates
@@ -1971,3 +1974,25 @@ resource and mutation described.
   no migrations remain, and post-deploy aggregate-only verification remained empty apart from 197
   schedule audits. All three external-action flags remain `0`; no resource provisioning,
   production route/domain, secret, provider action, customer data, or billing row changed.
+- 2026-08-15: Ported standalone charge-filter `cascade_updates` across subscription override
+  graphs. Create/update/delete resolve child filters by immutable values, assign independent IDs on
+  creation, and touch only child charges with active or pending subscriptions. Update compares the
+  child price with the parent's old normalized price: inherited children receive the new price and
+  display name, while subscriber-customized prices remain unchanged. One bounded D1 batch guards
+  the complete eligible child ID/version set, updates the parent and affected children, invalidates
+  their drafts through existing triggers, and inserts one outbox event per changed charge. A child
+  created, removed, or modified between preparation and commit forces a clean retry instead of a
+  partial cascade. Evidence covers non-cascade isolation, inherited update, customized-price
+  preservation, fresh-ID create, delete, and the standalone no-child path. Strict format/lint,
+  inventory, and TypeScript checks pass. The fully parallel suite passed 187/188 before the known
+  draft-termination-credit case exceeded its 10-second harness limit; that file passed 2/2 alone,
+  and bounded groups passed all 188 tests as 45 + 69 + 67 + 7. The dry-run bundle is 910.74 KiB
+  (159.23 KiB gzip). Feature checkpoint: `4edfebf`.
+- 2026-08-15: Code-only remote preflight found no pending migration and zero organizations,
+  customers, plans, subscriptions, invoices, billable metrics, charges, fixed charges, usage
+  events, outbox rows, and plan-deletion tasks. Deployed only the isolated Worker as version
+  `1cd16893-a578-43ab-9128-0040d7c5f861` with a 7 ms startup. Health/readiness returned `200`/`200`,
+  unauthenticated standalone-filter access returned `401`, and post-deploy aggregate-only
+  verification remained empty apart from 202 schedule audits. All three external-action flags
+  remain `0`; no migration, resource provisioning, production route/domain, secret, provider
+  action, customer data, or billing row changed.
