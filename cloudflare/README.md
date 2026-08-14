@@ -18,21 +18,24 @@ remaining Lago feature inventory is dispositioned and ported.
   subscription, usage, and fixed-charge fees.
 - Plan catalog: idempotent creation and optimistic scalar updates with transactional versioned
   outbox events. Catalog graph replacement and destructive plan lifecycle remain guarded.
-- Subscription lifecycle: explicit skip-invoice/skip-credit termination is idempotent; any existing
-  draft is invalidated and remains refreshable/finalizable from its immutable invoice context.
-  Prorated termination invoices and termination credit notes remain guarded.
+- Subscription lifecycle: immediate starts create their initial invoice atomically; a supported
+  future UTC `subscription_at` creates a pending subscription with no invoice, and the five-minute
+  activation owner starts it and creates the initial invoice exactly once. Explicit
+  skip-invoice/skip-credit termination is idempotent; any existing draft is invalidated and remains
+  refreshable/finalizable from its immutable invoice context. Backdating, calendar billing,
+  prorated termination invoices, and termination credit notes remain guarded.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.
 - Metering: single-event replay/conflict handling and all-before-write batches of up to 100 events,
   with atomic D1 event/outbox rows and deterministic immutable R2 evidence.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
-  of all 27 legacy Clockwork schedules. It runs the retained billing-close, flagged-draft refresh,
-  draft-finalization, invoice-overdue, Authorize.Net receipt retry, coupon-expiration, and
-  wallet-expiration paths on their original slots, performs 90-day inbound/outbound webhook
-  retention, records each run in D1, publishes the outbox, and reports due schedules whose behavior
-  is not yet ported. Inbound retention records R2 deletion tasks transactionally before removing
-  receipt rows, so storage outages remain retryable.
+  of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
+  flagged-draft refresh, draft-finalization, invoice-overdue, Authorize.Net receipt retry,
+  coupon-expiration, and wallet-expiration paths on their original slots, performs 90-day
+  inbound/outbound webhook retention, records each run in D1, publishes the outbox, and reports due
+  schedules whose behavior is not yet ported. Inbound retention records R2 deletion tasks
+  transactionally before removing receipt rows, so storage outages remain retryable.
 - R2: immutable provider webhook, usage-event, and invoice-document archives.
 - Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
 

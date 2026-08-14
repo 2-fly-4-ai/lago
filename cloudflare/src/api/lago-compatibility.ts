@@ -65,6 +65,7 @@ type SubscriptionRow = {
   name: string | null;
   request_sha256: string | null;
   status: string;
+  subscription_at: string | null;
   started_at: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
@@ -526,14 +527,34 @@ async function createSubscription(
   const externalId = requiredString(input, "external_id");
   const planCode = requiredString(input, "plan_code");
   const name = optionalString(input, "name");
+  const now = new Date();
+  const timestamp = now.toISOString();
+  const subscriptionAt = normalizeSubscriptionAt(input.subscription_at);
   const requestHash = await sha256Hex(
-    JSON.stringify({ externalCustomerId, externalId, name, planCode }),
+    JSON.stringify(
+      subscriptionAt
+        ? { externalCustomerId, externalId, name, planCode, subscriptionAt }
+        : { externalCustomerId, externalId, name, planCode },
+    ),
   );
 
   const existing = await findSubscription(database, auth.organizationId, externalId);
   if (existing) {
-    assertSubscriptionReplay(existing, { externalCustomerId, name, planCode, requestHash });
+    assertSubscriptionReplay(existing, {
+      externalCustomerId,
+      name,
+      planCode,
+      requestHash,
+      subscriptionAt,
+    });
     return json({ subscription: serializeSubscription(existing) }, { requestId });
+  }
+  if (subscriptionAt && Date.parse(subscriptionAt) <= now.getTime()) {
+    throw new ApiError(
+      422,
+      "unsupported_subscription_feature",
+      "subscription_at currently supports future activation only",
+    );
   }
 
   const customer = await findCustomer(database, auth.organizationId, externalCustomerId);
@@ -565,16 +586,94 @@ async function createSubscription(
     }>();
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
 
-  const now = new Date();
-  const timestamp = now.toISOString();
   const netPaymentTerm = customer.net_payment_term ?? organizationBilling?.net_payment_term ?? 0;
+  const commandKey = `${auth.organizationId}:${externalId}`;
+  const subscriptionId = await deterministicUuid("subscription", commandKey);
+  if (subscriptionAt) {
+    const event: DomainEvent = {
+      id: `subscription-created:${subscriptionId}:v1`,
+      type: "subscription.created",
+      version: 1,
+      aggregateType: "subscription",
+      aggregateId: subscriptionId,
+      aggregateVersion: 1,
+      occurredAt: timestamp,
+      causationId: requestId,
+      correlationId: requestId,
+      payload: {
+        organizationId: auth.organizationId,
+        subscriptionId,
+        externalSubscriptionId: externalId,
+        externalCustomerId,
+        planCode,
+        status: "pending",
+        subscriptionAt,
+        startedAt: null,
+      },
+    };
+    try {
+      await database.batch([
+        database
+          .prepare(
+            `INSERT INTO subscriptions
+             (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
+              started_at, current_period_start, current_period_end, version, created_at,
+              updated_at, name, request_sha256)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, 1, ?, ?, ?, ?)`,
+          )
+          .bind(
+            subscriptionId,
+            auth.organizationId,
+            customer.id,
+            plan.id,
+            externalId,
+            subscriptionAt,
+            timestamp,
+            timestamp,
+            name,
+            requestHash,
+          ),
+        database
+          .prepare(
+            `INSERT INTO outbox_events
+             (event_id, organization_id, event_type, event_version, aggregate_type,
+              aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+              occurred_at, published_at)
+             VALUES (?, ?, ?, 1, 'subscription', ?, 1, ?, ?, ?, ?, NULL)`,
+          )
+          .bind(
+            event.id,
+            auth.organizationId,
+            event.type,
+            subscriptionId,
+            requestId,
+            requestId,
+            stableJson(event.payload),
+            timestamp,
+          ),
+      ]);
+    } catch (error) {
+      const concurrent = await findSubscription(database, auth.organizationId, externalId);
+      if (!concurrent) throw error;
+      assertSubscriptionReplay(concurrent, {
+        externalCustomerId,
+        name,
+        planCode,
+        requestHash,
+        subscriptionAt,
+      });
+      return json({ subscription: serializeSubscription(concurrent) }, { requestId });
+    }
+    await env.DOMAIN_EVENTS.send(event);
+    const pending = await findSubscription(database, auth.organizationId, externalId);
+    if (!pending) throw new ApiError(500, "persistence_error", "Subscription was not persisted");
+    return json({ subscription: serializeSubscription(pending) }, { requestId });
+  }
   const draft = invoiceGracePeriod > 0;
   const issuingDate = shiftCalendarDate(timestamp.slice(0, 10), invoiceGracePeriod);
   const expectedFinalizationDate = issuingDate;
   const dueDate = paymentDueDate(issuingDate, netPaymentTerm);
   const periodEnd = nextPeriodEnd(now, plan.interval).toISOString();
-  const commandKey = `${auth.organizationId}:${externalId}`;
-  const subscriptionId = await deterministicUuid("subscription", commandKey);
   const invoiceId = await deterministicUuid("initial-invoice", commandKey);
   const invoiceLineId = await deterministicUuid("initial-invoice-line", invoiceId);
   const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
@@ -669,10 +768,11 @@ async function createSubscription(
       database
         .prepare(
           `INSERT INTO subscriptions
-         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+         (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
+          started_at,
           current_period_start, current_period_end, version, created_at, updated_at,
           name, request_sha256)
-         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, 1, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
         )
         .bind(
           subscriptionId,
@@ -680,6 +780,7 @@ async function createSubscription(
           customer.id,
           plan.id,
           externalId,
+          timestamp,
           timestamp,
           timestamp,
           periodEnd,
@@ -842,13 +943,25 @@ async function createSubscription(
       }
       throw error;
     }
-    assertSubscriptionReplay(concurrent, { externalCustomerId, name, planCode, requestHash });
+    assertSubscriptionReplay(concurrent, {
+      externalCustomerId,
+      name,
+      planCode,
+      requestHash,
+      subscriptionAt,
+    });
     return json({ subscription: serializeSubscription(concurrent) }, { requestId });
   }
 
   const subscription = await findSubscription(database, auth.organizationId, externalId);
   if (!subscription) throw new ApiError(500, "persistence_error", "Subscription was not persisted");
-  assertSubscriptionReplay(subscription, { externalCustomerId, name, planCode, requestHash });
+  assertSubscriptionReplay(subscription, {
+    externalCustomerId,
+    name,
+    planCode,
+    requestHash,
+    subscriptionAt,
+  });
   await Promise.all([
     env.DOMAIN_EVENTS.send({
       ...subscriptionEvent,
@@ -878,7 +991,6 @@ function rejectUnsupportedSubscriptionCreate(
     "billing_entity_code",
     "billing_entity_id",
     "billing_time",
-    "subscription_at",
     "ending_at",
     "progressive_billing_disabled",
     "invoice_custom_section",
@@ -2032,7 +2144,8 @@ async function findSubscription(
               p.code AS plan_code, p.amount_minor AS plan_amount_minor,
               p.currency AS plan_currency, p.interval AS plan_interval,
               s.name, s.request_sha256,
-              s.status, s.started_at, s.current_period_start, s.current_period_end,
+              s.status, s.subscription_at, s.started_at, s.current_period_start,
+              s.current_period_end,
               s.canceled_at, s.terminated_at, s.created_at
        FROM subscriptions s
        JOIN customers c ON c.id = s.customer_id
@@ -2076,7 +2189,7 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     plan_amount_currency: subscription.plan_currency,
     status: subscription.status,
     billing_time: "anniversary",
-    subscription_at: subscription.started_at,
+    subscription_at: subscription.subscription_at,
     started_at: subscription.started_at,
     terminated_at: subscription.terminated_at,
     canceled_at: subscription.canceled_at,
@@ -2367,12 +2480,23 @@ function escapeLike(value: string): string {
 
 function assertSubscriptionReplay(
   subscription: SubscriptionRow,
-  input: { externalCustomerId: string; name: string | null; planCode: string; requestHash: string },
+  input: {
+    externalCustomerId: string;
+    name: string | null;
+    planCode: string;
+    requestHash: string;
+    subscriptionAt: string | null;
+  },
 ): void {
+  const matchesSubscriptionAt =
+    input.subscriptionAt === null
+      ? subscription.subscription_at === subscription.started_at
+      : subscription.subscription_at === input.subscriptionAt;
   const matchesLegacyFields =
     subscription.customer_external_id === input.externalCustomerId &&
     subscription.plan_code === input.planCode &&
-    subscription.name === input.name;
+    subscription.name === input.name &&
+    matchesSubscriptionAt;
   if (
     (subscription.request_sha256 && subscription.request_sha256 !== input.requestHash) ||
     !matchesLegacyFields
@@ -2383,4 +2507,28 @@ function assertSubscriptionReplay(
       "Subscription external_id was reused with different attributes",
     );
   }
+}
+
+function normalizeSubscriptionAt(value: unknown): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  let timestamp: Date;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    timestamp = new Date(value * 1_000);
+  } else if (typeof value === "string" && value.trim()) {
+    timestamp = new Date(value.trim());
+  } else {
+    throw new ApiError(
+      422,
+      "validation_error",
+      "subscription_at must be an ISO 8601 timestamp or epoch seconds",
+    );
+  }
+  if (!Number.isFinite(timestamp.getTime())) {
+    throw new ApiError(
+      422,
+      "validation_error",
+      "subscription_at must be a valid ISO 8601 timestamp or epoch seconds",
+    );
+  }
+  return timestamp.toISOString();
 }

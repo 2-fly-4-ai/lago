@@ -1,6 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { closeBillingPeriod } from "../src/billing/close-period";
+import { activatePendingSubscriptions } from "../src/billing/activate-pending-subscriptions";
 import { sha256Hex } from "../src/auth/api-key";
 
 const apiKey = "billing-cycle-key";
@@ -76,6 +77,109 @@ beforeEach(async () => {
 });
 
 describe("billing period close", () => {
+  it("defers a future subscription and activates it with exactly one initial invoice", async () => {
+    const subscriptionAt = new Date(Date.now() + 60_000).toISOString();
+    const customerResponse = await invoiceRequest("/api/v1/customers", "POST", {
+      customer: { external_id: "customer-future-external", currency: "USD" },
+    });
+    expect(customerResponse.status).toBe(200);
+    const pendingResponse = await invoiceRequest("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-future-external",
+        external_id: "subscription-future-external",
+        plan_code: "cycle-plan",
+        subscription_at: subscriptionAt,
+      },
+    });
+    expect(pendingResponse.status).toBe(200);
+    const pendingBody = await pendingResponse.json<{
+      subscription: { lago_id: string; status: string; subscription_at: string; started_at: null };
+    }>();
+    expect(pendingBody.subscription).toMatchObject({
+      status: "pending",
+      subscription_at: subscriptionAt,
+      started_at: null,
+    });
+    const replayResponse = await invoiceRequest("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-future-external",
+        external_id: "subscription-future-external",
+        plan_code: "cycle-plan",
+        subscription_at: subscriptionAt,
+      },
+    });
+    expect(replayResponse.status).toBe(200);
+    await expect(replayResponse.json()).resolves.toMatchObject({
+      subscription: { lago_id: pendingBody.subscription.lago_id, status: "pending" },
+    });
+    await expect(
+      env.BILLING_DB.prepare("SELECT COUNT(*) AS total FROM invoices WHERE subscription_id = ?")
+        .bind(pendingBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({ total: 0 });
+
+    const beforeActivation = new Date(Date.parse(subscriptionAt) - 1).toISOString();
+    await expect(
+      activatePendingSubscriptions(env, beforeActivation, "pending-activation-before"),
+    ).resolves.toBe(0);
+    await expect(
+      activatePendingSubscriptions(env, subscriptionAt, "pending-activation"),
+    ).resolves.toBe(1);
+    await expect(
+      activatePendingSubscriptions(env, subscriptionAt, "pending-activation-replay"),
+    ).resolves.toBe(0);
+
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT s.status, s.version, s.subscription_at, s.started_at,
+                s.current_period_start,
+                (SELECT COUNT(*) FROM invoices i WHERE i.subscription_id = s.id) AS invoices,
+                (SELECT status FROM invoices i WHERE i.subscription_id = s.id LIMIT 1)
+                  AS invoice_status,
+                (SELECT COUNT(*) FROM outbox_events o
+                 WHERE o.aggregate_id = s.id AND o.event_type = 'subscription.created') AS created,
+                (SELECT COUNT(*) FROM outbox_events o
+                 WHERE o.aggregate_id = s.id AND o.event_type = 'subscription.started') AS started
+         FROM subscriptions s WHERE s.id = ?`,
+      )
+        .bind(pendingBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({
+      status: "active",
+      version: 2,
+      subscription_at: subscriptionAt,
+      started_at: subscriptionAt,
+      current_period_start: subscriptionAt,
+      invoices: 1,
+      invoice_status: "finalized",
+      created: 1,
+      started: 1,
+    });
+    const invoiceEvents = await env.BILLING_DB.prepare(
+      `SELECT COUNT(*) AS total FROM outbox_events o JOIN invoices i ON i.id = o.aggregate_id
+       WHERE i.subscription_id = ? AND o.event_type = 'invoice.finalized'`,
+    )
+      .bind(pendingBody.subscription.lago_id)
+      .first<{ total: number }>();
+    expect(invoiceEvents?.total).toBe(1);
+  });
+
+  it("rejects a new backdated subscription instead of silently activating it", async () => {
+    const response = await invoiceRequest("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-cycle-external",
+        external_id: "subscription-backdated-external",
+        plan_code: "cycle-plan",
+        subscription_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "unsupported_subscription_feature",
+      message: "subscription_at currently supports future activation only",
+    });
+  });
+
   it("creates one reconciled invoice and advances a month-end subscription once", async () => {
     const first = await closeBillingPeriod(
       env,

@@ -67,6 +67,7 @@ describe("legacy schedule ownership", () => {
     expect(
       LEGACY_SCHEDULES.filter((schedule) => schedule.executor).map((schedule) => schedule.key),
     ).toEqual([
+      "schedule:activate_subscriptions",
       "schedule:refresh_draft_invoices",
       "schedule:bill_customers",
       "schedule:finalize_invoices",

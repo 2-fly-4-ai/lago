@@ -1,4 +1,5 @@
 export type ScheduleExecutor =
+  | "activate_subscriptions"
   | "cleanup_inbound_webhooks"
   | "cleanup_outbound_webhooks"
   | "close_billing_periods"
@@ -39,7 +40,8 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     legacyJob: "Clock::ActivateSubscriptionsJob",
     cadence: everyMinutes(5),
     owner: "subscription lifecycle workflow",
-    parity: "not_started",
+    parity: "implemented",
+    executor: "activate_subscriptions",
   },
   {
     key: "schedule:refresh_draft_invoices",

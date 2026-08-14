@@ -2,6 +2,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { reconcileAuthorizeNetReceipt } from "../reconciliation/authorize-net";
 import type { DomainEvent } from "../domain-events";
 import { closeBillingPeriod } from "../billing/close-period";
+import { activatePendingSubscriptions } from "../billing/activate-pending-subscriptions";
 import {
   cleanupInboundWebhookReceipts,
   cleanupOutboundWebhookDeliveries,
@@ -56,6 +57,14 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
 
     const executors = new Set(dueSchedules.map((schedule) => schedule.executor));
     try {
+      const activatedSubscriptions = executors.has("activate_subscriptions")
+        ? await step.do(
+            "activate pending subscriptions",
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => activatePendingSubscriptions(this.env, triggeredAtIso, runId),
+          )
+        : 0;
+
       const pendingReceiptIds = await step.do("load pending provider receipts", async () => {
         if (!executors.has("reconcile_provider_receipts")) return [];
         const result = await this.env.BILLING_DB.prepare(
@@ -182,6 +191,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         triggeredAt,
         dueSchedules: dueScheduleKeys,
         unimplementedSchedules: unimplementedScheduleKeys,
+        activatedSubscriptions,
         pendingReceipts: pendingReceiptIds.length,
         processedReceipts,
         deferredReceipts,

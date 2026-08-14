@@ -14,6 +14,7 @@ type SubscriptionRow = {
   plan_currency: string;
   name: string | null;
   status: string;
+  subscription_at: string | null;
   started_at: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
@@ -313,7 +314,7 @@ async function terminateSubscription(
 function subscriptionSelect(): string {
   return `SELECT s.id, s.external_id, s.customer_id, c.external_id AS customer_external_id,
                  p.code AS plan_code, p.amount_minor AS plan_amount_minor,
-                 p.currency AS plan_currency, s.name, s.status, s.started_at,
+                 p.currency AS plan_currency, s.name, s.status, s.subscription_at, s.started_at,
                  s.current_period_start, s.current_period_end, s.canceled_at,
                  s.terminated_at, s.created_at, s.updated_at, s.version
           FROM subscriptions s
@@ -358,7 +359,7 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     plan_amount_currency: subscription.plan_currency,
     status: subscription.status,
     billing_time: "anniversary",
-    subscription_at: subscription.started_at,
+    subscription_at: subscription.subscription_at,
     started_at: subscription.started_at,
     terminated_at: subscription.terminated_at,
     canceled_at: subscription.canceled_at,
