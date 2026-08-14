@@ -36,6 +36,7 @@ import {
 import { paymentDueDate } from "../billing/payment-terms";
 import { finalizeInvoice } from "../billing/finalize-invoice";
 import { refreshSubscriptionDraft } from "../billing/refresh-draft-invoice";
+import { assertFutureSubscriptionAt, normalizeSubscriptionAt } from "../subscriptions/time";
 
 type CustomerRow = {
   id: string;
@@ -549,13 +550,7 @@ async function createSubscription(
     });
     return json({ subscription: serializeSubscription(existing) }, { requestId });
   }
-  if (subscriptionAt && Date.parse(subscriptionAt) <= now.getTime()) {
-    throw new ApiError(
-      422,
-      "unsupported_subscription_feature",
-      "subscription_at currently supports future activation only",
-    );
-  }
+  if (subscriptionAt) assertFutureSubscriptionAt(subscriptionAt, now);
 
   const customer = await findCustomer(database, auth.organizationId, externalCustomerId);
   if (!customer) throw new ApiError(404, "customer_not_found", "Customer was not found");
@@ -2507,28 +2502,4 @@ function assertSubscriptionReplay(
       "Subscription external_id was reused with different attributes",
     );
   }
-}
-
-function normalizeSubscriptionAt(value: unknown): string | null {
-  if (value === undefined || value === null || value === "") return null;
-  let timestamp: Date;
-  if (typeof value === "number" && Number.isFinite(value)) {
-    timestamp = new Date(value * 1_000);
-  } else if (typeof value === "string" && value.trim()) {
-    timestamp = new Date(value.trim());
-  } else {
-    throw new ApiError(
-      422,
-      "validation_error",
-      "subscription_at must be an ISO 8601 timestamp or epoch seconds",
-    );
-  }
-  if (!Number.isFinite(timestamp.getTime())) {
-    throw new ApiError(
-      422,
-      "validation_error",
-      "subscription_at must be a valid ISO 8601 timestamp or epoch seconds",
-    );
-  }
-  return timestamp.toISOString();
 }

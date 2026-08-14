@@ -1,6 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
+import { activatePendingSubscriptions } from "../src/billing/activate-pending-subscriptions";
 
 const apiKey = "subscription-lifecycle-key";
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
@@ -112,6 +113,85 @@ describe("subscription lifecycle", () => {
          (SELECT version FROM subscriptions WHERE id = 'subscription-lifecycle') AS version`,
     ).first<{ events: number; version: number }>();
     expect(counts).toEqual({ events: 1, version: 2 });
+  });
+
+  it("reschedules and cancels a pending subscription without creating an invoice", async () => {
+    const firstStart = new Date(Date.now() + 120_000).toISOString();
+    const created = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-external",
+        external_id: "pending-subscription-external",
+        plan_code: "monthly",
+        subscription_at: firstStart,
+      },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ subscription: { lago_id: string } }>();
+
+    const rescheduledAt = new Date(Date.now() + 240_000).toISOString();
+    const updated = await api("/api/v1/subscriptions/pending-subscription-external", "PUT", {
+      subscription: { name: "Rescheduled", subscription_at: rescheduledAt },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      subscription: {
+        status: "pending",
+        name: "Rescheduled",
+        subscription_at: rescheduledAt,
+        started_at: null,
+      },
+    });
+    await expect(
+      activatePendingSubscriptions(env, firstStart, "rescheduled-before-new-start"),
+    ).resolves.toBe(0);
+
+    const backdated = await api("/api/v1/subscriptions/pending-subscription-external", "PUT", {
+      subscription: { subscription_at: new Date(Date.now() - 60_000).toISOString() },
+    });
+    expect(backdated.status).toBe(422);
+    await expect(backdated.json()).resolves.toMatchObject({
+      code: "unsupported_subscription_feature",
+    });
+
+    const canceled = await api("/api/v1/subscriptions/pending-subscription-external", "DELETE");
+    expect(canceled.status).toBe(200);
+    const canceledBody = await canceled.json<{
+      subscription: { status: string; canceled_at: string; terminated_at: null };
+    }>();
+    expect(canceledBody.subscription).toMatchObject({ status: "canceled", terminated_at: null });
+    expect(canceledBody.subscription.canceled_at).toBeTruthy();
+
+    const replay = await api("/api/v1/subscriptions/pending-subscription-external", "DELETE");
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({
+      subscription: {
+        status: "canceled",
+        canceled_at: canceledBody.subscription.canceled_at,
+      },
+    });
+    await expect(
+      activatePendingSubscriptions(env, rescheduledAt, "canceled-pending-activation"),
+    ).resolves.toBe(0);
+
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT s.status, s.version,
+                (SELECT COUNT(*) FROM invoices i WHERE i.subscription_id = s.id) AS invoices,
+                (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = s.id
+                  AND o.event_type = 'subscription.updated') AS updated_events,
+                (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = s.id
+                  AND o.event_type = 'subscription.terminated') AS terminated_events
+         FROM subscriptions s WHERE s.id = ?`,
+      )
+        .bind(createdBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({
+      status: "canceled",
+      version: 3,
+      invoices: 0,
+      updated_events: 1,
+      terminated_events: 1,
+    });
   });
 });
 

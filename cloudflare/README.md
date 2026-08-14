@@ -20,7 +20,8 @@ remaining Lago feature inventory is dispositioned and ported.
   outbox events. Catalog graph replacement and destructive plan lifecycle remain guarded.
 - Subscription lifecycle: immediate starts create their initial invoice atomically; a supported
   future UTC `subscription_at` creates a pending subscription with no invoice, and the five-minute
-  activation owner starts it and creates the initial invoice exactly once. Explicit
+  activation owner starts it and creates the initial invoice exactly once. Pending starts can be
+  moved to another future instant or canceled without producing an invoice. Explicit
   skip-invoice/skip-credit termination is idempotent; any existing draft is invalidated and remains
   refreshable/finalizable from its immutable invoice context. Backdating, calendar billing,
   prorated termination invoices, and termination credit notes remain guarded.

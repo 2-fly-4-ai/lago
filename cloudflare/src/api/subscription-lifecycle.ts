@@ -3,6 +3,7 @@ import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
 import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../http";
 import { stableJson } from "../json";
+import { assertFutureSubscriptionAt, normalizeSubscriptionAt } from "../subscriptions/time";
 
 type SubscriptionRow = {
   id: string;
@@ -60,10 +61,11 @@ async function updateSubscription(
   const subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
   if (!subscription)
     throw new ApiError(404, "subscription_not_found", "Subscription was not found");
-  if (subscription.status !== "active" && subscription.status !== "past_due")
-    throw new ApiError(422, "subscription_not_updatable", "Subscription is not active");
+  if (!["active", "past_due", "pending"].includes(subscription.status))
+    throw new ApiError(422, "subscription_not_updatable", "Subscription is not updatable");
   const input = objectAt(await parseJsonObject(request), "subscription");
-  const unsupported = Object.keys(input).find((key) => key !== "name");
+  const allowed = subscription.status === "pending" ? ["name", "subscription_at"] : ["name"];
+  const unsupported = Object.keys(input).find((key) => !allowed.includes(key));
   if (unsupported)
     throw new ApiError(
       422,
@@ -71,7 +73,16 @@ async function updateSubscription(
       `${unsupported} update is not implemented by the Cloudflare subscription lifecycle`,
     );
   const name = input.name === undefined ? subscription.name : optionalString(input, "name");
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
+  let subscriptionAt = subscription.subscription_at;
+  if (input.subscription_at !== undefined) {
+    subscriptionAt = normalizeSubscriptionAt(input.subscription_at);
+    if (!subscriptionAt) {
+      throw new ApiError(422, "validation_error", "subscription_at is required when rescheduling");
+    }
+    assertFutureSubscriptionAt(subscriptionAt, nowDate);
+  }
   const event: DomainEvent = {
     id: `subscription-updated:${subscription.id}:v${subscription.version + 1}`,
     type: "subscription.updated",
@@ -87,14 +98,23 @@ async function updateSubscription(
       subscriptionId: subscription.id,
       externalSubscriptionId: externalId,
       name,
+      subscriptionAt,
     },
   };
   const results = await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
-      `UPDATE subscriptions SET name = ?, version = version + 1, updated_at = ?
+      `UPDATE subscriptions SET name = ?, subscription_at = ?, version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?
-         AND status IN ('active', 'past_due')`,
-    ).bind(name, now, subscription.id, auth.organizationId, subscription.version),
+         AND status = ?`,
+    ).bind(
+      name,
+      subscriptionAt,
+      now,
+      subscription.id,
+      auth.organizationId,
+      subscription.version,
+      subscription.status,
+    ),
     env.BILLING_DB.prepare(
       `INSERT INTO outbox_events
        (event_id, organization_id, event_type, event_version, aggregate_type,
@@ -183,6 +203,15 @@ async function terminateSubscription(
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
+  let subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
+  if (!subscription)
+    throw new ApiError(404, "subscription_not_found", "Subscription was not found");
+  if (subscription.status === "terminated" || subscription.status === "canceled") {
+    return json({ subscription: serializeSubscription(subscription) }, { requestId });
+  }
+  if (subscription.status === "pending") {
+    return cancelPendingSubscription(subscription, env, auth, requestId);
+  }
   const onTerminationInvoice = url.searchParams.get("on_termination_invoice")?.trim() || "generate";
   const onTerminationCreditNote =
     url.searchParams.get("on_termination_credit_note")?.trim() || "credit";
@@ -199,12 +228,6 @@ async function terminateSubscription(
       "unsupported_termination_credit_note",
       "Termination requires on_termination_credit_note=skip until credit notes are ported",
     );
-  }
-  let subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
-  if (!subscription)
-    throw new ApiError(404, "subscription_not_found", "Subscription was not found");
-  if (subscription.status === "terminated") {
-    return json({ subscription: serializeSubscription(subscription) }, { requestId });
   }
   if (subscription.status !== "active" && subscription.status !== "past_due") {
     throw new ApiError(422, "subscription_not_terminable", "Subscription is not active");
@@ -309,6 +332,86 @@ async function terminateSubscription(
   subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
   if (!subscription) throw new ApiError(500, "persistence_error", "Subscription disappeared");
   return json({ subscription: serializeSubscription(subscription) }, { requestId });
+}
+
+async function cancelPendingSubscription(
+  subscription: SubscriptionRow,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const canceledAt = new Date().toISOString();
+  const event: DomainEvent = {
+    id: `subscription-terminated:${subscription.id}:v${subscription.version + 1}`,
+    type: "subscription.terminated",
+    version: 1,
+    aggregateType: "subscription",
+    aggregateId: subscription.id,
+    aggregateVersion: subscription.version + 1,
+    occurredAt: canceledAt,
+    causationId: requestId,
+    correlationId: requestId,
+    payload: {
+      organizationId: auth.organizationId,
+      subscriptionId: subscription.id,
+      externalSubscriptionId: subscription.external_id,
+      canceledAt,
+      terminatedAt: null,
+      finalInvoiceGenerated: false,
+      creditNoteGenerated: false,
+    },
+  };
+  const results = await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `UPDATE subscriptions
+       SET status = 'canceled', canceled_at = ?, version = version + 1, updated_at = ?
+       WHERE id = ? AND organization_id = ? AND version = ? AND status = 'pending'`,
+    ).bind(canceledAt, canceledAt, subscription.id, auth.organizationId, subscription.version),
+    env.BILLING_DB.prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type,
+        aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+        occurred_at, published_at)
+       SELECT ?, ?, ?, 1, 'subscription', ?, ?, ?, ?, ?, ?, NULL
+       FROM subscriptions
+       WHERE id = ? AND organization_id = ? AND version = ?
+         AND status = 'canceled' AND canceled_at = ?
+       ON CONFLICT(event_id) DO NOTHING`,
+    ).bind(
+      event.id,
+      auth.organizationId,
+      event.type,
+      subscription.id,
+      event.aggregateVersion,
+      requestId,
+      requestId,
+      stableJson(event.payload),
+      canceledAt,
+      subscription.id,
+      auth.organizationId,
+      subscription.version + 1,
+      canceledAt,
+    ),
+  ]);
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
+    const current = await findAnySubscription(
+      env.BILLING_DB,
+      auth.organizationId,
+      subscription.external_id,
+    );
+    if (current?.status === "canceled") {
+      return json({ subscription: serializeSubscription(current) }, { requestId });
+    }
+    throw new ApiError(409, "subscription_version_conflict", "Subscription changed concurrently");
+  }
+  await env.DOMAIN_EVENTS.send(event);
+  const canceled = await findAnySubscription(
+    env.BILLING_DB,
+    auth.organizationId,
+    subscription.external_id,
+  );
+  if (!canceled) throw new ApiError(500, "persistence_error", "Subscription disappeared");
+  return json({ subscription: serializeSubscription(canceled) }, { requestId });
 }
 
 function subscriptionSelect(): string {
