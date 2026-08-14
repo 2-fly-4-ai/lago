@@ -689,6 +689,25 @@ async function createSubscription(
         initialInvoiceGenerated: false,
       },
     };
+    const startedEvent: DomainEvent = {
+      id: `subscription-started:${subscriptionId}:v1`,
+      type: "subscription.started",
+      version: 1,
+      aggregateType: "subscription",
+      aggregateId: subscriptionId,
+      aggregateVersion: 1,
+      occurredAt: timestamp,
+      causationId: requestId,
+      correlationId: requestId,
+      payload: {
+        organizationId: auth.organizationId,
+        subscriptionId,
+        externalSubscriptionId: externalId,
+        subscriptionAt: timestamp,
+        startedAt: timestamp,
+        initialInvoiceGenerated: false,
+      },
+    };
     try {
       await database.batch([
         database
@@ -732,6 +751,24 @@ async function createSubscription(
             stableJson(event.payload),
             timestamp,
           ),
+        database
+          .prepare(
+            `INSERT INTO outbox_events
+             (event_id, organization_id, event_type, event_version, aggregate_type,
+              aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+              occurred_at, published_at)
+             VALUES (?, ?, ?, 1, 'subscription', ?, 1, ?, ?, ?, ?, NULL)`,
+          )
+          .bind(
+            startedEvent.id,
+            auth.organizationId,
+            startedEvent.type,
+            subscriptionId,
+            requestId,
+            requestId,
+            stableJson(startedEvent.payload),
+            timestamp,
+          ),
       ]);
     } catch (error) {
       const concurrent = await findSubscription(database, auth.organizationId, externalId);
@@ -745,7 +782,7 @@ async function createSubscription(
       });
       return json({ subscription: serializeSubscription(concurrent) }, { requestId });
     }
-    await env.DOMAIN_EVENTS.send(event);
+    await Promise.all([env.DOMAIN_EVENTS.send(event), env.DOMAIN_EVENTS.send(startedEvent)]);
     const active = await findSubscription(database, auth.organizationId, externalId);
     if (!active) throw new ApiError(500, "persistence_error", "Subscription was not persisted");
     return json({ subscription: serializeSubscription(active) }, { requestId });
@@ -819,6 +856,20 @@ async function createSubscription(
       externalCustomerId,
       planCode,
       startedAt: timestamp,
+    },
+  };
+  const startedEvent = {
+    id: `subscription-started:${subscriptionId}:v1`,
+    type: "subscription.started",
+    aggregateType: "subscription",
+    aggregateId: subscriptionId,
+    payload: {
+      organizationId: auth.organizationId,
+      subscriptionId,
+      externalSubscriptionId: externalId,
+      subscriptionAt: timestamp,
+      startedAt: timestamp,
+      initialInvoiceGenerated: true,
     },
   };
   const invoiceEvent = {
@@ -981,7 +1032,7 @@ async function createSubscription(
         );
       }
     }
-    for (const event of [subscriptionEvent, invoiceEvent]) {
+    for (const event of [subscriptionEvent, startedEvent, invoiceEvent]) {
       statements.push(
         database
           .prepare(
@@ -1046,6 +1097,14 @@ async function createSubscription(
   await Promise.all([
     env.DOMAIN_EVENTS.send({
       ...subscriptionEvent,
+      version: 1,
+      aggregateVersion: 1,
+      occurredAt: timestamp,
+      causationId: requestId,
+      correlationId: requestId,
+    }),
+    env.DOMAIN_EVENTS.send({
+      ...startedEvent,
       version: 1,
       aggregateVersion: 1,
       occurredAt: timestamp,

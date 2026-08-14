@@ -134,7 +134,7 @@ describe("billing period close", () => {
         .bind(
           immediateBody.subscription.lago_id,
           futureBody.subscription.lago_id,
-          futureBody.subscription.lago_id,
+          immediateBody.subscription.lago_id,
         )
         .first(),
     ).resolves.toEqual({ created_events: 2, started_events: 1 });

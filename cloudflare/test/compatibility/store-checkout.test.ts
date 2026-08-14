@@ -103,12 +103,13 @@ describe("store-new Lago checkout compatibility", () => {
     });
     const initialEvents = await env.BILLING_DB.prepare(
       `SELECT event_type, aggregate_type FROM outbox_events
-       WHERE event_type IN ('subscription.created', 'invoice.finalized')
+       WHERE event_type IN ('subscription.created', 'subscription.started', 'invoice.finalized')
        ORDER BY event_type`,
     ).all<{ event_type: string; aggregate_type: string }>();
     expect(initialEvents.results).toEqual([
       { event_type: "invoice.finalized", aggregate_type: "invoice" },
       { event_type: "subscription.created", aggregate_type: "subscription" },
+      { event_type: "subscription.started", aggregate_type: "subscription" },
     ]);
 
     const replaySubscription = await SELF.fetch("https://lago.test/api/v1/subscriptions", {
