@@ -2058,3 +2058,12 @@ resource and mutation described.
   the known draft-termination-credit case exceeded its 10-second harness limit; that file passed
   2/2 alone, and bounded groups passed all 193 tests as 45 + 69 + 72 + 7. The dry-run bundle is
   952.92 KiB (164.26 KiB gzip). Feature checkpoint: `aa52ef6`.
+- 2026-08-15: Remote preflight found only `0048_plan_override_version_scope.sql` pending and zero
+  organizations, customers, plans, subscriptions, invoices, billable metrics, charges, fixed
+  charges, usage events, outbox rows, and plan-deletion tasks. Applied only that migration to the
+  isolated non-production D1, verified the root-only unique index and zero foreign-key violations,
+  and deployed only the isolated Worker as version `689476ed-8c07-4500-91a0-b696c2e05045` with a
+  9 ms startup. Health/readiness returned `200`/`200`, unauthenticated plan access returned `401`,
+  no migrations remain, and post-deploy aggregate-only verification stayed empty apart from 214
+  schedule audits. All three external-action flags remain `0`; no resource provisioning,
+  production route/domain, secret, provider action, customer data, or billing row changed.
