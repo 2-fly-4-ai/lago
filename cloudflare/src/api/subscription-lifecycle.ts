@@ -402,8 +402,8 @@ async function terminateSubscription(
         throw new ApiError(409, error.message, "Subscription changed concurrently");
       }
       const unsupported: Record<string, string> = {
-        unsupported_termination_invoice_grace_period:
-          "Termination invoices with a grace period are not implemented",
+        unsupported_pay_in_advance_termination_grace_period:
+          "Pay-in-advance termination with a grace period remains guarded until draft credit-note finalization is ported",
         unsupported_termination_minimum_commitment:
           "Termination invoicing for plans with a minimum commitment is not implemented",
         unsupported_pay_in_advance_termination_credit:

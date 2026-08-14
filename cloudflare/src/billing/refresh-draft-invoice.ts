@@ -8,6 +8,7 @@ import { paymentDueDate } from "./payment-terms";
 import {
   calculateInitialSubscriptionInvoice,
   calculateSubscriptionInvoice,
+  calculateTerminationSubscriptionInvoice,
   findRefreshableSubscription,
   subscriptionInvoiceLineStatements,
 } from "./subscription-invoice-calculation";
@@ -24,9 +25,10 @@ type DraftInvoiceRow = {
   net_payment_term: number;
   version: number;
   billing_cycle_id: string | null;
-  context_type: "initial" | "renewal";
+  context_type: "initial" | "renewal" | "termination";
   period_start: string;
   period_end: string;
+  terminated_at: string | null;
 };
 
 export type RefreshDraftResult = {
@@ -92,14 +94,24 @@ export async function refreshSubscriptionDraft(
             invoice.period_start,
             invoice.period_end,
           )
-        : await calculateSubscriptionInvoice(
-            env.BILLING_DB,
-            subscription,
-            invoice.id,
-            requireBillingCycleId(invoice.billing_cycle_id),
-            invoice.period_start,
-            invoice.period_end,
-          );
+        : invoice.context_type === "termination"
+          ? await calculateTerminationSubscriptionInvoice(
+              env.BILLING_DB,
+              subscription,
+              invoice.id,
+              `termination-draft:${invoice.id}`,
+              requireTerminatedAt(invoice.terminated_at),
+              undefined,
+              { periodStart: invoice.period_start, periodEnd: invoice.period_end },
+            )
+          : await calculateSubscriptionInvoice(
+              env.BILLING_DB,
+              subscription,
+              invoice.id,
+              requireBillingCycleId(invoice.billing_cycle_id),
+              invoice.period_start,
+              invoice.period_end,
+            );
     const nextVersion = invoice.version + 1;
     const paymentDue = paymentDueDate(invoice.issuing_date, invoice.net_payment_term);
     const eventType = finalize ? "invoice.finalized" : "invoice.refreshed";
@@ -300,7 +312,8 @@ async function findDraftInvoice(
               bc.id AS billing_cycle_id,
               CASE WHEN bc.id IS NOT NULL THEN 'renewal' ELSE sic.context_type END AS context_type,
               COALESCE(bc.period_start, sic.period_start) AS period_start,
-              COALESCE(bc.period_end, sic.period_end) AS period_end
+              COALESCE(bc.period_end, sic.period_end) AS period_end,
+              sic.terminated_at
        FROM invoices i
        LEFT JOIN billing_cycles bc ON bc.invoice_id = i.id
        LEFT JOIN subscription_invoice_contexts sic ON sic.invoice_id = i.id
@@ -314,6 +327,11 @@ async function findDraftInvoice(
 
 function requireBillingCycleId(value: string | null): string {
   if (!value) throw new Error("draft_billing_cycle_not_found");
+  return value;
+}
+
+function requireTerminatedAt(value: string | null): string {
+  if (!value) throw new Error("draft_termination_date_not_found");
   return value;
 }
 

@@ -520,6 +520,7 @@ export async function calculateTerminationSubscriptionInvoice(
   terminationId: string,
   terminatedAt: string,
   additionalCreditNote?: { creditNoteId: string; amountMinor: number },
+  immutablePeriod?: { periodStart: string; periodEnd: string },
 ): Promise<SubscriptionInvoiceCalculation> {
   const unsupported = await database
     .prepare(
@@ -531,18 +532,16 @@ export async function calculateTerminationSubscriptionInvoice(
   if (unsupported?.minimum_commitment === 1 && subscription.plan_pay_in_advance === 1) {
     throw new Error("unsupported_termination_minimum_commitment");
   }
-  const window = terminationBillingWindowUtc(
-    subscription.current_period_start,
-    subscription.current_period_end,
-    terminatedAt,
-  );
+  const periodStart = immutablePeriod?.periodStart ?? subscription.current_period_start;
+  const periodEnd = immutablePeriod?.periodEnd ?? subscription.current_period_end;
+  const window = terminationBillingWindowUtc(periodStart, periodEnd, terminatedAt);
   return calculateSubscriptionInvoice(
     database,
     subscription,
     invoiceId,
     terminationId,
-    subscription.current_period_start,
-    subscription.current_period_end,
+    periodStart,
+    periodEnd,
     { context: "termination", terminatedAt, window, additionalCreditNote },
   );
 }

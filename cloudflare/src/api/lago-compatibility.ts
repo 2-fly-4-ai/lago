@@ -589,7 +589,7 @@ async function createSubscription(
     }>();
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
   if (endingAt) {
-    assertScheduledTerminationPlanSupported(plan.pay_in_advance, plan.interval, invoiceGracePeriod);
+    assertScheduledTerminationPlanSupported(plan.pay_in_advance, plan.interval);
   }
 
   const netPaymentTerm = customer.net_payment_term ?? organizationBilling?.net_payment_term ?? 0;
@@ -1178,23 +1178,12 @@ function rejectUnsupportedSubscriptionCreate(
     );
 }
 
-function assertScheduledTerminationPlanSupported(
-  payInAdvance: number,
-  interval: string,
-  invoiceGracePeriod: number,
-): void {
+function assertScheduledTerminationPlanSupported(payInAdvance: number, interval: string): void {
   if (payInAdvance === 1 || interval === "one_time") {
     throw new ApiError(
       422,
       "unsupported_scheduled_termination",
       "ending_at is not implemented for pay-in-advance or one-time plans",
-    );
-  }
-  if (invoiceGracePeriod !== 0) {
-    throw new ApiError(
-      422,
-      "unsupported_scheduled_termination",
-      "ending_at requires a zero invoice grace period",
     );
   }
 }

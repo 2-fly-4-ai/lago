@@ -35,8 +35,9 @@ export async function terminateSubscriptionWithInvoice(
 ): Promise<TerminateSubscriptionWithInvoiceResult> {
   const subscription = await findBillableSubscription(env.BILLING_DB, subscriptionId);
   if (!subscription) throw new Error("subscription_not_found");
-  if (subscription.invoice_grace_period !== 0) {
-    throw new Error("unsupported_termination_invoice_grace_period");
+  const draft = subscription.invoice_grace_period > 0;
+  if (draft && subscription.plan_pay_in_advance === 1) {
+    throw new Error("unsupported_pay_in_advance_termination_grace_period");
   }
   const terminationId = await deterministicUuid(
     "subscription-termination",
@@ -67,11 +68,13 @@ export async function terminateSubscriptionWithInvoice(
   );
   const now = terminatedAt;
   const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
-  const issuingDate = terminatedAt.slice(0, 10);
+  const terminationDate = terminatedAt.slice(0, 10);
+  const issuingDate = shiftCalendarDate(terminationDate, subscription.invoice_grace_period);
   const dueDate = paymentDueDate(issuingDate, subscription.net_payment_term);
+  const eventType = draft ? "invoice.drafted" : "invoice.finalized";
   const invoiceEvent: DomainEvent = {
-    id: `invoice-finalized:${invoiceId}:v1`,
-    type: "invoice.finalized",
+    id: `${draft ? "invoice-drafted" : "invoice-finalized"}:${invoiceId}:v1`,
+    type: eventType,
     version: 1,
     aggregateType: "invoice",
     aggregateId: invoiceId,
@@ -93,6 +96,8 @@ export async function terminateSubscriptionWithInvoice(
       periodStart: subscription.current_period_start,
       periodEnd: calculation.nextPeriodEnd,
       issuingDate,
+      expectedFinalizationDate: issuingDate,
+      appliedGracePeriod: subscription.invoice_grace_period,
     },
   };
   const subscriptionEvent: DomainEvent = {
@@ -117,35 +122,41 @@ export async function terminateSubscriptionWithInvoice(
       creditAmountMinor: unusedCredit?.creditAmountMinor,
     },
   };
-  const couponStatements = couponCreditStatements(
-    env.BILLING_DB,
-    subscription.organization_id,
-    invoiceId,
-    subscription.currency,
-    calculation.couponCredits,
-    now,
-    correlationId,
-  );
-  const creditNoteStatements = calculation.creditNoteAllocations.flatMap((allocation) =>
-    creditNoteAllocationStatements(
-      env.BILLING_DB,
-      subscription.organization_id,
-      invoiceId,
-      allocation,
-      now,
-      correlationId,
-    ),
-  );
-  const walletStatements = calculation.walletAllocations.flatMap((allocation) =>
-    walletAllocationStatements(
-      env.BILLING_DB,
-      subscription.organization_id,
-      invoiceId,
-      allocation,
-      now,
-      correlationId,
-    ),
-  );
+  const couponStatements = draft
+    ? []
+    : couponCreditStatements(
+        env.BILLING_DB,
+        subscription.organization_id,
+        invoiceId,
+        subscription.currency,
+        calculation.couponCredits,
+        now,
+        correlationId,
+      );
+  const creditNoteStatements = draft
+    ? []
+    : calculation.creditNoteAllocations.flatMap((allocation) =>
+        creditNoteAllocationStatements(
+          env.BILLING_DB,
+          subscription.organization_id,
+          invoiceId,
+          allocation,
+          now,
+          correlationId,
+        ),
+      );
+  const walletStatements = draft
+    ? []
+    : calculation.walletAllocations.flatMap((allocation) =>
+        walletAllocationStatements(
+          env.BILLING_DB,
+          subscription.organization_id,
+          invoiceId,
+          allocation,
+          now,
+          correlationId,
+        ),
+      );
   const creditCreationStatements: D1PreparedStatement[] = [
     ...(unusedCredit?.creationStatements ?? []),
     ...(unusedCredit?.creditNoteEvent
@@ -168,8 +179,8 @@ export async function terminateSubscriptionWithInvoice(
        credit_notes_minor, net_payment_term, payment_due_date, payment_overdue,
         expected_finalization_date, applied_grace_period, ready_to_be_refreshed,
         last_refreshed_at)
-       SELECT ?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-              0, ?, 0, 0, NULL
+       SELECT ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+              0, ?, ?, 0, ?
        FROM subscriptions
        WHERE id = ? AND organization_id = ? AND version = ?
          AND status IN ('active', 'past_due')`,
@@ -179,12 +190,13 @@ export async function terminateSubscriptionWithInvoice(
       subscription.customer_id,
       subscription.id,
       invoiceNumber,
+      draft ? "draft" : "finalized",
       subscription.currency,
       calculation.subtotalMinor,
       calculation.taxMinor,
       calculation.creditsMinor,
       calculation.totalDueMinor,
-      now,
+      draft ? null : now,
       issuingDate,
       now,
       now,
@@ -194,6 +206,8 @@ export async function terminateSubscriptionWithInvoice(
       subscription.net_payment_term,
       dueDate,
       issuingDate,
+      subscription.invoice_grace_period,
+      draft ? now : null,
       subscription.id,
       subscription.organization_id,
       expectedVersion,
@@ -210,6 +224,24 @@ export async function terminateSubscriptionWithInvoice(
     ),
     ...creditNoteStatements,
     ...walletStatements,
+    ...(draft
+      ? [
+          env.BILLING_DB.prepare(
+            `INSERT INTO subscription_invoice_contexts
+             (invoice_id, organization_id, subscription_id, context_type, period_start,
+              period_end, terminated_at, created_at)
+             VALUES (?, ?, ?, 'termination', ?, ?, ?, ?)`,
+          ).bind(
+            invoiceId,
+            subscription.organization_id,
+            subscription.id,
+            subscription.current_period_start,
+            subscription.current_period_end,
+            terminatedAt,
+            now,
+          ),
+        ]
+      : []),
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
        SET status = 'terminated', terminated_at = ?, current_period_end = ?,
@@ -246,13 +278,17 @@ export async function terminateSubscriptionWithInvoice(
     throw error;
   }
   const subscriptionUpdate = results[results.length - 3];
-  if (!subscriptionUpdate || subscriptionUpdate.meta.changes !== 1) {
+  // D1 reports changes performed by the draft-invalidation trigger as part of this statement.
+  // The subscription predicate targets one primary key, so any positive count proves the transition.
+  if (!subscriptionUpdate || subscriptionUpdate.meta.changes < 1) {
     throw new Error("subscription_version_conflict");
   }
   const firstCouponUpdate = creditCreationStatements.length + 2 + calculation.lines.length;
-  for (let offset = 0; offset < calculation.couponCredits.length; offset += 1) {
-    const update = results[firstCouponUpdate + offset * 3];
-    if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
+  if (!draft) {
+    for (let offset = 0; offset < calculation.couponCredits.length; offset += 1) {
+      const update = results[firstCouponUpdate + offset * 3];
+      if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
+    }
   }
   if (publishImmediately) {
     if (unusedCredit?.creditNoteEvent) await env.DOMAIN_EVENTS.send(unusedCredit.creditNoteEvent);
@@ -269,6 +305,13 @@ export async function terminateSubscriptionWithInvoice(
     creditNoteId: unusedCredit?.creditNoteId ?? null,
     creditAmountMinor: unusedCredit?.creditAmountMinor ?? 0,
   };
+}
+
+function shiftCalendarDate(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(date.getTime())) throw new Error("invalid_termination_date");
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 export async function terminateEndedSubscriptions(

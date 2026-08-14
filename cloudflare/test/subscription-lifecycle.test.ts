@@ -50,6 +50,10 @@ beforeEach(async () => {
        WHERE id = 'subscription-lifecycle'`,
     ).bind(now, now, now),
     env.BILLING_DB.prepare(
+      `UPDATE customers SET invoice_grace_period = 0, updated_at = ?
+       WHERE id = 'customer-lifecycle'`,
+    ).bind(now),
+    env.BILLING_DB.prepare(
       `DELETE FROM outbox_events WHERE aggregate_id = 'subscription-lifecycle'
        AND event_type IN ('subscription.updated', 'subscription.terminated')`,
     ),
@@ -148,6 +152,220 @@ describe("subscription lifecycle", () => {
       contextType: "termination",
       terminatedAt: firstBody.subscription.terminated_at,
     });
+  });
+
+  it("creates a non-consuming grace-period termination draft and finalizes it from immutable boundaries", async () => {
+    const customer = await api("/api/v1/customers", "POST", {
+      customer: {
+        external_id: "customer-termination-grace",
+        currency: "USD",
+        billing_configuration: { invoice_grace_period: 3 },
+      },
+    });
+    expect(customer.status).toBe(200);
+    const created = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-termination-grace",
+        external_id: "subscription-termination-grace",
+        plan_code: "monthly",
+      },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ subscription: { lago_id: string } }>();
+    const original = await env.BILLING_DB.prepare(
+      "SELECT current_period_end FROM subscriptions WHERE id = ?",
+    )
+      .bind(createdBody.subscription.lago_id)
+      .first<{ current_period_end: string }>();
+    const wallet = await api("/api/v1/wallets", "POST", {
+      wallet: {
+        external_customer_id: "customer-termination-grace",
+        code: "termination-grace-wallet",
+        currency: "USD",
+        rate_amount: "1",
+        granted_credits: "20",
+      },
+    });
+    expect(wallet.status).toBe(200);
+
+    const terminated = await api("/api/v1/subscriptions/subscription-termination-grace", "DELETE");
+    const terminatedBody = await terminated.json();
+    expect({ status: terminated.status, body: terminatedBody }).toMatchObject({
+      status: 200,
+      body: { subscription: { status: "terminated" } },
+    });
+    const draft = await env.BILLING_DB.prepare(
+      `SELECT i.id, i.status, i.version, i.applied_grace_period,
+              i.total_due_minor, i.credits_minor,
+              CAST(julianday(i.expected_finalization_date) - julianday(date(i.created_at))
+                AS INTEGER) AS grace_days,
+              sic.context_type, sic.period_start, sic.period_end, sic.terminated_at,
+              s.current_period_end AS terminated_period_end,
+              (SELECT COUNT(*) FROM wallet_transactions wt
+               WHERE wt.invoice_id = i.id AND wt.transaction_type = 'outbound') AS allocations,
+              (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = i.id
+               AND o.event_type = 'invoice.drafted') AS drafted_events,
+              (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = i.id
+               AND o.event_type = 'invoice.finalized') AS finalized_events
+       FROM invoices i
+       JOIN subscription_invoice_contexts sic ON sic.invoice_id = i.id
+       JOIN subscriptions s ON s.id = i.subscription_id
+       WHERE i.subscription_id = ? AND sic.context_type = 'termination'`,
+    )
+      .bind(createdBody.subscription.lago_id)
+      .first<{
+        id: string;
+        status: string;
+        version: number;
+        applied_grace_period: number;
+        total_due_minor: number;
+        credits_minor: number;
+        grace_days: number;
+        context_type: string;
+        period_start: string;
+        period_end: string;
+        terminated_at: string;
+        terminated_period_end: string;
+        allocations: number;
+        drafted_events: number;
+        finalized_events: number;
+      }>();
+    expect(draft).toMatchObject({
+      status: "draft",
+      version: 1,
+      applied_grace_period: 3,
+      total_due_minor: 0,
+      grace_days: 3,
+      context_type: "termination",
+      allocations: 0,
+      drafted_events: 1,
+      finalized_events: 0,
+    });
+    expect(draft?.credits_minor).toBeGreaterThan(0);
+    expect(draft?.period_end).toBe(original?.current_period_end);
+    expect(draft?.terminated_period_end).toBe(draft?.terminated_at);
+
+    const refreshed = await api(`/api/v1/invoices/${draft?.id}/refresh`, "PUT");
+    expect(refreshed.status).toBe(200);
+    await expect(refreshed.json()).resolves.toMatchObject({
+      invoice: { status: "draft", version_number: 2, total_amount_cents: 0 },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total FROM wallet_transactions
+         WHERE invoice_id = ? AND transaction_type = 'outbound'`,
+      )
+        .bind(draft?.id)
+        .first(),
+    ).resolves.toEqual({ total: 0 });
+
+    const finalized = await api(`/api/v1/invoices/${draft?.id}/finalize`, "PUT");
+    expect(finalized.status).toBe(200);
+    await expect(finalized.json()).resolves.toMatchObject({
+      invoice: { status: "finalized", version_number: 3, total_amount_cents: 0 },
+    });
+    const replay = await api(`/api/v1/invoices/${draft?.id}/finalize`, "PUT");
+    expect(replay.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT i.status, i.version,
+                (SELECT COUNT(*) FROM wallet_transactions wt
+                 WHERE wt.invoice_id = i.id AND wt.transaction_type = 'outbound') AS allocations,
+                (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = i.id
+                 AND o.event_type = 'invoice.finalized') AS finalized_events
+         FROM invoices i WHERE i.id = ?`,
+      )
+        .bind(draft?.id)
+        .first(),
+    ).resolves.toEqual({ status: "finalized", version: 3, allocations: 1, finalized_events: 1 });
+  });
+
+  it("accepts ending_at with grace and creates one scheduled termination draft", async () => {
+    const endingAt = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    const customer = await api("/api/v1/customers", "POST", {
+      customer: {
+        external_id: "customer-scheduled-grace",
+        currency: "USD",
+        billing_configuration: { invoice_grace_period: 2 },
+      },
+    });
+    expect(customer.status).toBe(200);
+    const created = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-scheduled-grace",
+        external_id: "subscription-scheduled-grace",
+        plan_code: "monthly",
+        ending_at: endingAt,
+      },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ subscription: { lago_id: string } }>();
+
+    await expect(terminateEndedSubscriptions(env, endingAt, "scheduled-grace-due")).resolves.toBe(
+      1,
+    );
+    await expect(
+      terminateEndedSubscriptions(env, endingAt, "scheduled-grace-replay"),
+    ).resolves.toBe(0);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT s.status,
+                (SELECT COUNT(*) FROM invoices i WHERE i.subscription_id = s.id
+                 AND i.status = 'draft' AND i.applied_grace_period = 2) AS drafts,
+                (SELECT COUNT(*) FROM subscription_invoice_contexts sic
+                 WHERE sic.subscription_id = s.id AND sic.context_type = 'termination') AS contexts,
+                (SELECT COUNT(*) FROM outbox_events o JOIN invoices i ON i.id = o.aggregate_id
+                 WHERE i.subscription_id = s.id AND o.event_type = 'invoice.drafted') AS events
+         FROM subscriptions s WHERE s.id = ?`,
+      )
+        .bind(createdBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({ status: "terminated", drafts: 1, contexts: 1, events: 1 });
+  });
+
+  it("rolls back the entire grace-period termination batch on a late transition failure", async () => {
+    const customer = await api("/api/v1/customers", "POST", {
+      customer: {
+        external_id: "customer-termination-grace-rollback",
+        currency: "USD",
+        billing_configuration: { invoice_grace_period: 1 },
+      },
+    });
+    expect(customer.status).toBe(200);
+    const created = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-termination-grace-rollback",
+        external_id: "subscription-termination-grace-rollback",
+        plan_code: "monthly",
+      },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ subscription: { lago_id: string } }>();
+    await env.BILLING_DB.prepare(
+      `CREATE TRIGGER test_abort_grace_termination
+       BEFORE UPDATE OF status ON subscriptions
+       WHEN NEW.id = '${createdBody.subscription.lago_id}' AND NEW.status = 'terminated'
+       BEGIN SELECT RAISE(ABORT, 'test_grace_termination_abort'); END`,
+    ).run();
+    const failed = await api(
+      "/api/v1/subscriptions/subscription-termination-grace-rollback",
+      "DELETE",
+    );
+    expect(failed.status).toBe(500);
+    await env.BILLING_DB.prepare("DROP TRIGGER test_abort_grace_termination").run();
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT s.status, s.version,
+                (SELECT COUNT(*) FROM invoices i WHERE i.subscription_id = s.id) AS invoices,
+                (SELECT COUNT(*) FROM subscription_invoice_contexts sic
+                 WHERE sic.subscription_id = s.id) AS contexts,
+                (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = s.id
+                 AND o.event_type = 'subscription.terminated') AS events
+         FROM subscriptions s WHERE s.id = ?`,
+      )
+        .bind(createdBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({ status: "active", version: 1, invoices: 0, contexts: 0, events: 0 });
   });
 
   it("reschedules and cancels a pending subscription without creating an invoice", async () => {
