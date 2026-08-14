@@ -52,7 +52,10 @@ this document does not silently redefine that behavior.
   commitment targets use the same inclusive UTC coefficient, round to minor units before fee
   subtraction, and cover only the unsplit single-invoice window admitted by the catalog. A
   persisted `ending_at` uses this exact UTC subset and is executed by the hourly `:05` owner;
-  customer-local dates require separate timezone evidence.
+  supported updates may set it to a future UTC date or clear it. The subscription also persists the
+  supported termination invoice action and, for pay-in-advance plans only, the supported
+  credit-note action. Manual query parameters override those stored actions and the hourly owner
+  uses them when no query exists. Customer-local dates require separate timezone evidence.
 - Tenant-local time zones, daylight-saving behavior, and Rails time-zone parity are not implemented
   unless a feature's executable evidence says otherwise. A port that depends on local civil time
   must add the time-zone field, transition tests, and migration notes before it can be called parity.
@@ -153,7 +156,10 @@ Required evidence for a new aggregate or a boundary change:
   minimum-commitment target for the catalog's unsplit billing window. At positive grace they first
   persist a distinct immutable termination context containing the original period and termination
   instant, create a non-consuming preview, and allocate balances only during finalization. The same
-  subset may persist a future UTC `ending_at`, which the hourly owner executes before billing close.
+  subset may persist or update a future UTC `ending_at`, which the hourly owner executes before
+  billing close. Stored `generate`/`skip` invoice actions are honored by both manual and scheduled
+  termination; pay-in-advance subscriptions may also store `credit`/`skip`, while refund and offset
+  remain guarded.
   Credit-only pay-in-advance termination may issue an unused-period balance against a finalized base
   line only when the source invoice has no coupon, tax, wallet, or prior credit-note allocation.
   The default combined mode creates that unused-period note before finalizing bounded in-arrears

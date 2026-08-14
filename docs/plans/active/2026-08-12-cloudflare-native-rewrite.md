@@ -1199,3 +1199,18 @@ resource and mutation described.
   organizations, subscriptions, invoices, invoice lines, invoice contexts, credit notes,
   termination-credit contexts, credit-note applications, wallets, and outbox events plus 59 Cron
   audits. No route, secret, or billing data changed.
+- 2026-08-14: Recovered Lago's persisted subscription termination-action and ending-update
+  semantics. Migration `0031_subscription_termination_actions.sql` adds constrained nullable
+  invoice and credit-note actions. Creation identity/replay includes supplied actions without
+  changing legacy hashes when omitted; supported active and pending updates can set or clear a
+  future UTC `ending_at`, and in-arrears credit-action updates retain Lago's ignored/null behavior.
+  Manual termination honors stored actions unless a validated query override is supplied, and the
+  hourly ending owner now uses the same stored defaults. The no-invoice transition and its outbox
+  event share a guarded D1 batch. Evidence covers exact creation replay and divergent conflict,
+  manual override persistence, safe scheduling and clearing, exactly-once scheduled skips,
+  pay-in-advance credit/skip combinations, unsupported refund/offset and in-arrears creation guards,
+  tenant isolation, injected batch rollback, and a stale-version orphan-event check. All 94 tests
+  pass across 24 files; all 31 migrations replay from an empty local D1, and formatting, strict
+  lint, generated inventory/types, TypeScript, and the dry-run bundle are green at 538.35 KiB
+  (95.72 KiB gzip). The isolated remote stack remains at migration `0030` and Worker version
+  `f4fd52ff-083f-4e40-9240-ccec9b24091c` until the reviewed deployment step.

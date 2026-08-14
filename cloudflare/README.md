@@ -29,8 +29,11 @@ remaining Lago feature inventory is dispositioned and ported.
   days, usage is bounded to the following UTC-day boundary, and supported non-prorated
   pay-in-arrears fixed charges retain their full amount. The same constrained plans may persist a
   future UTC `ending_at`; the legacy hourly `:05` owner applies it exactly once and takes precedence
-  over the recurring close. Explicit skip-invoice/skip-credit
-  termination remains idempotent; any existing draft is invalidated and remains refreshable/
+  over the recurring close. Supported active and pending updates can set or clear that instant and
+  persist Lago's `on_termination_invoice` action; pay-in-advance subscriptions can additionally
+  persist the supported `credit` or `skip` credit-note action. Manual and scheduled termination use
+  the stored actions unless a valid manual query override is supplied. Explicit
+  skip-invoice/skip-credit termination remains idempotent; any existing draft is invalidated and remains refreshable/
   finalizable from its immutable invoice context. At renewal, pay-in-advance base fees snapshot the
   next period while in-arrears base fees and usage snapshot the closed period. Credit-only
   pay-in-advance termination can return exact unused UTC service days when its source base invoice
