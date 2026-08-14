@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `fe112738-18ba-41b5-a84f-9df1f0cabda9`
+- Latest verified version: `ae1cc8b4-9fc2-4d5d-abb1-095338efd8e0`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -33,7 +33,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `*/5 * * * *`                                                      | Worker scheduled handler  | Deterministic legacy-schedule dispatch                             |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
-Applied D1 migrations: `0001_foundation.sql` through `0024_initial_subscription_drafts.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0025_draft_dependency_invalidation.sql`.
 
 ## Verified behavior
 
@@ -97,6 +97,12 @@ Applied D1 migrations: `0001_foundation.sql` through `0024_initial_subscription_
   migration remained pending. Aggregate-only verification found zero organizations, invoices,
   initial contexts, and mutation guards; 17 Cron audits prove the dispatcher remains active. All
   payment/provider/outbound flags remain disabled, with no route, secret, or billing data added.
+- The draft-dependency deployment added 22 D1 triggers that flag affected drafts after supported
+  subscription, plan/rating, applied-coupon, tax, credit-note, wallet, and usage mutations. Remote
+  health/readiness returned `200`/`200`, unauthenticated draft refresh returned `401`, and no
+  migration remained pending. Aggregate-only verification found zero organizations, invoices,
+  initial contexts, and mutation guards; 20 Cron audits prove the dispatcher remains active. All
+  external-action flags remain disabled, with no route, secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

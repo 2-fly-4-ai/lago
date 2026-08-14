@@ -902,3 +902,11 @@ resource and mutation described.
   allocation. All 77 Workers-runtime tests pass across 22 files; all 25 migrations replay from
   empty D1 state, formatting, lint, generated bindings, TypeScript, and the cross-repository
   inventory are green, and the dry-run bundle is 453.27 KiB (82.71 KiB gzip).
+- 2026-08-14: After one transient read-only Cloudflare API `7403`, `wrangler whoami` confirmed the
+  intended SERP account and OAuth scopes and the retry showed exactly
+  `0025_draft_dependency_invalidation.sql`. Applied only that migration and deployed isolated Worker
+  version `ae1cc8b4-9fc2-4d5d-abb1-095338efd8e0`. Follow-up migration inventory was empty; remote
+  health/readiness returned `200`, unauthenticated draft refresh returned `401`, and aggregate-only
+  verification confirmed 22 invalidation triggers, zero organizations/invoices/initial contexts/
+  mutation guards, and 20 Cron audits. No route, secret, seeded billing data, or disabled external
+  flag changed.
