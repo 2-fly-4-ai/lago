@@ -26,6 +26,10 @@ this document does not silently redefine that behavior.
   metric field as Lago does, and persist/archive only the derived event. Batch evaluation remains
   all-before-write. Property lookup must use own properties so expression names cannot traverse an
   object prototype.
+- Apply optional billable-metric rounding after aggregation and before charge-model rating in both
+  current-usage projections and invoice calculation. Supported functions are `round` (half away
+  from zero), `ceil`, and `floor`; an omitted precision means zero and negative precision rounds to
+  powers of ten. Do not round each in-arrears event independently.
 - Snapshot quantity, unit amount, taxable base, tax rate, and computed amount on invoice lines or
   tax rows. Re-reading a mutable plan, charge, tax, coupon, or wallet must not change an issued
   invoice.

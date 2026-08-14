@@ -493,8 +493,9 @@ Acceptance:
       events before writing, caps requests at 100, rejects duplicate/existing transaction IDs,
       stores deterministic archives, and commits all event/outbox rows atomically.
 - [x] Port count, sum, maximum, latest, and add/remove unique-count aggregations plus six core
-      charge models; weighted/custom aggregation, filters, rounding configuration,
-      and advanced adjustments remain pending.
+      charge models; weighted/custom aggregation, filters, and advanced adjustments remain
+      pending. Optional round/ceil/floor metric configuration now applies to aggregate units before
+      current-usage and recurring-invoice rating, including negative precision.
 - [ ] Replace the Ruby subprocess and Go/Rust native library with a restricted TypeScript parser or
       a supported precompiled Wasm module. The pinned `lago-expression` Rust extension is now
       replaced by a bounded TypeScript parser/evaluator with no dynamic evaluation; the separately

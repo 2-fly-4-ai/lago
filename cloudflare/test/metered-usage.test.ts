@@ -551,7 +551,6 @@ describe("Lago-compatible metered usage", () => {
   it("rejects metric options the current usage engine cannot honor", async () => {
     for (const [suffix, unsupported] of [
       ["recurring", { recurring: true }],
-      ["rounding", { rounding_function: "round", rounding_precision: 2 }],
       ["weighted", { weighted_interval: "seconds" }],
       ["filters", { filters: [{ key: "region", values: ["us"] }] }],
     ] as const) {
@@ -572,6 +571,91 @@ describe("Lago-compatible metered usage", () => {
         code: "unsupported_billable_metric_feature",
       });
     }
+  });
+
+  it("persists metric rounding and applies it before current-usage rating", async () => {
+    const metric = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Rounded units",
+          code: "rounded_units",
+          aggregation_type: "sum_agg",
+          field_name: "units",
+          rounding_function: "ceil",
+          rounding_precision: 1,
+        },
+      },
+    });
+    expect(metric.status).toBe(200);
+    const metricBody = await metric.json<{ billable_metric: { lago_id: string } }>();
+    const charge = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metricBody.billable_metric.lago_id,
+          code: "rounded-unit-charge",
+          charge_model: "standard",
+          properties: { amount: "10" },
+        },
+      },
+    });
+    expect(charge.status).toBe(200);
+    for (const [transactionId, timestamp] of [
+      ["rounded-one", 1786579200],
+      ["rounded-two", 1786579260],
+    ] as const) {
+      const created = await api("/api/v1/events", {
+        method: "POST",
+        body: {
+          event: {
+            transaction_id: transactionId,
+            code: "rounded_units",
+            external_subscription_id: "subscription-external",
+            timestamp,
+            properties: { units: "1.231" },
+          },
+        },
+      });
+      expect(created.status).toBe(200);
+    }
+    const usage = await api(
+      "/api/v1/customers/customer-external/current_usage?external_subscription_id=subscription-external",
+    );
+    const usageBody = await usage.json<{
+      customer_usage: {
+        charges_usage: Array<{
+          units: string;
+          amount_cents: number;
+          billable_metric: { code: string };
+        }>;
+      };
+    }>();
+    expect(
+      usageBody.customer_usage.charges_usage.find(
+        (item) => item.billable_metric.code === "rounded_units",
+      ),
+    ).toMatchObject({ units: "2.5", amount_cents: 25 });
+    await expect(
+      api("/api/v1/billable_metrics/rounded_units").then((response) => response.json()),
+    ).resolves.toMatchObject({
+      billable_metric: { rounding_function: "ceil", rounding_precision: 1 },
+    });
+
+    const invalid = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Invalid rounding",
+          code: "invalid_rounding",
+          aggregation_type: "sum_agg",
+          field_name: "units",
+          rounding_function: "bankers",
+        },
+      },
+    });
+    expect(invalid.status).toBe(422);
+    await expect(invalid.json()).resolves.toMatchObject({ code: "validation_error" });
   });
 
   it("retires a metric graph, preserves finalized history, and safely recreates its code", async () => {

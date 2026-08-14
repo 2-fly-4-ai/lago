@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { aggregateUsage, type UsageAggregationEvent } from "../src/usage/aggregation";
+import { Decimal } from "../src/rating/decimal";
+import {
+  aggregateUsage,
+  applyAggregationRounding,
+  type UsageAggregationEvent,
+} from "../src/usage/aggregation";
 
 const event = (
   id: string,
@@ -24,6 +29,16 @@ describe("usage aggregation", () => {
       event("d", 4, { seat: "one", operation_type: "add" }),
     ];
     expect(aggregateUsage("unique_count_agg", "seat", events).toString()).toBe("2");
+  });
+
+  it("applies Lago rounding functions after aggregation at positive and negative precision", () => {
+    const units = Decimal.parse("123.456");
+    expect(applyAggregationRounding(units, "round", 2).toString()).toBe("123.46");
+    expect(applyAggregationRounding(units, "ceil", null).toString()).toBe("124");
+    expect(applyAggregationRounding(units, "ceil", -2).toString()).toBe("200");
+    expect(applyAggregationRounding(units, "floor", 2).toString()).toBe("123.45");
+    expect(applyAggregationRounding(units, "floor", -2).toString()).toBe("100");
+    expect(applyAggregationRounding(units, null, -2)).toBe(units);
   });
 
   it("fails closed on malformed aggregation values", () => {

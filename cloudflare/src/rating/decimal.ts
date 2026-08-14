@@ -147,7 +147,7 @@ export class Decimal {
 }
 
 function powerOfTen(exponent: number): bigint {
-  if (!Number.isSafeInteger(exponent) || exponent < 0 || exponent > 100) {
+  if (!Number.isSafeInteger(exponent) || exponent < 0 || exponent > 200) {
     throw new Error("invalid_decimal_scale");
   }
   return 10n ** BigInt(exponent);

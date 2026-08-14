@@ -116,7 +116,9 @@ remaining Lago feature inventory is dispositioned and ported.
   derive their aggregation field through the pinned Lago expression grammar. A bounded TypeScript
   parser/evaluator supports exact decimals, event attributes, arithmetic, and the six legacy
   functions without `eval`, Wasm, a Rust extension, or a subprocess; the derived property is part
-  of replay hashing, D1 state, and R2 evidence.
+  of replay hashing, D1 state, and R2 evidence. Optional metric `round`, `ceil`, or `floor`
+  configuration is applied to the aggregate before current-usage and recurring-invoice rating,
+  including zero-default and negative precision.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,

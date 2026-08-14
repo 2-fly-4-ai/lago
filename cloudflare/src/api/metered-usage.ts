@@ -6,7 +6,12 @@ import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { rateCharge } from "../rating/charge-models";
 import { Decimal } from "../rating/decimal";
-import { aggregateUsage, type SupportedAggregationType } from "../usage/aggregation";
+import {
+  aggregateUsage,
+  applyAggregationRounding,
+  type AggregationRoundingFunction,
+  type SupportedAggregationType,
+} from "../usage/aggregation";
 import { parseChargeModel } from "../usage/charge-properties";
 import {
   evaluateUsageExpression,
@@ -68,6 +73,8 @@ type ChargeUsageRow = {
   metric_name: string;
   aggregation_type: string;
   field_name: string | null;
+  rounding_function: AggregationRoundingFunction | null;
+  rounding_precision: number | null;
   accepts_target_wallet: number;
 };
 
@@ -296,7 +303,7 @@ async function createBillableMetric(
        (id, organization_id, code, name, description, aggregation_type, field_name,
         recurring, rounding_function, rounding_precision, weighted_interval, expression,
         properties_json, version, active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, '{}', ?, 1, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, '{}', ?, 1, ?, ?)`,
         )
         .bind(
           identity.id,
@@ -306,6 +313,8 @@ async function createBillableMetric(
           normalized.description,
           normalized.aggregationType,
           normalized.fieldName,
+          normalized.roundingFunction,
+          normalized.roundingPrecision,
           normalized.expression,
           identity.version,
           now,
@@ -405,6 +414,14 @@ async function updateBillableMetric(
     input.field_name === undefined ? metric.field_name : optionalString(input, "field_name");
   const nextExpression =
     input.expression === undefined ? metric.expression : optionalString(input, "expression");
+  const nextRoundingFunction =
+    input.rounding_function === undefined
+      ? normalizeStoredRoundingFunction(metric.rounding_function)
+      : normalizeRoundingFunction(input.rounding_function);
+  const nextRoundingPrecision =
+    input.rounding_precision === undefined
+      ? metric.rounding_precision
+      : normalizeRoundingPrecision(input.rounding_precision);
   validateMetricConfiguration(nextAggregation, nextFieldName, nextExpression);
   if (
     attached &&
@@ -451,8 +468,8 @@ async function updateBillableMetric(
       metricMutationGuardStatement(env.BILLING_DB, requestId, auth.organizationId, metric, 1, now),
       env.BILLING_DB.prepare(
         `UPDATE billable_metrics SET code = ?, name = ?, description = ?,
-         aggregation_type = ?, field_name = ?, expression = ?, version = version + 1,
-         updated_at = ?
+         aggregation_type = ?, field_name = ?, rounding_function = ?, rounding_precision = ?,
+         expression = ?, version = version + 1, updated_at = ?
          WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?
            AND EXISTS (SELECT 1 FROM billable_metric_mutation_guards
                        WHERE request_id = ? AND billable_metric_id = ?)`,
@@ -462,6 +479,8 @@ async function updateBillableMetric(
         next.description,
         next.aggregationType,
         next.fieldName,
+        nextRoundingFunction,
+        nextRoundingPrecision,
         nextExpression,
         now,
         metric.id,
@@ -1567,7 +1586,7 @@ async function currentUsage(
               ch.properties_json, ch.min_amount_minor, ch.accepts_target_wallet,
               bm.id AS metric_id,
               bm.code AS metric_code, bm.name AS metric_name,
-              bm.aggregation_type, bm.field_name
+              bm.aggregation_type, bm.field_name, bm.rounding_function, bm.rounding_precision
        FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id
        WHERE ch.organization_id = ? AND ch.plan_id = ? AND ch.active = 1
          AND ch.invoiceable = 1 AND ch.pay_in_advance = 0
@@ -1580,10 +1599,10 @@ async function currentUsage(
   const chargeUsage: Array<Record<string, unknown>> = [];
   for (const charge of charges.results) {
     const events = await usageEventsForPeriod(database, subscription, charge.metric_id);
-    const units = aggregateUsage(
-      supportedAggregation(charge.aggregation_type),
-      charge.field_name,
-      events,
+    const units = applyAggregationRounding(
+      aggregateUsage(supportedAggregation(charge.aggregation_type), charge.field_name, events),
+      charge.rounding_function,
+      charge.rounding_precision,
     );
     const properties = parseStoredObject(charge.properties_json);
     const rated = rateCharge(units.toString(), parseChargeModel(charge.charge_model, properties), {
@@ -2057,6 +2076,8 @@ type NormalizedMetric = {
   aggregationType: SupportedAggregationType;
   fieldName: string | null;
   expression: string | null;
+  roundingFunction: AggregationRoundingFunction | null;
+  roundingPrecision: number | null;
 };
 
 function normalizeMetricInput(input: Record<string, unknown>): NormalizedMetric {
@@ -2070,6 +2091,8 @@ function normalizeMetricInput(input: Record<string, unknown>): NormalizedMetric 
   const aggregationType = supportedMetricAggregation(input.aggregation_type);
   const fieldName = optionalString(input, "field_name");
   const expression = optionalString(input, "expression");
+  const roundingFunction = normalizeRoundingFunction(input.rounding_function);
+  const roundingPrecision = normalizeRoundingPrecision(input.rounding_precision);
   validateMetricConfiguration(aggregationType, fieldName, expression);
   return {
     code: requiredString(input, "code"),
@@ -2078,6 +2101,8 @@ function normalizeMetricInput(input: Record<string, unknown>): NormalizedMetric 
     aggregationType,
     fieldName,
     expression,
+    roundingFunction,
+    roundingPrecision,
   };
 }
 
@@ -2089,6 +2114,29 @@ function supportedMetricAggregation(value: unknown): SupportedAggregationType {
       `Unsupported aggregation type: ${String(value)}`,
     );
   return value as SupportedAggregationType;
+}
+
+function normalizeRoundingFunction(value: unknown): AggregationRoundingFunction | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (value === "round" || value === "ceil" || value === "floor") return value;
+  throw new ApiError(422, "validation_error", "rounding_function must be round, ceil, or floor");
+}
+
+function normalizeStoredRoundingFunction(value: string | null): AggregationRoundingFunction | null {
+  if (value === null || value === "round" || value === "ceil" || value === "floor") return value;
+  throw new ApiError(500, "invalid_metric", "Stored rounding_function is invalid");
+}
+
+function normalizeRoundingPrecision(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (!Number.isSafeInteger(value) || (value as number) < -100 || (value as number) > 100) {
+    throw new ApiError(
+      422,
+      "validation_error",
+      "rounding_precision must be an integer between -100 and 100",
+    );
+  }
+  return value as number;
 }
 
 function validateMetricConfiguration(
@@ -2110,12 +2158,7 @@ function validateMetricConfiguration(
 }
 
 function rejectUnsupportedMetricFeatures(input: Record<string, unknown>): void {
-  for (const field of [
-    "recurring",
-    "rounding_function",
-    "rounding_precision",
-    "weighted_interval",
-  ]) {
+  for (const field of ["recurring", "weighted_interval"]) {
     const value = input[field];
     if (value === undefined || value === null || value === false) continue;
     throw new ApiError(
@@ -2153,8 +2196,8 @@ function sameMetric(metric: MetricRow, normalized: NormalizedMetric): boolean {
     metric.aggregation_type === normalized.aggregationType &&
     metric.field_name === normalized.fieldName &&
     metric.recurring === 0 &&
-    metric.rounding_function === null &&
-    metric.rounding_precision === null &&
+    metric.rounding_function === normalized.roundingFunction &&
+    metric.rounding_precision === normalized.roundingPrecision &&
     metric.weighted_interval === null &&
     metric.expression === normalized.expression
   );

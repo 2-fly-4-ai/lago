@@ -2,7 +2,12 @@ import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { rateCharge } from "../rating/charge-models";
 import { Decimal } from "../rating/decimal";
-import { aggregateUsage, type SupportedAggregationType } from "../usage/aggregation";
+import {
+  aggregateUsage,
+  applyAggregationRounding,
+  type AggregationRoundingFunction,
+  type SupportedAggregationType,
+} from "../usage/aggregation";
 import { parseChargeModel } from "../usage/charge-properties";
 import { calculateCouponCredits, type CouponCredit } from "./coupon-credits";
 import { calculateCreditNoteAllocations, type CreditNoteAllocation } from "./credit-note-credits";
@@ -52,6 +57,8 @@ type ChargeRow = {
   metric_name: string;
   aggregation_type: string;
   field_name: string | null;
+  rounding_function: AggregationRoundingFunction | null;
+  rounding_precision: number | null;
   accepts_target_wallet: number;
 };
 
@@ -465,10 +472,14 @@ export async function calculateSubscriptionInvoice(
       calculationPeriodEndMs,
     );
     for (const group of targetWalletEventGroups(events, charge.accepts_target_wallet === 1)) {
-      const units = aggregateUsage(
-        supportedAggregation(charge.aggregation_type),
-        charge.field_name,
-        group.events,
+      const units = applyAggregationRounding(
+        aggregateUsage(
+          supportedAggregation(charge.aggregation_type),
+          charge.field_name,
+          group.events,
+        ),
+        charge.rounding_function,
+        charge.rounding_precision,
       );
       let precise = Decimal.parse(
         rateCharge(
@@ -774,7 +785,8 @@ async function loadCharges(
       `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
               ch.properties_json, ch.min_amount_minor, bm.id AS metric_id,
               bm.code AS metric_code, bm.name AS metric_name,
-              bm.aggregation_type, bm.field_name, ch.accepts_target_wallet
+              bm.aggregation_type, bm.field_name, bm.rounding_function,
+              bm.rounding_precision, ch.accepts_target_wallet
        FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id
        WHERE ch.organization_id = ? AND ch.plan_id = ? AND ch.active = 1
          AND ch.invoiceable = 1 AND ch.pay_in_advance = 0

@@ -668,6 +668,79 @@ describe("billing period close", () => {
     });
   });
 
+  it("rounds aggregated usage before recurring invoice rating", async () => {
+    const now = "2026-08-13T00:00:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO plans
+         (id, organization_id, code, name, interval, amount_minor, currency, version,
+          active, created_at, updated_at)
+         VALUES ('plan-rounded-cycle', 'org-cycle', 'rounded-cycle-plan', 'Rounded cycle plan',
+                 'monthly', 0, 'USD', 1, 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO billable_metrics
+         (id, organization_id, code, name, aggregation_type, field_name, recurring,
+          rounding_function, rounding_precision, properties_json, version, active,
+          created_at, updated_at)
+         VALUES ('metric-rounded-cycle', 'org-cycle', 'rounded-cycle-units',
+                 'Rounded cycle units', 'sum_agg', 'quantity', 0, 'ceil', 1, '{}', 1, 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, version, created_at, updated_at)
+         VALUES ('subscription-rounded-cycle', 'org-cycle', 'customer-cycle',
+                 'plan-rounded-cycle', 'subscription-rounded-cycle-external', 'active',
+                 '2026-07-31T00:00:00.000Z', '2026-07-31T00:00:00.000Z',
+                 '2026-08-31T00:00:00.000Z', 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO charges
+         (id, organization_id, plan_id, billable_metric_id, code, charge_model,
+          properties_json, invoiceable, pay_in_advance, prorated, min_amount_minor,
+          version, active, created_at, updated_at)
+         VALUES ('charge-rounded-cycle', 'org-cycle', 'plan-rounded-cycle',
+                 'metric-rounded-cycle', 'rounded-cycle-charge', 'standard', '{"amount":"10"}',
+                 1, 0, 0, 0, 1, 1, ?, ?)`,
+      ).bind(now, now),
+      ...["one", "two"].map((suffix, index) =>
+        env.BILLING_DB.prepare(
+          `INSERT INTO usage_events
+           (id, organization_id, subscription_id, customer_id, billable_metric_id,
+            transaction_id, code, timestamp, timestamp_ms, properties_json, request_sha256,
+            archive_key, created_at)
+           VALUES (?, 'org-cycle', 'subscription-rounded-cycle', 'customer-cycle',
+                   'metric-rounded-cycle', ?, 'rounded-cycle-units', ?, ?,
+                   '{"quantity":"1.231"}', ?, ?, ?)`,
+        ).bind(
+          `event-rounded-cycle-${suffix}`,
+          `rounded-cycle-${suffix}`,
+          `2026-08-13T00:0${index}:00.000Z`,
+          Date.parse(`2026-08-13T00:0${index}:00.000Z`),
+          `rounded-cycle-hash-${suffix}`,
+          `rounded-cycle-archive-${suffix}`,
+          now,
+        ),
+      ),
+    ]);
+    const result = await closeBillingPeriod(
+      env,
+      "subscription-rounded-cycle",
+      "2026-08-31T00:00:00.000Z",
+      "cycle-rounded",
+    );
+    expect(result).toMatchObject({ totalDueMinor: 25, lineCount: 2 });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT quantity_decimal, precise_amount_minor, amount_minor
+         FROM invoice_lines WHERE invoice_id = ? AND line_type = 'usage'`,
+      )
+        .bind(result.invoiceId)
+        .first(),
+    ).resolves.toEqual({ quantity_decimal: "2.5", precise_amount_minor: "25", amount_minor: 25 });
+  });
+
   it("creates a non-consuming draft, refreshes flagged late usage, and allocates credits only when finalized", async () => {
     const now = "2026-08-13T00:00:00.000Z";
     await env.BILLING_DB.batch([

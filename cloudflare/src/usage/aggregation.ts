@@ -13,6 +13,20 @@ export type UsageAggregationEvent = {
   properties: Record<string, unknown>;
 };
 
+export type AggregationRoundingFunction = "round" | "ceil" | "floor";
+
+export function applyAggregationRounding(
+  units: Decimal,
+  roundingFunction: AggregationRoundingFunction | null,
+  roundingPrecision: number | null,
+): Decimal {
+  if (!roundingFunction) return units;
+  return units.roundToScale(
+    roundingPrecision ?? 0,
+    roundingFunction === "round" ? "half_up" : roundingFunction === "ceil" ? "ceiling" : "floor",
+  );
+}
+
 export function aggregateUsage(
   type: SupportedAggregationType,
   fieldName: string | null,
