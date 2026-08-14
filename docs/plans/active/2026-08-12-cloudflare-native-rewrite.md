@@ -1212,5 +1212,13 @@ resource and mutation described.
   tenant isolation, injected batch rollback, and a stale-version orphan-event check. All 94 tests
   pass across 24 files; all 31 migrations replay from an empty local D1, and formatting, strict
   lint, generated inventory/types, TypeScript, and the dry-run bundle are green at 538.35 KiB
-  (95.72 KiB gzip). The isolated remote stack remains at migration `0030` and Worker version
-  `f4fd52ff-083f-4e40-9240-ccec9b24091c` until the reviewed deployment step.
+  (95.72 KiB gzip). At this pre-deployment checkpoint, the isolated remote stack remained at
+  migration `0030` and Worker version `f4fd52ff-083f-4e40-9240-ccec9b24091c`.
+- 2026-08-14: Remote preflight showed exactly `0031_subscription_termination_actions.sql`; applied
+  only that migration and confirmed the follow-up inventory was empty before deploying isolated
+  Worker version `f83c6e7a-0d6b-4e2b-a9b5-d987096cfab4`. Remote health/readiness returned `200`,
+  unauthenticated termination returned `401`, and the deployed version retained the three disabled
+  external-action flags and only the existing isolated bindings/triggers. Aggregate-only
+  verification confirmed both new columns, zero organizations, subscriptions, stored subscription
+  actions, invoices, credit notes, and outbox events plus 68 Cron audits. No route, secret, or
+  billing data changed.

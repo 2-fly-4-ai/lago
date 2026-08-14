@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `f4fd52ff-083f-4e40-9240-ccec9b24091c`
+- Latest verified version: `f83c6e7a-0d6b-4e2b-a9b5-d987096cfab4`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -34,7 +34,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0030_draft_termination_credit_notes.sql`.
+`0031_subscription_termination_actions.sql`.
 
 ## Verified behavior
 
@@ -214,6 +214,15 @@ Applied D1 migrations: `0001_foundation.sql` through
   invoice contexts, credit notes, termination-credit contexts, credit-note applications, wallets,
   and outbox events plus 59 Cron audits. All external-action flags remain disabled, with no route,
   secret, or billing data added.
+- The persisted-termination-action deployment applied only
+  `0031_subscription_termination_actions.sql`, adding constrained nullable invoice and credit-note
+  actions to subscriptions; follow-up inventory reported no pending migrations. Isolated Worker
+  version `f83c6e7a-0d6b-4e2b-a9b5-d987096cfab4` retained only the existing workers.dev URL, `*/5`
+  Cron, D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow bindings. Remote
+  health/readiness returned `200`/`200`, unauthenticated termination returned `401`, and
+  aggregate-only verification found both new columns, zero organizations, subscriptions, stored
+  subscription actions, invoices, credit notes, and outbox events plus 68 Cron audits. All three
+  external-action flags remain disabled, with no route, secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
