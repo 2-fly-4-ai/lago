@@ -2164,3 +2164,14 @@ resource and mutation described.
   before the known `draft-termination-credit` 10-second timeout; bounded groups pass all 204 tests
   as 37 + 35 + 71 + 54 + 7, including Store checkout compatibility. The dry-run bundle is 988.90
   KiB (170.59 KiB gzip). Feature checkpoint: `edd0ee0`.
+- 2026-08-15: Remote preflight found only `0050_prorated_fixed_charges.sql` pending and zero
+  organizations, customers, plans, subscriptions, invoices, billable metrics, charges, fixed
+  charges, fixed-charge unit events, usage events, wallets, outbox rows, and plan-deletion tasks,
+  with zero foreign-key violations. Applied only that migration to the isolated non-production D1,
+  then verified the widened proration check, retained pay-in-advance guard, all three fixed-charge
+  indexes, all eight restored triggers, and zero foreign-key violations. Deployed only the isolated
+  Worker as version `1e09848e-4729-4154-9db5-f4e55ef82a6d` with a 5 ms startup. Health/readiness
+  returned `200`/`200`, unauthenticated catalog fixed-charge access returned `401`, no migrations
+  remain, and post-deploy aggregate-only verification stayed empty apart from 236 schedule audits.
+  All three external-action flags remain `0`; no resource provisioning, production route/domain,
+  secret, provider action, customer data, or billing row changed.
