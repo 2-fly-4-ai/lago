@@ -371,6 +371,11 @@ async function terminateSection(code: string, env: Env, auth: AuthContext, reque
          AND EXISTS (SELECT 1 FROM invoice_custom_sections WHERE id = ? AND version = ?)`,
     ).bind(section.id, auth.organizationId, section.id, section.version + 1),
     env.BILLING_DB.prepare(
+      `DELETE FROM recurring_transaction_rules_invoice_custom_sections
+       WHERE invoice_custom_section_id = ? AND organization_id = ?
+         AND EXISTS (SELECT 1 FROM invoice_custom_sections WHERE id = ? AND version = ?)`,
+    ).bind(section.id, auth.organizationId, section.id, section.version + 1),
+    env.BILLING_DB.prepare(
       `DELETE FROM customers_invoice_custom_sections
        WHERE invoice_custom_section_id = ? AND organization_id = ?
          AND EXISTS (SELECT 1 FROM invoice_custom_sections WHERE id = ? AND version = ?)`,
@@ -389,7 +394,7 @@ async function terminateSection(code: string, env: Env, auth: AuthContext, reque
       now,
     ),
   ]);
-  if ((results[0]?.meta.changes ?? 0) < 1 || results[6]?.meta.changes !== 1)
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[7]?.meta.changes !== 1)
     throw new ApiError(
       409,
       "invoice_custom_section_version_conflict",

@@ -161,6 +161,7 @@ concurrent request, or replay converge on one valid result.
 | Invoice                   | one-off, billing-cycle, refresh/finalize, void, and payment services          | invoice header/version, lines/taxes/credits, linked ledgers, and outbox                      | immutable source IDs; line uniqueness; total `CHECK`; optimistic version; deterministic event IDs                       |
 | Coupon application        | coupon ledger and invoice credit service                                      | coupon/application version, credit row, invoice credit total, and outbox                     | unique application/reuse slot; request hash; DO reservation; optimistic version                                         |
 | Wallet                    | wallet ledger and invoice wallet-credit service                               | wallet version/balance, transaction lots/consumption, invoice credit, and outbox             | current-version and available-lot triggers; unique idempotency and invoice-wallet rows; D1 batch                        |
+| Recurring wallet rule     | wallet API and the `:50`/`:55` reconciliation owners                          | rule lifecycle/sections or one wallet version, interval lot, and outbox                      | one active rule per wallet; tenant/rule triggers; wallet version; deterministic wallet/local-date idempotency key       |
 | Credit note               | credit-note ledger and credit consumption service                             | note balance/version, consumption, invoice credit, and outbox                                | required idempotency key/hash; balance/version predicate; unique consumption source                                     |
 | Payment                   | payment ledger and provider reconciliation                                    | attempt/version, invoice payment projection/link invalidation, and outbox                    | tenant idempotency uniqueness; provider transaction uniqueness; terminal-state/version guards                           |
 | Webhook receipt           | provider webhook handler and reconciliation Workflow                          | receipt/process state; archive/cleanup intent where applicable                               | provider event uniqueness plus payload hash; R2 object key; processed-message and cleanup replay guards                 |
@@ -230,8 +231,10 @@ Required evidence for a new aggregate or a boundary change:
   subscription/customer skip, customer selections, then organization defaults for recurring and
   one-off snapshots. Wallet and wallet-transaction attach/skip state is retained for resource API
   compatibility but does not enter invoice precedence because the legacy paid-credit invoice path
-  does not supply those resources to section application. Multi-billing-entity routing,
-  system-generated sections, recurring top-up-rule targets, and a broader operator UI remain
-  pending.
+  does not supply those resources to section application. Fixed interval recurring granted-credit
+  rules retain their own attach/skip state and use customer-local clipped anniversaries plus a
+  deterministic wallet/local-date transaction key. Paid, target, threshold, and payment-method
+  rule behavior remains guarded. Multi-billing-entity routing, system-generated sections, and a
+  broader operator UI remain pending.
 - Advanced tax providers, multi-provider payment behavior, refunds, and several document families
   remain explicitly unsupported or incomplete in the generated feature inventory.

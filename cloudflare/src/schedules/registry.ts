@@ -10,6 +10,8 @@ export type ScheduleExecutor =
   | "mark_invoices_overdue"
   | "refresh_draft_invoices"
   | "reconcile_provider_receipts"
+  | "terminate_recurring_wallet_rules"
+  | "top_up_recurring_wallets"
   | "terminate_ended_subscriptions";
 
 export type ScheduleParity = "implemented" | "partial" | "not_started";
@@ -170,14 +172,16 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     legacyJob: "Clock::TerminateRecurringTransactionRulesJob",
     cadence: hourly(50),
     owner: "wallet recurring transaction workflow",
-    parity: "not_started",
+    parity: "partial",
+    executor: "terminate_recurring_wallet_rules",
   },
   {
     key: "schedule:top_up_wallet_interval_credits",
     legacyJob: "Clock::CreateIntervalWalletTransactionsJob",
     cadence: hourly(55),
     owner: "wallet top-up workflow",
-    parity: "not_started",
+    parity: "partial",
+    executor: "top_up_recurring_wallets",
   },
   {
     key: "schedule:clean_webhooks",

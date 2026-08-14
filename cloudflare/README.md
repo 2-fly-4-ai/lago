@@ -159,7 +159,15 @@ Wallet create/update and granted wallet-transaction create accept the same
 the persisted `applied_invoice_custom_sections` without per-row queries. These are resource API
 selections only: Lago's current paid-credit invoice service does not pass wallet resources into
 invoice section application, so this port deliberately does not add them to invoice precedence.
-Recurring top-up-rule selections remain guarded with the unported recurring wallet engine.
+
+Wallet create/update also supports one active fixed, interval-triggered recurring granted-credit
+rule. Weekly, monthly, quarterly, semiannual, and yearly anniversaries use the customer's timezone,
+clip month-end/leap-day anchors like Lago, skip the wallet's creation day, and create at most one
+top-up per wallet/local date. Rule expiration and interval top-up retain Lago's hourly `:50` and
+`:55` schedule slots. Rule-level custom-section selections are persisted and serialized but do not
+enter invoice precedence. Paid credits, target/threshold rules, payment methods, and
+successful-payment requirements fail explicitly and remain behind the disabled payment/provider
+boundary.
 
 ## Safety defaults
 

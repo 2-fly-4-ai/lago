@@ -175,6 +175,10 @@ type CustomSectionResourceLink =
   | {
       table: "wallet_transactions_invoice_custom_sections";
       ownerColumn: "wallet_transaction_id";
+    }
+  | {
+      table: "recurring_transaction_rules_invoice_custom_sections";
+      ownerColumn: "recurring_transaction_rule_id";
     };
 
 export function resourceCustomSectionLinkStatements(

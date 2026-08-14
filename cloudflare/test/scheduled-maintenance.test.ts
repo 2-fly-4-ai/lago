@@ -14,6 +14,11 @@ import {
   LEGACY_SCHEDULES,
   scheduleInstanceId,
 } from "../src/schedules/registry";
+import {
+  expireRecurringWalletRules,
+  isRecurringDateDue,
+  topUpDueRecurringWallets,
+} from "../src/schedules/recurring-wallets";
 
 beforeEach(async () => {
   const now = "2026-08-14T00:00:00.000Z";
@@ -21,7 +26,14 @@ beforeEach(async () => {
     env.BILLING_DB.prepare(
       `DELETE FROM outbox_events WHERE aggregate_id IN
        ('invoice-overdue', 'invoice-future', 'invoice-draft-due', 'invoice-draft-future',
-        'coupon-expired', 'coupon-future', 'wallet-expired', 'wallet-future')`,
+        'coupon-expired', 'coupon-future', 'wallet-expired', 'wallet-future',
+        'rule-recurring-expired', 'rule-recurring-future')
+        OR aggregate_type = 'wallet_transaction'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM wallet_transactions
+       WHERE wallet_id IN
+       ('wallet-recurring-due', 'wallet-recurring-created-today', 'wallet-recurring-imported')`,
     ),
     env.BILLING_DB.prepare(
       "DELETE FROM outbound_webhook_deliveries WHERE webhook_endpoint_id = 'endpoint-schedule'",
@@ -39,7 +51,12 @@ beforeEach(async () => {
        ('invoice-overdue', 'invoice-future', 'invoice-draft-due', 'invoice-draft-future')`,
     ),
     env.BILLING_DB.prepare("DELETE FROM coupons WHERE id IN ('coupon-expired', 'coupon-future')"),
-    env.BILLING_DB.prepare("DELETE FROM wallets WHERE id IN ('wallet-expired', 'wallet-future')"),
+    env.BILLING_DB.prepare(
+      `DELETE FROM wallets WHERE id IN
+       ('wallet-expired', 'wallet-future', 'wallet-recurring-due',
+        'wallet-recurring-created-today', 'wallet-recurring-expired',
+        'wallet-recurring-imported')`,
+    ),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO organizations (id, external_id, name, created_at, updated_at)
        VALUES ('org-schedule', 'schedule-test', 'Schedule Test', ?, ?)`,
@@ -76,6 +93,8 @@ describe("legacy schedule ownership", () => {
       "schedule:terminate_coupons",
       "schedule:bill_ended_trial_subscriptions",
       "schedule:terminate_wallets",
+      "schedule:terminate_expired_wallet_transaction_rules",
+      "schedule:top_up_wallet_interval_credits",
       "schedule:clean_webhooks",
       "schedule:clean_inbound_webhooks",
       "schedule:retry_inbound_webhooks",
@@ -252,6 +271,174 @@ describe("scheduled ledger maintenance", () => {
       events: 2,
     });
   });
+
+  it("creates one local-anniversary granted top-up and replays by wallet/local date", async () => {
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        "UPDATE customers SET timezone = 'Pacific/Noumea' WHERE id = 'customer-schedule'",
+      ),
+      walletStatement(
+        "wallet-recurring-due",
+        "recurring-due",
+        "2027-12-31T00:00:00.000Z",
+        "2026-07-13T14:00:00.000Z",
+      ),
+      walletStatement(
+        "wallet-recurring-created-today",
+        "recurring-created-today",
+        "2027-12-31T00:00:00.000Z",
+        "2026-09-13T14:00:00.000Z",
+      ),
+      walletStatement(
+        "wallet-recurring-imported",
+        "recurring-imported",
+        "2027-12-31T00:00:00.000Z",
+        "2026-07-13T14:00:00.000Z",
+      ),
+      recurringRuleStatement(
+        "rule-recurring-due",
+        "wallet-recurring-due",
+        "monthly",
+        "2026-07-13T14:00:00.000Z",
+        null,
+      ),
+      recurringRuleStatement(
+        "rule-recurring-created-today",
+        "wallet-recurring-created-today",
+        "monthly",
+        "2026-09-13T14:00:00.000Z",
+        null,
+      ),
+      recurringRuleStatement(
+        "rule-recurring-imported",
+        "wallet-recurring-imported",
+        "monthly",
+        "2026-07-13T14:00:00.000Z",
+        null,
+      ),
+      legacyIntervalTransactionStatement(
+        "legacy-interval-imported",
+        "wallet-recurring-imported",
+        "rule-recurring-imported",
+        "2026-09-13T23:55:00.000Z",
+      ),
+    ]);
+    const triggeredAt = "2026-09-14T00:55:00.000Z";
+    await expect(topUpDueRecurringWallets(env, triggeredAt, "schedule-recurring")).resolves.toBe(1);
+    await expect(
+      topUpDueRecurringWallets(env, triggeredAt, "schedule-recurring-replay"),
+    ).resolves.toBe(0);
+
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT
+           (SELECT balance_minor FROM wallets WHERE id = 'wallet-recurring-due') AS balance,
+           (SELECT balance_minor FROM wallets
+              WHERE id = 'wallet-recurring-created-today') AS creation_day_balance,
+           (SELECT balance_minor FROM wallets
+              WHERE id = 'wallet-recurring-imported') AS imported_balance,
+           (SELECT source FROM wallet_transactions
+              WHERE wallet_id = 'wallet-recurring-due') AS source,
+           (SELECT name FROM wallet_transactions
+              WHERE wallet_id = 'wallet-recurring-due') AS transaction_name,
+           (SELECT metadata_json FROM wallet_transactions
+              WHERE wallet_id = 'wallet-recurring-due') AS metadata_json,
+           (SELECT COUNT(*) FROM wallet_transactions
+              WHERE wallet_id = 'wallet-recurring-due') AS transactions,
+           (SELECT COUNT(*) FROM outbox_events
+              WHERE event_type = 'wallet_transaction.created'
+                AND aggregate_type = 'wallet_transaction') AS events`,
+      ).first(),
+    ).resolves.toEqual({
+      balance: 300,
+      creation_day_balance: 100,
+      events: 1,
+      imported_balance: 100,
+      metadata_json: '[{"key":"origin","value":"recurring"}]',
+      source: "interval",
+      transaction_name: "Monthly grant",
+      transactions: 1,
+    });
+  });
+
+  it("terminates expired recurring rules once and preserves future rules", async () => {
+    await env.BILLING_DB.batch([
+      walletStatement(
+        "wallet-recurring-expired",
+        "recurring-expired",
+        "2027-12-31T00:00:00.000Z",
+        "2026-07-01T00:00:00.000Z",
+      ),
+      recurringRuleStatement(
+        "rule-recurring-expired",
+        "wallet-recurring-expired",
+        "weekly",
+        null,
+        "2026-08-14T00:49:59.000Z",
+      ),
+    ]);
+    await expect(
+      expireRecurringWalletRules(env, "2026-08-14T00:50:00.000Z", "schedule-expire-rule"),
+    ).resolves.toBe(1);
+    await expect(
+      expireRecurringWalletRules(env, "2026-08-14T00:50:00.000Z", "schedule-expire-replay"),
+    ).resolves.toBe(0);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT status, version,
+                (SELECT COUNT(*) FROM outbox_events
+                 WHERE aggregate_id = recurring_transaction_rules.id) AS events
+         FROM recurring_transaction_rules WHERE id = 'rule-recurring-expired'`,
+      ).first(),
+    ).resolves.toEqual({ events: 1, status: "terminated", version: 2 });
+  });
+
+  it("matches Lago's clipped interval anniversaries", () => {
+    expect(
+      isRecurringDateDue(
+        "monthly",
+        { year: 2026, month: 1, day: 31 },
+        {
+          year: 2026,
+          month: 2,
+          day: 28,
+        },
+      ),
+    ).toBe(true);
+    expect(
+      isRecurringDateDue(
+        "yearly",
+        { year: 2024, month: 2, day: 29 },
+        {
+          year: 2026,
+          month: 2,
+          day: 28,
+        },
+      ),
+    ).toBe(true);
+    expect(
+      isRecurringDateDue(
+        "quarterly",
+        { year: 2026, month: 1, day: 15 },
+        {
+          year: 2026,
+          month: 3,
+          day: 15,
+        },
+      ),
+    ).toBe(false);
+    expect(
+      isRecurringDateDue(
+        "weekly",
+        { year: 2026, month: 8, day: 7 },
+        {
+          year: 2026,
+          month: 8,
+          day: 14,
+        },
+      ),
+    ).toBe(true);
+  });
 });
 
 function couponStatement(
@@ -317,6 +504,41 @@ function walletStatement(
      VALUES (?, 'org-schedule', 'customer-schedule', ?, ?, 'USD', 2, '1', 50, 100, 0,
              'active', ?, 1, ?, ?, ?, NULL)`,
   ).bind(id, code, code, expirationAt, `hash-${id}`, now, now);
+}
+
+function recurringRuleStatement(
+  id: string,
+  walletId: string,
+  interval: string,
+  startedAt: string | null,
+  expirationAt: string | null,
+): D1PreparedStatement {
+  const now = "2026-07-01T00:00:00.000Z";
+  return env.BILLING_DB.prepare(
+    `INSERT INTO recurring_transaction_rules
+     (id, organization_id, wallet_id, interval, method, trigger, paid_credits, granted_credits,
+      started_at, expiration_at, status, transaction_metadata_json, transaction_name,
+      invoice_requires_successful_payment, ignore_paid_top_up_limits,
+      skip_invoice_custom_sections, version, created_at, updated_at, terminated_at)
+     VALUES (?, 'org-schedule', ?, ?, 'fixed', 'interval', '0', '2', ?, ?, 'active',
+             '[{"key":"origin","value":"recurring"}]', 'Monthly grant', 0, 0, 0, 1, ?, ?, NULL)`,
+  ).bind(id, walletId, interval, startedAt, expirationAt, now, now);
+}
+
+function legacyIntervalTransactionStatement(
+  id: string,
+  walletId: string,
+  ruleId: string,
+  createdAt: string,
+): D1PreparedStatement {
+  return env.BILLING_DB.prepare(
+    `INSERT INTO wallet_transactions
+     (id, organization_id, wallet_id, transaction_type, transaction_status, status, source,
+      amount_minor, credit_amount, remaining_minor, priority, wallet_version, request_sha256,
+      settled_at, created_at, updated_at, recurring_transaction_rule_id)
+     VALUES (?, 'org-schedule', ?, 'inbound', 'granted', 'settled', 'interval', 25, '0.25',
+             25, 50, 1, 'legacy-import-hash', ?, ?, ?, ?)`,
+  ).bind(id, walletId, createdAt, createdAt, createdAt, ruleId);
 }
 
 function webhookEndpointStatement(now: string): D1PreparedStatement {

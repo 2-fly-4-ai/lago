@@ -12,6 +12,15 @@ import {
   serializeAppliedCustomSectionsForResources,
   type SerializedAppliedCustomSection,
 } from "../subscriptions/custom-sections";
+import {
+  activeRecurringRuleRows,
+  normalizeRecurringRule,
+  normalizeRecurringRuleList,
+  serializeRecurringRulesForWallets,
+  type NormalizedRecurringRule,
+  type RecurringRuleRow,
+  type SerializedRecurringRule,
+} from "../wallets/recurring-rules";
 
 type WalletRow = {
   id: string;
@@ -54,9 +63,28 @@ type WalletTransactionRow = {
   settled_at: string | null;
   failed_at: string | null;
   created_at: string;
+  metadata_json: string;
   skip_invoice_custom_sections: number;
   request_sha256: string;
 };
+
+type RecurringRuleMutation =
+  | { kind: "none" }
+  | { kind: "terminate" }
+  | {
+      kind: "create";
+      rule: NormalizedRecurringRule;
+      ruleId: string;
+      sectionIds: string[];
+    }
+  | {
+      kind: "update";
+      current: RecurringRuleRow;
+      rule: NormalizedRecurringRule;
+      replaceSections: boolean;
+      sectionIds: string[];
+      skipSections: boolean;
+    };
 
 export async function handleWalletLedgerRequest(
   request: Request,
@@ -108,7 +136,9 @@ async function createWallet(
 ): Promise<Response> {
   const input = objectAt(await parseJsonObject(request), "wallet");
   rejectUnsupported(input);
+  const requestedAt = new Date().toISOString();
   const customSections = normalizeSubscriptionCustomSections(input.invoice_custom_section);
+  const recurringRuleInputs = normalizeRecurringRuleList(input.recurring_transaction_rules);
   const externalCustomerId = requiredString(input, "external_customer_id");
   const customer = await env.BILLING_DB.prepare(
     "SELECT id, currency FROM customers WHERE organization_id = ? AND external_id = ? LIMIT 1",
@@ -134,10 +164,22 @@ async function createWallet(
     input.granted_credits === undefined
       ? null
       : nonNegativeDecimal(input.granted_credits, "granted_credits");
+  const recurringRule =
+    recurringRuleInputs?.[0] === undefined
+      ? null
+      : normalizeRecurringRule(recurringRuleInputs[0], {
+          fallbackGrantedCredits: grantedCredits,
+          now: requestedAt,
+        });
   const customSectionIds = await resolveCustomSectionIds(
     env.BILLING_DB,
     auth.organizationId,
     customSections?.codes,
+  );
+  const recurringRuleSectionIds = await resolveCustomSectionIds(
+    env.BILLING_DB,
+    auth.organizationId,
+    recurringRule?.customSections?.codes,
   );
   const normalized = {
     code,
@@ -151,6 +193,9 @@ async function createWallet(
     invoiceCustomSection: customSections
       ? { skip: customSections.skip === true, sectionIds: customSectionIds ?? null }
       : null,
+    recurringTransactionRule: recurringRule
+      ? canonicalRecurringRule(recurringRule, recurringRuleSectionIds)
+      : null,
   };
   const requestHash = await sha256Hex(stableJson(normalized));
   const existing = await findActiveWalletByCode(env.BILLING_DB, customer.id, code);
@@ -159,7 +204,7 @@ async function createWallet(
       throw new ApiError(422, "value_already_exist", "Active wallet code already exists");
     return json({ wallet: await serializeWallet(env.BILLING_DB, existing) }, { requestId });
   }
-  const now = new Date().toISOString();
+  const now = requestedAt;
   const id = crypto.randomUUID();
   const exponent = currencyExponent(currency);
   const initialMinor = grantedCredits ? creditsToMinor(grantedCredits, rateAmount, exponent) : 0;
@@ -199,6 +244,31 @@ async function createWallet(
       false,
     ),
   );
+  if (recurringRule) {
+    const recurringRuleId = await deterministicUuid("wallet-recurring-rule", id);
+    statements.push(
+      recurringRuleInsertStatement(
+        env.BILLING_DB,
+        auth.organizationId,
+        id,
+        recurringRuleId,
+        recurringRule,
+        now,
+      ),
+      ...resourceCustomSectionLinkStatements(
+        env.BILLING_DB,
+        {
+          table: "recurring_transaction_rules_invoice_custom_sections",
+          ownerColumn: "recurring_transaction_rule_id",
+        },
+        auth.organizationId,
+        recurringRuleId,
+        recurringRuleSectionIds,
+        now,
+        false,
+      ),
+    );
+  }
   let initialTransactionEvent: DomainEvent | null = null;
   if (grantedCredits && initialMinor > 0) {
     const initialTransactionId = await deterministicUuid("wallet-inbound", `${id}:initial`);
@@ -215,6 +285,7 @@ async function createWallet(
         now,
         idempotencyKey: `wallet-initial:${id}`,
         name: optionalString(input, "transaction_name"),
+        metadataJson: "[]",
         skipInvoiceCustomSections: false,
       }),
     );
@@ -358,6 +429,7 @@ async function createTransaction(
         now,
         idempotencyKey,
         name: optionalString(input, "name"),
+        metadataJson: "[]",
         skipInvoiceCustomSections: customSections?.skip === true,
       }),
       ...resourceCustomSectionLinkStatements(
@@ -469,7 +541,9 @@ async function updateWallet(
   if (!wallet || wallet.status !== "active")
     throw new ApiError(404, "wallet_not_found", "Active wallet was not found");
   const input = objectAt(await parseJsonObject(request), "wallet");
-  const unsupported = Object.keys(input).find((field) => field !== "invoice_custom_section");
+  const unsupported = Object.keys(input).find(
+    (field) => field !== "invoice_custom_section" && field !== "recurring_transaction_rules",
+  );
   if (unsupported)
     throw new ApiError(
       422,
@@ -477,30 +551,105 @@ async function updateWallet(
       `${unsupported} is not implemented for Cloudflare wallet updates`,
     );
   const customSections = normalizeSubscriptionCustomSections(input.invoice_custom_section);
-  if (!customSections)
-    throw new ApiError(422, "validation_error", "invoice_custom_section is required");
+  const recurringRuleInputs = normalizeRecurringRuleList(input.recurring_transaction_rules);
+  if (!customSections && recurringRuleInputs === undefined)
+    throw new ApiError(
+      422,
+      "validation_error",
+      "invoice_custom_section or recurring_transaction_rules is required",
+    );
   const resolvedIds = await resolveCustomSectionIds(
     env.BILLING_DB,
     auth.organizationId,
-    customSections.codes,
+    customSections?.codes,
   );
   const currentlySkipped = wallet.skip_invoice_custom_sections === 1;
   const nextSkipped =
-    customSections.skip === true ? true : customSections.skip === false ? false : currentlySkipped;
+    customSections?.skip === true
+      ? true
+      : customSections?.skip === false
+        ? false
+        : currentlySkipped;
   const replaceSections =
-    customSections.skip === true ||
-    (customSections.codes !== undefined && (!currentlySkipped || customSections.skip === false));
-  const nextSectionIds = customSections.skip === true ? [] : (resolvedIds ?? []);
+    customSections?.skip === true ||
+    (customSections?.codes !== undefined && (!currentlySkipped || customSections.skip === false));
+  const nextSectionIds = customSections?.skip === true ? [] : (resolvedIds ?? []);
   const currentSectionIds = replaceSections
     ? await selectedWalletCustomSectionIds(env.BILLING_DB, wallet.id)
     : [];
-  if (
-    currentlySkipped === nextSkipped &&
-    (!replaceSections || sameStringSets(currentSectionIds, nextSectionIds))
-  )
-    return json({ wallet: await serializeWallet(env.BILLING_DB, wallet) }, { requestId });
+  const walletSectionsChanged =
+    currentlySkipped !== nextSkipped ||
+    (replaceSections && !sameStringSets(currentSectionIds, nextSectionIds));
 
   const now = new Date().toISOString();
+  const currentRules =
+    recurringRuleInputs === undefined
+      ? []
+      : await activeRecurringRuleRows(env.BILLING_DB, auth.organizationId, wallet.id);
+  let recurringRuleMutation: RecurringRuleMutation = { kind: "none" };
+  if (recurringRuleInputs?.length === 0 && currentRules.length > 0) {
+    recurringRuleMutation = { kind: "terminate" };
+  } else if (recurringRuleInputs?.[0]) {
+    const requestedId =
+      typeof recurringRuleInputs[0].lago_id === "string"
+        ? recurringRuleInputs[0].lago_id.trim()
+        : null;
+    const current = requestedId
+      ? currentRules.find(
+          (rule) => rule.id === requestedId && (!rule.expiration_at || rule.expiration_at > now),
+        )
+      : undefined;
+    const rule = normalizeRecurringRule(recurringRuleInputs[0], {
+      fallbackGrantedCredits: null,
+      now,
+      current,
+    });
+    const ruleSectionIds = await resolveCustomSectionIds(
+      env.BILLING_DB,
+      auth.organizationId,
+      rule.customSections?.codes,
+    );
+    if (!current) {
+      recurringRuleMutation = {
+        kind: "create",
+        rule,
+        ruleId: crypto.randomUUID(),
+        sectionIds: rule.customSections?.skip === true ? [] : (ruleSectionIds ?? []),
+      };
+    } else {
+      const currentlyRuleSkipped = current.skip_invoice_custom_sections === 1;
+      const nextRuleSkipped =
+        rule.customSections?.skip === true
+          ? true
+          : rule.customSections?.skip === false
+            ? false
+            : currentlyRuleSkipped;
+      const replaceRuleSections =
+        rule.customSections?.skip === true ||
+        (rule.customSections?.codes !== undefined &&
+          (!currentlyRuleSkipped || rule.customSections.skip === false));
+      const nextRuleSectionIds = rule.customSections?.skip === true ? [] : (ruleSectionIds ?? []);
+      const currentRuleSectionIds = replaceRuleSections
+        ? await selectedRecurringRuleCustomSectionIds(env.BILLING_DB, current.id)
+        : [];
+      const ruleFieldsChanged = !sameRecurringRule(current, rule, nextRuleSkipped);
+      const ruleSectionsChanged =
+        replaceRuleSections && !sameStringSets(currentRuleSectionIds, nextRuleSectionIds);
+      if (ruleFieldsChanged || ruleSectionsChanged) {
+        recurringRuleMutation = {
+          kind: "update",
+          current,
+          rule,
+          replaceSections: replaceRuleSections,
+          sectionIds: nextRuleSectionIds,
+          skipSections: nextRuleSkipped,
+        };
+      }
+    }
+  }
+  if (!walletSectionsChanged && recurringRuleMutation.kind === "none")
+    return json({ wallet: await serializeWallet(env.BILLING_DB, wallet) }, { requestId });
+
   const nextVersion = wallet.version + 1;
   const event = walletEvent(
     "wallet.updated",
@@ -513,6 +662,7 @@ async function updateWallet(
       customerId: wallet.customer_id,
       skipInvoiceCustomSections: nextSkipped,
       invoiceCustomSectionIds: replaceSections ? nextSectionIds : undefined,
+      recurringTransactionRuleMutation: recurringRuleMutation.kind,
     },
   );
   const statements: D1PreparedStatement[] = [
@@ -551,6 +701,16 @@ async function updateWallet(
       );
     }
   }
+  statements.push(
+    ...recurringRuleMutationStatements(
+      env.BILLING_DB,
+      auth.organizationId,
+      wallet,
+      recurringRuleMutation,
+      nextVersion,
+      now,
+    ),
+  );
   const outboxIndex = statements.length;
   statements.push(
     conditionalWalletOutboxStatement(env.BILLING_DB, auth.organizationId, event, nextVersion, now),
@@ -647,7 +807,7 @@ function transactionSelect() {
   return `SELECT wt.id, wt.wallet_id, wt.invoice_id, wt.voided_invoice_id,
     wt.transaction_type, wt.transaction_status, wt.status, wt.source, wt.amount_minor,
     wt.credit_amount, wt.remaining_minor, wt.priority, wt.name, wt.settled_at,
-    wt.failed_at, wt.created_at, wt.skip_invoice_custom_sections, wt.request_sha256,
+    wt.failed_at, wt.created_at, wt.metadata_json, wt.skip_invoice_custom_sections, wt.request_sha256,
     w.rate_amount, w.currency_exponent
     FROM wallet_transactions wt JOIN wallets w ON w.id = wt.wallet_id`;
 }
@@ -675,6 +835,240 @@ async function selectedWalletCustomSectionIds(database: D1Database, walletId: st
     .bind(walletId)
     .all<{ invoice_custom_section_id: string }>();
   return rows.results.map((row) => row.invoice_custom_section_id);
+}
+
+async function selectedRecurringRuleCustomSectionIds(database: D1Database, ruleId: string) {
+  const rows = await database
+    .prepare(
+      `SELECT invoice_custom_section_id
+       FROM recurring_transaction_rules_invoice_custom_sections
+       WHERE recurring_transaction_rule_id = ? ORDER BY invoice_custom_section_id`,
+    )
+    .bind(ruleId)
+    .all<{ invoice_custom_section_id: string }>();
+  return rows.results.map((row) => row.invoice_custom_section_id);
+}
+
+function canonicalRecurringRule(rule: NormalizedRecurringRule, sectionIds: string[] | undefined) {
+  return {
+    interval: rule.interval,
+    grantedCredits: rule.grantedCredits,
+    startedAt: rule.startedAt,
+    expirationAt: rule.expirationAt,
+    transactionMetadata: rule.transactionMetadata,
+    transactionName: rule.transactionName,
+    invoiceCustomSection: rule.customSections
+      ? { skip: rule.customSections.skip === true, sectionIds: sectionIds ?? null }
+      : null,
+  };
+}
+
+function recurringRuleInsertStatement(
+  database: D1Database,
+  organizationId: string,
+  walletId: string,
+  ruleId: string,
+  rule: NormalizedRecurringRule,
+  now: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO recurring_transaction_rules
+       (id, organization_id, wallet_id, interval, method, trigger, paid_credits, granted_credits,
+        started_at, expiration_at, status, transaction_metadata_json, transaction_name,
+        invoice_requires_successful_payment, ignore_paid_top_up_limits,
+        skip_invoice_custom_sections, version, created_at, updated_at, terminated_at)
+       VALUES (?, ?, ?, ?, 'fixed', 'interval', '0', ?, ?, ?, 'active', ?, ?, 0, 0, ?, 1, ?, ?, NULL)`,
+    )
+    .bind(
+      ruleId,
+      organizationId,
+      walletId,
+      rule.interval,
+      rule.grantedCredits,
+      rule.startedAt,
+      rule.expirationAt,
+      stableJson(rule.transactionMetadata),
+      rule.transactionName,
+      rule.customSections?.skip === true ? 1 : 0,
+      now,
+      now,
+    );
+}
+
+function recurringRuleMutationStatements(
+  database: D1Database,
+  organizationId: string,
+  wallet: WalletRow,
+  mutation: RecurringRuleMutation,
+  nextWalletVersion: number,
+  now: string,
+): D1PreparedStatement[] {
+  if (mutation.kind === "none") return [];
+  const walletGuard = `EXISTS (
+    SELECT 1 FROM wallets WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?
+  )`;
+  const statements: D1PreparedStatement[] = [];
+  if (mutation.kind === "terminate" || mutation.kind === "create") {
+    statements.push(
+      database
+        .prepare(
+          `UPDATE recurring_transaction_rules
+           SET status = 'terminated', terminated_at = COALESCE(terminated_at, ?),
+               updated_at = ?, version = version + 1
+           WHERE wallet_id = ? AND organization_id = ? AND status = 'active'
+             AND ${walletGuard}`,
+        )
+        .bind(
+          now,
+          now,
+          wallet.id,
+          organizationId,
+          wallet.id,
+          organizationId,
+          nextWalletVersion,
+          now,
+        ),
+    );
+  }
+  if (mutation.kind === "create") {
+    const rule = mutation.rule;
+    statements.push(
+      database
+        .prepare(
+          `INSERT INTO recurring_transaction_rules
+           (id, organization_id, wallet_id, interval, method, trigger, paid_credits,
+            granted_credits, started_at, expiration_at, status, transaction_metadata_json,
+            transaction_name, invoice_requires_successful_payment, ignore_paid_top_up_limits,
+            skip_invoice_custom_sections, version, created_at, updated_at, terminated_at)
+           SELECT ?, ?, ?, ?, 'fixed', 'interval', '0', ?, ?, ?, 'active', ?, ?, 0, 0, ?, 1,
+                  ?, ?, NULL
+           FROM wallets WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
+        )
+        .bind(
+          mutation.ruleId,
+          organizationId,
+          wallet.id,
+          rule.interval,
+          rule.grantedCredits,
+          rule.startedAt,
+          rule.expirationAt,
+          stableJson(rule.transactionMetadata),
+          rule.transactionName,
+          rule.customSections?.skip === true ? 1 : 0,
+          now,
+          now,
+          wallet.id,
+          organizationId,
+          nextWalletVersion,
+          now,
+        ),
+    );
+    for (const sectionId of mutation.sectionIds) {
+      statements.push(
+        database
+          .prepare(
+            `INSERT OR IGNORE INTO recurring_transaction_rules_invoice_custom_sections
+             (recurring_transaction_rule_id, invoice_custom_section_id, organization_id, created_at)
+             SELECT ?, ?, ?, ? FROM recurring_transaction_rules
+             WHERE id = ? AND organization_id = ? AND status = 'active'`,
+          )
+          .bind(mutation.ruleId, sectionId, organizationId, now, mutation.ruleId, organizationId),
+      );
+    }
+  }
+  if (mutation.kind === "update") {
+    const rule = mutation.rule;
+    const nextRuleVersion = mutation.current.version + 1;
+    statements.push(
+      database
+        .prepare(
+          `UPDATE recurring_transaction_rules
+           SET interval = ?, granted_credits = ?, started_at = ?, expiration_at = ?,
+               transaction_metadata_json = ?, transaction_name = ?,
+               skip_invoice_custom_sections = ?, version = version + 1, updated_at = ?
+           WHERE id = ? AND wallet_id = ? AND organization_id = ? AND status = 'active'
+             AND version = ? AND ${walletGuard}`,
+        )
+        .bind(
+          rule.interval,
+          rule.grantedCredits,
+          rule.startedAt,
+          rule.expirationAt,
+          stableJson(rule.transactionMetadata),
+          rule.transactionName,
+          mutation.skipSections ? 1 : 0,
+          now,
+          mutation.current.id,
+          wallet.id,
+          organizationId,
+          mutation.current.version,
+          wallet.id,
+          organizationId,
+          nextWalletVersion,
+          now,
+        ),
+    );
+    if (mutation.replaceSections) {
+      statements.push(
+        database
+          .prepare(
+            `DELETE FROM recurring_transaction_rules_invoice_custom_sections
+             WHERE recurring_transaction_rule_id = ? AND organization_id = ?
+               AND EXISTS (
+                 SELECT 1 FROM recurring_transaction_rules
+                 WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?
+               )`,
+          )
+          .bind(
+            mutation.current.id,
+            organizationId,
+            mutation.current.id,
+            organizationId,
+            nextRuleVersion,
+            now,
+          ),
+      );
+      for (const sectionId of mutation.sectionIds) {
+        statements.push(
+          database
+            .prepare(
+              `INSERT OR IGNORE INTO recurring_transaction_rules_invoice_custom_sections
+               (recurring_transaction_rule_id, invoice_custom_section_id, organization_id, created_at)
+               SELECT ?, ?, ?, ? FROM recurring_transaction_rules
+               WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
+            )
+            .bind(
+              mutation.current.id,
+              sectionId,
+              organizationId,
+              now,
+              mutation.current.id,
+              organizationId,
+              nextRuleVersion,
+              now,
+            ),
+        );
+      }
+    }
+  }
+  return statements;
+}
+
+function sameRecurringRule(
+  current: RecurringRuleRow,
+  next: NormalizedRecurringRule,
+  skipSections: boolean,
+) {
+  return (
+    current.interval === next.interval &&
+    current.granted_credits === next.grantedCredits &&
+    current.started_at === next.startedAt &&
+    current.expiration_at === next.expirationAt &&
+    current.transaction_metadata_json === stableJson(next.transactionMetadata) &&
+    current.transaction_name === next.transactionName &&
+    (current.skip_invoice_custom_sections === 1) === skipSections
+  );
 }
 
 function sameStringSets(left: string[], right: string[]) {
@@ -714,6 +1108,7 @@ function inboundStatement(
     now: string;
     idempotencyKey: string;
     name: string | null;
+    metadataJson: string;
     skipInvoiceCustomSections: boolean;
   },
 ) {
@@ -722,8 +1117,9 @@ function inboundStatement(
       `INSERT INTO wallet_transactions
        (id, organization_id, wallet_id, transaction_type, transaction_status, status, source,
         amount_minor, credit_amount, remaining_minor, priority, wallet_version, idempotency_key,
-        request_sha256, name, settled_at, created_at, updated_at, skip_invoice_custom_sections)
-       VALUES (?, ?, ?, 'inbound', 'granted', 'settled', 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        request_sha256, name, settled_at, created_at, updated_at, skip_invoice_custom_sections,
+        metadata_json)
+       VALUES (?, ?, ?, 'inbound', 'granted', 'settled', 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       value.id,
@@ -741,6 +1137,7 @@ function inboundStatement(
       value.now,
       value.now,
       value.skipInvoiceCustomSections ? 1 : 0,
+      value.metadataJson,
     );
 }
 
@@ -750,15 +1147,25 @@ async function serializeWallet(database: D1Database, row: WalletRow) {
 }
 
 async function serializeWallets(database: D1Database, rows: WalletRow[]) {
-  const sections = await serializeAppliedCustomSectionsForResources(
-    database,
-    { table: "wallets_invoice_custom_sections", ownerColumn: "wallet_id" },
-    rows.map((row) => row.id),
+  const walletIds = rows.map((row) => row.id);
+  const [sections, recurringRules] = await Promise.all([
+    serializeAppliedCustomSectionsForResources(
+      database,
+      { table: "wallets_invoice_custom_sections", ownerColumn: "wallet_id" },
+      walletIds,
+    ),
+    serializeRecurringRulesForWallets(database, walletIds),
+  ]);
+  return rows.map((row) =>
+    serializeWalletRow(row, sections.get(row.id) ?? [], recurringRules.get(row.id) ?? []),
   );
-  return rows.map((row) => serializeWalletRow(row, sections.get(row.id) ?? []));
 }
 
-function serializeWalletRow(row: WalletRow, sections: SerializedAppliedCustomSection[]) {
+function serializeWalletRow(
+  row: WalletRow,
+  sections: SerializedAppliedCustomSection[],
+  recurringRules: SerializedRecurringRule[],
+) {
   const credits = minorToCredits(row.balance_minor, row.rate_amount, row.currency_exponent);
   return {
     lago_id: row.id,
@@ -783,7 +1190,7 @@ function serializeWalletRow(row: WalletRow, sections: SerializedAppliedCustomSec
     invoice_requires_successful_payment: false,
     paid_top_up_min_amount_cents: null,
     paid_top_up_max_amount_cents: null,
-    recurring_transaction_rules: [],
+    recurring_transaction_rules: recurringRules,
     applied_invoice_custom_sections: sections,
     applies_to: { fee_types: [], billable_metric_codes: [] },
     payment_method: { payment_method_id: null, payment_method_type: null },
@@ -835,7 +1242,7 @@ function serializeTransactionRow(
     failed_at: row.failed_at,
     created_at: row.created_at,
     invoice_requires_successful_payment: false,
-    metadata: [],
+    metadata: parseJsonArray(row.metadata_json),
     name: row.name,
     applied_invoice_custom_sections: sections,
     payment_method: { payment_method_id: null, payment_method_type: null },
@@ -917,6 +1324,14 @@ function currencyExponent(currency: string) {
     return 0;
   return 2;
 }
+function parseJsonArray(value: string): unknown[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 function pagination(total: number) {
   return {
     current_page: total === 0 ? 0 : 1,
@@ -927,13 +1342,7 @@ function pagination(total: number) {
   };
 }
 function rejectUnsupported(input: Record<string, unknown>) {
-  for (const field of [
-    "paid_credits",
-    "recurring_transaction_rules",
-    "applies_to",
-    "payment_method",
-    "metadata",
-  ])
+  for (const field of ["paid_credits", "applies_to", "payment_method", "metadata"])
     if (input[field] !== undefined && input[field] !== null)
       throw new ApiError(
         422,

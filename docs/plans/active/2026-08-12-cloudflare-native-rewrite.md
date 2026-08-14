@@ -308,8 +308,11 @@ Acceptance:
       later invoices, and auditable unpaid-void recredit; provider refunds, invoice offsets,
       tax-adjusted notes, documents, email, and external reporting remain pending. Granted-credit wallets now support
       create/list/show/terminate, idempotent top-up, priority/lot-ordered initial and renewal
-      invoice consumption, and auditable unpaid-void recredit; paid/recurring/threshold top-ups and
-      targeted allocation remain pending.
+      invoice consumption, and auditable unpaid-void recredit. One fixed interval-triggered
+      recurring granted-credit rule per wallet now supports tenant-safe create/update/replace/
+      termination, customer-local clipped anniversaries, deterministic daily replay, metadata,
+      resource custom-section selection, and legacy `:50` expiration/`:55` top-up ownership;
+      paid/target/threshold rules and targeted allocation remain pending.
       Organization-default manual percentage taxes now support create/list/show/update/terminate,
       coupon-adjusted fee taxable bases, exact rounding, and immutable invoice/fee snapshots;
       customer/plan/charge targeting, external providers, exemptions, tax identifiers, and
@@ -396,8 +399,8 @@ Acceptance:
       implemented. The retained single-billing-entity subset now maps organization defaults and
       customer replace/skip behavior into one tenant-safe invoice precedence projection shared by
       recurring and one-off snapshots. Multi-billing-entity routing, provider-created
-      system-generated sections, recurring top-up-rule section targets, provider-specific method
-      IDs, backdated one-time plans, and threshold inputs remain explicit gaps. Wallet and granted
+      system-generated sections, provider-specific method IDs, backdated one-time plans, and
+      threshold inputs remain explicit gaps. Wallet and granted
       wallet-transaction resource selections are persisted and serialized for API compatibility;
       they deliberately do not enter invoice precedence because Lago's paid-credit invoice service
       does not pass those resources to section application.
@@ -435,11 +438,12 @@ Acceptance:
       All 27 legacy entries now have an exhaustive code-level ownership registry. A deterministic
       five-minute Cron dispatches a versioned Workflow instance and records due/unimplemented
       schedules in D1. The retained pending-subscription activation, recurring billing, draft
-      refresh, Authorize.Net receipt retry, coupon expiry, wallet expiry, and invoice-overdue paths
-      run on their legacy slots; the other entries remain explicitly `not_started` until their
-      underlying feature families are ported. The two daily webhook-retention schedules now enforce
-      Lago's 90-day boundary; inbound receipt deletion uses a transactional D1 cleanup queue so R2
-      failures remain replayable without orphaning payloads.
+      refresh, Authorize.Net receipt retry, coupon expiry, wallet expiry, recurring-rule expiry,
+      provider-free recurring granted-credit top-up, and invoice-overdue paths run on their legacy
+      slots; the other entries remain explicitly `not_started` until their underlying feature
+      families are ported. The two daily webhook-retention schedules now enforce Lago's 90-day
+      boundary; inbound receipt deletion uses a transactional D1 cleanup queue so R2 failures remain
+      replayable without orphaning payloads.
 - [x] Add outbox publication and dead-letter handling for the implemented payment events.
 - [x] Add outbound HMAC webhook signing, endpoint filters, idempotency, bounded retry, URL safety,
       and delivery audit state. Deployment remains disabled until a signing secret is separately
@@ -1475,3 +1479,20 @@ resource and mutation described.
   uses the existing isolated D1/R2/Queue/Durable Object/Workflow/Browser/Cron bindings, and adds no
   production route, domain, secret, provider action, customer data, or billing/catalog/wallet
   record.
+- 2026-08-15: Ported the provider-free recurring granted-credit wallet subset. Wallet create/update
+  now supports one active fixed interval rule with Lago-compatible in-place update, replacement,
+  empty-array termination, metadata, and attach/skip section serialization. The `:50` expiration
+  and `:55` top-up schedule owners evaluate weekly/monthly/quarterly/semiannual/yearly anniversaries
+  in the customer timezone, clip month-end and leap-day anchors, suppress creation-day top-ups, and
+  use a deterministic wallet/local-date key. Interval transactions retain the originating rule ID;
+  a D1 trigger requires that exact tenant/wallet rule to remain active and inside its time window.
+  Paid credits, target and threshold rules, payment methods, and successful-payment requirements
+  fail explicitly. Evidence covers canonical create replay, update/replacement/termination,
+  catalog cleanup, cross-tenant injection, outbox rollback, timezone replay, creation-day
+  suppression, expiration replay, and clipped anniversaries. All 138 tests across 28 files pass in
+  bounded Workers-runtime batches. All 38 migrations replay from an empty local D1 with no
+  foreign-key violations, one recurring-rule table, one rule-section table, six related guards,
+  transaction metadata, and the originating-rule reference. Formatting, strict lint, generated
+  inventory/types, TypeScript, and a 715.63 KiB (125.34 KiB gzip) dry-run bundle are green. This is
+  a local pre-deployment checkpoint; isolated remote D1 remains on migration `0037` and Worker
+  version `a0c0ab74-b4bc-4493-94af-b8128d0535f9`.

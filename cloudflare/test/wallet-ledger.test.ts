@@ -338,6 +338,260 @@ describe("granted wallet ledger", () => {
     });
   });
 
+  it("creates, replaces, serializes, and terminates a recurring granted-credit rule", async () => {
+    await createSection("recurring-terms", "Recurring terms");
+    const payload = {
+      wallet: {
+        external_customer_id: "customer-wallet-external",
+        code: "recurring-wallet",
+        currency: "USD",
+        rate_amount: "1",
+        recurring_transaction_rules: [
+          {
+            trigger: "interval",
+            interval: "monthly",
+            method: "fixed",
+            paid_credits: "0",
+            granted_credits: "2",
+            started_at: "2026-07-31T00:00:00.000Z",
+            expiration_at: "2027-07-31T00:00:00.000Z",
+            transaction_name: "Monthly grant",
+            transaction_metadata: [{ key: "origin", value: "recurring" }],
+            invoice_custom_section: {
+              invoice_custom_section_codes: ["unknown-is-ignored", "recurring-terms"],
+            },
+          },
+        ],
+      },
+    };
+    const created = await request("/api/v1/wallets", "POST", payload);
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{
+      wallet: {
+        lago_id: string;
+        recurring_transaction_rules: Array<{
+          lago_id: string;
+          applied_invoice_custom_sections: Array<{
+            invoice_custom_section: { code: string };
+          }>;
+        }>;
+      };
+    }>();
+    const walletId = createdBody.wallet.lago_id;
+    const ruleId = createdBody.wallet.recurring_transaction_rules[0]!.lago_id;
+    expect(createdBody.wallet.recurring_transaction_rules).toEqual([
+      expect.objectContaining({
+        lago_id: ruleId,
+        paid_credits: "0",
+        granted_credits: "2",
+        interval: "monthly",
+        method: "fixed",
+        trigger: "interval",
+        transaction_name: "Monthly grant",
+        transaction_metadata: [{ key: "origin", value: "recurring" }],
+        applied_invoice_custom_sections: [
+          expect.objectContaining({
+            invoice_custom_section: expect.objectContaining({ code: "recurring-terms" }),
+          }),
+        ],
+      }),
+    ]);
+    const replay = await request("/api/v1/wallets", "POST", {
+      wallet: {
+        ...payload.wallet,
+        recurring_transaction_rules: [
+          {
+            ...payload.wallet.recurring_transaction_rules[0],
+            invoice_custom_section: {
+              invoice_custom_section_codes: ["recurring-terms"],
+            },
+          },
+        ],
+      },
+    });
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({ wallet: { lago_id: walletId } });
+
+    const updated = await request(`/api/v1/wallets/${walletId}`, "PUT", {
+      wallet: {
+        recurring_transaction_rules: [
+          {
+            lago_id: ruleId,
+            interval: "quarterly",
+            granted_credits: "3",
+            invoice_custom_section: { skip_invoice_custom_sections: true },
+          },
+        ],
+      },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      wallet: {
+        recurring_transaction_rules: [
+          {
+            lago_id: ruleId,
+            granted_credits: "3",
+            interval: "quarterly",
+            applied_invoice_custom_sections: [],
+          },
+        ],
+      },
+    });
+
+    const replaced = await request(`/api/v1/wallets/${walletId}`, "PUT", {
+      wallet: {
+        recurring_transaction_rules: [
+          {
+            trigger: "interval",
+            interval: "weekly",
+            granted_credits: "4",
+            invoice_custom_section: {
+              invoice_custom_section_codes: ["recurring-terms"],
+            },
+          },
+        ],
+      },
+    });
+    expect(replaced.status).toBe(200);
+    const replacedBody = await replaced.json<{
+      wallet: { recurring_transaction_rules: Array<{ lago_id: string }> };
+    }>();
+    const replacementId = replacedBody.wallet.recurring_transaction_rules[0]!.lago_id;
+    expect(replacementId).not.toBe(ruleId);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT
+           (SELECT status FROM recurring_transaction_rules WHERE id = ?) AS prior_status,
+           (SELECT status FROM recurring_transaction_rules WHERE id = ?) AS replacement_status,
+           (SELECT COUNT(*) FROM recurring_transaction_rules
+              WHERE wallet_id = ? AND status = 'active') AS active_rules`,
+      )
+        .bind(ruleId, replacementId, walletId)
+        .first(),
+    ).resolves.toEqual({
+      active_rules: 1,
+      prior_status: "terminated",
+      replacement_status: "active",
+    });
+
+    expect(
+      (await request("/api/v1/invoice_custom_sections/recurring-terms", "DELETE")).status,
+    ).toBe(200);
+    await expect(
+      request(`/api/v1/wallets/${walletId}`).then((response) => response.json()),
+    ).resolves.toMatchObject({
+      wallet: { recurring_transaction_rules: [{ applied_invoice_custom_sections: [] }] },
+    });
+
+    const terminated = await request(`/api/v1/wallets/${walletId}`, "PUT", {
+      wallet: { recurring_transaction_rules: [] },
+    });
+    expect(terminated.status).toBe(200);
+    await expect(terminated.json()).resolves.toMatchObject({
+      wallet: { recurring_transaction_rules: [] },
+    });
+  });
+
+  it("rejects provider-funded and threshold recurring rules without creating a wallet", async () => {
+    for (const [code, recurringRule] of [
+      [
+        "recurring-paid",
+        { trigger: "interval", interval: "monthly", paid_credits: "1", granted_credits: "0" },
+      ],
+      [
+        "recurring-threshold",
+        { trigger: "threshold", threshold_credits: "1", granted_credits: "2" },
+      ],
+    ] as const) {
+      const response = await request("/api/v1/wallets", "POST", {
+        wallet: {
+          external_customer_id: "customer-wallet-external",
+          code,
+          currency: "USD",
+          rate_amount: "1",
+          recurring_transaction_rules: [recurringRule],
+        },
+      });
+      expect(response.status).toBe(422);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "unsupported_recurring_wallet_feature",
+      });
+    }
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total FROM wallets
+         WHERE code IN ('recurring-paid', 'recurring-threshold')`,
+      ).first(),
+    ).resolves.toEqual({ total: 0 });
+  });
+
+  it("replaces an elapsed rule and terminates its replacement with the wallet", async () => {
+    const created = await request("/api/v1/wallets", "POST", {
+      wallet: {
+        external_customer_id: "customer-wallet-external",
+        code: "elapsed-recurring-wallet",
+        currency: "USD",
+        rate_amount: "1",
+        recurring_transaction_rules: [
+          {
+            trigger: "interval",
+            interval: "monthly",
+            granted_credits: "1",
+            expiration_at: "2027-08-15T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+    const createdBody = await created.json<{
+      wallet: { lago_id: string; recurring_transaction_rules: Array<{ lago_id: string }> };
+    }>();
+    const walletId = createdBody.wallet.lago_id;
+    const elapsedRuleId = createdBody.wallet.recurring_transaction_rules[0]!.lago_id;
+    await env.BILLING_DB.prepare(
+      `UPDATE recurring_transaction_rules SET expiration_at = '2026-01-01T00:00:00.000Z'
+       WHERE id = ?`,
+    )
+      .bind(elapsedRuleId)
+      .run();
+
+    const replaced = await request(`/api/v1/wallets/${walletId}`, "PUT", {
+      wallet: {
+        recurring_transaction_rules: [
+          {
+            lago_id: elapsedRuleId,
+            trigger: "interval",
+            interval: "weekly",
+            granted_credits: "2",
+            expiration_at: "2027-09-15T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+    expect(replaced.status).toBe(200);
+    const replacementId = (
+      await replaced.json<{
+        wallet: { recurring_transaction_rules: Array<{ lago_id: string }> };
+      }>()
+    ).wallet.recurring_transaction_rules[0]!.lago_id;
+    expect(replacementId).not.toBe(elapsedRuleId);
+    expect((await request(`/api/v1/wallets/${walletId}`, "DELETE")).status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT
+           (SELECT status FROM recurring_transaction_rules WHERE id = ?) AS elapsed_status,
+           (SELECT status FROM recurring_transaction_rules WHERE id = ?) AS replacement_status,
+           (SELECT COUNT(*) FROM recurring_transaction_rules
+              WHERE wallet_id = ? AND status = 'active') AS active_rules`,
+      )
+        .bind(elapsedRuleId, replacementId, walletId)
+        .first(),
+    ).resolves.toEqual({
+      active_rules: 0,
+      elapsed_status: "terminated",
+      replacement_status: "terminated",
+    });
+  });
+
   it("rolls wallet selection updates back when their outbox write fails", async () => {
     await createSection("wallet-rollback", "Wallet rollback");
     const created = await request("/api/v1/wallets", "POST", {
@@ -349,9 +603,21 @@ describe("granted wallet ledger", () => {
         invoice_custom_section: {
           invoice_custom_section_codes: ["wallet-rollback"],
         },
+        recurring_transaction_rules: [
+          {
+            trigger: "interval",
+            interval: "monthly",
+            granted_credits: "1",
+            expiration_at: "2027-08-15T00:00:00.000Z",
+          },
+        ],
       },
     });
-    const walletId = (await created.json<{ wallet: { lago_id: string } }>()).wallet.lago_id;
+    const createdBody = await created.json<{
+      wallet: { lago_id: string; recurring_transaction_rules: Array<{ lago_id: string }> };
+    }>();
+    const walletId = createdBody.wallet.lago_id;
+    const ruleId = createdBody.wallet.recurring_transaction_rules[0]!.lago_id;
     await env.BILLING_DB.prepare(
       `CREATE TRIGGER fail_wallet_selection_outbox
        BEFORE INSERT ON outbox_events
@@ -362,7 +628,10 @@ describe("granted wallet ledger", () => {
     ).run();
     try {
       const failed = await request(`/api/v1/wallets/${walletId}`, "PUT", {
-        wallet: { invoice_custom_section: { skip_invoice_custom_sections: true } },
+        wallet: {
+          invoice_custom_section: { skip_invoice_custom_sections: true },
+          recurring_transaction_rules: [{ lago_id: ruleId, granted_credits: "2" }],
+        },
       });
       expect(failed.status).toBe(500);
     } finally {
@@ -379,12 +648,22 @@ describe("granted wallet ledger", () => {
       env.BILLING_DB.prepare(
         `SELECT version, skip_invoice_custom_sections,
                 (SELECT COUNT(*) FROM outbox_events
-                 WHERE aggregate_id = wallets.id AND event_type = 'wallet.updated') AS updates
+                 WHERE aggregate_id = wallets.id AND event_type = 'wallet.updated') AS updates,
+                (SELECT granted_credits FROM recurring_transaction_rules
+                 WHERE id = ?) AS recurring_granted_credits,
+                (SELECT version FROM recurring_transaction_rules
+                 WHERE id = ?) AS recurring_version
          FROM wallets WHERE id = ?`,
       )
-        .bind(walletId)
+        .bind(ruleId, ruleId, walletId)
         .first(),
-    ).resolves.toEqual({ version: 1, skip_invoice_custom_sections: 0, updates: 0 });
+    ).resolves.toEqual({
+      recurring_granted_credits: "1",
+      recurring_version: 1,
+      skip_invoice_custom_sections: 0,
+      updates: 0,
+      version: 1,
+    });
   });
 
   it("rejects paid and targeted wallet features explicitly", async () => {

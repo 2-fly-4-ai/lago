@@ -16,6 +16,10 @@ import {
   webhookRetentionCutoff,
 } from "../schedules/maintenance";
 import { dueLegacySchedules, scheduleInstanceId } from "../schedules/registry";
+import {
+  expireRecurringWalletRules,
+  topUpDueRecurringWallets,
+} from "../schedules/recurring-wallets";
 
 type ReconciliationParams = {
   schedule?: {
@@ -157,6 +161,22 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           )
         : 0;
 
+      const expiredRecurringWalletRules = executors.has("terminate_recurring_wallet_rules")
+        ? await step.do(
+            "terminate expired recurring wallet rules",
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => expireRecurringWalletRules(this.env, triggeredAtIso, runId),
+          )
+        : 0;
+
+      const recurringWalletTopUps = executors.has("top_up_recurring_wallets")
+        ? await step.do(
+            "top up recurring granted-credit wallets",
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => topUpDueRecurringWallets(this.env, triggeredAtIso, runId),
+          )
+        : 0;
+
       const overdueInvoices = executors.has("mark_invoices_overdue")
         ? await step.do(
             "mark invoices overdue",
@@ -220,6 +240,8 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         closedBillingPeriods,
         expiredCoupons,
         expiredWallets,
+        expiredRecurringWalletRules,
+        recurringWalletTopUps,
         overdueInvoices,
         finalizedInvoices,
         refreshedDraftInvoices,

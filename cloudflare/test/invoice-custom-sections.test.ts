@@ -595,6 +595,15 @@ describe("invoice custom sections", () => {
                  'wallet-sections-other', 'inbound', 'granted', 'settled', 'manual', 100, '1',
                  100, 50, 1, 'hash', ?, ?)`,
       ).bind("2026-08-13T00:00:00.000Z", "2026-08-13T00:00:00.000Z"),
+      env.BILLING_DB.prepare(
+        `INSERT INTO recurring_transaction_rules
+         (id, organization_id, wallet_id, interval, method, trigger, paid_credits,
+          granted_credits, status, transaction_metadata_json, invoice_requires_successful_payment,
+          ignore_paid_top_up_limits, skip_invoice_custom_sections, version, created_at, updated_at)
+         VALUES ('recurring-rule-sections-other', 'org-sections-other',
+                 'wallet-sections-other', 'monthly', 'fixed', 'interval', '0', '1', 'active',
+                 '[]', 0, 0, 0, 1, ?, ?)`,
+      ).bind("2026-08-13T00:00:00.000Z", "2026-08-13T00:00:00.000Z"),
     ]);
     await expect(
       env.BILLING_DB.prepare(
@@ -641,6 +650,15 @@ describe("invoice custom sections", () => {
         .bind(section.lago_id, "2026-08-13T00:00:00.000Z")
         .run(),
     ).rejects.toThrow("invalid_wallet_transaction_invoice_custom_section_tenant");
+    await expect(
+      env.BILLING_DB.prepare(
+        `INSERT INTO recurring_transaction_rules_invoice_custom_sections
+         (recurring_transaction_rule_id, invoice_custom_section_id, organization_id, created_at)
+         VALUES ('recurring-rule-sections-other', ?, 'org-sections-other', ?)`,
+      )
+        .bind(section.lago_id, "2026-08-13T00:00:00.000Z")
+        .run(),
+    ).rejects.toThrow("invalid_recurring_rule_invoice_custom_section_tenant");
     await expect(
       env.BILLING_DB.prepare(
         "SELECT COUNT(*) AS count FROM subscriptions_invoice_custom_sections WHERE subscription_id = 'subscription-sections-other'",
