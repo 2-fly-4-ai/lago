@@ -1118,3 +1118,12 @@ resource and mutation described.
   differs. All 85 tests pass across 22 files; formatting, strict lint, inventory, generated
   bindings, TypeScript, and the dry-run bundle are green at 516.31 KiB (92.03 KiB gzip). No
   migration is required.
+- 2026-08-14: The first read-only remote migration preflight returned Cloudflare authorization code
+  `7403`, and the chained command correctly prevented deployment. `wrangler whoami` then confirmed
+  the OAuth identity, SERP account, and D1 permission; a repeated preflight showed no pending
+  migrations and deployed termination commitments as isolated Worker version
+  `2e42da12-3232-45eb-a15a-2096f5baa26e`. Follow-up inventory remained empty; remote
+  health/readiness returned `200`, unauthenticated termination returned `401`, and aggregate-only
+  verification confirmed zero organizations, subscriptions, invoices, invoice lines, fixed
+  charges, and minimum commitments plus 46 Cron audits. No route, secret, seeded billing data, or
+  disabled external flag changed.

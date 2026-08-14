@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `8768d17b-b3f7-4ddd-9a70-ee6d0f4f2b9b`
+- Latest verified version: `2e42da12-3232-45eb-a15a-2096f5baa26e`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -187,6 +187,15 @@ Applied D1 migrations: `0001_foundation.sql` through
   organizations, subscriptions, invoices, invoice lines, fixed charges, and minimum commitments
   plus 44 Cron audits. All external-action flags remain disabled, with no route, secret, or billing
   data added.
+- The code-only in-arrears commitment termination deployment added an inclusive UTC-prorated
+  threshold for the catalog's unsplit final-invoice window, while pay-in-advance commitments remain
+  guarded before reservation. The first read-only migration preflight returned transient Cloudflare
+  authorization code `7403`, so the chained deployment did not run; `wrangler whoami` confirmed the
+  OAuth identity and SERP account, and the repeated preflight succeeded before deployment. Remote
+  health/readiness returned `200`/`200`, unauthenticated termination returned `401`, and no migration
+  was pending. Aggregate-only verification found zero organizations, subscriptions, invoices,
+  invoice lines, fixed charges, and minimum commitments plus 46 Cron audits. All external-action
+  flags remain disabled, with no route, secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
