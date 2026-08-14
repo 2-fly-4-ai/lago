@@ -20,6 +20,7 @@ import {
   preparePlanDeletion,
 } from "../billing/plan-deletion";
 import { createPayInAdvanceFixedChargeDeltaInvoice } from "../billing/pay-in-advance-fixed-charges";
+import { validatePayInAdvanceUsageConfiguration } from "../usage/pay-in-advance-validation";
 
 type PlanRow = {
   id: string;
@@ -2228,24 +2229,24 @@ async function normalizeCharges(
     const chargeModel = requiredString(input, "charge_model");
     const properties = optionalObject(input.properties, "properties");
     parseChargeModel(chargeModel, properties);
-    if (booleanInteger(input.pay_in_advance, false) === 1)
-      throw new ApiError(
-        422,
-        "unsupported_charge_feature",
-        "Pay-in-advance usage charges are not implemented",
-      );
-    if (booleanInteger(input.prorated, false) === 1)
-      throw new ApiError(
-        422,
-        "unsupported_charge_feature",
-        "Prorated usage charges are not implemented",
-      );
+    const invoiceable = booleanInteger(input.invoiceable, true);
+    const payInAdvance = booleanInteger(input.pay_in_advance, false);
+    const prorated = booleanInteger(input.prorated, false);
     const id = await deterministicUuid("charge", `${planId}:${code}`);
     const minAmountMinor =
       input.min_amount_cents === undefined
         ? 0
         : nonNegativeInteger(input.min_amount_cents, "min_amount_cents");
     const acceptsTargetWallet = booleanInteger(input.accepts_target_wallet, false);
+    validatePayInAdvanceUsageConfiguration({
+      payInAdvance,
+      prorated,
+      invoiceable,
+      minAmountMinor,
+      aggregationType: metric.aggregation_type,
+      chargeModel,
+      properties,
+    });
     const filters = await normalizeChargeFilters(
       input.filters,
       parseStoredBillableMetricFilters(metric.filters_json),
@@ -2259,9 +2260,9 @@ async function normalizeCharges(
       invoiceDisplayName: optionalString(input, "invoice_display_name"),
       chargeModel,
       properties,
-      invoiceable: booleanInteger(input.invoiceable, true),
-      payInAdvance: booleanInteger(input.pay_in_advance, false),
-      prorated: booleanInteger(input.prorated, false),
+      invoiceable,
+      payInAdvance,
+      prorated,
       minAmountMinor,
       acceptsTargetWallet,
       filters,

@@ -27,7 +27,8 @@ remaining Lago feature inventory is dispositioned and ported.
 - Plan catalog: idempotent creation and optimistic scalar updates with transactional versioned
   outbox events, including the base subscription’s pay-in-advance mode and non-negative trial
   period. Standalone usage charges support create/list/show, optimistic core updates, soft deletion,
-  and deterministic code reuse. Attached plans retain Lago's restricted mutable charge subset;
+  deterministic code reuse, and the supported invoiceable, non-prorated pay-in-advance timing
+  subset. Attached plans retain Lago's restricted mutable charge subset;
   every charge mutation invalidates affected drafts while finalized invoice lines remain immutable.
   Billable metrics expose the same active/version lifecycle: deletion atomically retires attached
   charges, invalidates drafts, hides retired usage and wallet targets immediately, and enqueues
@@ -151,6 +152,14 @@ remaining Lago feature inventory is dispositioned and ported.
   Recurring weighted-sum filters reconstruct an independent historical cumulative baseline for
   every filter/base partition across subscription generations. The same baseline map composes with
   target-wallet grouping, so weighted filter × wallet cells rate and allocate independently.
+  Invoiceable, non-prorated pay-in-advance charges create one finalized invoice per usage event and
+  charge for count, sum, or unique-count metrics. The event-triggered marginal calculation supports
+  standard, graduated, package, percentage, and graduated-percentage pricing; preserves filter and
+  target-wallet partitions; and uses the normal coupon, manual-tax, credit-note, wallet, invoice-
+  ownership, custom-section, and outbox paths. A D1 event/charge ledger makes Queue replay
+  idempotent, and the five-minute reconciliation owner repairs persisted events whose delivery was
+  missed. Non-invoiceable or prorated advance usage, volume pricing, custom aggregation, positive
+  minimums, and grouped pricing remain explicit unsupported boundaries.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,
@@ -158,7 +167,8 @@ remaining Lago feature inventory is dispositioned and ported.
   wallet top-up paths on their original slots, performs 90-day
   inbound/outbound webhook retention, records each run in D1, publishes the outbox, and reports due
   schedules whose behavior is not yet ported. Each run also drains retired billable-metric events
-  in bounded D1/R2 batches and repairs pending plan-deletion Workflow dispatches. Subscription-
+  in bounded D1/R2 batches, repairs pending pay-in-advance fixed and usage invoices, and repairs
+  pending plan-deletion Workflow dispatches. Subscription-
   bearing plan deletion has its own Workflow, durable D1 task/snapshot, bounded subscription and
   draft batches, and deterministic continuation handoff. Inbound and usage-event retention records
   R2 deletion tasks transactionally before removing or tombstoning source rows, so storage outages

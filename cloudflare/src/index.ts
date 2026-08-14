@@ -7,6 +7,7 @@ import { handleAuthorizeNetWebhook } from "./webhooks/authorize-net";
 import { reconcileAuthorizeNetReceipt } from "./reconciliation/authorize-net";
 import { deliverOutboundWebhooks } from "./webhooks/outbound";
 import { scheduleInstanceId } from "./schedules/registry";
+import { processPayInAdvanceUsageEvent } from "./billing/pay-in-advance-usage";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -115,6 +116,10 @@ export default {
       }
 
       try {
+        if (event.type === "usage_event.ingested") {
+          await processPayInAdvanceUsageEvent(env, event.aggregateId, event.correlationId);
+        }
+
         if (event.type === "authorize_net.webhook.received") {
           const outcome = await reconcileAuthorizeNetReceipt(env, event.aggregateId);
           if (outcome === "deferred") {

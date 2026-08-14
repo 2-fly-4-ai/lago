@@ -24,6 +24,7 @@ import {
 import { refreshWalletOngoingBalances } from "../schedules/wallet-balances";
 import { dispatchPendingPlanDeletions } from "../billing/plan-deletion";
 import { repairPendingPayInAdvanceFixedChargeInvoices } from "../billing/pay-in-advance-fixed-charges";
+import { repairPendingPayInAdvanceUsageInvoices } from "../billing/pay-in-advance-usage";
 
 type ReconciliationParams = {
   schedule?: {
@@ -79,6 +80,12 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         "repair advance fixed charge invoices",
         { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
         async () => repairPendingPayInAdvanceFixedChargeInvoices(this.env, triggeredAtIso, runId),
+      );
+
+      const repairedAdvanceUsageInvoices = await step.do(
+        "repair advance usage invoices",
+        { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+        async () => repairPendingPayInAdvanceUsageInvoices(this.env, triggeredAtIso, runId),
       );
 
       const terminatedSubscriptions = executors.has("terminate_ended_subscriptions")
@@ -265,6 +272,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         unimplementedSchedules: unimplementedScheduleKeys,
         activatedSubscriptions,
         repairedAdvanceFixedChargeInvoices,
+        repairedAdvanceUsageInvoices,
         terminatedSubscriptions,
         endedTrialSubscriptions,
         pendingReceipts: pendingReceiptIds.length,

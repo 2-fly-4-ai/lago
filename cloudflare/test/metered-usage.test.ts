@@ -1271,7 +1271,7 @@ describe("Lago-compatible metered usage", () => {
     ).resolves.toEqual({ artifacts: 0, event_deleted: 1, metric_tasks: 0 });
   });
 
-  it("rejects charge options the recurring invoice path cannot honor", async () => {
+  it("accepts supported advance usage while rejecting options no billing path can honor", async () => {
     const metricResponse = await api("/api/v1/billable_metrics", {
       method: "POST",
       body: {
@@ -1285,8 +1285,23 @@ describe("Lago-compatible metered usage", () => {
     });
     const metricId = (await metricResponse.json<{ billable_metric: { lago_id: string } }>())
       .billable_metric.lago_id;
+    const advance = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metricId,
+          code: "guarded-advance",
+          charge_model: "standard",
+          properties: { amount: "10" },
+          pay_in_advance: true,
+        },
+      },
+    });
+    expect(advance.status).toBe(200);
+    await expect(advance.json()).resolves.toMatchObject({
+      charge: { code: "guarded-advance", pay_in_advance: true },
+    });
     for (const [suffix, unsupported] of [
-      ["advance", { pay_in_advance: true }],
       ["prorated", { prorated: true }],
       ["filters", { filters: [{ properties: {}, values: {} }] }],
       ["tax", { tax_codes: ["vat"] }],

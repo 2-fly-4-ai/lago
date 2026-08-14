@@ -29,6 +29,7 @@ import {
   validateUsageExpression,
 } from "../usage/expression";
 import { billingPeriodDurationDays, type BillingTime } from "../billing/periods";
+import { validatePayInAdvanceUsageConfiguration } from "../usage/pay-in-advance-validation";
 
 type MetricRow = {
   id: string;
@@ -114,6 +115,8 @@ type NormalizedCatalogChargeMutation = {
   chargeModel: string;
   properties: Record<string, unknown>;
   invoiceable: number;
+  payInAdvance: number;
+  prorated: number;
   minAmountMinor: number;
   acceptsTargetWallet: number;
 };
@@ -124,6 +127,8 @@ type PreparedChargeCascadeUpdate = {
   version: number;
   propertiesJson: string;
   filtersJson: string;
+  payInAdvance: number;
+  prorated: number;
 };
 
 type PreparedChargeCascade = {
@@ -144,6 +149,8 @@ type PreparedChargeCascadeCreate = {
   propertiesJson: string;
   filtersJson: string;
   invoiceable: number;
+  payInAdvance: number;
+  prorated: number;
   minAmountMinor: number;
   acceptsTargetWallet: number;
 };
@@ -784,18 +791,8 @@ async function createCharge(
   }
   const properties = optionalObject(input.properties, "properties");
   parseChargeModel(chargeModel, properties);
-  if (booleanInteger(input.pay_in_advance, false) === 1)
-    throw new ApiError(
-      422,
-      "unsupported_charge_feature",
-      "Pay-in-advance usage charges are not implemented",
-    );
-  if (booleanInteger(input.prorated, false) === 1)
-    throw new ApiError(
-      422,
-      "unsupported_charge_feature",
-      "Prorated usage charges are not implemented",
-    );
+  const payInAdvance = booleanInteger(input.pay_in_advance, false);
+  const prorated = booleanInteger(input.prorated, false);
 
   const plan = await database
     .prepare(
@@ -819,9 +816,20 @@ async function createCharge(
   const normalized = {
     invoiceDisplayName: optionalString(input, "invoice_display_name"),
     invoiceable: booleanInteger(input.invoiceable, true),
+    payInAdvance,
+    prorated,
     minAmountMinor: optionalNonNegativeInteger(input.min_amount_cents, 0),
     acceptsTargetWallet: booleanInteger(input.accepts_target_wallet, false),
   };
+  validatePayInAdvanceUsageConfiguration({
+    payInAdvance: normalized.payInAdvance,
+    prorated: normalized.prorated,
+    invoiceable: normalized.invoiceable,
+    minAmountMinor: normalized.minAmountMinor,
+    aggregationType: metric.aggregation_type,
+    chargeModel,
+    properties,
+  });
   const existing = await findCatalogCharge(database, plan.id, code);
   if (existing) {
     const filters = await normalizeChargeFilters(
@@ -852,6 +860,8 @@ async function createCharge(
         properties,
         filters,
         invoiceable: normalized.invoiceable,
+        payInAdvance: normalized.payInAdvance,
+        prorated: normalized.prorated,
         minAmountMinor: normalized.minAmountMinor,
         acceptsTargetWallet: normalized.acceptsTargetWallet,
       })
@@ -918,8 +928,8 @@ async function createCharge(
           stableJson(properties),
           stableJson(filters),
           normalized.invoiceable,
-          0,
-          0,
+          normalized.payInAdvance,
+          normalized.prorated,
           normalized.minAmountMinor,
           normalized.acceptsTargetWallet,
           now,
@@ -946,7 +956,9 @@ async function createCharge(
                   json_extract(row.value, '$.chargeModel'),
                   json_extract(row.value, '$.propertiesJson'),
                   json_extract(row.value, '$.filtersJson'),
-                  json_extract(row.value, '$.invoiceable'), 0, 0,
+                  json_extract(row.value, '$.invoiceable'),
+                  json_extract(row.value, '$.payInAdvance'),
+                  json_extract(row.value, '$.prorated'),
                   json_extract(row.value, '$.minAmountMinor'),
                   json_extract(row.value, '$.acceptsTargetWallet'), 1, 1, ?, ?
            FROM json_each(?) row
@@ -1011,18 +1023,6 @@ async function updateCharge(
   const input = objectAt(await parseJsonObject(request), "charge");
   rejectUnsupportedChargeInput(input);
   const cascade = cascadeRequested(input);
-  if (booleanInteger(input.pay_in_advance, charge.pay_in_advance === 1) === 1)
-    throw new ApiError(
-      422,
-      "unsupported_charge_feature",
-      "Pay-in-advance usage charges are not implemented",
-    );
-  if (booleanInteger(input.prorated, charge.prorated === 1) === 1)
-    throw new ApiError(
-      422,
-      "unsupported_charge_feature",
-      "Prorated usage charges are not implemented",
-    );
 
   const attached = await database
     .prepare("SELECT id FROM subscriptions WHERE plan_id = ? LIMIT 1")
@@ -1062,6 +1062,14 @@ async function updateCharge(
       attached || input.invoiceable === undefined
         ? charge.invoiceable
         : booleanInteger(input.invoiceable, charge.invoiceable === 1),
+    payInAdvance:
+      attached || input.pay_in_advance === undefined
+        ? charge.pay_in_advance
+        : booleanInteger(input.pay_in_advance, charge.pay_in_advance === 1),
+    prorated:
+      attached || input.prorated === undefined
+        ? charge.prorated
+        : booleanInteger(input.prorated, charge.prorated === 1),
     minAmountMinor:
       attached || input.min_amount_cents === undefined
         ? charge.min_amount_minor
@@ -1080,6 +1088,15 @@ async function updateCharge(
     .first<{ id: string; aggregation_type: string; filters_json: string }>();
   if (!metric)
     throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
+  validatePayInAdvanceUsageConfiguration({
+    payInAdvance: next.payInAdvance,
+    prorated: next.prorated,
+    invoiceable: next.invoiceable,
+    minAmountMinor: next.minAmountMinor,
+    aggregationType: metric.aggregation_type,
+    chargeModel: next.chargeModel,
+    properties: next.properties,
+  });
   const nextFilters =
     input.filters === undefined
       ? parseStoredChargeFilters(
@@ -1147,8 +1164,9 @@ async function updateCharge(
       database
         .prepare(
           `UPDATE charges SET billable_metric_id = ?, code = ?, invoice_display_name = ?,
-           charge_model = ?, properties_json = ?, filters_json = ?, invoiceable = ?, min_amount_minor = ?,
-           accepts_target_wallet = ?, version = version + 1, updated_at = ?
+           charge_model = ?, properties_json = ?, filters_json = ?, invoiceable = ?,
+           pay_in_advance = ?, prorated = ?, min_amount_minor = ?, accepts_target_wallet = ?,
+           version = version + 1, updated_at = ?
            WHERE id = ? AND organization_id = ? AND plan_id = ? AND active = 1 AND version = ?
              AND (
                ? = 0 OR (
@@ -1179,6 +1197,8 @@ async function updateCharge(
           stableJson(next.properties),
           stableJson(nextFilters),
           next.invoiceable,
+          next.payInAdvance,
+          next.prorated,
           next.minAmountMinor,
           next.acceptsTargetWallet,
           now,
@@ -1212,6 +1232,16 @@ async function updateCharge(
                  FROM json_each(?) update_row
                  WHERE json_extract(update_row.value, '$.id') = child.id
                ),
+               pay_in_advance = (
+                 SELECT json_extract(update_row.value, '$.payInAdvance')
+                 FROM json_each(?) update_row
+                 WHERE json_extract(update_row.value, '$.id') = child.id
+               ),
+               prorated = (
+                 SELECT json_extract(update_row.value, '$.prorated')
+                 FROM json_each(?) update_row
+                 WHERE json_extract(update_row.value, '$.id') = child.id
+               ),
                version = version + 1,
                updated_at = ?
            WHERE child.id IN (SELECT json_extract(value, '$.id') FROM json_each(?))
@@ -1227,6 +1257,8 @@ async function updateCharge(
              )`,
         )
         .bind(
+          cascadeJson,
+          cascadeJson,
           cascadeJson,
           cascadeJson,
           cascadeJson,
@@ -1946,6 +1978,8 @@ async function prepareChargeCreateCascade(
     properties: Record<string, unknown>;
     filters: ChargeFilter[];
     invoiceable: number;
+    payInAdvance: number;
+    prorated: number;
     minAmountMinor: number;
     acceptsTargetWallet: number;
   },
@@ -1997,6 +2031,8 @@ async function prepareChargeCreateCascade(
       propertiesJson: stableJson(charge.properties),
       filtersJson: stableJson(filters),
       invoiceable: charge.invoiceable,
+      payInAdvance: charge.payInAdvance,
+      prorated: charge.prorated,
       minAmountMinor: charge.minAmountMinor,
       acceptsTargetWallet: charge.acceptsTargetWallet,
     });
@@ -2069,7 +2105,16 @@ async function prepareChargeUpdateCascade(
   const oldParentFilters = catalogChargeFilters(parent);
   for (const child of result.results) {
     // Lago does not cascade a charge-model transition into an existing child charge.
-    if (child.charge_model !== next.chargeModel) continue;
+    if (child.charge_model !== next.chargeModel) {
+      if (child.pay_in_advance !== next.payInAdvance || child.prorated !== next.prorated) {
+        throw new ApiError(
+          422,
+          "unsupported_charge_cascade",
+          "Charge timing cannot cascade across a customized charge model",
+        );
+      }
+      continue;
+    }
     const childProperties = parseStoredObject(child.properties_json);
     const properties =
       parent.charge_model === child.charge_model &&
@@ -2084,7 +2129,9 @@ async function prepareChargeUpdateCascade(
     if (
       child.code !== next.code ||
       stableJson(childProperties) !== stableJson(properties) ||
-      stableJson(catalogChargeFilters(child)) !== stableJson(filters)
+      stableJson(catalogChargeFilters(child)) !== stableJson(filters) ||
+      child.pay_in_advance !== next.payInAdvance ||
+      child.prorated !== next.prorated
     ) {
       updates.push({
         id: child.id,
@@ -2092,6 +2139,8 @@ async function prepareChargeUpdateCascade(
         version: child.version,
         propertiesJson: stableJson(properties),
         filtersJson: stableJson(filters),
+        payInAdvance: next.payInAdvance,
+        prorated: next.prorated,
       });
     }
   }
@@ -2265,6 +2314,8 @@ function sameCatalogCharge(
   normalized: {
     invoiceDisplayName: string | null;
     invoiceable: number;
+    payInAdvance: number;
+    prorated: number;
     minAmountMinor: number;
     acceptsTargetWallet: number;
   },
@@ -2283,8 +2334,8 @@ function sameCatalogCharge(
       ),
     ) === stableJson(filters) &&
     charge.invoiceable === normalized.invoiceable &&
-    charge.pay_in_advance === 0 &&
-    charge.prorated === 0 &&
+    charge.pay_in_advance === normalized.payInAdvance &&
+    charge.prorated === normalized.prorated &&
     charge.min_amount_minor === normalized.minAmountMinor &&
     charge.accepts_target_wallet === normalized.acceptsTargetWallet
   );
