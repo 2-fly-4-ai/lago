@@ -262,10 +262,81 @@ describe("subscription lifecycle", () => {
       code: "unsupported_scheduled_termination",
     });
 
+    const creditSource = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-external",
+        external_id: "subscription-external-advance-credit",
+        plan_code: "monthly-advance",
+      },
+    });
+    expect(creditSource.status).toBe(200);
+    const creditSourceBody = await creditSource.json<{ subscription: { lago_id: string } }>();
+    const credited = await api(
+      "/api/v1/subscriptions/subscription-external-advance-credit?on_termination_invoice=skip",
+      "DELETE",
+    );
+    expect(credited.status).toBe(200);
+    await expect(credited.json()).resolves.toMatchObject({
+      subscription: { status: "terminated" },
+    });
+    const creditState = await env.BILLING_DB.prepare(
+      `SELECT cn.id, cn.total_amount_minor, cn.balance_amount_minor, cn.reason,
+              cni.precise_amount_minor,
+              (SELECT payload_json FROM outbox_events o WHERE o.aggregate_id = cn.id
+                AND o.event_type = 'credit_note.created') AS event_payload_json,
+              (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = cn.id
+                AND o.event_type = 'credit_note.created') AS credit_events
+       FROM credit_notes cn JOIN credit_note_items cni ON cni.credit_note_id = cn.id
+       WHERE cn.customer_id = 'customer-lifecycle' AND cn.reason = 'order_cancellation'
+         AND cn.invoice_id IN (
+           SELECT id FROM invoices WHERE subscription_id = ?
+         )`,
+    )
+      .bind(creditSourceBody.subscription.lago_id)
+      .first<{
+        id: string;
+        total_amount_minor: number;
+        balance_amount_minor: number;
+        reason: string;
+        precise_amount_minor: string;
+        event_payload_json: string;
+        credit_events: number;
+      }>();
+    expect(creditState).toBeTruthy();
+    expect(creditState).toMatchObject({
+      balance_amount_minor: creditState?.total_amount_minor,
+      reason: "order_cancellation",
+      credit_events: 1,
+    });
+    expect(creditState?.total_amount_minor).toBeGreaterThan(0);
+    const creditEventPayload = JSON.parse(creditState?.event_payload_json ?? "{}") as {
+      unusedDays: number;
+      fullPeriodDays: number;
+    };
+    const expectedCredit =
+      (1000 * creditEventPayload.unusedDays) / creditEventPayload.fullPeriodDays;
+    expect(Math.round(Number(creditState?.precise_amount_minor))).toBe(
+      creditState?.total_amount_minor,
+    );
+    expect(Number(creditState?.precise_amount_minor)).toBeCloseTo(expectedCredit, 10);
+    const creditReplay = await api(
+      "/api/v1/subscriptions/subscription-external-advance-credit?on_termination_invoice=skip",
+      "DELETE",
+    );
+    expect(creditReplay.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total FROM credit_notes WHERE invoice_id IN
+         (SELECT id FROM invoices WHERE subscription_id = ?)`,
+      )
+        .bind(creditSourceBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({ total: 1 });
+
     const creditGuard = await api("/api/v1/subscriptions/subscription-external-advance", "DELETE");
     expect(creditGuard.status).toBe(422);
     await expect(creditGuard.json()).resolves.toMatchObject({
-      code: "unsupported_termination_credit_note",
+      code: "unsupported_termination_invoicing",
     });
 
     const invoiceGuard = await api(

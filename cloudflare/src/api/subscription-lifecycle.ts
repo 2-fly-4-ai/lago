@@ -2,6 +2,7 @@ import type { AuthContext } from "../auth/api-key";
 import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
 import { terminateSubscriptionWithInvoice } from "../billing/terminate-subscription";
+import { terminatePayInAdvanceWithCredit } from "../billing/pay-in-advance-termination-credit";
 import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../http";
 import { stableJson } from "../json";
 import {
@@ -236,11 +237,15 @@ async function terminateSubscription(
       "on_termination_credit_note must be credit, skip, refund, or offset",
     );
   }
-  if (subscription.plan_pay_in_advance === 1 && onTerminationCreditNote !== "skip") {
+  if (
+    subscription.plan_pay_in_advance === 1 &&
+    onTerminationCreditNote !== "credit" &&
+    onTerminationCreditNote !== "skip"
+  ) {
     throw new ApiError(
       422,
       "unsupported_termination_credit_note",
-      "Pay-in-advance termination requires on_termination_credit_note=skip until unused-period credits are ported",
+      "Pay-in-advance termination currently supports only credit or skip",
     );
   }
   if (onTerminationInvoice === "generate" && subscription.plan_pay_in_advance === 1) {
@@ -301,6 +306,27 @@ async function terminateSubscription(
     },
   };
   try {
+    if (
+      subscription.plan_pay_in_advance === 1 &&
+      onTerminationInvoice === "skip" &&
+      onTerminationCreditNote === "credit"
+    ) {
+      const result = await terminatePayInAdvanceWithCredit(
+        env,
+        subscription.id,
+        subscription.version,
+        terminatedAt,
+        requestId,
+      );
+      await account.completeCommand(reservationKey, {
+        terminatedAt,
+        eventId: result.subscriptionEvent.id,
+        creditNoteId: result.creditNoteId,
+      });
+      subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
+      if (!subscription) throw new ApiError(500, "persistence_error", "Subscription disappeared");
+      return json({ subscription: serializeSubscription(subscription) }, { requestId });
+    }
     if (onTerminationInvoice === "generate") {
       const result = await terminateSubscriptionWithInvoice(
         env,
@@ -376,6 +402,8 @@ async function terminateSubscription(
           "Termination invoicing for plans with fixed charges is not implemented",
         unsupported_termination_minimum_commitment:
           "Termination invoicing for plans with a minimum commitment is not implemented",
+        unsupported_pay_in_advance_termination_credit:
+          "Pay-in-advance termination credits require a finalized, undiscounted, untaxed base invoice without wallet or credit-note allocations",
       };
       const message = unsupported[error.message];
       if (message) throw new ApiError(422, error.message, message);
