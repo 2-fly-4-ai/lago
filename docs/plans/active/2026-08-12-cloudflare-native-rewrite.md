@@ -342,10 +342,11 @@ Acceptance:
       Tenant-scoped add-ons now support idempotent create/list/show/update/terminate with versioned
       outbox events, and plans support standard/graduated/volume recurring pay-in-arrears fixed
       charges. Fixed fees enter the exact recurring invoice pipeline before minimum commitments,
-      coupons, taxes, credit notes, and wallets. Pay-in-advance charges, proration, unit events,
-      per-subscription fixed-charge mutation/cascades and targeted taxes remain pending and fail
-      explicitly; subscription filter overrides preserve fixed charges by cloning the full active
-      pricing graph.
+      coupons, taxes, credit notes, and wallets. Pay-in-advance charges, proration, catalog-wide
+      unit-event propagation, and targeted taxes remain pending and fail explicitly. Subscription
+      fixed-charge list/show/update is ported; override mutations clone the full active pricing
+      graph and persist effective-dated units so the default applies at the next boundary while an
+      explicit immediate update affects the open period.
       Standalone fixed-charge list/show routes expose the same ledger; standalone create/update/
       delete remain guarded because they require per-subscription unit-event and rebilling flows.
       Plan creation now emits transactional versioned outbox events, and scalar plan updates
@@ -2090,3 +2091,20 @@ resource and mutation described.
   218 schedule audits. All three external-action flags remain `0`; no migration, resource
   provisioning, production route/domain, secret, provider action, customer data, or billing row
   changed.
+- 2026-08-15: Closed the subscription fixed-charge unit-timing gap found during post-deployment
+  review. Migration `0049_fixed_charge_unit_events.sql` adds a tenant- and subscription-scoped
+  effective-dated unit ledger with deterministic version order. A first override records the
+  inherited open-period baseline and the requested child value in the same D1 batch as the graph
+  clone; later mutations append a versioned value in the same batch as the guarded fixed-charge
+  update and outbox event. Default updates become effective at the next half-open period boundary,
+  while `apply_units_immediately: true` becomes effective at mutation time. Invoice, draft,
+  termination, and current projections select the newest created fixed-charge version that is
+  effective before their calculation boundary, so a newer immediate change cannot be superseded by
+  an older scheduled value. Pending subscriptions retain row fallback until activation. Evidence
+  covers current/next-period pricing, repeated scheduled changes, immediate changes, mixed
+  scheduled/immediate ordering, event rows, and graph/root isolation. All 49 migrations replay in
+  fresh isolated D1 state with zero foreign-key violations. Strict format/lint, inventory,
+  generated types, TypeScript, and Wrangler dry run pass; the fully parallel suite reached 197/198
+  before the known draft-termination-credit 10-second timeout, that file passed 2/2 alone, and
+  bounded groups pass all 198 tests as 36 + 43 + 70 + 42 + 7. The dry-run bundle is 971.99 KiB
+  (167.61 KiB gzip). Feature checkpoint: `2217cc7`.

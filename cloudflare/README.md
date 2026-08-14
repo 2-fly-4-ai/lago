@@ -10,7 +10,8 @@ remaining Lago feature inventory is dispositioned and ported.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
-  pay-in-arrears fixed charges, customer payment terms, immutable invoice due-date snapshots,
+  pay-in-arrears fixed charges, effective-dated subscription fixed-charge units, customer payment
+  terms, immutable invoice due-date snapshots,
   customer invoice-grace settings, distinct initial/renewal invoice contexts, refreshable draft
   state, dependency-invalidation triggers and mutation guards, immutable issuing/finalization dates,
   tenant-scoped invoice custom-section catalog records, subscription selections, and immutable
@@ -159,7 +160,9 @@ remaining Lago feature inventory is dispositioned and ported.
   update endpoints live under `/api/v1/subscriptions/:external_id/fixed_charges`; the first update
   clones the complete active pricing graph into a hidden child plan, while later updates mutate the
   same child fixed charge with optimistic versions and transactional outbox events. Immediate unit
-  application and fixed-charge-specific tax targeting remain explicit unsupported boundaries.
+  application writes an effective-dated event for the open period; the default schedules the new
+  units at the next boundary. Fixed-charge-specific tax targeting remains an explicit unsupported
+  boundary.
 
 No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or
 OS command is required by this package.
