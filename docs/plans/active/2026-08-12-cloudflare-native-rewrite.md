@@ -1945,3 +1945,29 @@ resource and mutation described.
   remained empty apart from 192 schedule audits. All three external-action flags remain `0`; no
   migration, resource provisioning, production route/domain, secret, provider action, customer
   data, or billing row changed.
+- 2026-08-15: Ported Lago-compatible subscription charge-filter list/show/create/update/delete
+  routes with real pricing-graph inheritance. The first mutation atomically creates a hidden child
+  plan, clones every active usage and fixed charge with explicit parent links and fresh
+  deterministic filter IDs, switches only the selected subscription generation, and applies the
+  requested filter mutation. Later mutations reuse that graph. Root-only plan discovery prevents
+  overrides from leaking into catalog creation, listing, subscription creation, or plan changes;
+  root deletion fails safely while an active overridden subscription exists. Minimum commitments
+  are intentionally not cloned, matching the legacy subscription-filter override service. Bounded
+  graph counts and payload bytes keep the request finite, and transactional outbox events plus the
+  existing draft invalidation trigger preserve mutation visibility. Evidence covers create,
+  parent-ID update mapping, deletion, duplicate rejection without partial writes, full usage/fixed
+  graph cloning, catalog isolation, later parent mutation isolation, current-usage billing from the
+  child graph, and one-time graph creation. Formatting, strict lint, inventory, TypeScript, and the
+  complete Worker suite are green at 187 tests across 35 files. All 47 migrations replayed in the
+  isolated Worker harness; Wrangler's separate persisted local-state database reported
+  `SQLITE_BUSY`, while remote preflight and application succeeded. The dry-run bundle is 901.76 KiB
+  (157.35 KiB gzip). Feature checkpoint: `afc69ee`.
+- 2026-08-15: Remote preflight on the explicit SERP account found only migration
+  `0047_subscription_plan_overrides.sql` pending and zero organizations, customers, plans,
+  subscriptions, invoices, billable metrics, charges, fixed charges, usage events, outbox rows, and
+  plan-deletion tasks. Applied that migration only to the isolated non-production D1 and deployed
+  only the isolated Worker as version `25aa2950-4fff-41a0-b33d-c93c9c56fa35` with a 5 ms startup.
+  Health/readiness returned `200`/`200`, unauthenticated subscription-filter access returned `401`,
+  no migrations remain, and post-deploy aggregate-only verification remained empty apart from 197
+  schedule audits. All three external-action flags remain `0`; no resource provisioning,
+  production route/domain, secret, provider action, customer data, or billing row changed.
