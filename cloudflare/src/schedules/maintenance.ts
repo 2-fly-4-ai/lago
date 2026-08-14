@@ -33,6 +33,12 @@ type ArtifactCleanupTask = {
   archive_key: string;
 };
 
+type BillableMetricCleanupTask = {
+  billable_metric_id: string;
+  organization_id: string;
+  created_at: string;
+};
+
 type RetentionEnv = Pick<Env, "BILLING_ARTIFACTS" | "BILLING_DB">;
 
 const RETENTION_DAYS = 90;
@@ -331,6 +337,74 @@ export async function cleanupInboundWebhookReceipts(
   }
   artifactsDeleted += await drainArtifactCleanupTasks(env);
   return { artifactsDeleted, receiptsDeleted };
+}
+
+export async function cleanupDeletedMetricEvents(
+  env: RetentionEnv,
+): Promise<{ artifactsDeleted: number; eventsDeleted: number; tasksCompleted: number }> {
+  let artifactsDeleted = await drainArtifactCleanupTasks(env);
+  let eventsDeleted = 0;
+  let tasksCompleted = 0;
+  for (let iteration = 0; iteration < 10; iteration += 1) {
+    const task = await env.BILLING_DB.prepare(
+      `SELECT billable_metric_id, organization_id, created_at
+       FROM billable_metric_cleanup_tasks
+       ORDER BY created_at, billable_metric_id LIMIT 1`,
+    ).first<BillableMetricCleanupTask>();
+    if (!task) break;
+    const eventIds = await env.BILLING_DB.prepare(
+      `SELECT id FROM usage_events
+       WHERE organization_id = ? AND billable_metric_id = ? AND deleted_at IS NULL
+       ORDER BY id LIMIT 100`,
+    )
+      .bind(task.organization_id, task.billable_metric_id)
+      .all<{ id: string }>();
+    if (eventIds.results.length === 0) {
+      const deleted = await env.BILLING_DB.prepare(
+        `DELETE FROM billable_metric_cleanup_tasks
+         WHERE billable_metric_id = ? AND organization_id = ?`,
+      )
+        .bind(task.billable_metric_id, task.organization_id)
+        .run();
+      tasksCompleted += deleted.meta.changes;
+      continue;
+    }
+    const placeholders = eventIds.results.map(() => "?").join(", ");
+    const ids = eventIds.results.map((event) => event.id);
+    const results = await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT OR IGNORE INTO artifact_cleanup_tasks
+         (archive_key, resource_type, resource_id, created_at)
+         SELECT archive_key, 'usage_event', id, ? FROM usage_events
+         WHERE organization_id = ? AND billable_metric_id = ? AND deleted_at IS NULL
+           AND id IN (${placeholders})`,
+      ).bind(task.created_at, task.organization_id, task.billable_metric_id, ...ids),
+      env.BILLING_DB.prepare(
+        `UPDATE usage_events SET deleted_at = ?
+         WHERE organization_id = ? AND billable_metric_id = ? AND deleted_at IS NULL
+           AND id IN (${placeholders})`,
+      ).bind(task.created_at, task.organization_id, task.billable_metric_id, ...ids),
+      env.BILLING_DB.prepare(
+        `DELETE FROM billable_metric_cleanup_tasks
+         WHERE billable_metric_id = ? AND organization_id = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM usage_events
+             WHERE organization_id = ? AND billable_metric_id = ? AND deleted_at IS NULL
+           )`,
+      ).bind(
+        task.billable_metric_id,
+        task.organization_id,
+        task.organization_id,
+        task.billable_metric_id,
+      ),
+    ]);
+    // D1's changes count includes draft-invalidation trigger writes, so the selected source rows
+    // are the stable event count for this bounded cleanup batch.
+    eventsDeleted += eventIds.results.length;
+    tasksCompleted += results[2]?.meta.changes ?? 0;
+  }
+  artifactsDeleted += await drainArtifactCleanupTasks(env);
+  return { artifactsDeleted, eventsDeleted, tasksCompleted };
 }
 
 async function drainArtifactCleanupTasks(env: RetentionEnv): Promise<number> {

@@ -823,6 +823,7 @@ async function loadEvents(
     .prepare(
       `SELECT id, timestamp_ms, properties_json FROM usage_events
        WHERE subscription_id = ? AND billable_metric_id = ?
+         AND deleted_at IS NULL
          AND timestamp_ms >= ? AND timestamp_ms < ?
        ORDER BY timestamp_ms, id LIMIT 10001`,
     )

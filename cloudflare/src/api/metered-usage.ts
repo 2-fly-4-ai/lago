@@ -143,11 +143,7 @@ export async function handleMeteredUsageRequest(
     return updateBillableMetric(decodeURIComponent(metricMatch[1]), request, env, auth, requestId);
   }
   if (request.method === "DELETE" && metricMatch?.[1]) {
-    throw new ApiError(
-      422,
-      "unsupported_billable_metric_deletion",
-      "Billable metric deletion requires the unported event, charge, and draft-invoice cleanup workflow",
-    );
+    return deleteBillableMetric(decodeURIComponent(metricMatch[1]), env, auth, requestId);
   }
 
   const chargesMatch = url.pathname.match(/^\/api\/v1\/plans\/([^/]+)\/charges$/);
@@ -228,10 +224,7 @@ async function createBillableMetric(
   }
 
   const now = new Date().toISOString();
-  const id = await deterministicUuid(
-    "billable-metric",
-    `${auth.organizationId}:${normalized.code}`,
-  );
+  const id = await nextMetricId(database, auth.organizationId, normalized.code);
   const event = catalogEvent(
     "billable_metric.created",
     "billable_metric",
@@ -398,10 +391,13 @@ async function updateBillableMetric(
   );
   try {
     const results = await env.BILLING_DB.batch([
+      metricMutationGuardStatement(env.BILLING_DB, requestId, auth.organizationId, metric, 1, now),
       env.BILLING_DB.prepare(
         `UPDATE billable_metrics SET code = ?, name = ?, description = ?,
          aggregation_type = ?, field_name = ?, version = version + 1, updated_at = ?
-         WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?`,
+         WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?
+           AND EXISTS (SELECT 1 FROM billable_metric_mutation_guards
+                       WHERE request_id = ? AND billable_metric_id = ?)`,
       ).bind(
         next.code,
         next.name,
@@ -412,17 +408,27 @@ async function updateBillableMetric(
         metric.id,
         auth.organizationId,
         metric.version,
+        requestId,
+        metric.id,
       ),
-      conditionalMetricOutboxStatement(
+      guardedMetricOutboxStatement(
         env.BILLING_DB,
         auth.organizationId,
         event,
         metric.id,
         metric.version + 1,
         now,
+        1,
+        requestId,
       ),
+      clearMetricMutationGuardStatement(env.BILLING_DB, requestId, metric.id),
     ]);
-    if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
+    if (
+      results[0]?.meta.changes !== 1 ||
+      (results[1]?.meta.changes ?? 0) < 1 ||
+      results[2]?.meta.changes !== 1 ||
+      results[3]?.meta.changes !== 1
+    )
       throw new ApiError(
         409,
         "billable_metric_version_conflict",
@@ -436,6 +442,85 @@ async function updateBillableMetric(
   const updated = await findMetric(env.BILLING_DB, auth.organizationId, next.code);
   if (!updated) throw new ApiError(500, "persistence_error", "Billable metric disappeared");
   return json({ billable_metric: serializeMetric(updated) }, { requestId });
+}
+
+async function deleteBillableMetric(
+  code: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const database = env.BILLING_DB;
+  const metric = await findMetric(database, auth.organizationId, code);
+  if (!metric)
+    throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
+
+  const now = new Date().toISOString();
+  const event = catalogEvent(
+    "billable_metric.deleted",
+    "billable_metric",
+    metric.id,
+    metric.version + 1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: metric.code },
+  );
+  const currentMetric = `EXISTS (
+    SELECT 1 FROM billable_metric_mutation_guards
+    WHERE request_id = ? AND billable_metric_id = ?
+  )`;
+  const results = await database.batch([
+    metricMutationGuardStatement(database, requestId, auth.organizationId, metric, 0, now),
+    database
+      .prepare(
+        `UPDATE charges SET active = 0, version = version + 1, updated_at = ?
+         WHERE organization_id = ? AND billable_metric_id = ? AND active = 1
+           AND ${currentMetric}`,
+      )
+      .bind(now, auth.organizationId, metric.id, requestId, metric.id),
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO billable_metric_cleanup_tasks
+         (billable_metric_id, organization_id, created_at)
+         SELECT id, organization_id, ? FROM billable_metrics
+         WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?
+           AND ${currentMetric}`,
+      )
+      .bind(now, metric.id, auth.organizationId, metric.version, requestId, metric.id),
+    database
+      .prepare(
+        `UPDATE billable_metrics SET active = 0, version = version + 1, updated_at = ?
+         WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?
+           AND ${currentMetric}`,
+      )
+      .bind(now, metric.id, auth.organizationId, metric.version, requestId, metric.id),
+    guardedMetricOutboxStatement(
+      database,
+      auth.organizationId,
+      event,
+      metric.id,
+      metric.version + 1,
+      now,
+      0,
+      requestId,
+    ),
+    clearMetricMutationGuardStatement(database, requestId, metric.id),
+  ]);
+  if (
+    results[0]?.meta.changes !== 1 ||
+    results[2]?.meta.changes !== 1 ||
+    results[3]?.meta.changes !== 1 ||
+    results[4]?.meta.changes !== 1 ||
+    results[5]?.meta.changes !== 1
+  )
+    throw new ApiError(
+      409,
+      "billable_metric_version_conflict",
+      "Billable metric changed concurrently",
+    );
+  await env.DOMAIN_EVENTS.send(event);
+  return json({ billable_metric: serializeMetric(metric) }, { requestId });
 }
 
 async function createCharge(
@@ -1311,7 +1396,9 @@ async function showUsageEvent(
               ue.timestamp_ms, ue.precise_total_amount_minor, ue.properties_json,
               ue.request_sha256, ue.created_at
        FROM usage_events ue JOIN subscriptions s ON s.id = ue.subscription_id
-       WHERE ue.organization_id = ? AND ue.transaction_id = ?
+       WHERE ue.organization_id = ? AND ue.transaction_id = ? AND ue.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM billable_metrics metric
+                     WHERE metric.id = ue.billable_metric_id AND metric.active = 1)
        ORDER BY ue.created_at DESC LIMIT 1`,
     )
     .bind(auth.organizationId, transactionId)
@@ -1331,7 +1418,12 @@ async function listUsageEvents(
   const page = positiveInteger(url.searchParams.get("page"), 1);
   const perPage = Math.min(positiveInteger(url.searchParams.get("per_page"), 20), 100);
   const offset = (page - 1) * perPage;
-  const filters = ["ue.organization_id = ?"];
+  const filters = [
+    "ue.organization_id = ?",
+    "ue.deleted_at IS NULL",
+    `EXISTS (SELECT 1 FROM billable_metrics metric
+             WHERE metric.id = ue.billable_metric_id AND metric.active = 1)`,
+  ];
   const bindings: Array<string | number> = [auth.organizationId];
   if (code) {
     filters.push("ue.code = ?");
@@ -1478,6 +1570,7 @@ async function usageEventsForPeriod(
     .prepare(
       `SELECT id, timestamp_ms, properties_json FROM usage_events
        WHERE subscription_id = ? AND billable_metric_id = ?
+         AND deleted_at IS NULL
          AND timestamp_ms >= ? AND timestamp_ms < ?
        ORDER BY timestamp_ms, id LIMIT 10001`,
     )
@@ -1597,6 +1690,28 @@ async function findMetric(
     )
     .bind(organizationId, code)
     .first<MetricRow>();
+}
+
+async function nextMetricId(
+  database: D1Database,
+  organizationId: string,
+  code: string,
+): Promise<string> {
+  for (let generation = 1; generation <= 100; generation += 1) {
+    const seed =
+      generation === 1 ? `${organizationId}:${code}` : `${organizationId}:${code}:${generation}`;
+    const id = await deterministicUuid("billable-metric", seed);
+    const existing = await database
+      .prepare("SELECT id FROM billable_metrics WHERE id = ? LIMIT 1")
+      .bind(id)
+      .first<{ id: string }>();
+    if (!existing) return id;
+  }
+  throw new ApiError(
+    409,
+    "billable_metric_generation_conflict",
+    "Billable metric code has too many generations",
+  );
 }
 
 async function findEvent(
@@ -1975,21 +2090,47 @@ function outboxStatement(
     );
 }
 
-function conditionalMetricOutboxStatement(
+function metricMutationGuardStatement(
+  database: D1Database,
+  requestId: string,
+  organizationId: string,
+  metric: MetricRow,
+  targetActive: 0 | 1,
+  now: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO billable_metric_mutation_guards
+       (request_id, organization_id, billable_metric_id, source_version, target_version,
+        target_active, created_at)
+       SELECT ?, organization_id, id, version, version + 1, ?, ? FROM billable_metrics
+       WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?`,
+    )
+    .bind(requestId, targetActive, now, metric.id, organizationId, metric.version);
+}
+
+function guardedMetricOutboxStatement(
   database: D1Database,
   organizationId: string,
   event: DomainEvent,
   metricId: string,
   expectedVersion: number,
   expectedUpdatedAt: string,
+  expectedActive: 0 | 1,
+  requestId: string,
 ): D1PreparedStatement {
   return database
     .prepare(
       `INSERT INTO outbox_events
        (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
         aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL FROM billable_metrics
-       WHERE id = ? AND organization_id = ? AND active = 1 AND version = ? AND updated_at = ?`,
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+       FROM billable_metrics metric
+       JOIN billable_metric_mutation_guards guard
+         ON guard.billable_metric_id = metric.id AND guard.organization_id = metric.organization_id
+       WHERE guard.request_id = ? AND guard.target_active = ? AND guard.target_version = ?
+         AND metric.id = ? AND metric.organization_id = ? AND metric.active = ?
+         AND metric.version = ? AND metric.updated_at = ?`,
     )
     .bind(
       event.id,
@@ -2003,11 +2144,28 @@ function conditionalMetricOutboxStatement(
       event.correlationId,
       stableJson(event.payload),
       event.occurredAt,
+      requestId,
+      expectedActive,
+      expectedVersion,
       metricId,
       organizationId,
+      expectedActive,
       expectedVersion,
       expectedUpdatedAt,
     );
+}
+
+function clearMetricMutationGuardStatement(
+  database: D1Database,
+  requestId: string,
+  metricId: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `DELETE FROM billable_metric_mutation_guards
+       WHERE request_id = ? AND billable_metric_id = ?`,
+    )
+    .bind(requestId, metricId);
 }
 
 function conditionalChargeOutboxStatement(

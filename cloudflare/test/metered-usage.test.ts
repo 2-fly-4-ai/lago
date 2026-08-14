@@ -1,6 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
+import { cleanupDeletedMetricEvents } from "../src/schedules/maintenance";
 
 const apiKey = "metered-usage-test-key";
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
@@ -369,11 +370,182 @@ describe("Lago-compatible metered usage", () => {
         code: "unsupported_billable_metric_feature",
       });
     }
-    const deleted = await api("/api/v1/billable_metrics/anything", { method: "DELETE" });
-    expect(deleted.status).toBe(422);
-    await expect(deleted.json()).resolves.toMatchObject({
-      code: "unsupported_billable_metric_deletion",
+  });
+
+  it("retires a metric graph, preserves finalized history, and safely recreates its code", async () => {
+    const created = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Retirable units",
+          code: "retirable_units",
+          aggregation_type: "sum_agg",
+          field_name: "tokens",
+        },
+      },
     });
+    expect(created.status).toBe(200);
+    const originalMetricId = (await created.json<{ billable_metric: { lago_id: string } }>())
+      .billable_metric.lago_id;
+    const charge = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: originalMetricId,
+          code: "retirable-charge",
+          charge_model: "standard",
+          properties: { amount: "10" },
+        },
+      },
+    });
+    const originalChargeId = (await charge.json<{ charge: { lago_id: string } }>()).charge.lago_id;
+    const usage = await createEvent("retirable-event", "2", "retirable_units");
+    expect(usage.status).toBe(200);
+    const usageId = (await usage.json<{ event: { lago_id: string } }>()).event.lago_id;
+    const archived = await env.BILLING_DB.prepare(
+      "SELECT archive_key FROM usage_events WHERE id = ?",
+    )
+      .bind(usageId)
+      .first<{ archive_key: string }>();
+    expect(archived && (await env.BILLING_ARTIFACTS.head(archived.archive_key))).not.toBeNull();
+
+    const wallet = await api("/api/v1/wallets", {
+      method: "POST",
+      body: {
+        wallet: {
+          external_customer_id: "customer-external",
+          code: "retirable-wallet",
+          currency: "USD",
+          rate_amount: "1",
+          granted_credits: "1",
+          applies_to: { billable_metric_codes: ["retirable_units"] },
+        },
+      },
+    });
+    expect(wallet.status).toBe(200);
+    const walletId = (await wallet.json<{ wallet: { lago_id: string } }>()).wallet.lago_id;
+
+    const now = "2026-08-13T01:00:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices
+         (id, organization_id, customer_id, subscription_id, number, status, payment_status,
+          currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
+          created_at, updated_at)
+         VALUES ('metric-draft', 'org-usage', 'customer-usage', 'subscription-usage', NULL,
+                 'draft', 'pending', 'USD', 0, 0, 0, 0, 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices
+         (id, organization_id, customer_id, subscription_id, number, status, payment_status,
+          currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
+          finalized_at, created_at, updated_at)
+         VALUES ('metric-finalized', 'org-usage', 'customer-usage', 'subscription-usage',
+                 'INV-METRIC-FINAL', 'finalized', 'pending', 'USD', 321, 0, 0, 321, 1, ?, ?, ?)`,
+      ).bind(now, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoice_lines
+         (id, invoice_id, line_type, description, quantity_decimal, unit_amount_decimal,
+          amount_minor, source_type, source_id, metadata_json, created_at)
+         VALUES ('metric-final-line', 'metric-finalized', 'charge', 'Historical metric', '1',
+                 '321', 321, 'charge', ?, ?, ?)`,
+      ).bind(originalChargeId, JSON.stringify({ billableMetricId: originalMetricId }), now),
+    ]);
+
+    const deleted = await api("/api/v1/billable_metrics/retirable_units", { method: "DELETE" });
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toMatchObject({
+      billable_metric: { lago_id: originalMetricId, code: "retirable_units" },
+    });
+    expect((await api("/api/v1/billable_metrics/retirable_units")).status).toBe(404);
+    expect(
+      (await api("/api/v1/billable_metrics/retirable_units", { method: "DELETE" })).status,
+    ).toBe(404);
+    expect((await api("/api/v1/plans/metered-plan/charges/retirable-charge")).status).toBe(404);
+    expect((await api("/api/v1/events/retirable-event")).status).toBe(404);
+    await expect(
+      api("/api/v1/events?code=retirable_units").then((response) => response.json()),
+    ).resolves.toMatchObject({ meta: { total_count: 0 }, events: [] });
+    await expect(
+      api(`/api/v1/wallets/${walletId}`).then((response) => response.json()),
+    ).resolves.toMatchObject({
+      wallet: { applies_to: { billable_metric_codes: [] } },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT metric.active AS metric_active, metric.version AS metric_version,
+                charge.active AS charge_active, charge.version AS charge_version,
+                event.deleted_at IS NOT NULL AS event_deleted,
+                draft.ready_to_be_refreshed,
+                line.amount_minor,
+                (SELECT COUNT(*) FROM billable_metric_cleanup_tasks
+                 WHERE billable_metric_id = metric.id) AS cleanup_tasks,
+                (SELECT COUNT(*) FROM billable_metric_mutation_guards) AS mutation_guards,
+                (SELECT COUNT(*) FROM outbox_events
+                 WHERE aggregate_type = 'billable_metric' AND aggregate_id = metric.id
+                   AND event_type = 'billable_metric.deleted') AS delete_events
+         FROM billable_metrics metric
+         JOIN charges charge ON charge.billable_metric_id = metric.id
+         JOIN usage_events event ON event.billable_metric_id = metric.id
+         JOIN invoices draft ON draft.id = 'metric-draft'
+         JOIN invoice_lines line ON line.id = 'metric-final-line'
+         WHERE metric.id = ? AND charge.id = ? AND event.id = ?`,
+      )
+        .bind(originalMetricId, originalChargeId, usageId)
+        .first(),
+    ).resolves.toEqual({
+      charge_active: 0,
+      charge_version: 2,
+      cleanup_tasks: 1,
+      delete_events: 1,
+      event_deleted: 0,
+      metric_active: 0,
+      metric_version: 2,
+      mutation_guards: 0,
+      amount_minor: 321,
+      ready_to_be_refreshed: 1,
+    });
+
+    const recreated = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Retirable units v2",
+          code: "retirable_units",
+          aggregation_type: "sum_agg",
+          field_name: "tokens",
+        },
+      },
+    });
+    expect(recreated.status).toBe(200);
+    const recreatedMetricId = (await recreated.json<{ billable_metric: { lago_id: string } }>())
+      .billable_metric.lago_id;
+    expect(recreatedMetricId).not.toBe(originalMetricId);
+    expect((await createEvent("retirable-event-v2", "3", "retirable_units")).status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT billable_metric_id FROM usage_events
+         WHERE transaction_id = 'retirable-event-v2'`,
+      ).first(),
+    ).resolves.toEqual({ billable_metric_id: recreatedMetricId });
+
+    await expect(cleanupDeletedMetricEvents(env)).resolves.toEqual({
+      artifactsDeleted: 1,
+      eventsDeleted: 1,
+      tasksCompleted: 1,
+    });
+    expect(archived && (await env.BILLING_ARTIFACTS.head(archived.archive_key))).toBeNull();
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM artifact_cleanup_tasks
+            WHERE resource_type = 'usage_event') AS artifacts,
+           (SELECT COUNT(*) FROM billable_metric_cleanup_tasks) AS metric_tasks,
+           (SELECT deleted_at IS NOT NULL FROM usage_events WHERE id = ?) AS event_deleted`,
+      )
+        .bind(usageId)
+        .first(),
+    ).resolves.toEqual({ artifacts: 0, event_deleted: 1, metric_tasks: 0 });
   });
 
   it("rejects charge options the recurring invoice path cannot honor", async () => {

@@ -6,6 +6,7 @@ import { activatePendingSubscriptions } from "../billing/activate-pending-subscr
 import { terminateEndedSubscriptions } from "../billing/terminate-subscription";
 import { billEndedTrialSubscriptions } from "../billing/bill-ended-trials";
 import {
+  cleanupDeletedMetricEvents,
   cleanupInboundWebhookReceipts,
   cleanupOutboundWebhookDeliveries,
   expireCoupons,
@@ -213,6 +214,12 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           )
         : { customers: 0, wallets: 0, thresholdTopUps: 0 };
 
+      const deletedMetricUsage = await step.do(
+        "clean retired billable metric usage",
+        { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+        async () => cleanupDeletedMetricEvents(this.env),
+      );
+
       const retentionCutoff = webhookRetentionCutoff(triggeredAtIso);
       const deletedOutboundWebhooks = executors.has("cleanup_outbound_webhooks")
         ? await step.do(
@@ -258,6 +265,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         finalizedInvoices,
         refreshedDraftInvoices,
         walletBalanceProjection,
+        deletedMetricUsage,
         deletedOutboundWebhooks,
         deletedInboundWebhooks,
         publishedEvents,

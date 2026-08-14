@@ -1763,7 +1763,7 @@ async function walletMetricCodes(database: D1Database, walletIds: string[]) {
       `SELECT target.wallet_id, metric.code
        FROM wallet_targets target
        JOIN billable_metrics metric ON metric.id = target.billable_metric_id
-       WHERE target.wallet_id IN (${placeholders})
+       WHERE target.wallet_id IN (${placeholders}) AND metric.active = 1
        ORDER BY target.wallet_id, metric.code`,
     )
     .bind(...walletIds)

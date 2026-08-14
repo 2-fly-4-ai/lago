@@ -414,8 +414,10 @@ async function projectionWalletTargets(database: D1Database, walletIds: string[]
   const placeholders = walletIds.map(() => "?").join(", ");
   const rows = await database
     .prepare(
-      `SELECT wallet_id, billable_metric_id FROM wallet_targets
-       WHERE wallet_id IN (${placeholders}) ORDER BY wallet_id, billable_metric_id`,
+      `SELECT target.wallet_id, target.billable_metric_id FROM wallet_targets target
+       JOIN billable_metrics metric ON metric.id = target.billable_metric_id
+       WHERE target.wallet_id IN (${placeholders}) AND metric.active = 1
+       ORDER BY target.wallet_id, target.billable_metric_id`,
     )
     .bind(...walletIds)
     .all<{ wallet_id: string; billable_metric_id: string }>();
