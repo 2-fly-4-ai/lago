@@ -1775,3 +1775,21 @@ resource and mutation described.
   `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`;
   no migration, resource provisioning, production route/domain, secret, provider action, customer
   data, or billing row changed.
+- 2026-08-15: Ported billable-metric rounding configuration. Metric create/replay now validates and
+  persists `round`, `ceil`, or `floor` plus integer precision from -100 through 100; attached metrics
+  retain their existing immutable-rating guard. One shared exact-decimal operation transforms the
+  aggregate after event reduction and before charge-model rating in both current-usage projection
+  and recurring/termination invoice calculation. Omitted precision defaults to zero and negative
+  precision rounds to powers of ten. Evidence covers all three functions, positive/omitted/negative
+  precision, API serialization and rejection, a 2.462-unit current projection ceiled to 2.5 before
+  pricing, and the same 2.5-unit/25-cent persisted invoice line. Formatting, strict lint, inventory,
+  generated types, and TypeScript are green; bounded Worker groups pass all 169 tests as
+  44 + 65 + 60. The dry-run bundle is 840.81 KiB (146.78 KiB gzip). Feature checkpoint: `c57a033`.
+- 2026-08-15: Remote preflight on the explicit SERP account found no pending migration and zero
+  organizations, customers, plans, subscriptions, invoices, and usage events. Deployed only the
+  isolated Worker as version `fad8d3ba-963a-4281-ba4c-aa146590a591` with a 5 ms startup.
+  Health/readiness returned `200`/`200`, unauthenticated metric creation returned `401`, and
+  post-deploy aggregate-only verification remained empty apart from 171 schedule audits.
+  `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`;
+  no migration, resource provisioning, production route/domain, secret, provider action, customer
+  data, or billing row changed.

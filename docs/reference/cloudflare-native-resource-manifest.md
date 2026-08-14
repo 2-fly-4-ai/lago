@@ -423,6 +423,16 @@ Applied D1 migrations: `0001_foundation.sql` through `0044_standalone_plan_lifec
   migrations and zero organizations, customers, plans, subscriptions, invoices, and usage events
   plus 169 schedule audits. All three external-action flags remain disabled, with no route, secret,
   provider action, customer data, or billing data added.
+- The code-only billable-metric rounding deployment required no D1 migration. Optional
+  `round`/`ceil`/`floor` configuration now transforms aggregate units before both current-usage and
+  recurring-invoice rating, with zero-default and negative precision. Isolated Worker version
+  `fad8d3ba-963a-4281-ba4c-aa146590a591` retained only the existing workers.dev URL, `*/5` Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The deployed bundle was
+  840.81 KiB (146.78 KiB gzip) with a 5 ms startup. Health/readiness returned `200`/`200`, and
+  unauthenticated metric creation returned `401`. Remote verification found no pending migrations
+  and zero organizations, customers, plans, subscriptions, invoices, and usage events plus 171
+  schedule audits. All three external-action flags remain disabled, with no route, secret,
+  provider action, customer data, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
