@@ -1,8 +1,11 @@
 import type { AuthContext } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
-import { ApiError, json, objectAt, parseJsonObject } from "../http";
+import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../http";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import { rateCharge } from "../rating/charge-models";
+import { Decimal } from "../rating/decimal";
+import { parseChargeModel } from "../usage/charge-properties";
 import {
   normalizeChargeFilters,
   parseStoredBillableMetricFilters,
@@ -50,7 +53,9 @@ type GraphChargeRow = {
 
 type GraphFixedChargeRow = {
   id: string;
+  parent_id: string | null;
   add_on_id: string;
+  add_on_code: string;
   code: string;
   invoice_display_name: string | null;
   charge_model: string;
@@ -58,6 +63,58 @@ type GraphFixedChargeRow = {
   units: string;
   pay_in_advance: number;
   prorated: number;
+  version: number;
+  created_at: string;
+};
+
+type NormalizedFixedChargeOverride = {
+  invoiceDisplayName: string | null;
+  properties: Record<string, unknown>;
+  units: string;
+};
+
+type ClonedGraphCharge = {
+  id: string;
+  parentId: string;
+  billableMetricId: string;
+  code: string;
+  invoiceDisplayName: string | null;
+  chargeModel: string;
+  propertiesJson: string;
+  filtersJson: string;
+  invoiceable: number;
+  payInAdvance: number;
+  prorated: number;
+  minAmountMinor: number;
+  acceptsTargetWallet: number;
+};
+
+type ClonedGraphFixedCharge = {
+  id: string;
+  parentId: string;
+  addOnId: string;
+  code: string;
+  invoiceDisplayName: string | null;
+  chargeModel: string;
+  propertiesJson: string;
+  units: string;
+  payInAdvance: number;
+  prorated: number;
+};
+
+type PreparedPlanOverrideGraph = {
+  childPlanId: string;
+  nextVersion: number;
+  clonedCharges: ClonedGraphCharge[];
+  clonedFixedCharges: ClonedGraphFixedCharge[];
+};
+
+type OverrideGraphTransforms = {
+  charge?: (source: GraphChargeRow, clone: ClonedGraphCharge) => Promise<ClonedGraphCharge>;
+  fixedCharge?: (
+    source: GraphFixedChargeRow,
+    clone: ClonedGraphFixedCharge,
+  ) => Promise<ClonedGraphFixedCharge>;
 };
 
 type Mutation =
@@ -76,6 +133,39 @@ export async function handleSubscriptionChargeFilterRequest(
   requestId: string,
 ): Promise<Response | null> {
   const url = new URL(request.url);
+  const fixedChargeCollection = url.pathname.match(
+    /^\/api\/v1\/subscriptions\/([^/]+)\/fixed_charges$/,
+  );
+  if (fixedChargeCollection?.[1] && request.method === "GET") {
+    return listFixedCharges(
+      decodeURIComponent(fixedChargeCollection[1]),
+      url,
+      env.BILLING_DB,
+      auth,
+      requestId,
+    );
+  }
+  const fixedChargeMember = url.pathname.match(
+    /^\/api\/v1\/subscriptions\/([^/]+)\/fixed_charges\/([^/]+)$/,
+  );
+  if (fixedChargeMember?.[1] && fixedChargeMember[2]) {
+    const externalId = decodeURIComponent(fixedChargeMember[1]);
+    const fixedChargeCode = decodeURIComponent(fixedChargeMember[2]);
+    if (request.method === "GET") {
+      return showFixedCharge(externalId, fixedChargeCode, env.BILLING_DB, auth, requestId);
+    }
+    if (request.method === "PUT") {
+      return updateSubscriptionFixedCharge(
+        externalId,
+        fixedChargeCode,
+        objectAt(await parseJsonObject(request), "fixed_charge"),
+        env,
+        auth,
+        requestId,
+      );
+    }
+  }
+
   const collection = url.pathname.match(
     /^\/api\/v1\/subscriptions\/([^/]+)\/charges\/([^/]+)\/filters$/,
   );
@@ -121,6 +211,88 @@ export async function handleSubscriptionChargeFilterRequest(
     return mutateFilter(externalId, chargeCode, { kind: "delete", filterId }, env, auth, requestId);
   }
   return null;
+}
+
+async function listFixedCharges(
+  externalId: string,
+  url: URL,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const plan = await requireSubscriptionPlan(database, auth.organizationId, externalId);
+  const page = positiveInteger(url.searchParams.get("page"), 1);
+  const perPage = Math.min(positiveInteger(url.searchParams.get("per_page"), 20), 100);
+  const offset = (page - 1) * perPage;
+  const count = await database
+    .prepare("SELECT COUNT(*) AS total FROM fixed_charges WHERE plan_id = ? AND active = 1")
+    .bind(plan.plan_id)
+    .first<{ total: number }>();
+  const result = await database
+    .prepare(
+      `${graphFixedChargeSelect()} WHERE fc.plan_id = ? AND fc.active = 1
+       ORDER BY fc.created_at DESC, fc.id DESC LIMIT ? OFFSET ?`,
+    )
+    .bind(plan.plan_id, perPage, offset)
+    .all<GraphFixedChargeRow>();
+  return json(
+    {
+      fixed_charges: result.results.map(serializeFixedCharge),
+      meta: pagination(count?.total ?? 0, page, perPage),
+    },
+    { requestId },
+  );
+}
+
+async function showFixedCharge(
+  externalId: string,
+  fixedChargeCode: string,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const { fixedCharge } = await requireSubscriptionFixedCharge(
+    database,
+    auth.organizationId,
+    externalId,
+    fixedChargeCode,
+  );
+  return json({ fixed_charge: serializeFixedCharge(fixedCharge) }, { requestId });
+}
+
+async function updateSubscriptionFixedCharge(
+  externalId: string,
+  fixedChargeCode: string,
+  input: Record<string, unknown>,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const current = await requireSubscriptionFixedCharge(
+    env.BILLING_DB,
+    auth.organizationId,
+    externalId,
+    fixedChargeCode,
+  );
+  const normalized = normalizeFixedChargeOverride(current.fixedCharge, input);
+  if (current.plan.parent_id === null) {
+    return createFixedChargePlanOverride(
+      current.plan,
+      current.fixedCharge,
+      normalized,
+      env,
+      auth,
+      requestId,
+    );
+  }
+  return mutateExistingFixedChargeOverride(
+    current.plan,
+    current.fixedCharge,
+    normalized,
+    env,
+    auth,
+    requestId,
+  );
 }
 
 async function listFilters(
@@ -200,7 +372,133 @@ async function createPlanOverride(
 ): Promise<Response> {
   const originalFilters = chargeFilters(targetCharge);
   if (mutation.kind !== "create") requireFilter(targetCharge, mutation.filterId);
+  let resultFilter: ChargeFilter | null = null;
+  let childTargetChargeId = "";
+  const prepared = await preparePlanOverrideGraph(plan, env, auth.organizationId, {
+    charge: async (source, clone) => {
+      if (source.id !== targetCharge.id) return clone;
+      const clonedFilters = chargeFiltersFromJson(clone.filtersJson, source, clone.id);
+      const nextFilters = await applyMutation(
+        source,
+        clonedFilters,
+        originalFilters,
+        mutation,
+        clone.id,
+      );
+      childTargetChargeId = clone.id;
+      resultFilter = mutationResult(originalFilters, clonedFilters, nextFilters, mutation);
+      return { ...clone, filtersJson: stableJson(nextFilters) };
+    },
+  });
+  if (!childTargetChargeId) {
+    throw new ApiError(409, "charge_version_conflict", "Charge changed concurrently");
+  }
+  const now = new Date().toISOString();
+  const subscriptionEvent = domainEvent(
+    "subscription.updated",
+    "subscription",
+    plan.subscription_id,
+    plan.subscription_version + 1,
+    auth.organizationId,
+    requestId,
+    now,
+    { planCode: plan.code, planId: prepared.childPlanId },
+  );
+  const chargeEvent = domainEvent(
+    "charge.updated",
+    "charge",
+    childTargetChargeId,
+    1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: targetCharge.code, planCode: plan.code, subscriptionId: plan.subscription_id },
+  );
+  await persistPlanOverrideGraph(
+    plan,
+    prepared,
+    subscriptionEvent,
+    chargeEvent,
+    "charge",
+    now,
+    env,
+    auth,
+  );
+  if (!resultFilter)
+    throw new ApiError(500, "persistence_error", "Charge filter was not persisted");
+  return json({ filter: serializeChargeFilter(resultFilter, targetCharge.code) }, { requestId });
+}
 
+async function createFixedChargePlanOverride(
+  plan: SubscriptionPlanRow,
+  targetFixedCharge: GraphFixedChargeRow,
+  normalized: NormalizedFixedChargeOverride,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  let childTargetId = "";
+  const prepared = await preparePlanOverrideGraph(plan, env, auth.organizationId, {
+    fixedCharge: async (source, clone) => {
+      if (source.id !== targetFixedCharge.id) return clone;
+      childTargetId = clone.id;
+      return {
+        ...clone,
+        invoiceDisplayName: normalized.invoiceDisplayName,
+        propertiesJson: stableJson(normalized.properties),
+        units: normalized.units,
+      };
+    },
+  });
+  if (!childTargetId) {
+    throw new ApiError(409, "fixed_charge_version_conflict", "Fixed charge changed concurrently");
+  }
+  const now = new Date().toISOString();
+  const subscriptionEvent = domainEvent(
+    "subscription.updated",
+    "subscription",
+    plan.subscription_id,
+    plan.subscription_version + 1,
+    auth.organizationId,
+    requestId,
+    now,
+    { planCode: plan.code, planId: prepared.childPlanId },
+  );
+  const fixedChargeEvent = domainEvent(
+    "fixed_charge.updated",
+    "fixed_charge",
+    childTargetId,
+    1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: targetFixedCharge.code, planCode: plan.code, subscriptionId: plan.subscription_id },
+  );
+  await persistPlanOverrideGraph(
+    plan,
+    prepared,
+    subscriptionEvent,
+    fixedChargeEvent,
+    "fixed_charge",
+    now,
+    env,
+    auth,
+  );
+  const persisted = await requireFixedChargeById(
+    env.BILLING_DB,
+    auth.organizationId,
+    prepared.childPlanId,
+    childTargetId,
+  );
+  return json({ fixed_charge: serializeFixedCharge(persisted) }, { requestId });
+}
+
+async function preparePlanOverrideGraph(
+  plan: SubscriptionPlanRow,
+  env: Env,
+  organizationId: string,
+  transforms: OverrideGraphTransforms,
+): Promise<PreparedPlanOverrideGraph> {
   const charges = await env.BILLING_DB.prepare(
     `${graphChargeSelect()} WHERE ch.plan_id = ? AND ch.active = 1
      ORDER BY ch.created_at, ch.id LIMIT ?`,
@@ -215,10 +513,8 @@ async function createPlanOverride(
     );
   }
   const fixedCharges = await env.BILLING_DB.prepare(
-    `SELECT id, add_on_id, code, invoice_display_name, charge_model, properties_json, units,
-            pay_in_advance, prorated
-     FROM fixed_charges WHERE plan_id = ? AND active = 1
-     ORDER BY created_at, id LIMIT ?`,
+    `${graphFixedChargeSelect()} WHERE fc.plan_id = ? AND fc.active = 1
+     ORDER BY fc.created_at, fc.id LIMIT ?`,
   )
     .bind(plan.plan_id, MAX_GRAPH_FIXED_CHARGES + 1)
     .all<GraphFixedChargeRow>();
@@ -229,65 +525,55 @@ async function createPlanOverride(
       `Subscription plan overrides support at most ${MAX_GRAPH_FIXED_CHARGES} fixed charges`,
     );
   }
-
   const childPlanId = await deterministicUuid(
     "subscription-plan-override",
     `${plan.subscription_id}:${plan.plan_id}`,
   );
-  const nextVersion = await nextPlanVersion(env.BILLING_DB, auth.organizationId, plan.code);
-  let resultFilter: ChargeFilter | null = null;
-  const clonedCharges: Array<Record<string, unknown>> = [];
-  let childTargetChargeId = "";
-  for (const charge of charges.results) {
-    const childChargeId = await deterministicUuid(
+  const nextVersion = await nextPlanVersion(env.BILLING_DB, organizationId, plan.code);
+  const clonedCharges: ClonedGraphCharge[] = [];
+  for (const source of charges.results) {
+    const id = await deterministicUuid(
       "subscription-charge-override",
-      `${childPlanId}:${charge.id}`,
+      `${childPlanId}:${source.id}`,
     );
-    const clonedFilters = await cloneFilters(charge, childChargeId);
-    const isTarget = charge.id === targetCharge.id;
-    const nextFilters = isTarget
-      ? await applyMutation(charge, clonedFilters, originalFilters, mutation, childChargeId)
-      : clonedFilters;
-    if (isTarget) {
-      childTargetChargeId = childChargeId;
-      resultFilter = mutationResult(originalFilters, clonedFilters, nextFilters, mutation);
-    }
-    clonedCharges.push({
-      id: childChargeId,
-      parentId: charge.id,
-      billableMetricId: charge.billable_metric_id,
-      code: charge.code,
-      invoiceDisplayName: charge.invoice_display_name,
-      chargeModel: charge.charge_model,
-      propertiesJson: charge.properties_json,
-      filtersJson: stableJson(nextFilters),
-      invoiceable: charge.invoiceable,
-      payInAdvance: charge.pay_in_advance,
-      prorated: charge.prorated,
-      minAmountMinor: charge.min_amount_minor,
-      acceptsTargetWallet: charge.accepts_target_wallet,
-    });
+    const clone: ClonedGraphCharge = {
+      id,
+      parentId: source.id,
+      billableMetricId: source.billable_metric_id,
+      code: source.code,
+      invoiceDisplayName: source.invoice_display_name,
+      chargeModel: source.charge_model,
+      propertiesJson: source.properties_json,
+      filtersJson: stableJson(await cloneFilters(source, id)),
+      invoiceable: source.invoiceable,
+      payInAdvance: source.pay_in_advance,
+      prorated: source.prorated,
+      minAmountMinor: source.min_amount_minor,
+      acceptsTargetWallet: source.accepts_target_wallet,
+    };
+    clonedCharges.push(transforms.charge ? await transforms.charge(source, clone) : clone);
   }
-  if (!childTargetChargeId) {
-    throw new ApiError(409, "charge_version_conflict", "Charge changed concurrently");
-  }
-  const clonedFixedCharges = await Promise.all(
-    fixedCharges.results.map(async (charge) => ({
+  const clonedFixedCharges: ClonedGraphFixedCharge[] = [];
+  for (const source of fixedCharges.results) {
+    const clone: ClonedGraphFixedCharge = {
       id: await deterministicUuid(
         "subscription-fixed-charge-override",
-        `${childPlanId}:${charge.id}`,
+        `${childPlanId}:${source.id}`,
       ),
-      parentId: charge.id,
-      addOnId: charge.add_on_id,
-      code: charge.code,
-      invoiceDisplayName: charge.invoice_display_name,
-      chargeModel: charge.charge_model,
-      propertiesJson: charge.properties_json,
-      units: charge.units,
-      payInAdvance: charge.pay_in_advance,
-      prorated: charge.prorated,
-    })),
-  );
+      parentId: source.id,
+      addOnId: source.add_on_id,
+      code: source.code,
+      invoiceDisplayName: source.invoice_display_name,
+      chargeModel: source.charge_model,
+      propertiesJson: source.properties_json,
+      units: source.units,
+      payInAdvance: source.pay_in_advance,
+      prorated: source.prorated,
+    };
+    clonedFixedCharges.push(
+      transforms.fixedCharge ? await transforms.fixedCharge(source, clone) : clone,
+    );
+  }
   const chargesJson = stableJson(clonedCharges);
   const fixedChargesJson = stableJson(clonedFixedCharges);
   if (
@@ -301,28 +587,39 @@ async function createPlanOverride(
       "Subscription plan override pricing data exceeds the supported size",
     );
   }
+  return { childPlanId, nextVersion, clonedCharges, clonedFixedCharges };
+}
 
-  const now = new Date().toISOString();
-  const subscriptionEvent = domainEvent(
-    "subscription.updated",
-    "subscription",
-    plan.subscription_id,
-    plan.subscription_version + 1,
-    auth.organizationId,
-    requestId,
-    now,
-    { externalId: undefined, planCode: plan.code, planId: childPlanId },
-  );
-  const chargeEvent = domainEvent(
-    "charge.updated",
-    "charge",
-    childTargetChargeId,
-    1,
-    auth.organizationId,
-    requestId,
-    now,
-    { code: targetCharge.code, planCode: plan.code, subscriptionId: plan.subscription_id },
-  );
+async function persistPlanOverrideGraph(
+  plan: SubscriptionPlanRow,
+  prepared: PreparedPlanOverrideGraph,
+  subscriptionEvent: DomainEvent,
+  mutationEvent: DomainEvent,
+  mutationKind: "charge" | "fixed_charge",
+  now: string,
+  env: Env,
+  auth: AuthContext,
+): Promise<void> {
+  const chargesJson = stableJson(prepared.clonedCharges);
+  const fixedChargesJson = stableJson(prepared.clonedFixedCharges);
+  const mutationOutbox =
+    mutationKind === "charge"
+      ? conditionalChargeOutboxStatement(
+          env.BILLING_DB,
+          auth.organizationId,
+          mutationEvent,
+          mutationEvent.aggregateId,
+          1,
+          now,
+        )
+      : conditionalFixedChargeOutboxStatement(
+          env.BILLING_DB,
+          auth.organizationId,
+          mutationEvent,
+          mutationEvent.aggregateId,
+          1,
+          now,
+        );
   const results = await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
       `INSERT INTO plans
@@ -341,8 +638,8 @@ async function createPlanOverride(
            WHERE id = ? AND organization_id = ? AND plan_id = ? AND version = ?
          )`,
     ).bind(
-      childPlanId,
-      nextVersion,
+      prepared.childPlanId,
+      prepared.nextVersion,
       now,
       now,
       plan.plan_id,
@@ -367,7 +664,15 @@ async function createPlanOverride(
               json_extract(value, '$.acceptsTargetWallet'), 1, 1, ?, ?
        FROM json_each(?)
        WHERE EXISTS (SELECT 1 FROM plans WHERE id = ? AND parent_id = ?)`,
-    ).bind(auth.organizationId, childPlanId, now, now, chargesJson, childPlanId, plan.plan_id),
+    ).bind(
+      auth.organizationId,
+      prepared.childPlanId,
+      now,
+      now,
+      chargesJson,
+      prepared.childPlanId,
+      plan.plan_id,
+    ),
     env.BILLING_DB.prepare(
       `INSERT INTO fixed_charges
        (id, organization_id, parent_id, plan_id, add_on_id, code, invoice_display_name,
@@ -381,19 +686,27 @@ async function createPlanOverride(
               1, 1, ?, ?
        FROM json_each(?)
        WHERE EXISTS (SELECT 1 FROM plans WHERE id = ? AND parent_id = ?)`,
-    ).bind(auth.organizationId, childPlanId, now, now, fixedChargesJson, childPlanId, plan.plan_id),
+    ).bind(
+      auth.organizationId,
+      prepared.childPlanId,
+      now,
+      now,
+      fixedChargesJson,
+      prepared.childPlanId,
+      plan.plan_id,
+    ),
     env.BILLING_DB.prepare(
       `UPDATE subscriptions SET plan_id = ?, version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND plan_id = ? AND version = ?
          AND EXISTS (SELECT 1 FROM plans WHERE id = ? AND parent_id = ?)`,
     ).bind(
-      childPlanId,
+      prepared.childPlanId,
       now,
       plan.subscription_id,
       auth.organizationId,
       plan.plan_id,
       plan.subscription_version,
-      childPlanId,
+      prepared.childPlanId,
       plan.plan_id,
     ),
     conditionalOutboxStatement(
@@ -404,19 +717,12 @@ async function createPlanOverride(
       plan.subscription_version + 1,
       now,
     ),
-    conditionalChargeOutboxStatement(
-      env.BILLING_DB,
-      auth.organizationId,
-      chargeEvent,
-      childTargetChargeId,
-      1,
-      now,
-    ),
+    mutationOutbox,
   ]);
   if (
     results[0]?.meta.changes !== 1 ||
-    results[1]?.meta.changes !== clonedCharges.length ||
-    results[2]?.meta.changes !== clonedFixedCharges.length ||
+    results[1]?.meta.changes !== prepared.clonedCharges.length ||
+    results[2]?.meta.changes !== prepared.clonedFixedCharges.length ||
     results[3]?.meta.changes !== 1 ||
     results[4]?.meta.changes !== 1 ||
     results[5]?.meta.changes !== 1
@@ -424,10 +730,7 @@ async function createPlanOverride(
     throw new ApiError(409, "subscription_version_conflict", "Subscription changed concurrently");
   }
   await env.DOMAIN_EVENTS.send(subscriptionEvent);
-  await env.DOMAIN_EVENTS.send(chargeEvent);
-  if (!resultFilter)
-    throw new ApiError(500, "persistence_error", "Charge filter was not persisted");
-  return json({ filter: serializeChargeFilter(resultFilter, targetCharge.code) }, { requestId });
+  await env.DOMAIN_EVENTS.send(mutationEvent);
 }
 
 async function mutateExistingOverride(
@@ -474,6 +777,64 @@ async function mutateExistingOverride(
   if (!resultFilter)
     throw new ApiError(500, "persistence_error", "Charge filter was not persisted");
   return json({ filter: serializeChargeFilter(resultFilter, charge.code) }, { requestId });
+}
+
+async function mutateExistingFixedChargeOverride(
+  plan: SubscriptionPlanRow,
+  fixedCharge: GraphFixedChargeRow,
+  normalized: NormalizedFixedChargeOverride,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const now = new Date().toISOString();
+  const nextVersion = fixedCharge.version + 1;
+  const event = domainEvent(
+    "fixed_charge.updated",
+    "fixed_charge",
+    fixedCharge.id,
+    nextVersion,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: fixedCharge.code, planCode: plan.code, subscriptionId: plan.subscription_id },
+  );
+  const results = await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `UPDATE fixed_charges
+       SET invoice_display_name = ?, properties_json = ?, units = ?,
+           version = version + 1, updated_at = ?
+       WHERE id = ? AND organization_id = ? AND plan_id = ? AND active = 1 AND version = ?`,
+    ).bind(
+      normalized.invoiceDisplayName,
+      stableJson(normalized.properties),
+      normalized.units,
+      now,
+      fixedCharge.id,
+      auth.organizationId,
+      plan.plan_id,
+      fixedCharge.version,
+    ),
+    conditionalFixedChargeOutboxStatement(
+      env.BILLING_DB,
+      auth.organizationId,
+      event,
+      fixedCharge.id,
+      nextVersion,
+      now,
+    ),
+  ]);
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
+    throw new ApiError(409, "fixed_charge_version_conflict", "Fixed charge changed concurrently");
+  }
+  await env.DOMAIN_EVENTS.send(event);
+  const persisted = await requireFixedChargeById(
+    env.BILLING_DB,
+    auth.organizationId,
+    plan.plan_id,
+    fixedCharge.id,
+  );
+  return json({ fixed_charge: serializeFixedCharge(persisted) }, { requestId });
 }
 
 async function applyMutation(
@@ -558,12 +919,24 @@ async function cloneFilters(
   );
 }
 
-async function requireSubscriptionCharge(
+function chargeFiltersFromJson(
+  filtersJson: string,
+  source: GraphChargeRow,
+  identityScope: string,
+): ChargeFilter[] {
+  return parseStoredChargeFilters(
+    filtersJson,
+    parseStoredBillableMetricFilters(source.metric_filters_json),
+    source.charge_model,
+    identityScope,
+  );
+}
+
+async function requireSubscriptionPlan(
   database: D1Database,
   organizationId: string,
   externalId: string,
-  chargeCode: string,
-): Promise<{ plan: SubscriptionPlanRow; charge: GraphChargeRow }> {
+): Promise<SubscriptionPlanRow> {
   const plan = await database
     .prepare(
       `SELECT s.id AS subscription_id, s.version AS subscription_version, s.plan_id,
@@ -581,6 +954,16 @@ async function requireSubscriptionCharge(
     .bind(organizationId, externalId)
     .first<SubscriptionPlanRow>();
   if (!plan) throw new ApiError(404, "subscription_not_found", "Subscription was not found");
+  return plan;
+}
+
+async function requireSubscriptionCharge(
+  database: D1Database,
+  organizationId: string,
+  externalId: string,
+  chargeCode: string,
+): Promise<{ plan: SubscriptionPlanRow; charge: GraphChargeRow }> {
+  const plan = await requireSubscriptionPlan(database, organizationId, externalId);
   const charge = await database
     .prepare(
       `${graphChargeSelect()} WHERE ch.plan_id = ? AND ch.code = ? AND ch.active = 1 LIMIT 1`,
@@ -591,6 +974,41 @@ async function requireSubscriptionCharge(
   return { plan, charge };
 }
 
+async function requireSubscriptionFixedCharge(
+  database: D1Database,
+  organizationId: string,
+  externalId: string,
+  fixedChargeCode: string,
+): Promise<{ plan: SubscriptionPlanRow; fixedCharge: GraphFixedChargeRow }> {
+  const plan = await requireSubscriptionPlan(database, organizationId, externalId);
+  const fixedCharge = await database
+    .prepare(
+      `${graphFixedChargeSelect()}
+       WHERE fc.plan_id = ? AND fc.code = ? AND fc.active = 1 LIMIT 1`,
+    )
+    .bind(plan.plan_id, fixedChargeCode)
+    .first<GraphFixedChargeRow>();
+  if (!fixedCharge) throw new ApiError(404, "fixed_charge_not_found", "Fixed charge was not found");
+  return { plan, fixedCharge };
+}
+
+async function requireFixedChargeById(
+  database: D1Database,
+  organizationId: string,
+  planId: string,
+  fixedChargeId: string,
+): Promise<GraphFixedChargeRow> {
+  const fixedCharge = await database
+    .prepare(
+      `${graphFixedChargeSelect()}
+       WHERE fc.organization_id = ? AND fc.plan_id = ? AND fc.id = ? AND fc.active = 1 LIMIT 1`,
+    )
+    .bind(organizationId, planId, fixedChargeId)
+    .first<GraphFixedChargeRow>();
+  if (!fixedCharge) throw new ApiError(500, "persistence_error", "Fixed charge was not persisted");
+  return fixedCharge;
+}
+
 function graphChargeSelect(): string {
   return `SELECT ch.id, ch.billable_metric_id, ch.code, ch.invoice_display_name,
                  ch.charge_model, ch.properties_json, ch.filters_json,
@@ -598,6 +1016,134 @@ function graphChargeSelect(): string {
                  ch.prorated, ch.min_amount_minor, ch.accepts_target_wallet,
                  ch.version
           FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id`;
+}
+
+function graphFixedChargeSelect(): string {
+  return `SELECT fc.id, fc.parent_id, fc.add_on_id, ao.code AS add_on_code, fc.code,
+                 fc.invoice_display_name, fc.charge_model, fc.properties_json, fc.units,
+                 fc.pay_in_advance, fc.prorated, fc.version, fc.created_at
+          FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id`;
+}
+
+function serializeFixedCharge(charge: GraphFixedChargeRow): Record<string, unknown> {
+  return {
+    lago_id: charge.id,
+    lago_add_on_id: charge.add_on_id,
+    code: charge.code,
+    invoice_display_name: charge.invoice_display_name,
+    add_on_code: charge.add_on_code,
+    created_at: charge.created_at,
+    charge_model: charge.charge_model,
+    pay_in_advance: charge.pay_in_advance === 1,
+    prorated: charge.prorated === 1,
+    properties: parseObject(charge.properties_json),
+    units: charge.units,
+    lago_parent_id: charge.parent_id,
+    taxes: [],
+  };
+}
+
+function normalizeFixedChargeOverride(
+  current: GraphFixedChargeRow,
+  input: Record<string, unknown>,
+): NormalizedFixedChargeOverride {
+  if (input.apply_units_immediately === true) {
+    throw new ApiError(
+      422,
+      "unsupported_fixed_charge_feature",
+      "Immediate fixed-charge unit events are not implemented",
+    );
+  }
+  if (input.tax_codes !== undefined && !Array.isArray(input.tax_codes)) {
+    throw new ApiError(422, "validation_error", "tax_codes must be an array");
+  }
+  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0) {
+    throw new ApiError(
+      422,
+      "unsupported_tax_target",
+      "Fixed-charge tax targeting is not implemented; use organization-default taxes",
+    );
+  }
+  for (const field of ["id", "parent_id", "code", "add_on_id", "add_on_code"]) {
+    if (input[field] !== undefined && input[field] !== null) {
+      throw new ApiError(
+        422,
+        "unsupported_fixed_charge_feature",
+        `${field} cannot be changed by a subscription fixed-charge override`,
+      );
+    }
+  }
+  if (input.charge_model !== undefined && input.charge_model !== current.charge_model) {
+    throw new ApiError(
+      422,
+      "unsupported_fixed_charge_feature",
+      "A subscription fixed-charge override cannot change its charge model",
+    );
+  }
+  for (const [field, currentValue] of [
+    ["pay_in_advance", current.pay_in_advance === 1],
+    ["prorated", current.prorated === 1],
+  ] as const) {
+    if (input[field] !== undefined && input[field] !== currentValue) {
+      throw new ApiError(
+        422,
+        "unsupported_fixed_charge_feature",
+        `A subscription fixed-charge override cannot change ${field}`,
+      );
+    }
+  }
+  const invoiceDisplayName =
+    input.invoice_display_name === undefined
+      ? current.invoice_display_name
+      : optionalString(input, "invoice_display_name");
+  const properties =
+    input.properties === undefined
+      ? parseObject(current.properties_json)
+      : optionalObject(input.properties, "properties");
+  const units =
+    input.units === undefined
+      ? nonNegativeDecimal(current.units, "units")
+      : nonNegativeDecimal(input.units, "units");
+  try {
+    const rated = Decimal.parse(
+      rateCharge(units, parseChargeModel(current.charge_model, properties)).amountCents,
+    );
+    if (rated.isNegative()) throw new Error("negative");
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(422, "validation_error", "Fixed charge has invalid rating properties");
+  }
+  return { invoiceDisplayName, properties, units };
+}
+
+function optionalObject(value: unknown, field: string): Record<string, unknown> {
+  if (value === undefined || value === null) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError(422, "validation_error", `${field} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function parseObject(value: string): Record<string, unknown> {
+  try {
+    return optionalObject(JSON.parse(value) as unknown, "stored JSON");
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(500, "invalid_stored_json", "Stored JSON could not be decoded");
+  }
+}
+
+function nonNegativeDecimal(value: unknown, field: string): string {
+  if (typeof value !== "string" && typeof value !== "number") {
+    throw new ApiError(422, "validation_error", `${field} must be a non-negative decimal`);
+  }
+  try {
+    const decimal = Decimal.parse(value);
+    if (decimal.isNegative()) throw new Error("negative");
+    return decimal.toString();
+  } catch {
+    throw new ApiError(422, "validation_error", `${field} must be a non-negative decimal`);
+  }
 }
 
 function chargeFilters(charge: GraphChargeRow): ChargeFilter[] {
@@ -726,6 +1272,44 @@ function conditionalChargeOutboxStatement(
       stableJson(event.payload),
       event.occurredAt,
       chargeId,
+      organizationId,
+      version,
+      updatedAt,
+    );
+}
+
+function conditionalFixedChargeOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+  fixedChargeId: string,
+  version: number,
+  updatedAt: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+       WHERE EXISTS (
+         SELECT 1 FROM fixed_charges WHERE id = ? AND organization_id = ?
+           AND active = 1 AND version = ? AND updated_at = ?
+       )`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+      fixedChargeId,
       organizationId,
       version,
       updatedAt,

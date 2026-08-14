@@ -736,6 +736,172 @@ describe("subscription charge-filter overrides", () => {
     childFilters = await subscriptionFilters();
     expect(childFilters.some((filter) => filter.values.region?.[0] === "asia")).toBe(false);
   });
+
+  it("lists, shows, creates, and updates a subscription fixed-charge override", async () => {
+    const initialList = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges?per_page=1",
+    );
+    expect(initialList.status).toBe(200);
+    await expect(initialList.json()).resolves.toMatchObject({
+      fixed_charges: [
+        {
+          lago_id: "fixed-sub-filter",
+          lago_parent_id: null,
+          lago_add_on_id: "addon-sub-filter",
+          add_on_code: "support",
+          code: "support-fixed",
+          properties: { amount: "500" },
+          units: "1",
+          taxes: [],
+        },
+      ],
+      meta: { current_page: 1, total_count: 1, total_pages: 1 },
+    });
+    const initialShow = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
+    );
+    expect(initialShow.status).toBe(200);
+    await expect(initialShow.json()).resolves.toMatchObject({
+      fixed_charge: { lago_id: "fixed-sub-filter", lago_parent_id: null },
+    });
+
+    const created = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
+      "PUT",
+      {
+        fixed_charge: {
+          invoice_display_name: "Subscriber support",
+          charge_model: "standard",
+          properties: { amount: "750" },
+          units: "2",
+          apply_units_immediately: false,
+          tax_codes: [],
+        },
+      },
+    );
+    expect(created.status, await created.clone().text()).toBe(200);
+    const createdBody = await created.json<{
+      fixed_charge: { lago_id: string; lago_parent_id: string | null };
+    }>();
+    expect(createdBody.fixed_charge.lago_id).not.toBe("fixed-sub-filter");
+    expect(createdBody.fixed_charge).toMatchObject({
+      lago_parent_id: "fixed-sub-filter",
+      invoice_display_name: "Subscriber support",
+      charge_model: "standard",
+      properties: { amount: "750" },
+      units: "2",
+    });
+
+    const graph = await env.BILLING_DB.prepare(
+      `SELECT s.version AS subscription_version, p.parent_id,
+              (SELECT COUNT(*) FROM plans WHERE organization_id = 'org-sub-filter') AS plans,
+              (SELECT COUNT(*) FROM charges WHERE organization_id = 'org-sub-filter') AS charges,
+              (SELECT COUNT(*) FROM fixed_charges WHERE organization_id = 'org-sub-filter') AS fixed_charges,
+              (SELECT filters_json FROM charges WHERE plan_id = s.plan_id
+                AND parent_id = 'charge-sub-filter') AS filters_json
+       FROM subscriptions s JOIN plans p ON p.id = s.plan_id
+       WHERE s.id = 'subscription-sub-filter'`,
+    ).first<{
+      subscription_version: number;
+      parent_id: string | null;
+      plans: number;
+      charges: number;
+      fixed_charges: number;
+      filters_json: string;
+    }>();
+    expect(graph).toMatchObject({
+      subscription_version: 2,
+      parent_id: "plan-sub-filter",
+      plans: 2,
+      charges: 4,
+      fixed_charges: 2,
+    });
+    expect(JSON.parse(graph?.filters_json ?? "[]")).toEqual([
+      expect.objectContaining({ values: { region: ["eu"] } }),
+    ]);
+
+    const updated = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
+      "PUT",
+      { fixed_charge: { properties: { amount: "900" }, units: 3 } },
+    );
+    expect(updated.status, await updated.clone().text()).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      fixed_charge: {
+        lago_id: createdBody.fixed_charge.lago_id,
+        lago_parent_id: "fixed-sub-filter",
+        invoice_display_name: "Subscriber support",
+        properties: { amount: "900" },
+        units: "3",
+      },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT invoice_display_name, properties_json, units, version
+         FROM fixed_charges WHERE id = 'fixed-sub-filter'`,
+      ).first(),
+    ).resolves.toEqual({
+      invoice_display_name: null,
+      properties_json: '{"amount":"500"}',
+      units: "1",
+      version: 1,
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total FROM outbox_events
+         WHERE organization_id = 'org-sub-filter' AND event_type = 'fixed_charge.updated'`,
+      ).first(),
+    ).resolves.toEqual({ total: 2 });
+  });
+
+  it("rejects unsupported subscription fixed-charge features before cloning the plan", async () => {
+    const immediate = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
+      "PUT",
+      { fixed_charge: { units: "2", apply_units_immediately: true } },
+    );
+    expect(immediate.status).toBe(422);
+    await expect(immediate.json()).resolves.toMatchObject({
+      code: "unsupported_fixed_charge_feature",
+    });
+    const taxes = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
+      "PUT",
+      { fixed_charge: { tax_codes: ["vat"] } },
+    );
+    expect(taxes.status).toBe(422);
+    await expect(taxes.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
+    const identity = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
+      "PUT",
+      { fixed_charge: { code: "renamed" } },
+    );
+    expect(identity.status).toBe(422);
+    await expect(identity.json()).resolves.toMatchObject({
+      code: "unsupported_fixed_charge_feature",
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT (SELECT COUNT(*) FROM plans WHERE organization_id = 'org-sub-filter') AS plans,
+                (SELECT COUNT(*) FROM fixed_charges WHERE organization_id = 'org-sub-filter') AS fixed_charges`,
+      ).first(),
+    ).resolves.toEqual({ plans: 1, fixed_charges: 1 });
+  });
+
+  it("returns precise not-found errors for subscription fixed-charge routes", async () => {
+    const missingCharge = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/missing",
+    );
+    expect(missingCharge.status).toBe(404);
+    await expect(missingCharge.json()).resolves.toMatchObject({ code: "fixed_charge_not_found" });
+    const missingSubscription = await api(
+      "/api/v1/subscriptions/missing/fixed_charges/support-fixed",
+    );
+    expect(missingSubscription.status).toBe(404);
+    await expect(missingSubscription.json()).resolves.toMatchObject({
+      code: "subscription_not_found",
+    });
+  });
 });
 
 async function subscriptionFilters(): Promise<
