@@ -148,16 +148,18 @@ Required evidence for a new aggregate or a boundary change:
   credit notes, and wallet lots only while finalizing. Supported subscription, plan/rating, coupon,
   tax, credit-note, wallet, and usage mutations flag affected drafts through D1 triggers.
   Explicit skip-invoice/skip-credit termination keeps an existing draft refreshable from its
-  immutable context. Final termination invoices currently cover zero-grace in-arrears plans using
-  explicit UTC civil-day semantics, full supported non-prorated fixed charges, and a prorated
-  minimum-commitment target for the catalog's unsplit billing window. Those plans may also persist a
-  future UTC `ending_at`, which the hourly owner executes before billing close.
+  immutable context. Final termination invoices cover in-arrears plans using explicit UTC
+  civil-day semantics, full supported non-prorated fixed charges, and a prorated
+  minimum-commitment target for the catalog's unsplit billing window. At positive grace they first
+  persist a distinct immutable termination context containing the original period and termination
+  instant, create a non-consuming preview, and allocate balances only during finalization. The same
+  subset may persist a future UTC `ending_at`, which the hourly owner executes before billing close.
   Credit-only pay-in-advance termination may issue an unused-period balance against a finalized base
   line only when the source invoice has no coupon, tax, wallet, or prior credit-note allocation.
   The default combined mode creates that unused-period note before finalizing bounded in-arrears
   usage, applies the new credit before wallet lots, never repeats the prepaid base line, and commits
   both ledgers plus the subscription transition and ordered outbox evidence in one D1 batch. A
-  separate mode may skip credit creation. Positive-grace termination drafts, tenant-local
+  separate mode may skip credit creation. Pay-in-advance positive-grace termination, tenant-local
   termination dates, prorated or pay-in-advance fixed charges, split-window or pay-in-advance
   commitment reconciliation, allocated-source adjustments, refunds, and offsets still need
   explicit lifecycle rules.

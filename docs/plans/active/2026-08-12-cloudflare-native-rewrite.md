@@ -345,9 +345,12 @@ Acceptance:
       skip-credit subscription termination flags an existing draft and keeps it refreshable from
       its immutable initial or renewal context. Supported final termination now covers prorated
       in-arrears bases/commitments and the ordered pay-in-advance unused-credit plus usage-invoice
-      command. Paid-invoice refund/offset voids, allocated-source adjustments, positive-grace
-      termination drafts, destructive plan/charge graph replacement, and broader retry transitions
-      remain pending.
+      command. Positive-grace in-arrears termination now uses a distinct immutable termination
+      context, creates a non-consuming draft for immediate or scheduled termination, refreshes from
+      the original period after the subscription transition, and allocates balances only while
+      finalizing. Pay-in-advance grace termination, paid-invoice refund/offset voids,
+      allocated-source adjustments, destructive plan/charge graph replacement, and broader retry
+      transitions remain pending.
       Customer net-payment terms now snapshot onto finalized initial, recurring, and one-off
       invoices with deterministic due dates. The legacy hourly overdue transition is replay-safe,
       emits a transactional outbox event, and successful manual or Authorize.Net settlement clears
@@ -1150,3 +1153,15 @@ resource and mutation described.
   subscriptions, invoices, invoice lines, credit notes, credit-note applications, wallets, and
   outbox events plus 49 Cron audits. No route, secret, seeded billing data, or disabled external
   flag changed.
+- 2026-08-14: Added positive-grace in-arrears termination drafts for both immediate and scheduled
+  lifecycle paths. Migration `0029_termination_invoice_drafts.sql` expands the immutable
+  subscription invoice context with a distinct termination type, original period boundaries, and
+  termination instant, so refresh/finalization never depend on the subscription's shortened current
+  period. Draft creation previews coupons, finalized credit-note balances, and wallet lots without
+  consuming them; manual refresh remains non-consuming and finalization alone commits allocations.
+  Replay creates one draft/event/allocation, while an injected late subscription-transition abort
+  proves the entire D1 batch rolls back. Pay-in-advance grace remains explicitly guarded because its
+  source credit note is itself draft until the prepaid invoice finalizes in Lago. All 88 tests pass
+  across 22 files; all 29 migrations replay from an empty local D1, and formatting, strict lint,
+  generated inventory/types, TypeScript, and the dry-run bundle are green at 520.83 KiB (92.94 KiB
+  gzip).
