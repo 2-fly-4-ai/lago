@@ -294,9 +294,10 @@ Acceptance:
       Billable-metric create/list/show and Rails-safe scalar update now emit transactional,
       versioned outbox events; attached metrics allow only name/description mutation. Expression,
       rounding, recurring weighted-sum, nested metric filters, and deletion workflows are now
-      ported. Generic recurring, custom aggregation, standalone filter endpoints, and grouped
-      weighted baselines remain explicit gaps. Standalone plan charge create/list/show/update/delete
-      supports the exact in-arrears rating models and nested filter-specific price overrides.
+      ported. Generic recurring, custom aggregation, subscription-level filter overrides, and
+      grouped weighted baselines remain explicit gaps. Standalone plan charge
+      create/list/show/update/delete supports the exact in-arrears rating models, nested
+      filter-specific price overrides, and standalone filter list/show/create/update/delete.
       Pay-in-advance, proration, targeted taxes, pricing units, and cascades fail explicitly until
       their billing and cleanup workflows are ported; combining filters with weighted usage,
       target-wallet grouping, or charge minimums remains guarded.
@@ -1844,3 +1845,20 @@ resource and mutation described.
   from 180 schedule audits. `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and
   `OUTBOUND_WEBHOOKS_ENABLED` remain `0`; no resource provisioning, production route/domain,
   secret, provider action, customer data, or billing row changed.
+- 2026-08-15: Added Lago-compatible standalone plan charge-filter list/show/create/update/delete
+  routes over the same bounded D1 filter documents. Mutations preserve immutable filter values on
+  update, strip legacy presentation-group metadata, issue a new deterministic ID after
+  delete/recreate, increment the owning charge version, refresh drafts through the existing charge
+  trigger, and emit transactional `charge.updated` outbox events. Pagination and plan/charge/filter
+  not-found behavior match the legacy route family; cascades fail explicitly until plan inheritance
+  is ported. Formatting, strict lint, inventory, generated types, and TypeScript are green; bounded
+  Worker groups pass all 181 tests as 49 + 69 + 63. The dry-run bundle is 875.50 KiB (152.50 KiB
+  gzip). Feature checkpoint: `ae120ed`.
+- 2026-08-15: Remote preflight on the explicit SERP account found no pending migration and zero
+  organizations, customers, plans, subscriptions, invoices, and usage events. Deployed only the
+  isolated Worker as version `7c1bf413-994b-46d5-a215-ececc802e28b` with a 5 ms startup.
+  Health/readiness returned `200`/`200`, unauthenticated standalone filter access returned `401`,
+  and post-deploy aggregate-only verification remained empty apart from 182 schedule audits.
+  `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`;
+  no migration, resource provisioning, production route/domain, secret, provider action, customer
+  data, or billing row changed.

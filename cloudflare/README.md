@@ -147,7 +147,9 @@ remaining Lago feature inventory is dispositioned and ported.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
   `/api/v1/invoice_custom_sections` replace the retained operator GraphQL workflow for this
   feature. Draft invoices refresh their snapshots; finalized invoice API/PDF output uses only the
-  immutable copy.
+  immutable copy. Lago-compatible plan charge-filter list/show/create/update/delete endpoints live
+  under `/api/v1/plans/:plan_code/charges/:charge_code/filters`; mutations use optimistic charge
+  versions and transactional `charge.updated` outbox events.
 
 No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or
 OS command is required by this package.
