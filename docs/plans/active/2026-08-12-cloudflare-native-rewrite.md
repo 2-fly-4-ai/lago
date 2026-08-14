@@ -1296,3 +1296,13 @@ resource and mutation described.
   bundle are green. All 33 migrations replayed from empty D1 with no foreign-key violations. This
   is a local pre-deployment checkpoint: isolated remote D1 and Worker remain on migration `0032`
   and version `074a28d2-6d22-48e0-aad7-6c27a04e5b8c`.
+- 2026-08-14: Remote preflight showed exactly `0033_subscription_generations.sql` pending and zero
+  organizations, customers, plans, subscriptions, invoices, credit notes, and outbox events. Applied
+  only that migration to isolated D1 `2f32f159-c269-46c6-a4dd-9e38477f5d25`; follow-up inventory
+  was empty, `PRAGMA foreign_key_check` returned no rows, and verification found 33 migrations, all
+  10 generation invalidation triggers, the transition-consistency trigger, and all three expected
+  uniqueness indexes. Deployed isolated Worker version
+  `6f198ceb-959d-486a-ba64-6b7ca88a6fa3` with the existing bindings and all three external-action
+  flags still `0`. Remote health/readiness returned `200`/`200`, unauthenticated subscription access
+  returned `401`, and aggregate-only verification remained empty for every billing entity. No
+  production route, domain, secret, provider action, or billing record changed.
