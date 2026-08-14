@@ -1143,3 +1143,10 @@ resource and mutation described.
   separate credit-only and usage-only modes remain intact. All 85 tests pass across 22 files;
   formatting, strict lint, generated inventory/types, TypeScript, and the dry-run bundle are green
   at 519.00 KiB (92.48 KiB gzip). No migration is required.
+- 2026-08-14: Confirmed no remote migration was pending and deployed the combined pay-in-advance
+  termination ledger as isolated Worker version `c80d6528-7953-4183-a52a-0f00863b5b81`.
+  Follow-up inventory remained empty; remote health/readiness returned `200`, unauthenticated
+  termination returned `401`, and aggregate-only verification confirmed zero organizations,
+  subscriptions, invoices, invoice lines, credit notes, credit-note applications, wallets, and
+  outbox events plus 49 Cron audits. No route, secret, seeded billing data, or disabled external
+  flag changed.
