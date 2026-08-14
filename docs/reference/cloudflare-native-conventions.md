@@ -43,6 +43,11 @@ this document does not silently redefine that behavior.
   as `subscription_at`, creates no invoice while pending, and uses the supplied Workflow trigger
   instant for both activation and the initial billing-period anchor. Backdated starts and
   tenant-local civil-date interpretation remain unsupported.
+- The retained termination-invoice subset uses UTC civil dates. Its in-arrears base line includes
+  both the period-start date and termination date, caps the result at the full period, and uses
+  exact `Decimal` division before minor-unit rounding. Usage remains half-open and is bounded by the
+  start of the next UTC day, capped at the original period end. This is not tenant-local timezone
+  parity and must not be reused for a scheduled `ending_at` transition without timezone evidence.
 - Tenant-local time zones, daylight-saving behavior, and Rails time-zone parity are not implemented
   unless a feature's executable evidence says otherwise. A port that depends on local civil time
   must add the time-zone field, transition tests, and migration notes before it can be called parity.
@@ -104,23 +109,23 @@ this document does not silently redefine that behavior.
 The following table defines the write owner. “Proof” names the mechanism that makes a crash,
 concurrent request, or replay converge on one valid result.
 
-| Aggregate                 | Write owner                                                          | Atomic D1 unit                                                                            | Concurrency and replay proof                                                                              |
-| ------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Organization and API keys | authenticated admin/bootstrap boundary                               | organization and key rows                                                                 | unique external ID/key hash; all child reads require organization scope                                   |
-| Customer billing account  | `BillingAccount` Durable Object plus customer API                    | customer version and outbox                                                               | per-customer command reservation; unique external ID; optimistic version; replay hash                     |
-| Plan catalog              | plan, charge, fixed-charge, add-on, metric, and tax APIs             | one catalog mutation and outbox                                                           | tenant/code/version uniqueness; attached-plan restrictions; optimistic version                            |
-| Subscription              | compatibility API and lifecycle API                                  | subscription state transition, billing-cycle seed, initial invoice/event rows, and outbox | unique tenant external ID; request hash; customer DO reservation; transition/version guards               |
-| Usage event               | metered-usage API                                                    | one event/outbox or an atomic batch; R2 archives are content-addressed                    | tenant transaction ID uniqueness; canonical request hash; replay/conflict and batch rollback tests        |
-| Billing cycle             | `closeBillingPeriod`                                                 | cycle lease/result, invoice graph, credits, next period, and outbox                       | deterministic cycle key; cycle request hash; customer DO reservation; D1 batch; version predicates        |
-| Invoice                   | one-off, billing-cycle, refresh/finalize, void, and payment services | invoice header/version, lines/taxes/credits, linked ledgers, and outbox                   | immutable source IDs; line uniqueness; total `CHECK`; optimistic version; deterministic event IDs         |
-| Coupon application        | coupon ledger and invoice credit service                             | coupon/application version, credit row, invoice credit total, and outbox                  | unique application/reuse slot; request hash; DO reservation; optimistic version                           |
-| Wallet                    | wallet ledger and invoice wallet-credit service                      | wallet version/balance, transaction lots/consumption, invoice credit, and outbox          | current-version and available-lot triggers; unique idempotency and invoice-wallet rows; D1 batch          |
-| Credit note               | credit-note ledger and credit consumption service                    | note balance/version, consumption, invoice credit, and outbox                             | required idempotency key/hash; balance/version predicate; unique consumption source                       |
-| Payment                   | payment ledger and provider reconciliation                           | attempt/version, invoice payment projection/link invalidation, and outbox                 | tenant idempotency uniqueness; provider transaction uniqueness; terminal-state/version guards             |
-| Webhook receipt           | provider webhook handler and reconciliation Workflow                 | receipt/process state; archive/cleanup intent where applicable                            | provider event uniqueness plus payload hash; R2 object key; processed-message and cleanup replay guards   |
-| Outbound webhook          | endpoint API and reconciliation Workflow                             | endpoint/delivery state and attempt projection                                            | endpoint/event uniqueness; deterministic payload/event; versioned endpoint; kill switch and bounded retry |
-| Schedule run              | five-minute dispatcher and reconciliation Workflow                   | slot audit and each executor's own aggregate batch                                        | deterministic slot/instance ID; unique run ID; due-but-unported work recorded as partial                  |
-| Document artifact         | document Workflow                                                    | artifact status keyed by aggregate version                                                | unique resource/type/version; immutable R2 key/hash; retries reuse ready artifact                         |
+| Aggregate                 | Write owner                                                          | Atomic D1 unit                                                                                  | Concurrency and replay proof                                                                              |
+| ------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Organization and API keys | authenticated admin/bootstrap boundary                               | organization and key rows                                                                       | unique external ID/key hash; all child reads require organization scope                                   |
+| Customer billing account  | `BillingAccount` Durable Object plus customer API                    | customer version and outbox                                                                     | per-customer command reservation; unique external ID; optimistic version; replay hash                     |
+| Plan catalog              | plan, charge, fixed-charge, add-on, metric, and tax APIs             | one catalog mutation and outbox                                                                 | tenant/code/version uniqueness; attached-plan restrictions; optimistic version                            |
+| Subscription              | compatibility API and lifecycle API                                  | subscription state transition, billing-cycle seed, initial/final invoice event rows, and outbox | unique tenant external ID; request hash; customer DO reservation; transition/version guards               |
+| Usage event               | metered-usage API                                                    | one event/outbox or an atomic batch; R2 archives are content-addressed                          | tenant transaction ID uniqueness; canonical request hash; replay/conflict and batch rollback tests        |
+| Billing cycle             | `closeBillingPeriod`                                                 | cycle lease/result, invoice graph, credits, next period, and outbox                             | deterministic cycle key; cycle request hash; customer DO reservation; D1 batch; version predicates        |
+| Invoice                   | one-off, billing-cycle, refresh/finalize, void, and payment services | invoice header/version, lines/taxes/credits, linked ledgers, and outbox                         | immutable source IDs; line uniqueness; total `CHECK`; optimistic version; deterministic event IDs         |
+| Coupon application        | coupon ledger and invoice credit service                             | coupon/application version, credit row, invoice credit total, and outbox                        | unique application/reuse slot; request hash; DO reservation; optimistic version                           |
+| Wallet                    | wallet ledger and invoice wallet-credit service                      | wallet version/balance, transaction lots/consumption, invoice credit, and outbox                | current-version and available-lot triggers; unique idempotency and invoice-wallet rows; D1 batch          |
+| Credit note               | credit-note ledger and credit consumption service                    | note balance/version, consumption, invoice credit, and outbox                                   | required idempotency key/hash; balance/version predicate; unique consumption source                       |
+| Payment                   | payment ledger and provider reconciliation                           | attempt/version, invoice payment projection/link invalidation, and outbox                       | tenant idempotency uniqueness; provider transaction uniqueness; terminal-state/version guards             |
+| Webhook receipt           | provider webhook handler and reconciliation Workflow                 | receipt/process state; archive/cleanup intent where applicable                                  | provider event uniqueness plus payload hash; R2 object key; processed-message and cleanup replay guards   |
+| Outbound webhook          | endpoint API and reconciliation Workflow                             | endpoint/delivery state and attempt projection                                                  | endpoint/event uniqueness; deterministic payload/event; versioned endpoint; kill switch and bounded retry |
+| Schedule run              | five-minute dispatcher and reconciliation Workflow                   | slot audit and each executor's own aggregate batch                                              | deterministic slot/instance ID; unique run ID; due-but-unported work recorded as partial                  |
+| Document artifact         | document Workflow                                                    | artifact status keyed by aggregate version                                                      | unique resource/type/version; immutable R2 key/hash; retries reuse ready artifact                         |
 
 Required evidence for a new aggregate or a boundary change:
 
@@ -138,8 +143,10 @@ Required evidence for a new aggregate or a boundary change:
   credit notes, and wallet lots only while finalizing. Supported subscription, plan/rating, coupon,
   tax, credit-note, wallet, and usage mutations flag affected drafts through D1 triggers.
   Explicit skip-invoice/skip-credit termination keeps an existing draft refreshable from its
-  immutable context. Destructive plan/charge graph replacement, prorated termination invoices, and
-  termination credit notes still need explicit lifecycle rules.
+  immutable context. Final termination invoices currently cover only zero-grace in-arrears plans
+  without fixed charges or minimum commitments, using explicit UTC civil-day semantics. Positive-
+  grace termination drafts, tenant-local termination dates, fixed-charge/commitment proration,
+  pay-in-advance final invoicing, and termination credit notes still need explicit lifecycle rules.
 - A base subscription creates an initial invoice only when its plan snapshots
   `pay_in_advance = 1`; in-arrears starts seed the billing period without an invoice. Recurring
   pay-in-advance base lines snapshot the next period, while in-arrears base lines, usage, fixed

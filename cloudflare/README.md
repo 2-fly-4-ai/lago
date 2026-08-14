@@ -24,11 +24,15 @@ remaining Lago feature inventory is dispositioned and ported.
   pending subscription with no invoice, and the five-minute activation owner applies the same
   billing-mode rule exactly once. Pending starts can be moved to another future instant or canceled
   without producing an invoice. Immediate and scheduled activation both emit a transactional
-  `subscription.started` event. Explicit skip-invoice/skip-credit termination is idempotent; any
-  existing draft is invalidated and remains refreshable/finalizable from its immutable invoice
-  context. At renewal, pay-in-advance base fees snapshot the next period while in-arrears base fees
-  and usage snapshot the closed period. Backdating, calendar billing, prorated termination
-  invoices, and termination credit notes remain guarded.
+  `subscription.started` event. Zero-grace in-arrears subscriptions without fixed charges or a
+  minimum commitment can terminate with an atomic final invoice: the base fee is prorated by
+  inclusive UTC service days and usage is bounded to the following UTC-day boundary. Explicit
+  skip-invoice/skip-credit termination remains idempotent; any existing draft is invalidated and
+  remains refreshable/finalizable from its immutable invoice context. At renewal, pay-in-advance
+  base fees snapshot the next period while in-arrears base fees and usage snapshot the closed
+  period. Backdating, calendar billing, tenant-local termination dates, positive-grace termination
+  drafts, pay-in-advance termination credits, and termination with fixed charges or commitments
+  remain guarded.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.

@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `9e9dbdd0-23fd-4901-ae49-060db143ddff`
+- Latest verified version: `616df085-3589-4f49-906e-34d3c4f66405`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -146,6 +146,14 @@ Applied D1 migrations: `0001_foundation.sql` through `0027_pending_subscription_
   aggregate-only verification found zero organizations, subscriptions, invoices, and outbox events
   plus 32 Cron audits. All external-action flags remain disabled, with no route, secret, or billing
   data added.
+- The code-only in-arrears termination deployment added atomic final-invoice persistence with exact
+  inclusive UTC-day base proration, partial-window usage, immutable line metadata, credit/tax/wallet
+  allocation, and invoice/subscription outbox events. Remote health/readiness returned `200`/`200`,
+  unauthenticated termination returned `401`, and no migration was pending. Aggregate-only
+  verification found zero organizations, subscriptions, invoices, and invoice lines plus 37 Cron
+  audits. Pay-in-advance termination credits, positive-grace drafts, fixed charges, commitments,
+  and tenant-local scheduling remain guarded; all external-action flags remain disabled, with no
+  route, secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

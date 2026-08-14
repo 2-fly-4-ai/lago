@@ -1019,3 +1019,24 @@ resource and mutation described.
   aggregate-only verification confirmed zero organizations, subscriptions, invoices, and outbox
   events plus 32 Cron audits. No route, secret, seeded billing data, or disabled external flag
   changed.
+- 2026-08-14: Added the first final-termination invoice subset for zero-grace in-arrears plans
+  without fixed charges or minimum commitments. Base fees use legacy-compatible inclusive UTC
+  civil-day proration with exact decimal intermediates; usage remains half-open through the next
+  UTC-day boundary, capped at the original period end. Invoice header, lines, coupons, taxes,
+  credit-note/wallet allocations, subscription transition, and both outbox events commit in one
+  guarded D1 batch. Pay-in-advance credits/final invoices, grace-period drafts, fixed-charge and
+  commitment proration, tenant-local dates, and scheduled `ending_at` remain explicit guards. The
+  exact legacy 1000-cent/2-of-30-day case produces a 67-cent base line, and boundary evidence
+  excludes usage at the following midnight. A gate run caught a renewal deterministic-line-key
+  regression and its downstream coupon assertion; restoring the frozen renewal key resolved both.
+  Two subsequent parallel runs hit the existing credit-note test's five-second timeout, while its
+  isolated retry passed. Consolidating the new termination evidence into the existing lifecycle
+  suite retained 22 test files, after which the complete 84-test run passed. Formatting, lint,
+  generated bindings, TypeScript, inventory, and the dry-run bundle are green at 500.39 KiB
+  (89.71 KiB gzip). No migration is required.
+- 2026-08-14: Confirmed no remote migration was pending and deployed in-arrears final termination
+  invoices as isolated Worker version `616df085-3589-4f49-906e-34d3c4f66405`. Follow-up migration
+  inventory remained empty; remote health/readiness returned `200`, unauthenticated termination
+  returned `401`, and aggregate-only verification confirmed zero organizations, subscriptions,
+  invoices, and invoice lines plus 37 Cron audits. No route, secret, seeded billing data, or
+  disabled external flag changed.
