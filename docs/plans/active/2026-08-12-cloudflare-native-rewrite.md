@@ -837,3 +837,9 @@ resource and mutation described.
   time. All 74 Workers-runtime tests pass across 22 files; all 22 migrations replay from empty D1
   state, generated bindings and cross-repository inventory are current, and the dry-run bundle is
   429.15 KiB.
+- 2026-08-14: The first read-only D1 inventory call returned transient Cloudflare API code `7500`;
+  a retry showed exactly `0022_invoice_finalization.sql`. Applied only that migration and deployed
+  Worker version `d4ccd896-36fb-4a48-95ae-710b5ce5529e`. Follow-up migration inventory was empty;
+  remote health/readiness returned `200`, unauthenticated finalization returned `401`, and direct
+  aggregate-only counts confirmed zero organizations, invoices, and drafts. Eight Cron audits now
+  exist; no route, secret, seeded billing row, or disabled mutation/delivery flag changed.
