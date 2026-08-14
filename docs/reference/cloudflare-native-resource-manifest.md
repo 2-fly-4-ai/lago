@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `d4ccd896-36fb-4a48-95ae-710b5ce5529e`
+- Latest verified version: `865e26c9-fea7-408a-93a6-4e6fdf12c7d2`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -20,20 +20,20 @@ It is not a production inventory and contains no secrets or customer data.
 
 ## Resources
 
-| Kind | Name or ID | Binding | Purpose |
-| --- | --- | --- | --- |
-| D1 | `serp-dev-lago-native-d1` / `2f32f159-c269-46c6-a4dd-9e38477f5d25` | `BILLING_DB` | Synthetic billing state |
-| R2 | `serp-dev-lago-native-billing-artifacts` | `BILLING_ARTIFACTS` | Immutable provider webhook, usage-event, and invoice PDF artifacts |
-| Queue | `serp-dev-lago-domain-events` | `DOMAIN_EVENTS` | Domain events and reconciliation dispatch |
-| DLQ | `serp-dev-lago-domain-events-dlq` | none | Poison/retry exhaustion |
-| Durable Object | `BillingAccount` | `BILLING_ACCOUNTS` | Per-invoice command reservations |
-| Workflow | `serp-dev-lago-checkout` | `CHECKOUT_WORKFLOW` | Checkout orchestration target |
-| Workflow | `serp-dev-lago-reconciliation` | `RECONCILIATION_WORKFLOW` | Provider and outbox reconciliation |
-| Workflow | `serp-dev-lago-documents` | `DOCUMENT_WORKFLOW` | Retryable invoice PDF generation and R2 archival |
-| Cron | `*/5 * * * *` | Worker scheduled handler | Deterministic legacy-schedule dispatch |
-| Browser Rendering | account binding | `BROWSER` | Invoice HTML-to-PDF rendering |
+| Kind              | Name or ID                                                         | Binding                   | Purpose                                                            |
+| ----------------- | ------------------------------------------------------------------ | ------------------------- | ------------------------------------------------------------------ |
+| D1                | `serp-dev-lago-native-d1` / `2f32f159-c269-46c6-a4dd-9e38477f5d25` | `BILLING_DB`              | Synthetic billing state                                            |
+| R2                | `serp-dev-lago-native-billing-artifacts`                           | `BILLING_ARTIFACTS`       | Immutable provider webhook, usage-event, and invoice PDF artifacts |
+| Queue             | `serp-dev-lago-domain-events`                                      | `DOMAIN_EVENTS`           | Domain events and reconciliation dispatch                          |
+| DLQ               | `serp-dev-lago-domain-events-dlq`                                  | none                      | Poison/retry exhaustion                                            |
+| Durable Object    | `BillingAccount`                                                   | `BILLING_ACCOUNTS`        | Per-invoice command reservations                                   |
+| Workflow          | `serp-dev-lago-checkout`                                           | `CHECKOUT_WORKFLOW`       | Checkout orchestration target                                      |
+| Workflow          | `serp-dev-lago-reconciliation`                                     | `RECONCILIATION_WORKFLOW` | Provider and outbox reconciliation                                 |
+| Workflow          | `serp-dev-lago-documents`                                          | `DOCUMENT_WORKFLOW`       | Retryable invoice PDF generation and R2 archival                   |
+| Cron              | `*/5 * * * *`                                                      | Worker scheduled handler  | Deterministic legacy-schedule dispatch                             |
+| Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
-Applied D1 migrations: `0001_foundation.sql` through `0022_invoice_finalization.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0023_refreshable_drafts.sql`.
 
 ## Verified behavior
 
@@ -85,6 +85,12 @@ Applied D1 migrations: `0001_foundation.sql` through `0022_invoice_finalization.
   and the hourly finalization owner. Remote health/readiness returned `200`/`200`, unauthenticated
   finalize access returned `401`, and no migration remained pending. Aggregate-only verification
   found zero organizations, invoices, and draft invoices.
+- The refreshable-draft deployment added customer grace settings, non-consuming recurring draft
+  previews, manual and scheduled refresh, refresh-before-finalize allocation, and trigger-backed
+  mutation guards. Remote health/readiness returned `200`/`200`, unauthenticated draft refresh
+  returned `401`, and no migration remained pending. Aggregate-only verification found zero
+  organizations, invoices, drafts, and mutation guards; 15 Cron audits prove the dispatcher remains
+  active. No route, secret, billing row, or disabled external-mutation/delivery flag changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

@@ -870,3 +870,9 @@ resource and mutation described.
   Workers-runtime tests pass across 22 files; all 23 migrations replay from empty D1 state,
   formatting, lint, generated bindings, TypeScript, and the cross-repository inventory are green,
   and the dry-run bundle is 449.44 KiB (81.94 KiB gzip).
+- 2026-08-14: Applied only `0023_refreshable_drafts.sql` to the isolated development D1 and deployed
+  Worker version `865e26c9-fea7-408a-93a6-4e6fdf12c7d2`. Follow-up migration inventory was empty;
+  remote health/readiness returned `200`, unauthenticated draft refresh returned `401`, and direct
+  aggregate-only counts confirmed zero organizations, invoices, drafts, and mutation guards. The
+  five-minute dispatcher has 15 audit rows; all provider/payment/outbound flags remain disabled,
+  with no production route, provider secret, or seeded billing data.
