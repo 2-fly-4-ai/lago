@@ -1,6 +1,7 @@
 import type { AuthContext } from "../auth/api-key";
 import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
+import { terminateSubscriptionWithInvoice } from "../billing/terminate-subscription";
 import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../http";
 import { stableJson } from "../json";
 import { assertFutureSubscriptionAt, normalizeSubscriptionAt } from "../subscriptions/time";
@@ -13,6 +14,7 @@ type SubscriptionRow = {
   plan_code: string;
   plan_amount_minor: number;
   plan_currency: string;
+  plan_pay_in_advance: number;
   name: string | null;
   status: string;
   subscription_at: string | null;
@@ -24,6 +26,7 @@ type SubscriptionRow = {
   created_at: string;
   updated_at: string;
   version: number;
+  invoice_grace_period: number;
 };
 
 export async function handleSubscriptionLifecycleRequest(
@@ -215,18 +218,28 @@ async function terminateSubscription(
   const onTerminationInvoice = url.searchParams.get("on_termination_invoice")?.trim() || "generate";
   const onTerminationCreditNote =
     url.searchParams.get("on_termination_credit_note")?.trim() || "credit";
-  if (onTerminationInvoice !== "skip") {
+  if (onTerminationInvoice !== "generate" && onTerminationInvoice !== "skip") {
+    throw new ApiError(422, "validation_error", "on_termination_invoice must be generate or skip");
+  }
+  if (!new Set(["credit", "skip", "refund", "offset"]).has(onTerminationCreditNote)) {
     throw new ApiError(
       422,
-      "unsupported_termination_invoicing",
-      "Termination requires on_termination_invoice=skip until final proration is ported",
+      "validation_error",
+      "on_termination_credit_note must be credit, skip, refund, or offset",
     );
   }
-  if (onTerminationCreditNote !== "skip") {
+  if (subscription.plan_pay_in_advance === 1 && onTerminationCreditNote !== "skip") {
     throw new ApiError(
       422,
       "unsupported_termination_credit_note",
-      "Termination requires on_termination_credit_note=skip until credit notes are ported",
+      "Pay-in-advance termination requires on_termination_credit_note=skip until unused-period credits are ported",
+    );
+  }
+  if (onTerminationInvoice === "generate" && subscription.plan_pay_in_advance === 1) {
+    throw new ApiError(
+      422,
+      "unsupported_termination_invoicing",
+      "Pay-in-advance final invoicing is guarded until unused-period credits are ported",
     );
   }
   if (subscription.status !== "active" && subscription.status !== "past_due") {
@@ -280,6 +293,23 @@ async function terminateSubscription(
     },
   };
   try {
+    if (onTerminationInvoice === "generate") {
+      const result = await terminateSubscriptionWithInvoice(
+        env,
+        subscription.id,
+        subscription.version,
+        terminatedAt,
+        requestId,
+      );
+      await account.completeCommand(reservationKey, {
+        terminatedAt,
+        eventId: result.subscriptionEvent.id,
+        invoiceId: result.invoiceId,
+      });
+      subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
+      if (!subscription) throw new ApiError(500, "persistence_error", "Subscription disappeared");
+      return json({ subscription: serializeSubscription(subscription) }, { requestId });
+    }
     const results = await env.BILLING_DB.batch([
       env.BILLING_DB.prepare(
         `UPDATE subscriptions
@@ -327,6 +357,21 @@ async function terminateSubscription(
     await account.completeCommand(reservationKey, { terminatedAt, eventId: event.id });
   } catch (error) {
     await account.releaseCommand(reservationKey, requestHash);
+    if (error instanceof Error) {
+      if (error.message === "subscription_version_conflict") {
+        throw new ApiError(409, error.message, "Subscription changed concurrently");
+      }
+      const unsupported: Record<string, string> = {
+        unsupported_termination_invoice_grace_period:
+          "Termination invoices with a grace period are not implemented",
+        unsupported_termination_fixed_charges:
+          "Termination invoicing for plans with fixed charges is not implemented",
+        unsupported_termination_minimum_commitment:
+          "Termination invoicing for plans with a minimum commitment is not implemented",
+      };
+      const message = unsupported[error.message];
+      if (message) throw new ApiError(422, error.message, message);
+    }
     throw error;
   }
   subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
@@ -417,12 +462,15 @@ async function cancelPendingSubscription(
 function subscriptionSelect(): string {
   return `SELECT s.id, s.external_id, s.customer_id, c.external_id AS customer_external_id,
                  p.code AS plan_code, p.amount_minor AS plan_amount_minor,
-                 p.currency AS plan_currency, s.name, s.status, s.subscription_at, s.started_at,
+                 p.currency AS plan_currency, p.pay_in_advance AS plan_pay_in_advance,
+                 COALESCE(c.invoice_grace_period, o.invoice_grace_period) AS invoice_grace_period,
+                 s.name, s.status, s.subscription_at, s.started_at,
                  s.current_period_start, s.current_period_end, s.canceled_at,
                  s.terminated_at, s.created_at, s.updated_at, s.version
           FROM subscriptions s
           JOIN customers c ON c.id = s.customer_id
-          JOIN plans p ON p.id = s.plan_id`;
+          JOIN plans p ON p.id = s.plan_id
+          JOIN organizations o ON o.id = s.organization_id`;
 }
 
 async function findSubscription(

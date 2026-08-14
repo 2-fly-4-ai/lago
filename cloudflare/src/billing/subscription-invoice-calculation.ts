@@ -83,6 +83,20 @@ export type SubscriptionInvoiceCalculation = {
   nextPeriodEnd: string;
 };
 
+export type TerminationBillingWindow = {
+  billableDays: number;
+  fullPeriodDays: number;
+  usagePeriodEnd: string;
+};
+
+type SubscriptionInvoiceOptions =
+  | { context: "renewal" }
+  | {
+      context: "termination";
+      terminatedAt: string;
+      window: TerminationBillingWindow;
+    };
+
 export async function findBillableSubscription(
   database: D1Database,
   id: string,
@@ -213,6 +227,7 @@ export async function calculateSubscriptionInvoice(
   billingCycleId: string,
   periodStart: string,
   periodEnd: string,
+  options: SubscriptionInvoiceOptions = { context: "renewal" },
 ): Promise<SubscriptionInvoiceCalculation> {
   const periodStartMs = Date.parse(periodStart);
   const periodEndMs = Date.parse(periodEnd);
@@ -223,29 +238,61 @@ export async function calculateSubscriptionInvoice(
   ) {
     throw new Error("invalid_billing_period");
   }
-  const cycleKey = `${subscription.id}:${periodStart}:${periodEnd}`;
+  const calculationPeriodEnd =
+    options.context === "termination" ? options.window.usagePeriodEnd : periodEnd;
+  const calculationPeriodEndMs = Date.parse(calculationPeriodEnd);
+  if (!Number.isFinite(calculationPeriodEndMs) || calculationPeriodEndMs <= periodStartMs) {
+    throw new Error("invalid_calculation_period");
+  }
+  const cycleKey =
+    options.context === "renewal"
+      ? `${subscription.id}:${periodStart}:${periodEnd}`
+      : `${subscription.id}:${periodStart}:${calculationPeriodEnd}:termination`;
   const followingPeriodEnd = nextPeriodEnd(
     new Date(periodEnd),
     subscription.interval,
   ).toISOString();
-  const planPeriodStart = subscription.plan_pay_in_advance === 1 ? periodEnd : periodStart;
-  const planPeriodEnd = subscription.plan_pay_in_advance === 1 ? followingPeriodEnd : periodEnd;
+  const planPeriodStart =
+    options.context === "renewal" && subscription.plan_pay_in_advance === 1
+      ? periodEnd
+      : periodStart;
+  const planPeriodEnd =
+    options.context === "termination"
+      ? calculationPeriodEnd
+      : subscription.plan_pay_in_advance === 1
+        ? followingPeriodEnd
+        : periodEnd;
   const lines: SubscriptionInvoiceLine[] = [];
-  let subtotalMinor = subscription.plan_amount_minor;
+  const precisePlanAmount =
+    options.context === "termination"
+      ? Decimal.parse(subscription.plan_amount_minor)
+          .multiply(Decimal.parse(options.window.billableDays))
+          .divideByInteger(BigInt(options.window.fullPeriodDays))
+      : Decimal.parse(subscription.plan_amount_minor);
+  const roundedPlanAmount = safeMinorInteger(precisePlanAmount);
+  let subtotalMinor = roundedPlanAmount;
   lines.push({
     id: await deterministicUuid("billing-cycle-plan-line", cycleKey),
     description: subscription.plan_name,
     units: "1",
-    precise: String(subscription.plan_amount_minor),
-    rounded: subscription.plan_amount_minor,
+    precise: precisePlanAmount.toString(),
+    rounded: roundedPlanAmount,
     sourceId: subscription.plan_id,
     lineType: "subscription",
     sourceType: "plan",
     metadataJson: stableJson({
-      billingCycleId,
+      billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
       billingMode: subscription.plan_pay_in_advance === 1 ? "in_advance" : "in_arrears",
       periodStart: planPeriodStart,
       periodEnd: planPeriodEnd,
+      ...(options.context === "termination"
+        ? {
+            contextType: "termination",
+            billableDays: options.window.billableDays,
+            fullPeriodDays: options.window.fullPeriodDays,
+            terminatedAt: options.terminatedAt,
+          }
+        : {}),
     }),
   });
 
@@ -255,7 +302,7 @@ export async function calculateSubscriptionInvoice(
       subscription.id,
       charge.metric_id,
       periodStartMs,
-      periodEndMs,
+      calculationPeriodEndMs,
     );
     const units = aggregateUsage(
       supportedAggregation(charge.aggregation_type),
@@ -283,18 +330,21 @@ export async function calculateSubscriptionInvoice(
       lineType: "usage",
       sourceType: "charge",
       metadataJson: stableJson({
-        billingCycleId,
+        billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
         billableMetricCode: charge.metric_code,
         chargeCode: charge.code,
         chargeModel: charge.charge_model,
         eventCount: events.length,
         periodStart,
-        periodEnd,
+        periodEnd: calculationPeriodEnd,
+        ...(options.context === "termination" ? { contextType: "termination" } : {}),
       }),
     });
   }
 
-  for (const charge of await loadFixedCharges(database, subscription)) {
+  for (const charge of options.context === "renewal"
+    ? await loadFixedCharges(database, subscription)
+    : []) {
     const precise = Decimal.parse(
       rateCharge(
         charge.units,
@@ -328,13 +378,16 @@ export async function calculateSubscriptionInvoice(
     (total, line) => total.add(Decimal.parse(line.precise)),
     Decimal.zero(),
   );
-  const commitmentLine = await calculateMinimumCommitmentLine(
-    database,
-    subscription.plan_id,
-    invoiceId,
-    subtotalMinor,
-    preciseFees,
-  );
+  const commitmentLine =
+    options.context === "renewal"
+      ? await calculateMinimumCommitmentLine(
+          database,
+          subscription.plan_id,
+          invoiceId,
+          subtotalMinor,
+          preciseFees,
+        )
+      : null;
   if (commitmentLine) {
     subtotalMinor = safeAdd(subtotalMinor, commitmentLine.amountMinor);
     lines.push({
@@ -408,8 +461,100 @@ export async function calculateSubscriptionInvoice(
     prepaidCreditMinor,
     creditsMinor,
     totalDueMinor: subtotalMinor + taxMinor - creditsMinor,
-    nextPeriodEnd: followingPeriodEnd,
+    nextPeriodEnd: options.context === "renewal" ? followingPeriodEnd : calculationPeriodEnd,
   };
+}
+
+export async function calculateTerminationSubscriptionInvoice(
+  database: D1Database,
+  subscription: BillableSubscription,
+  invoiceId: string,
+  terminationId: string,
+  terminatedAt: string,
+): Promise<SubscriptionInvoiceCalculation> {
+  if (subscription.plan_pay_in_advance === 1) {
+    throw new Error("unsupported_pay_in_advance_termination_invoice");
+  }
+  const unsupported = await database
+    .prepare(
+      `SELECT
+         EXISTS(SELECT 1 FROM fixed_charges
+                WHERE organization_id = ? AND plan_id = ? AND pay_in_advance = 0) AS fixed_charges,
+         EXISTS(SELECT 1 FROM minimum_commitments
+                WHERE organization_id = ? AND plan_id = ?) AS minimum_commitment`,
+    )
+    .bind(
+      subscription.organization_id,
+      subscription.plan_id,
+      subscription.organization_id,
+      subscription.plan_id,
+    )
+    .first<{ fixed_charges: number; minimum_commitment: number }>();
+  if (unsupported?.fixed_charges === 1) {
+    throw new Error("unsupported_termination_fixed_charges");
+  }
+  if (unsupported?.minimum_commitment === 1) {
+    throw new Error("unsupported_termination_minimum_commitment");
+  }
+  const window = terminationBillingWindowUtc(
+    subscription.current_period_start,
+    subscription.current_period_end,
+    terminatedAt,
+  );
+  return calculateSubscriptionInvoice(
+    database,
+    subscription,
+    invoiceId,
+    terminationId,
+    subscription.current_period_start,
+    subscription.current_period_end,
+    { context: "termination", terminatedAt, window },
+  );
+}
+
+export function terminationBillingWindowUtc(
+  periodStart: string,
+  periodEnd: string,
+  terminatedAt: string,
+): TerminationBillingWindow {
+  const periodStartMs = Date.parse(periodStart);
+  const periodEndMs = Date.parse(periodEnd);
+  const terminatedAtMs = Date.parse(terminatedAt);
+  if (
+    !Number.isFinite(periodStartMs) ||
+    !Number.isFinite(periodEndMs) ||
+    !Number.isFinite(terminatedAtMs) ||
+    periodEndMs <= periodStartMs ||
+    terminatedAtMs < periodStartMs
+  ) {
+    throw new Error("invalid_termination_period");
+  }
+  const startDay = utcDayOrdinal(periodStartMs);
+  const endDay = utcDayOrdinal(periodEndMs);
+  const terminationDay = utcDayOrdinal(Math.min(terminatedAtMs, periodEndMs));
+  const fullPeriodDays = endDay - startDay;
+  if (!Number.isSafeInteger(fullPeriodDays) || fullPeriodDays <= 0) {
+    throw new Error("unsupported_subday_termination_period");
+  }
+  const billableDays = Math.min(fullPeriodDays, terminationDay - startDay + 1);
+  if (!Number.isSafeInteger(billableDays) || billableDays <= 0) {
+    throw new Error("invalid_termination_billable_days");
+  }
+  const nextUtcDayMs = (terminationDay + 1) * 86_400_000;
+  const usagePeriodEndMs = Math.min(periodEndMs, nextUtcDayMs);
+  if (usagePeriodEndMs <= periodStartMs) throw new Error("invalid_termination_usage_period");
+  return {
+    billableDays,
+    fullPeriodDays,
+    usagePeriodEnd: new Date(usagePeriodEndMs).toISOString(),
+  };
+}
+
+function utcDayOrdinal(timestampMs: number): number {
+  const date = new Date(timestampMs);
+  return Math.floor(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) / 86_400_000,
+  );
 }
 
 export function subscriptionInvoiceLineStatements(
