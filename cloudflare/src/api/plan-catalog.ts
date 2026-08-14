@@ -41,6 +41,7 @@ type ChargeRow = {
   pay_in_advance: number;
   prorated: number;
   min_amount_minor: number;
+  accepts_target_wallet: number;
   created_at: string;
 };
 
@@ -69,6 +70,7 @@ type NormalizedCharge = {
   payInAdvance: number;
   prorated: number;
   minAmountMinor: number;
+  acceptsTargetWallet: number;
 };
 
 type NormalizedCommitment = {
@@ -298,8 +300,8 @@ async function createPlan(
             `INSERT INTO charges
            (id, organization_id, plan_id, billable_metric_id, code, invoice_display_name,
             charge_model, properties_json, invoiceable, pay_in_advance, prorated,
-            min_amount_minor, version, active, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
+            min_amount_minor, accepts_target_wallet, version, active, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
           )
           .bind(
             charge.id,
@@ -314,6 +316,7 @@ async function createPlan(
             charge.payInAdvance,
             charge.prorated,
             charge.minAmountMinor,
+            charge.acceptsTargetWallet,
             now,
             now,
           ),
@@ -637,6 +640,7 @@ async function serializePlan(
       `SELECT ch.id, ch.billable_metric_id, bm.code AS billable_metric_code, ch.code,
               ch.invoice_display_name, ch.charge_model, ch.properties_json, ch.invoiceable,
               ch.pay_in_advance, ch.prorated, ch.min_amount_minor, ch.created_at
+              , ch.accepts_target_wallet
        FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id
        WHERE ch.plan_id = ? AND ch.active = 1 ORDER BY ch.created_at, ch.id`,
     )
@@ -756,6 +760,7 @@ function serializeCharge(charge: ChargeRow): Record<string, unknown> {
     pay_in_advance: charge.pay_in_advance === 1,
     prorated: charge.prorated === 1,
     min_amount_cents: charge.min_amount_minor,
+    accepts_target_wallet: charge.accepts_target_wallet === 1,
     properties: parseObject(charge.properties_json),
     filters: [],
     taxes: [],
@@ -824,19 +829,14 @@ async function normalizeCharges(
         input.min_amount_cents === undefined
           ? 0
           : nonNegativeInteger(input.min_amount_cents, "min_amount_cents"),
+      acceptsTargetWallet: booleanInteger(input.accepts_target_wallet, false),
     });
   }
   return charges;
 }
 
 function rejectUnsupportedChargeFeatures(input: Record<string, unknown>): void {
-  for (const field of [
-    "filters",
-    "applied_pricing_unit",
-    "accepts_target_wallet",
-    "regroup_paid_fees",
-    "cascade_updates",
-  ]) {
+  for (const field of ["filters", "applied_pricing_unit", "regroup_paid_fees", "cascade_updates"]) {
     const value = input[field];
     if (value === undefined || value === null || value === false) continue;
     if (Array.isArray(value) && value.length === 0) continue;

@@ -78,6 +78,7 @@ describe("Lago-compatible metered usage", () => {
           billable_metric_id: metric.billable_metric.lago_id,
           code: "api-token-charge",
           charge_model: "standard",
+          accepts_target_wallet: true,
           properties: { amount: "10" },
         },
       },
@@ -90,6 +91,7 @@ describe("Lago-compatible metered usage", () => {
           billable_metric_id: metric.billable_metric.lago_id,
           code: "api-token-charge",
           charge_model: "standard",
+          accepts_target_wallet: true,
           properties: { amount: "10" },
         },
       },
@@ -99,7 +101,13 @@ describe("Lago-compatible metered usage", () => {
       api("/api/v1/plans/metered-plan/charges").then((response) => response.json()),
     ).resolves.toMatchObject({
       meta: { total_count: 1 },
-      charges: [{ code: "api-token-charge", billable_metric_code: "api_tokens" }],
+      charges: [
+        {
+          code: "api-token-charge",
+          billable_metric_code: "api_tokens",
+          accepts_target_wallet: true,
+        },
+      ],
     });
     await expect(
       api("/api/v1/plans/metered-plan/charges/api-token-charge").then((response) =>

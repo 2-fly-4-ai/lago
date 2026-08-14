@@ -379,8 +379,13 @@ async function persistedInvoiceFeeBuckets(
   const rows = await database
     .prepare(
       `SELECT line.line_type, line.amount_minor,
-              CASE WHEN line.source_type = 'charge' THEN charge.billable_metric_id END
-                AS billable_metric_id,
+              CASE WHEN line.source_type = 'charge'
+                   THEN COALESCE(json_extract(line.metadata_json, '$.billableMetricId'),
+                                 charge.billable_metric_id)
+              END AS billable_metric_id,
+              CASE WHEN line.source_type = 'charge'
+                   THEN json_extract(line.metadata_json, '$.targetWalletCode')
+              END AS target_wallet_code,
               COALESCE((SELECT SUM(tax.amount_minor) FROM invoice_line_taxes tax
                         WHERE tax.invoice_line_id = line.id), 0) AS tax_minor
        FROM invoice_lines line
@@ -392,12 +397,14 @@ async function persistedInvoiceFeeBuckets(
       line_type: string;
       amount_minor: number;
       billable_metric_id: string | null;
+      target_wallet_code: string | null;
       tax_minor: number;
     }>();
   return rows.results.map((row) => ({
     amountMinor: safeAdd(row.amount_minor, row.tax_minor),
     billableMetricId: row.billable_metric_id,
     feeType: projectionFeeType(row.line_type),
+    targetWalletCode: row.target_wallet_code,
   }));
 }
 

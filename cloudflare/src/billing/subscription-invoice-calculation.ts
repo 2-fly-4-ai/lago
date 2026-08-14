@@ -52,6 +52,7 @@ type ChargeRow = {
   metric_name: string;
   aggregation_type: string;
   field_name: string | null;
+  accepts_target_wallet: number;
 };
 
 type FixedChargeRow = {
@@ -75,7 +76,9 @@ export type SubscriptionInvoiceLine = {
   sourceId: string;
   lineType: "subscription" | "usage" | "fixed_charge" | "commitment";
   sourceType: "plan" | "charge" | "fixed_charge" | "commitment";
+  persistenceSourceId?: string;
   billableMetricId?: string | null;
+  targetWalletCode?: string | null;
   metadataJson: string;
 };
 
@@ -461,43 +464,64 @@ export async function calculateSubscriptionInvoice(
       periodStartMs,
       calculationPeriodEndMs,
     );
-    const units = aggregateUsage(
-      supportedAggregation(charge.aggregation_type),
-      charge.field_name,
-      events,
-    );
-    let precise = Decimal.parse(
-      rateCharge(
-        units.toString(),
-        parseChargeModel(charge.charge_model, parseObject(charge.properties_json)),
-        { eventsCount: events.length },
-      ).amountCents,
-    );
-    const minimum = Decimal.parse(charge.min_amount_minor);
-    if (precise.compare(minimum) < 0) precise = minimum;
-    const rounded = safeMinorInteger(precise);
-    subtotalMinor = safeAdd(subtotalMinor, rounded);
-    lines.push({
-      id: await deterministicUuid("billing-cycle-line", `${cycleKey}:${charge.id}`),
-      description: charge.invoice_display_name ?? charge.metric_name,
-      units: units.toString(),
-      precise: precise.toString(),
-      rounded,
-      sourceId: charge.id,
-      lineType: "usage",
-      sourceType: "charge",
-      billableMetricId: charge.metric_id,
-      metadataJson: stableJson({
-        billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
-        billableMetricCode: charge.metric_code,
-        chargeCode: charge.code,
-        chargeModel: charge.charge_model,
-        eventCount: events.length,
-        periodStart,
-        periodEnd: calculationPeriodEnd,
-        ...(options.context === "termination" ? { contextType: "termination" } : {}),
-      }),
-    });
+    for (const group of targetWalletEventGroups(events, charge.accepts_target_wallet === 1)) {
+      const units = aggregateUsage(
+        supportedAggregation(charge.aggregation_type),
+        charge.field_name,
+        group.events,
+      );
+      let precise = Decimal.parse(
+        rateCharge(
+          units.toString(),
+          parseChargeModel(charge.charge_model, parseObject(charge.properties_json)),
+          { eventsCount: group.events.length },
+        ).amountCents,
+      );
+      const minimum = Decimal.parse(charge.min_amount_minor);
+      if (precise.compare(minimum) < 0) precise = minimum;
+      const rounded = safeMinorInteger(precise);
+      subtotalMinor = safeAdd(subtotalMinor, rounded);
+      const groupKey = group.targetWalletCode ?? "untargeted";
+      const targeted = charge.accepts_target_wallet === 1;
+      lines.push({
+        id: await deterministicUuid(
+          "billing-cycle-line",
+          targeted ? `${cycleKey}:${charge.id}:wallet:${groupKey}` : `${cycleKey}:${charge.id}`,
+        ),
+        description: charge.invoice_display_name ?? charge.metric_name,
+        units: units.toString(),
+        precise: precise.toString(),
+        rounded,
+        sourceId: charge.id,
+        persistenceSourceId: targeted
+          ? await deterministicUuid("charge-wallet-group-source", `${charge.id}:${groupKey}`)
+          : charge.id,
+        lineType: "usage",
+        sourceType: "charge",
+        billableMetricId: charge.metric_id,
+        targetWalletCode: group.targetWalletCode,
+        metadataJson: stableJson({
+          billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
+          billableMetricCode: charge.metric_code,
+          chargeCode: charge.code,
+          chargeModel: charge.charge_model,
+          eventCount: group.events.length,
+          periodStart,
+          periodEnd: calculationPeriodEnd,
+          ...(targeted
+            ? {
+                billableMetricId: charge.metric_id,
+                chargeId: charge.id,
+                targetWalletCode: group.targetWalletCode ?? undefined,
+                groupedBy: group.targetWalletCode
+                  ? { target_wallet_code: group.targetWalletCode }
+                  : {},
+              }
+            : {}),
+          ...(options.context === "termination" ? { contextType: "termination" } : {}),
+        }),
+      });
+    }
   }
 
   for (const charge of await loadFixedCharges(database, subscription)) {
@@ -617,6 +641,7 @@ export function walletFeeBuckets(
     ),
     billableMetricId: line.billableMetricId ?? null,
     feeType: walletFeeType(line.lineType),
+    targetWalletCode: line.targetWalletCode ?? null,
   }));
 }
 
@@ -730,7 +755,7 @@ export function subscriptionInvoiceLineStatements(
           : Decimal.parse(line.precise).divide(Decimal.parse(line.units)).toString(),
         line.rounded,
         line.sourceType,
-        line.sourceId,
+        line.persistenceSourceId ?? line.sourceId,
         line.metadataJson,
         now,
         line.precise,
@@ -748,7 +773,7 @@ async function loadCharges(
       `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
               ch.properties_json, ch.min_amount_minor, bm.id AS metric_id,
               bm.code AS metric_code, bm.name AS metric_name,
-              bm.aggregation_type, bm.field_name
+              bm.aggregation_type, bm.field_name, ch.accepts_target_wallet
        FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id
        WHERE ch.organization_id = ? AND ch.plan_id = ? AND ch.active = 1
          AND ch.invoiceable = 1 AND ch.pay_in_advance = 0
@@ -808,6 +833,35 @@ async function loadEvents(
     timestampMs: row.timestamp_ms,
     properties: parseObject(row.properties_json),
   }));
+}
+
+type RatedUsageEvent = Awaited<ReturnType<typeof loadEvents>>[number];
+
+function targetWalletEventGroups(
+  events: RatedUsageEvent[],
+  acceptsTargetWallet: boolean,
+): Array<{ targetWalletCode: string | null; events: RatedUsageEvent[] }> {
+  if (!acceptsTargetWallet) return [{ targetWalletCode: null, events }];
+  const grouped = new Map<string | null, RatedUsageEvent[]>();
+  if (events.length === 0) grouped.set(null, []);
+  for (const event of events) {
+    const value = event.properties.target_wallet_code;
+    const code = typeof value === "string" && value.trim() ? value.trim() : null;
+    const values = grouped.get(code) ?? [];
+    values.push(event);
+    grouped.set(code, values);
+  }
+  return [...grouped.entries()]
+    .sort(([left], [right]) => {
+      if (left === right) return 0;
+      if (left === null) return -1;
+      if (right === null) return 1;
+      return left.localeCompare(right);
+    })
+    .map(([targetWalletCode, groupedEvents]) => ({
+      targetWalletCode,
+      events: groupedEvents,
+    }));
 }
 
 function parseObject(value: string): Record<string, unknown> {

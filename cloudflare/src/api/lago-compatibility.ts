@@ -2352,10 +2352,12 @@ async function serializeInvoiceLines(
     result.results.map(async (line) => {
       const appliedTaxes = await serializeInvoiceLineTaxes(database, line.id);
       const metadata = parseObjectJson(line.metadata_json);
+      const sourceResourceId =
+        typeof metadata.chargeId === "string" ? metadata.chargeId : line.source_id;
       return {
         lago_id: line.id,
         lago_invoice_id: invoice.id,
-        lago_charge_id: line.source_type === "charge" ? line.source_id : null,
+        lago_charge_id: line.source_type === "charge" ? sourceResourceId : null,
         lago_subscription_id: null,
         item: {
           type: line.line_type,
@@ -2366,7 +2368,7 @@ async function serializeInvoiceLines(
             typeof metadata.invoiceDisplayName === "string"
               ? metadata.invoiceDisplayName
               : line.description,
-          lago_item_id: line.source_id,
+          lago_item_id: sourceResourceId,
           item_type: line.source_type,
         },
         pay_in_advance: false,

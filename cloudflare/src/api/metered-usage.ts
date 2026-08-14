@@ -63,6 +63,7 @@ type ChargeUsageRow = {
   metric_name: string;
   aggregation_type: string;
   field_name: string | null;
+  accepts_target_wallet: number;
 };
 
 type EventInput = {
@@ -81,6 +82,7 @@ type EventContext = {
   metric_id: string;
   aggregation_type: string;
   field_name: string | null;
+  accepts_target_wallet: number;
 };
 
 type PreparedBatchEvent = {
@@ -91,6 +93,7 @@ type PreparedBatchEvent = {
   archiveKey: string;
   row: EventRow;
   domainEvent: DomainEvent;
+  targetWalletError: DomainEvent | null;
 };
 
 const SUPPORTED_AGGREGATIONS = new Set<SupportedAggregationType>([
@@ -474,6 +477,7 @@ async function createCharge(
     invoiceDisplayName: optionalString(input, "invoice_display_name"),
     invoiceable: booleanInteger(input.invoiceable, true),
     minAmountMinor: optionalNonNegativeInteger(input.min_amount_cents, 0),
+    acceptsTargetWallet: booleanInteger(input.accepts_target_wallet, false),
   };
   const existing = await findCatalogCharge(database, plan.id, code);
   if (existing) {
@@ -501,8 +505,8 @@ async function createCharge(
           `INSERT INTO charges
        (id, organization_id, plan_id, billable_metric_id, code, invoice_display_name,
         charge_model, properties_json, invoiceable, pay_in_advance, prorated,
-        min_amount_minor, version, active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
+        min_amount_minor, accepts_target_wallet, version, active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
         )
         .bind(
           id,
@@ -517,6 +521,7 @@ async function createCharge(
           0,
           0,
           normalized.minAmountMinor,
+          normalized.acceptsTargetWallet,
           now,
           now,
         ),
@@ -610,6 +615,7 @@ function chargeSelect(): string {
   return `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
                  ch.properties_json, ch.min_amount_minor, ch.invoiceable,
                  ch.pay_in_advance, ch.prorated, ch.created_at,
+                 ch.accepts_target_wallet,
                  bm.id AS metric_id, bm.code AS metric_code, bm.name AS metric_name,
                  bm.aggregation_type, bm.field_name
           FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id`;
@@ -638,7 +644,12 @@ function sameCatalogCharge(
   metricId: string,
   chargeModel: string,
   properties: Record<string, unknown>,
-  normalized: { invoiceDisplayName: string | null; invoiceable: number; minAmountMinor: number },
+  normalized: {
+    invoiceDisplayName: string | null;
+    invoiceable: number;
+    minAmountMinor: number;
+    acceptsTargetWallet: number;
+  },
 ): boolean {
   return (
     charge.metric_id === metricId &&
@@ -648,7 +659,8 @@ function sameCatalogCharge(
     charge.invoiceable === normalized.invoiceable &&
     charge.pay_in_advance === 0 &&
     charge.prorated === 0 &&
-    charge.min_amount_minor === normalized.minAmountMinor
+    charge.min_amount_minor === normalized.minAmountMinor &&
+    charge.accepts_target_wallet === normalized.acceptsTargetWallet
   );
 }
 
@@ -672,6 +684,7 @@ function serializeCatalogCharge(
     pay_in_advance: charge.pay_in_advance === 1,
     prorated: charge.prorated === 1,
     min_amount_cents: charge.min_amount_minor,
+    accepts_target_wallet: charge.accepts_target_wallet === 1,
     properties: parseStoredObject(charge.properties_json),
     filters: [],
     taxes: [],
@@ -782,7 +795,15 @@ async function createUsageEventBatch(
     throw error;
   }
 
-  await Promise.all(prepared.map((event) => env.DOMAIN_EVENTS.send(event.domainEvent)));
+  await Promise.all(
+    prepared
+      .flatMap((event) =>
+        [event.domainEvent, event.targetWalletError].filter(
+          (candidate): candidate is DomainEvent => candidate !== null,
+        ),
+      )
+      .map((event) => env.DOMAIN_EVENTS.send(event)),
+  );
   return json({ events: prepared.map((event) => serializeEvent(event.row)) }, { requestId });
 }
 
@@ -835,6 +856,14 @@ async function prepareBatchEvent(
     request_sha256: requestHash,
     created_at: createdAt,
   };
+  const targetWalletError = await targetWalletErrorEvent(
+    env.BILLING_DB,
+    auth.organizationId,
+    context,
+    row,
+    input,
+    requestId,
+  );
   return {
     input,
     context,
@@ -843,6 +872,7 @@ async function prepareBatchEvent(
     archiveKey,
     row,
     domainEvent: eventDomainMessage(row, auth.organizationId, requestId),
+    targetWalletError,
   };
 }
 
@@ -852,7 +882,7 @@ function batchEventStatements(
   requestId: string,
   event: PreparedBatchEvent,
 ): D1PreparedStatement[] {
-  return [
+  const statements = [
     database
       .prepare(
         `INSERT INTO usage_events
@@ -897,6 +927,9 @@ function batchEventStatements(
         event.row.created_at,
       ),
   ];
+  if (event.targetWalletError)
+    statements.push(eventOutboxStatement(database, auth.organizationId, event.targetWalletError));
+  return statements;
 }
 
 async function cleanupUncommittedBatchArchives(
@@ -977,6 +1010,14 @@ async function createUsageEvent(
     created_at: createdAt,
   };
   const domainEvent = eventDomainMessage(row, auth.organizationId, requestId);
+  const targetWalletError = await targetWalletErrorEvent(
+    env.BILLING_DB,
+    auth.organizationId,
+    context,
+    row,
+    input,
+    requestId,
+  );
   try {
     await env.BILLING_DB.batch([
       env.BILLING_DB.prepare(
@@ -1018,6 +1059,9 @@ async function createUsageEvent(
         stableJson(domainEvent.payload),
         createdAt,
       ),
+      ...(targetWalletError
+        ? [eventOutboxStatement(env.BILLING_DB, auth.organizationId, targetWalletError)]
+        : []),
       env.BILLING_DB.prepare(
         `UPDATE invoices SET ready_to_be_refreshed = 1, updated_at = ?
          WHERE status = 'draft' AND organization_id = ? AND subscription_id = ?
@@ -1048,6 +1092,7 @@ async function createUsageEvent(
     return json({ event: serializeEvent(concurrent) }, { requestId });
   }
   await env.DOMAIN_EVENTS.send(domainEvent);
+  if (targetWalletError) await env.DOMAIN_EVENTS.send(targetWalletError);
   return json({ event: serializeEvent(row) }, { requestId });
 }
 
@@ -1151,7 +1196,8 @@ async function currentUsage(
   const charges = await database
     .prepare(
       `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
-              ch.properties_json, ch.min_amount_minor, bm.id AS metric_id,
+              ch.properties_json, ch.min_amount_minor, ch.accepts_target_wallet,
+              bm.id AS metric_id,
               bm.code AS metric_code, bm.name AS metric_name,
               bm.aggregation_type, bm.field_name
        FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id
@@ -1258,7 +1304,11 @@ async function findEventContext(
   return database
     .prepare(
       `SELECT s.id AS subscription_id, s.customer_id, bm.id AS metric_id,
-              bm.aggregation_type, bm.field_name
+              bm.aggregation_type, bm.field_name,
+              EXISTS(SELECT 1 FROM charges charge
+                     WHERE charge.plan_id = s.plan_id
+                       AND charge.billable_metric_id = bm.id AND charge.active = 1
+                       AND charge.accepts_target_wallet = 1) AS accepts_target_wallet
        FROM subscriptions s
        JOIN billable_metrics bm
          ON bm.organization_id = s.organization_id AND bm.code = ? AND bm.active = 1
@@ -1313,6 +1363,12 @@ function normalizeEventInput(input: Record<string, unknown>): EventInput {
     precise === undefined || precise === null
       ? null
       : validateDecimalValue(precise, "precise_total_amount_cents");
+  const properties = optionalObject(input.properties, "properties");
+  if (properties.target_wallet_code !== undefined) {
+    if (typeof properties.target_wallet_code !== "string" || !properties.target_wallet_code.trim())
+      throw new ApiError(422, "validation_error", "target_wallet_code must be a non-empty string");
+    properties.target_wallet_code = properties.target_wallet_code.trim();
+  }
   return {
     transactionId: requiredString(input, "transaction_id"),
     code: requiredString(input, "code"),
@@ -1320,7 +1376,7 @@ function normalizeEventInput(input: Record<string, unknown>): EventInput {
     timestamp: timestamp.toISOString(),
     timestampMs,
     preciseTotalAmountMinor,
-    properties: optionalObject(input.properties, "properties"),
+    properties,
   };
 }
 
@@ -1422,6 +1478,73 @@ function eventDomainMessage(
       timestamp: event.timestamp,
     },
   };
+}
+
+async function targetWalletErrorEvent(
+  database: D1Database,
+  organizationId: string,
+  context: EventContext,
+  event: EventRow,
+  input: EventInput,
+  correlationId: string,
+): Promise<DomainEvent | null> {
+  const targetWalletCode = input.properties.target_wallet_code;
+  if (context.accepts_target_wallet !== 1 || typeof targetWalletCode !== "string") return null;
+  const wallet = await database
+    .prepare(
+      `SELECT id FROM wallets
+       WHERE organization_id = ? AND customer_id = ? AND code = ? AND status = 'active'
+       LIMIT 1`,
+    )
+    .bind(organizationId, context.customer_id, targetWalletCode)
+    .first<{ id: string }>();
+  if (wallet) return null;
+  return {
+    id: `usage-event-target-wallet-error:${event.id}`,
+    type: "event.error",
+    version: 1,
+    aggregateType: "usage_event",
+    aggregateId: event.id,
+    aggregateVersion: 1,
+    occurredAt: event.created_at,
+    causationId: correlationId,
+    correlationId,
+    payload: {
+      organizationId,
+      subscriptionId: event.subscription_id,
+      transactionId: event.transaction_id,
+      targetWalletCode,
+      error: { target_wallet_code: ["target_wallet_code_not_found"] },
+    },
+  };
+}
+
+function eventOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type,
+        aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+        occurred_at, published_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+    );
 }
 
 function assertEventReplay(event: EventRow, requestHash: string): void {
@@ -1566,13 +1689,7 @@ function rejectUnsupportedMetricFeatures(input: Record<string, unknown>): void {
 }
 
 function rejectUnsupportedChargeInput(input: Record<string, unknown>): void {
-  for (const field of [
-    "filters",
-    "applied_pricing_unit",
-    "accepts_target_wallet",
-    "regroup_paid_fees",
-    "cascade_updates",
-  ]) {
+  for (const field of ["filters", "applied_pricing_unit", "regroup_paid_fees", "cascade_updates"]) {
     const value = input[field];
     if (value === undefined || value === null || value === false) continue;
     if (Array.isArray(value) && value.length === 0) continue;
