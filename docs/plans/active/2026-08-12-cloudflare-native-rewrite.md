@@ -1089,3 +1089,13 @@ resource and mutation described.
   `401`, and aggregate-only verification confirmed zero organizations, subscriptions, invoices,
   invoice lines, and credit notes plus 42 Cron audits. No route, secret, seeded billing data, or
   disabled external flag changed.
+- 2026-08-14: Extended immediate and scheduled final termination invoices with the already-supported
+  non-prorated, pay-in-arrears fixed-charge subset. Lago's upgrade scenarios prove those fees remain
+  full on a partial final period, unlike explicitly prorated fixed charges; executable Worker
+  evidence now retains a 250-cent fixed fee while prorating the base to two of 30 UTC service days,
+  and proves a due `ending_at` emits that fixed line exactly once. Minimum commitments remain
+  guarded because Lago prorates their threshold in the customer timezone and reconciles fees across
+  the commitment window, which is broader than the current single-invoice implementation. The full
+  85-test suite passes across 22 files; formatting, strict lint, inventory, generated bindings,
+  TypeScript, and the dry-run bundle are green at 514.93 KiB (91.86 KiB gzip). No migration is
+  required.
