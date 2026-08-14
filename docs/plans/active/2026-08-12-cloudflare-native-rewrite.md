@@ -808,3 +808,10 @@ resource and mutation described.
   successful manual or Authorize.Net settlement. All 70 Workers-runtime tests pass across 21 files;
   all 20 migrations replay from an empty D1 database, generated bindings and the cross-repository
   inventory are current, and the dry-run bundle is 420.49 KiB.
+- 2026-08-14: Applied only migration `0020_payment_terms.sql` to the isolated development D1 and
+  deployed Worker version `ab6d42d7-e2c7-4f25-87b5-ecb25c4851c4`. Follow-up migration inventory
+  was empty; remote health/readiness returned `200`, unauthenticated invoice access returned `401`,
+  and direct aggregate-only counts confirmed zero organizations and zero invoices. Three automatic
+  Cron workflow audits now prove the five-minute dispatcher is firing; all are correctly `partial`
+  because due unported schedules are explicitly reported. No route, provider secret, seeded billing
+  row, or disabled mutation/delivery flag changed.

@@ -1,6 +1,6 @@
 # Cloudflare-Native Lago Resource Manifest
 
-Last verified: 2026-08-13
+Last verified: 2026-08-14
 
 This manifest covers the isolated, non-production stack created for the Cloudflare-native rewrite.
 It is not a production inventory and contains no secrets or customer data.
@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `887c749b-09d3-4143-932a-a41cd0fdbbd6`
+- Latest verified version: `ab6d42d7-e2c7-4f25-87b5-ecb25c4851c4`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -30,10 +30,10 @@ It is not a production inventory and contains no secrets or customer data.
 | Workflow | `serp-dev-lago-checkout` | `CHECKOUT_WORKFLOW` | Checkout orchestration target |
 | Workflow | `serp-dev-lago-reconciliation` | `RECONCILIATION_WORKFLOW` | Provider and outbox reconciliation |
 | Workflow | `serp-dev-lago-documents` | `DOCUMENT_WORKFLOW` | Retryable invoice PDF generation and R2 archival |
-| Cron | `17 * * * *` | Worker scheduled handler | Hourly reconciliation dispatch |
+| Cron | `*/5 * * * *` | Worker scheduled handler | Deterministic legacy-schedule dispatch |
 | Browser Rendering | account binding | `BROWSER` | Invoice HTML-to-PDF rendering |
 
-Applied D1 migrations: `0001_foundation.sql` through `0014_outbound_webhooks.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0020_payment_terms.sql`.
 
 ## Verified behavior
 
@@ -70,6 +70,13 @@ Applied D1 migrations: `0001_foundation.sql` through `0014_outbound_webhooks.sql
   health/readiness returned `200`/`200`, unauthenticated endpoint access returned `401`, and no
   migrations remained pending. Delivery is disabled, no HMAC signing secret exists remotely, and
   no endpoint or delivery row was created.
+- The schedule-dispatch deployment registered the five-minute trigger and an exhaustive ownership
+  registry for all 27 legacy schedules. Aggregate-only verification found three completed Workflow
+  audits, all correctly marked `partial` because due unported schedules are reported explicitly.
+- The payment-terms deployment added customer and organization defaults, immutable invoice due-date
+  snapshots, replay-safe overdue state, and successful-payment clearing. Remote health/readiness
+  returned `200`/`200`, unauthenticated invoice access returned `401`, and no migration remained
+  pending. The remote database still contains zero organizations and zero invoices.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
