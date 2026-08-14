@@ -2108,3 +2108,13 @@ resource and mutation described.
   before the known draft-termination-credit 10-second timeout, that file passed 2/2 alone, and
   bounded groups pass all 198 tests as 36 + 43 + 70 + 42 + 7. The dry-run bundle is 971.99 KiB
   (167.61 KiB gzip). Feature checkpoint: `2217cc7`.
+- 2026-08-15: Remote preflight found only `0049_fixed_charge_unit_events.sql` pending and zero
+  organizations, customers, plans, subscriptions, invoices, billable metrics, charges, fixed
+  charges, usage events, outbox rows, and plan-deletion tasks, with zero foreign-key violations.
+  Applied only that migration to the isolated non-production D1, verified the unit-event lookup
+  index, and deployed only the isolated Worker as version
+  `c4fae6b3-1bd8-4931-b999-10b60edda727` with a 5 ms startup. Health/readiness returned
+  `200`/`200`, unauthenticated subscription fixed-charge access returned `401`, no migrations
+  remain, and post-deploy aggregate-only verification stayed empty apart from 222 schedule audits.
+  All three external-action flags remain `0`; no resource provisioning, production route/domain,
+  secret, provider action, customer data, or billing row changed.
