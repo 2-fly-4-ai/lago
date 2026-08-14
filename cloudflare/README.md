@@ -10,8 +10,9 @@ remaining Lago feature inventory is dispositioned and ported.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
-  pay-in-arrears fixed charges with local-day proration, effective-dated subscription fixed-charge
-  units, customer payment terms, immutable invoice due-date snapshots,
+  fixed charges with in-arrears or in-advance timing, local-day proration, effective-dated
+  subscription units, immediate-billing evidence and durable repair state, customer payment terms,
+  immutable invoice due-date snapshots,
   customer invoice-grace settings, distinct initial/renewal invoice contexts, refreshable draft
   state, dependency-invalidation triggers and mutation guards, immutable issuing/finalization dates,
   tenant-scoped invoice custom-section catalog records, subscription selections, and immutable
@@ -32,12 +33,14 @@ remaining Lago feature inventory is dispositioned and ported.
   charges, invalidates drafts, hides retired usage and wallet targets immediately, and enqueues
   bounded event/R2 cleanup. Deterministic metric generations allow safe same-code recreation while
   finalized lines and relational event history remain auditable.
-  Supported pay-in-arrears fixed charges also expose standalone create/list/show,
+  Supported fixed charges also expose standalone create/list/show,
   optimistic core update, and soft-delete routes with the same draft/finalized invariants. Creates
   and inherited unit updates on attached plans are effective-dated per active subscription: the
   default takes effect at the next period boundary, while `apply_units_immediately: true` affects
-  the open period. Their retained hard uniqueness constraint means a deleted fixed-charge code
-  cannot yet be reused.
+  the open period. Standard fixed charges may bill in advance with optional proration; graduated
+  advance charges are supported only without proration, and volume advance charges fail
+  explicitly. Their retained hard uniqueness constraint means a deleted fixed-charge code cannot
+  yet be reused.
   Unused plans can be retired atomically with their active usage/fixed charges. Plans with
   subscription history instead enter a durable deletion Workflow that closes the attachment
   snapshot, terminates active generations, cancels pending generations, recalculates/finalizes
@@ -46,8 +49,10 @@ remaining Lago feature inventory is dispositioned and ported.
   Commitments and relational catalog/billing rows remain historical, and monotonic deterministic
   generations permit repeated same-code recreation. Filter/tax/pricing-unit/child-plan cascades
   and catalog graph replacement remain guarded.
-- Subscription lifecycle: pay-in-advance starts create their initial invoice atomically, while
-  in-arrears starts create no initial invoice. A supported future UTC `subscription_at` creates a
+- Subscription lifecycle: pay-in-advance starts create their initial invoice atomically, combining
+  the base and advance fixed-charge lines. In-arrears starts create no base invoice but do create a
+  fixed-charge-only invoice when their plan has advance fixed charges; those charges also bill at
+  activation during a base-plan trial. A supported future UTC `subscription_at` creates a
   pending subscription with no invoice, and the five-minute activation owner applies the same
   billing-mode rule exactly once. A start on an earlier customer-local day activates at that
   historical instant without generating a retroactive invoice, then resumes from the billing
@@ -73,8 +78,11 @@ remaining Lago feature inventory is dispositioned and ported.
   may schedule `ending_at` only with persisted skip-credit, so the unattended owner cannot enter an
   allocated-source credit path. Explicit
   skip-invoice/skip-credit termination remains idempotent; any existing draft is invalidated and remains refreshable/
-  finalizable from its immutable invoice context. At renewal, pay-in-advance base fees snapshot the
-  next period while in-arrears base fees and usage snapshot the closed period. Credit-only
+  finalizable from its immutable invoice context. At renewal, pay-in-advance base and fixed-charge
+  fees snapshot the next period while in-arrears base, usage, and fixed-charge fees snapshot the
+  closed period. Immediate advance-unit increases bill only units not already paid in the open
+  period; decreases create zero-amount evidence without a refund, and the five-minute owner repairs
+  any committed event whose synchronous invoice step was interrupted. Credit-only
   pay-in-advance termination can return exact unused UTC service days when its source base invoice
   is finalized and has no discount, tax, or wallet allocation. Prior invoice-level credit-note
   applications do not reduce the creditable source line. The default combined
@@ -85,7 +93,7 @@ remaining Lago feature inventory is dispositioned and ported.
   fixed fees already invoiced in the period plus the current termination fees. Credit notes do not
   reduce that gross fee history, and refresh excludes the current draft so its true-up is stable.
   Backdated one-time plans, tenant-local termination dates, refund/offset modes, allocated source
-  invoices and pay-in-advance fixed charges remain guarded.
+  invoices and unused-period credit/refund for pay-in-advance fixed-charge lines remain guarded.
   In-arrears termination with a positive grace period instead creates a non-consuming draft from an
   immutable termination context; manual or scheduled refresh uses the original period boundaries,
   and finalization alone allocates coupon, credit-note, and wallet balances. Pay-in-advance grace
@@ -104,8 +112,10 @@ remaining Lago feature inventory is dispositioned and ported.
   Posting the same external subscription with a different same-currency plan now preserves Lago's
   immutable generation chain. Annualized price determines an immediate upgrade or boundary
   downgrade. An upgrade terminates the old generation, starts a distinct generation, reconciles
-  old in-arrears fees, a new prepaid base, and any unused prepaid credit into one invoice, and links
-  that invoice to both generations atomically. A downgrade remains pending until the old period
+  old in-arrears fees, a new prepaid base, advance fixed charges, and any unused prepaid credit into
+  one invoice, and links that invoice to both generations atomically. A prorated advance fixed
+  charge with the same add-on deducts the overlapping amount already paid on the prior generation.
+  A downgrade remains pending until the old period
   closes, when the same cycle command bills the old plan, starts the new generation, and records one
   replay-safe combined invoice. Grace drafts retain both immutable period snapshots; termination
   cancels a queued downgrade in the same D1 batch. Usage-event ownership uses half-open generation
@@ -167,8 +177,10 @@ remaining Lago feature inventory is dispositioned and ported.
   application writes an effective-dated event for the open period; the default schedules the new
   units at the next boundary. Catalog fixed-charge create/update and their inherited child-plan
   cascades use the same timing contract. In-arrears prorated charges rate the event-weighted units
-  across customer-local calendar days; fixed-charge-specific tax targeting remains an explicit
-  unsupported boundary.
+  across customer-local calendar days. Advance increases use the same local-day window, charge only
+  a positive delta against all current-period advance lines, and retain deterministic invoice IDs
+  for replay and repair; fixed-charge-specific tax targeting remains an explicit unsupported
+  boundary.
 
 No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or
 OS command is required by this package.

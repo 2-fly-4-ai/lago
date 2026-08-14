@@ -2175,3 +2175,22 @@ resource and mutation described.
   remain, and post-deploy aggregate-only verification stayed empty apart from 236 schedule audits.
   All three external-action flags remain `0`; no resource provisioning, production route/domain,
   secret, provider action, customer data, or billing row changed.
+- 2026-08-15: Ported Lago's pay-in-advance fixed-charge contract. Migration
+  `0051_pay_in_advance_fixed_charges.sql` admits checked advance catalog rows, adds immediate-event
+  billing/repair evidence, and restores all eight fixed-charge draft/deletion triggers after the
+  table rebuild. Standard advance charges support proration; graduated advance charges remain
+  non-prorated and volume advance charges fail explicitly. Activation bills advance fixed charges
+  even when the base is in arrears or trialing, while an advance base combines its base and fixed
+  lines in one starting invoice. Renewal snapshots advance fixed charges against the upcoming
+  period. Immediate increases charge only units not already paid in the open period, decreases
+  persist a zero-amount invoice without refunding, and deterministic invoice IDs plus the
+  five-minute reconciliation owner repair committed event/invoice gaps. Catalog, inherited-child,
+  and subscription-override unit changes use the same bounded path. Upgrade invoices include target
+  advance fixed charges even for an in-arrears target base and deduct the overlapping prepaid amount
+  when a prorated prior-generation charge uses the same add-on. Coupons, manual taxes, credit-note
+  balances, wallets, invoice ownership, custom-section triggers, and outbox delivery use the normal
+  invoice allocation path. All 51 migrations replayed from zero in an actual isolated D1 state with
+  zero foreign-key violations, the widened timing check, all three event columns, the repair index,
+  and all eight restored triggers. Strict format/lint, inventory, generated types, TypeScript, and
+  Wrangler dry run pass; the serial suite passes all 207 tests across 37 files in 114.79 seconds.
+  The dry-run bundle is 1015.84 KiB (175.71 KiB gzip). Feature checkpoint: `c9642d7`.
