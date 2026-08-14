@@ -2067,3 +2067,17 @@ resource and mutation described.
   no migrations remain, and post-deploy aggregate-only verification stayed empty apart from 214
   schedule audits. All three external-action flags remain `0`; no resource provisioning,
   production route/domain, secret, provider action, customer data, or billing row changed.
+- 2026-08-15: Ported Lago-compatible subscription fixed-charge list/show/update routes. The first
+  update now reuses the same bounded pricing-graph override preparer and transactional persister as
+  subscription charge-filter mutations: it clones every active usage and fixed charge, assigns
+  independent deterministic child identities and parent links, switches only the selected
+  subscription generation, and applies the fixed-charge display name, properties, and units to the
+  selected child. Later updates reuse that graph, guard the child version, refresh affected drafts
+  through the existing trigger, and emit transactional `fixed_charge.updated` outbox events. The
+  catalog root remains unchanged. Immediate unit-event application and fixed-charge-specific tax
+  targeting fail explicitly because those subsystems are not yet ported. Evidence covers
+  pagination, show, first and repeated update, complete graph cloning, filter preservation, parent
+  isolation, parent IDs, outbox versions, unsupported-feature rejection before mutation, and
+  precise not-found errors. Strict format/lint, inventory, generated types, TypeScript, and the
+  complete Worker suite pass at 196 tests across 35 files. Wrangler's dry-run bundle is 967.78 KiB
+  (166.75 KiB gzip). No migration is required. Feature checkpoint: `f5447c6`.

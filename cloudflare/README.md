@@ -155,7 +155,11 @@ remaining Lago feature inventory is dispositioned and ported.
   feature. Draft invoices refresh their snapshots; finalized invoice API/PDF output uses only the
   immutable copy. Lago-compatible plan charge-filter list/show/create/update/delete endpoints live
   under `/api/v1/plans/:plan_code/charges/:charge_code/filters`; mutations use optimistic charge
-  versions and transactional `charge.updated` outbox events.
+  versions and transactional `charge.updated` outbox events. Subscription fixed-charge list/show/
+  update endpoints live under `/api/v1/subscriptions/:external_id/fixed_charges`; the first update
+  clones the complete active pricing graph into a hidden child plan, while later updates mutate the
+  same child fixed charge with optimistic versions and transactional outbox events. Immediate unit
+  application and fixed-charge-specific tax targeting remain explicit unsupported boundaries.
 
 No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or
 OS command is required by this package.
