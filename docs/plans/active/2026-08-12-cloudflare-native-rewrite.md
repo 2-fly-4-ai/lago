@@ -751,3 +751,19 @@ resource and mutation described.
   `401`, and direct read-only counts confirmed zero organizations and zero customers. The stack has
   no production route or provider secret, and payment, provider-read, and outbound-webhook flags
   all remain disabled.
+- 2026-08-14: Added Lago-shaped, tenant-scoped payment list/show/customer-list APIs; a kill-switched,
+  idempotent manual-payment ledger with partial/final settlement and overpayment guards; exact
+  invoice paid/outstanding projections; stale hosted-payment-link invalidation; and versioned
+  `payment.recorded`, provider-outcome, and `invoice.payment_status_updated` events. Authorize.Net
+  reconciliation now sums successful attempts, preserves terminal success against later decline
+  notifications, and exposes provider attempts through the same payment ledger. All 63
+  Workers-runtime tests pass across 19 files; formatting, lint, generated types, TypeScript, the
+  cross-repository inventory check, and the 391.40 KiB dry-run bundle are green. Because the SMB
+  worktree timed out while starting parallel Cloudflare test runners, the complete suite was also
+  run against an exact disposable local-filesystem snapshot of `cloudflare/`.
+- 2026-08-14: Applied only migration `0017_payment_ledger.sql` to the isolated development D1 and
+  deployed Worker version `1be34a00-4e0c-45d4-8d9d-88706d7527e2`. Follow-up migration inventory was
+  empty; remote health/readiness returned `200`, unauthenticated payment reads and writes returned
+  `401`, and direct read-only counts confirmed zero organizations, customers, and payments. The
+  stack remains without a production route or provider secret, with payment, provider-read, and
+  outbound-webhook flags disabled.
