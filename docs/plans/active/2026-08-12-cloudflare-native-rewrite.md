@@ -1321,3 +1321,11 @@ resource and mutation described.
   and a 618.32 KiB (108.87 KiB gzip) dry-run bundle are green. This is a code-only local checkpoint;
   isolated remote D1 remains on migration `0033` and Worker version
   `6f198ceb-959d-486a-ba64-6b7ca88a6fa3`.
+- 2026-08-14: Code-only remote preflight found no pending migrations and zero organizations,
+  customers, plans, subscriptions, invoices, credit notes, and outbox events. Deployed prepaid
+  grace-upgrade coordination as isolated Worker version
+  `52f2f3e2-d402-4c9c-bb04-be095fe5b7f8` with the existing bindings and all external-action flags
+  still `0`. Remote health/readiness returned `200`/`200`, unauthenticated subscription access
+  returned `401`, and post-deploy aggregate-only verification remained empty for every billing
+  entity. No production route, domain, secret, provider action, migration, or billing record
+  changed.
