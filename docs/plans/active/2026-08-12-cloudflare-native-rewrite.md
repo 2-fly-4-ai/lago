@@ -362,6 +362,11 @@ Acceptance:
 
 - [ ] Replace enabled Active Jobs with domain commands, Queue consumers, or Workflow steps.
 - [ ] Replace enabled Clockwork entries with deterministic Cron-to-Workflow dispatch.
+      All 27 legacy entries now have an exhaustive code-level ownership registry. A deterministic
+      five-minute Cron dispatches a versioned Workflow instance and records due/unimplemented
+      schedules in D1. The retained recurring billing, Authorize.Net receipt retry, coupon expiry,
+      and wallet expiry paths run on their legacy slots; the other entries remain explicitly
+      `not_started` until their underlying feature families are ported.
 - [x] Add outbox publication and dead-letter handling for the implemented payment events.
 - [x] Add outbound HMAC webhook signing, endpoint filters, idempotency, bounded retry, URL safety,
       and delivery audit state. Deployment remains disabled until a signing secret is separately
@@ -780,3 +785,10 @@ resource and mutation described.
   empty; remote health/readiness returned `200`, unauthenticated one-off creation returned `401`,
   and direct read-only counts confirmed zero organizations, invoices, and invoice lines. No
   production route, provider secret, or external-mutation flag was changed.
+- 2026-08-14: Added an exhaustive code-level ownership registry for all 27 legacy Clockwork
+  schedules, deterministic five-minute Cron-to-Workflow instance IDs, D1 schedule-run audit state,
+  legacy-slot dispatch for recurring billing and Authorize.Net receipt retries, and replay-safe
+  coupon and wallet expiration with transactional outbox events. Due but unported schedules are
+  recorded as partial runs instead of being silently skipped. All 68 Workers-runtime tests pass
+  across 21 files; all 19 migrations replay from an empty D1 database, generated bindings and the
+  cross-repository inventory are current, and the dry-run bundle is 415.26 KiB.

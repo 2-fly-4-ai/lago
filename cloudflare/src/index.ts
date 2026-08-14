@@ -6,6 +6,7 @@ import { authorizeNetPaymentForm } from "./providers/authorize-net";
 import { handleAuthorizeNetWebhook } from "./webhooks/authorize-net";
 import { reconcileAuthorizeNetReceipt } from "./reconciliation/authorize-net";
 import { deliverOutboundWebhooks } from "./webhooks/outbound";
+import { scheduleInstanceId } from "./schedules/registry";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -81,8 +82,7 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
-    const scheduledAt = new Date(controller.scheduledTime).toISOString();
-    const instanceId = `reconcile-${scheduledAt.slice(0, 13).replace(/[-T:]/g, "")}`;
+    const instanceId = scheduleInstanceId(controller.scheduledTime);
     try {
       await env.RECONCILIATION_WORKFLOW.create({
         id: instanceId,

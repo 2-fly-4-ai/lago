@@ -2,6 +2,8 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { reconcileAuthorizeNetReceipt } from "../reconciliation/authorize-net";
 import type { DomainEvent } from "../domain-events";
 import { closeBillingPeriod } from "../billing/close-period";
+import { expireCoupons, expireWallets } from "../schedules/maintenance";
+import { dueLegacySchedules, scheduleInstanceId } from "../schedules/registry";
 
 type ReconciliationParams = {
   schedule?: {
@@ -12,76 +14,163 @@ type ReconciliationParams = {
 
 export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, ReconciliationParams> {
   override async run(event: WorkflowEvent<ReconciliationParams>, step: WorkflowStep) {
-    const pendingReceiptIds = await step.do("load pending provider receipts", async () => {
-      const result = await this.env.BILLING_DB.prepare(
-        `SELECT id FROM webhook_receipts
-         WHERE provider = 'authorize_net' AND processed_at IS NULL
-         ORDER BY received_at ASC LIMIT 100`,
-      ).all<{ id: string }>();
-      return result.results.map((row) => row.id);
+    const triggeredAt = event.payload.schedule?.triggeredAt ?? event.timestamp.getTime();
+    const triggeredAtIso = new Date(triggeredAt).toISOString();
+    const cron = event.payload.schedule?.cron ?? "manual";
+    const runId = scheduleInstanceId(triggeredAt);
+    const dueSchedules = dueLegacySchedules(triggeredAt);
+    const dueScheduleKeys = dueSchedules.map((schedule) => schedule.key);
+    const unimplementedScheduleKeys = dueSchedules
+      .filter((schedule) => !schedule.executor)
+      .map((schedule) => schedule.key);
+    await step.do("record schedule run", async () => {
+      await this.env.BILLING_DB.prepare(
+        `INSERT INTO schedule_runs
+         (id, cron, triggered_at_ms, triggered_at, status, due_schedules_json,
+          unimplemented_schedules_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)
+         ON CONFLICT(id) DO NOTHING`,
+      )
+        .bind(
+          runId,
+          cron,
+          triggeredAt,
+          triggeredAtIso,
+          JSON.stringify(dueScheduleKeys),
+          JSON.stringify(unimplementedScheduleKeys),
+          triggeredAtIso,
+          triggeredAtIso,
+        )
+        .run();
+      return { runId, dueScheduleKeys, unimplementedScheduleKeys };
     });
 
-    let processedReceipts = 0;
-    let deferredReceipts = 0;
-    for (const receiptId of pendingReceiptIds) {
-      const outcome = await step.do(
-        `reconcile provider receipt ${receiptId}`,
-        { retries: { limit: 5, delay: "10 seconds", backoff: "exponential" }, timeout: "1 minute" },
-        async () => reconcileAuthorizeNetReceipt(this.env, receiptId),
-      );
-      if (outcome === "processed") processedReceipts += 1;
-      else deferredReceipts += 1;
-    }
+    const executors = new Set(dueSchedules.map((schedule) => schedule.executor));
+    try {
+      const pendingReceiptIds = await step.do("load pending provider receipts", async () => {
+        if (!executors.has("reconcile_provider_receipts")) return [];
+        const result = await this.env.BILLING_DB.prepare(
+          `SELECT id FROM webhook_receipts
+         WHERE provider = 'authorize_net' AND processed_at IS NULL
+         ORDER BY received_at ASC LIMIT 100`,
+        ).all<{ id: string }>();
+        return result.results.map((row) => row.id);
+      });
 
-    const dueBillingPeriods = await step.do("load due billing periods", async () => {
-      const cutoff = event.payload.schedule?.triggeredAt ?? Date.now();
-      const result = await this.env.BILLING_DB.prepare(
-        `SELECT id, current_period_end FROM subscriptions
+      let processedReceipts = 0;
+      let deferredReceipts = 0;
+      for (const receiptId of pendingReceiptIds) {
+        const outcome = await step.do(
+          `reconcile provider receipt ${receiptId}`,
+          {
+            retries: { limit: 5, delay: "10 seconds", backoff: "exponential" },
+            timeout: "1 minute",
+          },
+          async () => reconcileAuthorizeNetReceipt(this.env, receiptId),
+        );
+        if (outcome === "processed") processedReceipts += 1;
+        else deferredReceipts += 1;
+      }
+
+      const dueBillingPeriods = await step.do("load due billing periods", async () => {
+        if (!executors.has("close_billing_periods")) return [];
+        const result = await this.env.BILLING_DB.prepare(
+          `SELECT id, current_period_end FROM subscriptions
          WHERE status IN ('active', 'past_due') AND current_period_end IS NOT NULL
            AND current_period_end <= ?
          ORDER BY current_period_end, id LIMIT 100`,
-      )
-        .bind(new Date(cutoff).toISOString())
-        .all<{ id: string; current_period_end: string }>();
-      return [...result.results];
-    });
+        )
+          .bind(triggeredAtIso)
+          .all<{ id: string; current_period_end: string }>();
+        return [...result.results];
+      });
 
-    let closedBillingPeriods = 0;
-    for (const period of dueBillingPeriods) {
-      await step.do(
-        `close billing period ${period.id} ${period.current_period_end}`,
-        {
-          retries: { limit: 5, delay: "10 seconds", backoff: "exponential" },
-          timeout: "2 minutes",
-        },
-        async () =>
-          closeBillingPeriod(
-            this.env,
-            period.id,
-            period.current_period_end,
-            `schedule:${event.payload.schedule?.triggeredAt ?? "manual"}`,
-          ),
+      let closedBillingPeriods = 0;
+      for (const period of dueBillingPeriods) {
+        await step.do(
+          `close billing period ${period.id} ${period.current_period_end}`,
+          {
+            retries: { limit: 5, delay: "10 seconds", backoff: "exponential" },
+            timeout: "2 minutes",
+          },
+          async () =>
+            closeBillingPeriod(
+              this.env,
+              period.id,
+              period.current_period_end,
+              `schedule:${triggeredAt}`,
+            ),
+        );
+        closedBillingPeriods += 1;
+      }
+
+      const expiredCoupons = executors.has("expire_coupons")
+        ? await step.do(
+            "terminate expired coupons",
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => expireCoupons(this.env, triggeredAtIso, runId),
+          )
+        : 0;
+
+      const expiredWallets = executors.has("expire_wallets")
+        ? await step.do(
+            "terminate expired wallets",
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => expireWallets(this.env, triggeredAtIso, runId),
+          )
+        : 0;
+
+      const publishedEvents = await step.do(
+        "publish pending outbox events",
+        { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" }, timeout: "1 minute" },
+        async () => publishOutboxEvents(this.env),
       );
-      closedBillingPeriods += 1;
+
+      const result = {
+        accepted: true,
+        runId,
+        cron,
+        triggeredAt,
+        dueSchedules: dueScheduleKeys,
+        unimplementedSchedules: unimplementedScheduleKeys,
+        pendingReceipts: pendingReceiptIds.length,
+        processedReceipts,
+        deferredReceipts,
+        dueBillingPeriods: dueBillingPeriods.length,
+        closedBillingPeriods,
+        expiredCoupons,
+        expiredWallets,
+        publishedEvents,
+      };
+      await step.do("complete schedule run", async () => {
+        await this.env.BILLING_DB.prepare(
+          `UPDATE schedule_runs SET status = ?, result_json = ?, updated_at = ?, completed_at = ?
+         WHERE id = ?`,
+        )
+          .bind(
+            unimplementedScheduleKeys.length === 0 ? "completed" : "partial",
+            JSON.stringify(result),
+            new Date().toISOString(),
+            new Date().toISOString(),
+            runId,
+          )
+          .run();
+        return { completed: true };
+      });
+      return result;
+    } catch (error) {
+      await step.do("fail schedule run", async () => {
+        const failedAt = new Date().toISOString();
+        await this.env.BILLING_DB.prepare(
+          `UPDATE schedule_runs SET status = 'failed', error_code = 'schedule_execution_failed',
+           updated_at = ?, completed_at = ? WHERE id = ?`,
+        )
+          .bind(failedAt, failedAt, runId)
+          .run();
+        return { failed: true };
+      });
+      throw error;
     }
-
-    const publishedEvents = await step.do(
-      "publish pending outbox events",
-      { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" }, timeout: "1 minute" },
-      async () => publishOutboxEvents(this.env),
-    );
-
-    return {
-      accepted: true,
-      cron: event.payload.schedule?.cron ?? null,
-      triggeredAt: event.payload.schedule?.triggeredAt ?? null,
-      pendingReceipts: pendingReceiptIds.length,
-      processedReceipts,
-      deferredReceipts,
-      dueBillingPeriods: dueBillingPeriods.length,
-      closedBillingPeriods,
-      publishedEvents,
-    };
   }
 }
 

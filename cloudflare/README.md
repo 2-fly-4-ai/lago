@@ -18,7 +18,10 @@ remaining Lago feature inventory is dispositioned and ported.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.
-- Workflows and Cron: provider reconciliation and outbox publication.
+- Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
+  of all 27 legacy Clockwork schedules. It runs the retained billing-close, Authorize.Net receipt
+  retry, coupon-expiration, and wallet-expiration paths on their original slots, records each run in
+  D1, publishes the outbox, and reports due schedules whose behavior is not yet ported.
 - R2: immutable provider webhook, usage-event, and invoice-document archives.
 - Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
 
