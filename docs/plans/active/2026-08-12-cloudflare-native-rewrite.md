@@ -2135,3 +2135,12 @@ resource and mutation described.
   bounded groups pass all 199 tests as 37 + 43 + 70 + 42 + 7, including Store checkout
   compatibility. The dry-run bundle is 981.94 KiB (169.22 KiB gzip). No migration is required;
   this reuses migration `0049_fixed_charge_unit_events.sql`. Feature checkpoint: `c964e7c`.
+- 2026-08-15: Code-only remote preflight found no pending migration and zero organizations,
+  customers, plans, subscriptions, invoices, billable metrics, charges, fixed charges,
+  fixed-charge unit events, usage events, wallets, outbox rows, and plan-deletion tasks, with zero
+  foreign-key violations. Deployed only the isolated Worker as version
+  `2c67b47e-40f2-4562-ad97-11752f1bc1c0` with a 7 ms startup. Health/readiness returned `200`/`200`,
+  unauthenticated catalog fixed-charge access returned `401`, no migrations remain, and
+  post-deploy aggregate-only verification stayed empty apart from 228 schedule audits. All three
+  external-action flags remain `0`; no migration, resource provisioning, production route/domain,
+  secret, provider action, customer data, or billing row changed.
