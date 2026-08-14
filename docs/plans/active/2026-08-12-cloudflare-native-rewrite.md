@@ -315,8 +315,10 @@ Acceptance:
       customer/plan/charge targeting, external providers, exemptions, tax identifiers, and
       credit-note tax adjustments remain pending.
       Plan-level in-arrears minimum commitments now create only the rounded billing-period
-      shortfall while retaining the precise fee value; commitment-specific taxes, pay-in-advance
-      reconciliation, partial-period proration, and subscription overrides remain pending.
+      shortfall while retaining the precise fee value. Final termination invoices also prorate the
+      target over the retained UTC unsplit window before subtracting precise and rounded fees;
+      commitment-specific taxes, pay-in-advance reconciliation, split windows, tenant-local civil
+      dates, and subscription overrides remain pending.
       Tenant-scoped add-ons now support idempotent create/list/show/update/terminate with versioned
       outbox events, and plans support standard/graduated/volume recurring pay-in-arrears fixed
       charges. Fixed fees enter the exact recurring invoice pipeline before minimum commitments,
@@ -341,9 +343,11 @@ Acceptance:
       the same non-consuming preview, refresh manually or on schedule, and allocate credits only
       while finalizing; they do not masquerade as renewal cycles. Explicit skip-invoice/
       skip-credit subscription termination flags an existing draft and keeps it refreshable from
-      its immutable initial or renewal context. Paid-invoice credit/refund voids, prorated
-      termination invoices/credits, destructive plan/charge graph replacement, and broader retry
-      transitions remain pending.
+      its immutable initial or renewal context. Supported final termination now covers prorated
+      in-arrears bases/commitments and the ordered pay-in-advance unused-credit plus usage-invoice
+      command. Paid-invoice refund/offset voids, allocated-source adjustments, positive-grace
+      termination drafts, destructive plan/charge graph replacement, and broader retry transitions
+      remain pending.
       Customer net-payment terms now snapshot onto finalized initial, recurring, and one-off
       invoices with deterministic due dates. The legacy hourly overdue transition is replay-safe,
       emits a transactional outbox event, and successful manual or Authorize.Net settlement clears
@@ -1127,3 +1131,15 @@ resource and mutation described.
   verification confirmed zero organizations, subscriptions, invoices, invoice lines, fixed
   charges, and minimum commitments plus 46 Cron audits. No route, secret, seeded billing data, or
   disabled external flag changed.
+- 2026-08-14: Ported Lago's default pay-in-advance termination ordering. A reusable preparation
+  phase derives the exact unused UTC-period credit without writing; the final command then creates
+  the credit note/item and `credit_note.created` outbox row, finalizes bounded in-arrears usage,
+  applies existing balances followed by the newly created note, considers wallet lots only for the
+  remainder, terminates the subscription, and records invoice/subscription events in one ordered D1
+  batch. Executable evidence applies 25 cents from the new note to a 25-cent usage invoice, leaves
+  the unused remainder available, preserves an eligible 100-cent fallback wallet untouched, proves
+  created-before-applied outbox order, replays without duplicate invoices/notes/applications, and
+  injects a post-credit invoice failure to prove the entire ledger transition rolls back. The
+  separate credit-only and usage-only modes remain intact. All 85 tests pass across 22 files;
+  formatting, strict lint, generated inventory/types, TypeScript, and the dry-run bundle are green
+  at 519.00 KiB (92.48 KiB gzip). No migration is required.

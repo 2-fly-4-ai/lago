@@ -34,12 +34,13 @@ remaining Lago feature inventory is dispositioned and ported.
   finalizable from its immutable invoice context. At renewal, pay-in-advance base fees snapshot the
   next period while in-arrears base fees and usage snapshot the closed period. Credit-only
   pay-in-advance termination can return exact unused UTC service days when its source base invoice
-  is finalized and has no discount, tax, wallet, or prior credit allocation. Alternatively,
-  pay-in-advance termination can finalize the bounded in-arrears usage invoice without rebilling the
-  base when unused-period crediting is explicitly skipped. Backdating, calendar billing,
-  tenant-local termination dates, positive-grace termination drafts, the combined final-invoice/
-  unused-credit command, refund/offset modes, allocated source invoices, prorated/pay-in-advance
-  fixed charges, and pay-in-advance commitment termination remain guarded.
+  is finalized and has no discount, tax, wallet, or prior credit allocation. The default combined
+  command creates that credit, finalizes bounded in-arrears usage without rebilling the base, and
+  applies the new balance before wallet credits in one ordered D1 batch. The usage invoice can also
+  be generated while explicitly skipping unused-period crediting. Backdating, calendar billing,
+  tenant-local termination dates, positive-grace termination drafts, refund/offset modes, allocated
+  source invoices, prorated/pay-in-advance fixed charges, and pay-in-advance commitment termination
+  remain guarded.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.
