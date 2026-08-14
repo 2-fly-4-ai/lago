@@ -10,9 +10,16 @@ import {
   type PreparedPayInAdvanceTerminationCredit,
 } from "./pay-in-advance-termination-credit";
 import { paymentDueDate } from "./payment-terms";
-import { addTrialDays, firstPeriodEnd, localDateString, type BillingTime } from "./periods";
+import {
+  addTrialDays,
+  firstPeriodEnd,
+  localDate,
+  localDateString,
+  type BillingTime,
+} from "./periods";
 import {
   calculateInitialSubscriptionInvoice,
+  calculateInitialPayInAdvanceFixedChargeLines,
   calculateInvoiceAllocations,
   calculateTerminationSubscriptionInvoice,
   findBillableSubscription,
@@ -492,7 +499,7 @@ async function upgradeActiveGeneration(
     previous.plan_amount_minor,
     previous.trial_end_at,
   );
-  const nextLines =
+  const unadjustedNextLines =
     target.pay_in_advance === 1 && !targetTrialActive
       ? (
           await calculateInitialSubscriptionInvoice(
@@ -503,7 +510,20 @@ async function upgradeActiveGeneration(
             nextPeriodEnd,
           )
         ).lines
-      : [];
+      : await calculateInitialPayInAdvanceFixedChargeLines(
+          env.BILLING_DB,
+          nextSubscription,
+          invoiceId,
+          changedAt,
+          nextPeriodEnd,
+        );
+  const nextLines = await applyPreviousAdvanceFixedChargeOffsets(
+    env.BILLING_DB,
+    current.id,
+    current.billing_timezone,
+    changedAt,
+    unadjustedNextLines,
+  );
   const lines = [...previousLines, ...nextLines];
   const unusedCredit = await maybePrepareUnusedCredit(
     env.BILLING_DB,
@@ -846,6 +866,135 @@ export function adjustUpgradeTerminationDay(
       },
     ];
   });
+}
+
+type PreviousAdvanceFixedChargeLine = {
+  next_fixed_charge_id: string;
+  precise_amount_minor: string | number;
+  metadata_json: string;
+};
+
+async function applyPreviousAdvanceFixedChargeOffsets(
+  database: D1Database,
+  previousSubscriptionId: string,
+  timezone: string,
+  changedAt: string,
+  lines: SubscriptionInvoiceLine[],
+): Promise<SubscriptionInvoiceLine[]> {
+  const candidates = lines.filter((line) => {
+    if (line.lineType !== "fixed_charge") return false;
+    const metadata = parseLineMetadata(line.metadataJson);
+    return metadata.billingMode === "in_advance" && metadata.prorated === true;
+  });
+  if (candidates.length === 0) return lines;
+  const ids = candidates.map((line) => line.sourceId);
+  const prior = await database
+    .prepare(
+      `SELECT next.id AS next_fixed_charge_id,
+              COALESCE(line.precise_amount_minor, line.amount_minor) AS precise_amount_minor,
+              line.metadata_json
+       FROM fixed_charges next
+       JOIN fixed_charges previous ON previous.add_on_id = next.add_on_id
+       JOIN invoice_lines line ON line.source_id = previous.id AND line.line_type = 'fixed_charge'
+       JOIN invoices invoice ON invoice.id = line.invoice_id
+       JOIN invoice_subscriptions owner ON owner.invoice_id = invoice.id
+       WHERE next.id IN (SELECT value FROM json_each(?)) AND owner.subscription_id = ?
+         AND invoice.status <> 'voided'
+         AND json_extract(line.metadata_json, '$.billingMode') = 'in_advance'
+         AND json_extract(line.metadata_json, '$.periodEnd') > ?
+       ORDER BY line.created_at, line.id LIMIT ?`,
+    )
+    .bind(
+      stableJson(ids),
+      previousSubscriptionId,
+      changedAt,
+      MAX_PREVIOUS_ADVANCE_FIXED_CHARGE_LINES + 1,
+    )
+    .all<PreviousAdvanceFixedChargeLine>();
+  if (prior.results.length > MAX_PREVIOUS_ADVANCE_FIXED_CHARGE_LINES) {
+    throw new Error("previous_advance_fixed_charge_line_limit_exceeded");
+  }
+  const priorByNext = new Map<string, PreviousAdvanceFixedChargeLine[]>();
+  for (const row of prior.results) {
+    const values = priorByNext.get(row.next_fixed_charge_id) ?? [];
+    values.push(row);
+    priorByNext.set(row.next_fixed_charge_id, values);
+  }
+  return lines.map((line) => {
+    const previousLines = priorByNext.get(line.sourceId);
+    if (!previousLines?.length) return line;
+    const metadata = parseLineMetadata(line.metadataJson);
+    const currentStart = stringMetadata(metadata.periodStart) ?? changedAt;
+    const currentEnd = stringMetadata(metadata.periodEnd);
+    if (!currentEnd) return line;
+    let offset = Decimal.zero();
+    for (const previous of previousLines) {
+      const previousMetadata = parseLineMetadata(previous.metadata_json);
+      const paidStart =
+        stringMetadata(previousMetadata.effectiveAt) ??
+        stringMetadata(previousMetadata.periodStart);
+      const paidEnd = stringMetadata(previousMetadata.periodEnd);
+      if (!paidStart || !paidEnd) continue;
+      const paidDays = localDaySpan(paidStart, paidEnd, timezone);
+      const overlapStart = new Date(
+        Math.max(Date.parse(changedAt), Date.parse(currentStart), Date.parse(paidStart)),
+      ).toISOString();
+      const overlapEnd = new Date(
+        Math.min(Date.parse(currentEnd), Date.parse(paidEnd)),
+      ).toISOString();
+      const overlapDays = localDaySpan(overlapStart, overlapEnd, timezone);
+      if (paidDays <= 0 || overlapDays <= 0) continue;
+      offset = offset.add(
+        Decimal.parse(previous.precise_amount_minor)
+          .multiply(Decimal.parse(overlapDays))
+          .divideByInteger(BigInt(paidDays)),
+      );
+    }
+    if (offset.isZero()) return line;
+    const adjusted = Decimal.parse(line.precise).subtract(offset);
+    const clamped = adjusted.isNegative() ? Decimal.zero() : adjusted;
+    const rounded = Number(clamped.round());
+    if (!Number.isSafeInteger(rounded) || rounded < 0) {
+      throw new Error("invoice_amount_out_of_range");
+    }
+    return {
+      ...line,
+      precise: clamped.toString(),
+      rounded,
+      metadataJson: stableJson({
+        ...metadata,
+        previousPrepaidOffsetMinor: offset.toString(),
+        upgrade: true,
+      }),
+    };
+  });
+}
+
+const MAX_PREVIOUS_ADVANCE_FIXED_CHARGE_LINES = 1_000;
+
+function parseLineMetadata(value: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function stringMetadata(value: unknown): string | null {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
+function localDaySpan(start: string, end: string, timezone: string): number {
+  const startDate = localDate(new Date(start), timezone);
+  const endDate = localDate(new Date(end), timezone);
+  return Math.max(
+    0,
+    Math.floor(Date.UTC(endDate.year, endDate.month - 1, endDate.day) / 86_400_000) -
+      Math.floor(Date.UTC(startDate.year, startDate.month - 1, startDate.day) / 86_400_000),
+  );
 }
 
 function utcDayOrdinal(value: string): number {

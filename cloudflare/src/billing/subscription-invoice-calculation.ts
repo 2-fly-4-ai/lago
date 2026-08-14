@@ -266,8 +266,76 @@ export async function calculateInitialSubscriptionInvoice(
     }),
   };
   const lines = [line];
+  const shouldBillAdvanceFixedCharges = subscription.trial_started_at === null || !trialEndInvoice;
+  if (shouldBillAdvanceFixedCharges) {
+    lines.push(
+      ...(await calculateInitialPayInAdvanceFixedChargeLines(
+        database,
+        subscription,
+        invoiceId,
+        periodStart,
+        periodEnd,
+      )),
+    );
+  }
   const allocations = await calculateInvoiceAllocations(database, subscription, invoiceId, lines);
   return { lines, ...allocations, nextPeriodEnd: periodEnd };
+}
+
+export async function calculateInitialPayInAdvanceFixedChargeLines(
+  database: D1Database,
+  subscription: BillableSubscription,
+  invoiceId: string,
+  periodStart: string,
+  periodEnd: string,
+): Promise<SubscriptionInvoiceLine[]> {
+  const fixedChargeFullPeriodDays = billingPeriodDurationDays(
+    new Date(periodStart),
+    new Date(periodEnd),
+    subscription.billing_time,
+    subscription.interval,
+    subscription.billing_timezone,
+  );
+  const lines: SubscriptionInvoiceLine[] = [];
+  for (const charge of await loadFixedCharges(
+    database,
+    subscription,
+    periodStart,
+    periodEnd,
+    fixedChargeFullPeriodDays,
+    1,
+  )) {
+    const model = parseChargeModel(charge.charge_model, parseObject(charge.properties_json));
+    const precise = Decimal.parse(
+      (charge.prorated === 1
+        ? rateProratedFixedCharge(charge.units, charge.prorated_units, model)
+        : rateCharge(charge.units, model)
+      ).amountCents,
+    );
+    lines.push({
+      id: await deterministicUuid("initial-fixed-charge-line", `${invoiceId}:${charge.id}`),
+      description:
+        charge.invoice_display_name ?? charge.add_on_invoice_display_name ?? charge.add_on_name,
+      units: charge.units,
+      precise: precise.toString(),
+      rounded: safeMinorInteger(precise),
+      sourceId: charge.id,
+      lineType: "fixed_charge",
+      sourceType: "fixed_charge",
+      metadataJson: stableJson({
+        contextType: "in_advance_charge",
+        billingMode: "in_advance",
+        fixedChargeCode: charge.code,
+        addOnCode: charge.add_on_code,
+        chargeModel: charge.charge_model,
+        periodStart,
+        periodEnd,
+        effectiveAt: periodStart,
+        ...(charge.prorated === 1 ? { prorated: true, proratedUnits: charge.prorated_units } : {}),
+      }),
+    });
+  }
+  return lines;
 }
 
 export async function calculateInvoiceAllocations(
@@ -685,50 +753,74 @@ export async function calculateSubscriptionInvoice(
     }
   }
 
-  const fixedChargeFullPeriodDays = billingPeriodDurationDays(
-    new Date(periodStartMs),
-    new Date(periodEndMs),
-    subscription.billing_time,
-    subscription.interval,
-    subscription.billing_timezone,
-  );
-  for (const charge of await loadFixedCharges(
-    database,
-    subscription,
-    periodStart,
-    calculationPeriodEnd,
-    fixedChargeFullPeriodDays,
-  )) {
-    const model = parseChargeModel(charge.charge_model, parseObject(charge.properties_json));
-    const precise = Decimal.parse(
-      (charge.prorated === 1
-        ? rateProratedFixedCharge(charge.units, charge.prorated_units, model)
-        : rateCharge(charge.units, model)
-      ).amountCents,
+  const fixedChargePeriods = [
+    {
+      payInAdvance: 0 as const,
+      start: periodStart,
+      end: calculationPeriodEnd,
+      fullEnd: periodEnd,
+    },
+    ...(options.context === "renewal"
+      ? [
+          {
+            payInAdvance: 1 as const,
+            start: periodEnd,
+            end: nextEnd,
+            fullEnd: nextEnd,
+          },
+        ]
+      : []),
+  ];
+  for (const fixedChargePeriod of fixedChargePeriods) {
+    const fullPeriodDays = billingPeriodDurationDays(
+      new Date(fixedChargePeriod.start),
+      new Date(fixedChargePeriod.fullEnd),
+      subscription.billing_time,
+      subscription.interval,
+      subscription.billing_timezone,
     );
-    const rounded = safeMinorInteger(precise);
-    subtotalMinor = safeAdd(subtotalMinor, rounded);
-    lines.push({
-      id: await deterministicUuid("billing-cycle-fixed-charge-line", `${cycleKey}:${charge.id}`),
-      description:
-        charge.invoice_display_name ?? charge.add_on_invoice_display_name ?? charge.add_on_name,
-      units: charge.units,
-      precise: precise.toString(),
-      rounded,
-      sourceId: charge.id,
-      lineType: "fixed_charge",
-      sourceType: "fixed_charge",
-      metadataJson: stableJson({
-        billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
-        fixedChargeCode: charge.code,
-        addOnCode: charge.add_on_code,
-        chargeModel: charge.charge_model,
-        ...(charge.prorated === 1 ? { prorated: true, proratedUnits: charge.prorated_units } : {}),
-        periodStart,
-        periodEnd: calculationPeriodEnd,
-        ...(options.context === "termination" ? { contextType: "termination" } : {}),
-      }),
-    });
+    for (const charge of await loadFixedCharges(
+      database,
+      subscription,
+      fixedChargePeriod.start,
+      fixedChargePeriod.end,
+      fullPeriodDays,
+      fixedChargePeriod.payInAdvance,
+    )) {
+      const model = parseChargeModel(charge.charge_model, parseObject(charge.properties_json));
+      const precise = Decimal.parse(
+        (charge.prorated === 1
+          ? rateProratedFixedCharge(charge.units, charge.prorated_units, model)
+          : rateCharge(charge.units, model)
+        ).amountCents,
+      );
+      const rounded = safeMinorInteger(precise);
+      subtotalMinor = safeAdd(subtotalMinor, rounded);
+      lines.push({
+        id: await deterministicUuid("billing-cycle-fixed-charge-line", `${cycleKey}:${charge.id}`),
+        description:
+          charge.invoice_display_name ?? charge.add_on_invoice_display_name ?? charge.add_on_name,
+        units: charge.units,
+        precise: precise.toString(),
+        rounded,
+        sourceId: charge.id,
+        lineType: "fixed_charge",
+        sourceType: "fixed_charge",
+        metadataJson: stableJson({
+          billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
+          fixedChargeCode: charge.code,
+          addOnCode: charge.add_on_code,
+          chargeModel: charge.charge_model,
+          billingMode: fixedChargePeriod.payInAdvance === 1 ? "in_advance" : "in_arrears",
+          ...(charge.prorated === 1
+            ? { prorated: true, proratedUnits: charge.prorated_units }
+            : {}),
+          periodStart: fixedChargePeriod.start,
+          periodEnd: fixedChargePeriod.end,
+          ...(options.context === "termination" ? { contextType: "termination" } : {}),
+        }),
+      });
+    }
   }
 
   const preciseFees = lines.reduce(
@@ -969,6 +1061,7 @@ async function loadFixedCharges(
   periodStart: string,
   calculationPeriodEnd: string,
   fullPeriodDays: number,
+  payInAdvance: 0 | 1,
 ): Promise<FixedChargeRow[]> {
   const result = await database
     .prepare(
@@ -982,10 +1075,10 @@ async function loadFixedCharges(
               ao.invoice_display_name AS add_on_invoice_display_name
        FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id
        WHERE fc.organization_id = ? AND fc.plan_id = ? AND fc.active = 1
-         AND fc.pay_in_advance = 0
+         AND fc.pay_in_advance = ?
        ORDER BY fc.created_at, fc.id`,
     )
-    .bind(subscription.id, subscription.organization_id, subscription.plan_id)
+    .bind(subscription.id, subscription.organization_id, subscription.plan_id, payInAdvance)
     .all<
       Omit<FixedChargeRow, "prorated_units"> & {
         has_unit_events: number;

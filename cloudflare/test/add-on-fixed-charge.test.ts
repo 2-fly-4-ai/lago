@@ -353,7 +353,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
     expect(events?.total).toBe(2);
   });
 
-  it("updates and terminates unused add-ons while rejecting unsafe fixed-charge modes", async () => {
+  it("updates and terminates unused add-ons while enforcing advance fixed-charge models", async () => {
     const unused = await api("/api/v1/add_ons", "POST", {
       add_on: {
         name: "Unused",
@@ -373,32 +373,73 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
     expect((await api("/api/v1/add_ons/unused-renamed", "DELETE")).status).toBe(200);
     expect((await api("/api/v1/add_ons/unused-renamed")).status).toBe(404);
 
+    const advanceAddOn = await api("/api/v1/add_ons", "POST", {
+      add_on: {
+        name: "Advance",
+        code: "advance",
+        amount_cents: 200,
+        amount_currency: "USD",
+      },
+    });
+    const advanceAddOnId = (await advanceAddOn.json<{ add_on: { lago_id: string } }>()).add_on
+      .lago_id;
     const planBase = {
-      name: "Unsafe fixed plan",
+      name: "Advance fixed plan",
       interval: "monthly",
       amount_cents: 100,
       amount_currency: "USD",
     };
-    for (const [suffix, unsafe] of [["advance", { pay_in_advance: true }]] as const) {
+    const supportedAdvance = await api("/api/v1/plans", "POST", {
+      plan: {
+        ...planBase,
+        code: "supported-advance",
+        fixed_charges: [
+          {
+            add_on_id: advanceAddOnId,
+            code: "supported-advance",
+            charge_model: "standard",
+            units: 1,
+            properties: { amount: "100" },
+            pay_in_advance: true,
+            prorated: true,
+          },
+        ],
+      },
+    });
+    expect(supportedAdvance.status).toBe(200);
+    await expect(supportedAdvance.json()).resolves.toMatchObject({
+      plan: {
+        fixed_charges: [{ pay_in_advance: true, prorated: true }],
+      },
+    });
+
+    for (const [suffix, chargeModel, prorated] of [
+      ["volume", "volume", false],
+      ["graduated-prorated", "graduated", true],
+    ] as const) {
       const response = await api("/api/v1/plans", "POST", {
         plan: {
           ...planBase,
-          code: `unsafe-${suffix}`,
+          code: `invalid-${suffix}`,
           fixed_charges: [
             {
-              add_on_id: unusedId,
-              code: `unsafe-${suffix}`,
-              charge_model: "standard",
+              add_on_id: advanceAddOnId,
+              code: `invalid-${suffix}`,
+              charge_model: chargeModel,
               units: 1,
-              properties: { amount: "100" },
-              ...unsafe,
+              properties:
+                chargeModel === "graduated"
+                  ? { graduated_ranges: [{ from_value: 0, to_value: null, per_unit_amount: "1" }] }
+                  : { volume_ranges: [{ from_value: 0, to_value: null, per_unit_amount: "1" }] },
+              pay_in_advance: true,
+              prorated,
             },
           ],
         },
       });
       expect(response.status).toBe(422);
       await expect(response.json()).resolves.toMatchObject({
-        code: "unsupported_fixed_charge_feature",
+        code: "invalid_charge_model",
       });
     }
 

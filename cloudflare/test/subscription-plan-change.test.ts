@@ -11,6 +11,11 @@ beforeEach(async () => {
   const now = new Date().toISOString();
   await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
+      `DELETE FROM fixed_charges
+       WHERE id IN ('plan-change-base-seats', 'plan-change-upgrade-seats')`,
+    ),
+    env.BILLING_DB.prepare("DELETE FROM add_ons WHERE id = 'plan-change-seats'"),
+    env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO organizations (id, external_id, name, created_at, updated_at)
        VALUES ('org-plan-change', 'org-plan-change', 'Plan Change', ?, ?)`,
     ).bind(now, now),
@@ -284,6 +289,83 @@ describe("subscription plan generations", () => {
     expect(state?.owners).toBe(2);
     expect(state?.credit_notes_minor).toBeGreaterThan(0);
     expect(state?.total_due_minor).toBe(state!.subtotal_minor - state!.credit_notes_minor);
+  });
+
+  it("bills an advance fixed charge on upgrade and offsets the matching prepaid add-on", async () => {
+    const now = new Date().toISOString();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE plans SET pay_in_advance = CASE WHEN id = 'plan-change-base' THEN 1 ELSE 0 END
+         WHERE id IN ('plan-change-base', 'plan-change-upgrade')`,
+      ),
+      env.BILLING_DB.prepare(
+        `INSERT INTO add_ons
+         (id, organization_id, code, name, amount_minor, currency, status, version,
+          request_sha256, created_at, updated_at)
+         VALUES ('plan-change-seats', 'org-plan-change', 'plan-change-seats', 'Plan seats',
+                 100, 'USD', 'active', 1, 'plan-change-seats-hash', ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO fixed_charges
+         (id, organization_id, plan_id, add_on_id, code, charge_model, properties_json,
+          units, pay_in_advance, prorated, created_at, updated_at)
+         VALUES ('plan-change-base-seats', 'org-plan-change', 'plan-change-base',
+                 'plan-change-seats', 'base-seats', 'standard', '{"amount":"100"}',
+                 '1', 1, 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO fixed_charges
+         (id, organization_id, plan_id, add_on_id, code, charge_model, properties_json,
+          units, pay_in_advance, prorated, created_at, updated_at)
+         VALUES ('plan-change-upgrade-seats', 'org-plan-change', 'plan-change-upgrade',
+                 'plan-change-seats', 'upgrade-seats', 'standard', '{"amount":"200"}',
+                 '1', 1, 1, ?, ?)`,
+      ).bind(now, now),
+    ]);
+    const created = await createSubscription(
+      "subscription-upgrade-fixed-charge",
+      "plan-change-base",
+    );
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ subscription: { lago_id: string } }>();
+    const prepaid = await env.BILLING_DB.prepare(
+      `SELECT line.amount_minor
+       FROM invoice_lines line JOIN invoices invoice ON invoice.id = line.invoice_id
+       WHERE invoice.subscription_id = ? AND line.source_id = 'plan-change-base-seats'
+       ORDER BY line.created_at DESC LIMIT 1`,
+    )
+      .bind(createdBody.subscription.lago_id)
+      .first<{ amount_minor: number }>();
+    expect(prepaid?.amount_minor).toBeGreaterThan(0);
+
+    const upgraded = await createSubscription(
+      "subscription-upgrade-fixed-charge",
+      "plan-change-upgrade",
+    );
+    expect(upgraded.status).toBe(200);
+    const upgradedBody = await upgraded.json<{ subscription: { lago_id: string } }>();
+    const replacement = await env.BILLING_DB.prepare(
+      `SELECT line.amount_minor, line.metadata_json
+       FROM invoice_lines line
+       JOIN invoice_subscriptions owner ON owner.invoice_id = line.invoice_id
+       WHERE owner.subscription_id = ? AND owner.invoicing_reason = 'upgrading'
+         AND line.source_id = 'plan-change-upgrade-seats'
+       ORDER BY line.created_at DESC LIMIT 1`,
+    )
+      .bind(upgradedBody.subscription.lago_id)
+      .first<{ amount_minor: number; metadata_json: string }>();
+    expect(replacement?.amount_minor).toBe(prepaid?.amount_minor);
+    expect(JSON.parse(replacement!.metadata_json)).toMatchObject({
+      billingMode: "in_advance",
+      prorated: true,
+      upgrade: true,
+    });
+    expect(
+      Number(
+        (JSON.parse(replacement!.metadata_json) as { previousPrepaidOffsetMinor: string })
+          .previousPrepaidOffsetMinor,
+      ),
+    ).toBeGreaterThan(0);
   });
 
   it("finalizes a draft prepaid source before applying its upgrade credit", async () => {

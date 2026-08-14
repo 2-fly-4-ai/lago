@@ -19,6 +19,7 @@ import {
   findPlanDeletionTask,
   preparePlanDeletion,
 } from "../billing/plan-deletion";
+import { createPayInAdvanceFixedChargeDeltaInvoice } from "../billing/pay-in-advance-fixed-charges";
 
 type PlanRow = {
   id: string;
@@ -108,6 +109,7 @@ type NormalizedFixedCharge = {
   chargeModel: "standard" | "graduated" | "volume";
   properties: Record<string, unknown>;
   units: string;
+  payInAdvance: 0 | 1;
   prorated: 0 | 1;
   applyUnitsImmediately: boolean;
 };
@@ -137,6 +139,7 @@ type PreparedFixedChargeUnitEvent = {
   fixedChargeVersion: number;
   units: string;
   effectiveAt: string;
+  billImmediately: boolean;
 };
 
 type PreparedFixedChargeUnitEvents = {
@@ -169,6 +172,7 @@ type PreparedFixedChargeCascadeCreate = {
   chargeModel: "standard" | "graduated" | "volume";
   propertiesJson: string;
   units: string;
+  payInAdvance: 0 | 1;
   prorated: 0 | 1;
 };
 
@@ -441,7 +445,7 @@ async function createPlan(
            (id, organization_id, plan_id, add_on_id, code, invoice_display_name,
             charge_model, properties_json, units, pay_in_advance, prorated, version, active,
             created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, 1, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
           )
           .bind(
             charge.id,
@@ -453,6 +457,7 @@ async function createPlan(
             charge.chargeModel,
             stableJson(charge.properties),
             charge.units,
+            charge.payInAdvance,
             charge.prorated,
             now,
             now,
@@ -643,7 +648,7 @@ async function createFixedCharge(
            (id, organization_id, plan_id, add_on_id, code, invoice_display_name,
             charge_model, properties_json, units, pay_in_advance, prorated, version, active,
             created_at, updated_at)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, 1, ?, ?
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?
            WHERE (
              ? = 0 OR (
                ? = (
@@ -699,6 +704,7 @@ async function createFixedCharge(
           normalized.chargeModel,
           stableJson(normalized.properties),
           normalized.units,
+          normalized.payInAdvance,
           normalized.prorated,
           now,
           now,
@@ -729,7 +735,7 @@ async function createFixedCharge(
                   json_extract(row.value, '$.invoiceDisplayName'),
                   json_extract(row.value, '$.chargeModel'),
                   json_extract(row.value, '$.propertiesJson'),
-                  json_extract(row.value, '$.units'), 0,
+                  json_extract(row.value, '$.units'), json_extract(row.value, '$.payInAdvance'),
                   json_extract(row.value, '$.prorated'), 1, 1, ?, ?
            FROM json_each(?) row
            WHERE EXISTS (
@@ -791,6 +797,9 @@ async function createFixedCharge(
   }
   await env.DOMAIN_EVENTS.send(event);
   for (const childEvent of childEvents) await env.DOMAIN_EVENTS.send(childEvent);
+  if (normalized.payInAdvance === 1 && normalized.applyUnitsImmediately) {
+    await billImmediateAdvanceFixedChargeEvents(env, unitEvents.events, now, requestId);
+  }
   const created = await findFixedCharge(database, plan.id, normalized.code);
   if (!created) throw new ApiError(500, "persistence_error", "Fixed charge was not persisted");
   return json({ fixed_charge: serializeFixedCharge(created) }, { requestId });
@@ -841,6 +850,7 @@ async function updateFixedCharge(
       input.units === undefined
         ? fixedCharge.units
         : nonNegativeDecimal(input.units, "fixed_charge.units"),
+    payInAdvance: fixedCharge.pay_in_advance === 1 ? 1 : 0,
     prorated: fixedCharge.prorated === 1 ? 1 : 0,
     applyUnitsImmediately: input.apply_units_immediately === true,
   } satisfies NormalizedFixedCharge;
@@ -1062,6 +1072,9 @@ async function updateFixedCharge(
   }
   await env.DOMAIN_EVENTS.send(event);
   for (const childEvent of childEvents) await env.DOMAIN_EVENTS.send(childEvent);
+  if (fixedCharge.pay_in_advance === 1 && next.applyUnitsImmediately) {
+    await billImmediateAdvanceFixedChargeEvents(env, unitEvents.events, now, requestId);
+  }
   const updated = await findFixedCharge(database, plan.id, next.code);
   if (!updated) throw new ApiError(500, "persistence_error", "Fixed charge disappeared");
   return json({ fixed_charge: serializeFixedCharge(updated) }, { requestId });
@@ -1794,7 +1807,7 @@ function sameFixedCharge(charge: FixedChargeRow, normalized: NormalizedFixedChar
     charge.charge_model === normalized.chargeModel &&
     stableJson(parseObject(charge.properties_json)) === stableJson(normalized.properties) &&
     Decimal.parse(charge.units).compare(Decimal.parse(normalized.units)) === 0 &&
-    charge.pay_in_advance === 0 &&
+    charge.pay_in_advance === normalized.payInAdvance &&
     charge.prorated === normalized.prorated
   );
 }
@@ -1802,6 +1815,29 @@ function sameFixedCharge(charge: FixedChargeRow, normalized: NormalizedFixedChar
 const MAX_FIXED_CHARGE_CASCADE_CHILDREN = 100;
 const MAX_FIXED_CHARGE_CASCADE_JSON_BYTES = 512 * 1024;
 const MAX_FIXED_CHARGE_UNIT_EVENT_SUBSCRIPTIONS = 200;
+
+async function billImmediateAdvanceFixedChargeEvents(
+  env: Env,
+  events: PreparedFixedChargeUnitEvent[],
+  effectiveAt: string,
+  correlationId: string,
+): Promise<void> {
+  const subscriptionIds = [
+    ...new Set(
+      events
+        .filter((event) => event.effectiveAt === effectiveAt)
+        .map((event) => event.subscriptionId),
+    ),
+  ];
+  for (const subscriptionId of subscriptionIds) {
+    await createPayInAdvanceFixedChargeDeltaInvoice(
+      env,
+      subscriptionId,
+      effectiveAt,
+      correlationId,
+    );
+  }
+}
 
 async function prepareFixedChargeCreateCascade(
   database: D1Database,
@@ -1844,6 +1880,7 @@ async function prepareFixedChargeCreateCascade(
       chargeModel: fixedCharge.chargeModel,
       propertiesJson: stableJson(fixedCharge.properties),
       units: fixedCharge.units,
+      payInAdvance: fixedCharge.payInAdvance,
       prorated: fixedCharge.prorated,
     });
   }
@@ -2019,6 +2056,7 @@ async function prepareFixedChargeUnitEvents(
         fixedChargeVersion: 0,
         units: row.previous_units,
         effectiveAt: periodStart,
+        billImmediately: false,
       });
     }
     events.push({
@@ -2031,6 +2069,7 @@ async function prepareFixedChargeUnitEvents(
       fixedChargeVersion: row.fixed_charge_version,
       units: row.units,
       effectiveAt: applyUnitsImmediately ? now : periodEnd,
+      billImmediately: applyUnitsImmediately,
     });
   }
   if (
@@ -2066,13 +2105,14 @@ function fixedChargeUnitEventInsertStatement(
     .prepare(
       `INSERT OR IGNORE INTO fixed_charge_unit_events
        (id, organization_id, subscription_id, fixed_charge_id, fixed_charge_version, units,
-        effective_at, created_at)
+        effective_at, bill_immediately, created_at)
        SELECT json_extract(event.value, '$.id'), ?,
               json_extract(event.value, '$.subscriptionId'),
               json_extract(event.value, '$.fixedChargeId'),
               json_extract(event.value, '$.fixedChargeVersion'),
               json_extract(event.value, '$.units'),
-              json_extract(event.value, '$.effectiveAt'), ?
+              json_extract(event.value, '$.effectiveAt'),
+              CASE WHEN json_extract(event.value, '$.billImmediately') THEN 1 ELSE 0 END, ?
        FROM json_each(?) event
        WHERE EXISTS (
          SELECT 1 FROM subscriptions subscription
@@ -2271,12 +2311,7 @@ async function normalizeFixedCharges(
         "unsupported_fixed_charge_feature",
         "Fixed-charge overrides and parent inheritance are not implemented",
       );
-    if (booleanInteger(input.pay_in_advance, false) === 1)
-      throw new ApiError(
-        422,
-        "unsupported_fixed_charge_feature",
-        "Pay-in-advance fixed charges are not implemented",
-      );
+    const payInAdvance = booleanInteger(input.pay_in_advance, false);
     const prorated = booleanInteger(input.prorated, false);
     if (
       input.apply_units_immediately !== undefined &&
@@ -2309,6 +2344,7 @@ async function normalizeFixedCharges(
       throw new ApiError(422, "value_already_exist", "Fixed-charge code is duplicated");
     seen.add(code);
     const chargeModel = supportedFixedChargeModel(input.charge_model);
+    validateFixedChargeTiming(chargeModel, payInAdvance, prorated);
     const properties = optionalObject(input.properties, "properties");
     const units = nonNegativeDecimal(input.units ?? 1, `fixed_charges[${index}].units`);
     validateFixedChargeRating(units, chargeModel, properties, `fixed_charges[${index}]`);
@@ -2320,6 +2356,7 @@ async function normalizeFixedCharges(
       chargeModel,
       properties,
       units,
+      payInAdvance,
       prorated,
       applyUnitsImmediately: input.apply_units_immediately === true,
     });
@@ -2353,6 +2390,27 @@ function validateFixedChargeRating(
   }
 }
 
+function validateFixedChargeTiming(
+  chargeModel: "standard" | "graduated" | "volume",
+  payInAdvance: 0 | 1,
+  prorated: 0 | 1,
+): void {
+  if (payInAdvance === 1 && chargeModel === "volume") {
+    throw new ApiError(
+      422,
+      "invalid_charge_model",
+      "Volume fixed charges cannot be billed in advance",
+    );
+  }
+  if (payInAdvance === 1 && prorated === 1 && chargeModel === "graduated") {
+    throw new ApiError(
+      422,
+      "invalid_charge_model",
+      "Prorated graduated fixed charges cannot be billed in advance",
+    );
+  }
+}
+
 function rejectUnsupportedFixedChargeMutation(
   input: Record<string, unknown>,
   current?: FixedChargeRow,
@@ -2366,12 +2424,8 @@ function rejectUnsupportedFixedChargeMutation(
       `${field} is not implemented for fixed-charge mutations`,
     );
   }
-  if (booleanInteger(input.pay_in_advance, current?.pay_in_advance === 1) === 1)
-    throw new ApiError(
-      422,
-      "unsupported_fixed_charge_feature",
-      "Pay-in-advance fixed charges are not implemented",
-    );
+  if (input.pay_in_advance !== undefined)
+    booleanInteger(input.pay_in_advance, current?.pay_in_advance === 1);
   if (input.prorated !== undefined) booleanInteger(input.prorated, current?.prorated === 1);
   if (
     input.apply_units_immediately !== undefined &&

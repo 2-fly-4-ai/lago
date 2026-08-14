@@ -5,6 +5,7 @@ import { couponCreditStatements } from "./coupon-credits";
 import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
 import { paymentDueDate } from "./payment-terms";
+import { createInitialPayInAdvanceFixedChargeInvoice } from "./pay-in-advance-fixed-charges";
 import { firstPeriodEnd, localDateString } from "./periods";
 import {
   calculateInitialSubscriptionInvoice,
@@ -76,7 +77,7 @@ async function activatePendingSubscription(
     `${pending.organization_id}:${pending.external_id}`,
   );
   if (pending.plan_pay_in_advance !== 1 || pending.trial_end_at !== null) {
-    return activateWithoutInitialInvoice(
+    const activated = await activateWithoutInitialInvoice(
       env,
       pending,
       effectiveStart,
@@ -84,6 +85,15 @@ async function activatePendingSubscription(
       periodEnd,
       correlationId,
     );
+    if (activated) {
+      await createInitialPayInAdvanceFixedChargeInvoice(
+        env,
+        pending.id,
+        effectiveStart,
+        correlationId,
+      );
+    }
+    return activated;
   }
   const calculation = await calculateInitialSubscriptionInvoice(
     env.BILLING_DB,

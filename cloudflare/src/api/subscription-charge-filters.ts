@@ -6,6 +6,7 @@ import { stableJson } from "../json";
 import { rateCharge } from "../rating/charge-models";
 import { Decimal } from "../rating/decimal";
 import { parseChargeModel } from "../usage/charge-properties";
+import { createPayInAdvanceFixedChargeDeltaInvoice } from "../billing/pay-in-advance-fixed-charges";
 import {
   normalizeChargeFilters,
   parseStoredBillableMetricFilters,
@@ -85,6 +86,7 @@ type FixedChargeUnitEventInput = {
   fixedChargeVersion: number;
   units: string;
   effectiveAt: string;
+  billImmediately: boolean;
 };
 
 type ClonedGraphCharge = {
@@ -509,6 +511,9 @@ async function createFixedChargePlanOverride(
     env,
     auth,
   );
+  if (targetFixedCharge.pay_in_advance === 1 && normalized.applyUnitsImmediately) {
+    await createPayInAdvanceFixedChargeDeltaInvoice(env, plan.subscription_id, now, requestId);
+  }
   const persisted = await requireFixedChargeById(
     env.BILLING_DB,
     auth.organizationId,
@@ -870,6 +875,9 @@ async function mutateExistingFixedChargeOverride(
     throw new ApiError(409, "fixed_charge_version_conflict", "Fixed charge changed concurrently");
   }
   await env.DOMAIN_EVENTS.send(event);
+  if (fixedCharge.pay_in_advance === 1 && normalized.applyUnitsImmediately) {
+    await createPayInAdvanceFixedChargeDeltaInvoice(env, plan.subscription_id, now, requestId);
+  }
   const persisted = await requireFixedChargeById(
     env.BILLING_DB,
     auth.organizationId,
@@ -1001,6 +1009,7 @@ async function prepareFixedChargeUnitEvents(
       fixedChargeVersion: 0,
       units: previousUnits,
       effectiveAt: periodStart,
+      billImmediately: false,
     },
     {
       id: changeId,
@@ -1009,6 +1018,7 @@ async function prepareFixedChargeUnitEvents(
       fixedChargeVersion,
       units: nextUnits,
       effectiveAt: applyUnitsImmediately ? now : periodEnd,
+      billImmediately: applyUnitsImmediately,
     },
   ];
 }
@@ -1023,13 +1033,14 @@ function fixedChargeUnitEventInsertStatement(
     .prepare(
       `INSERT OR IGNORE INTO fixed_charge_unit_events
        (id, organization_id, subscription_id, fixed_charge_id, fixed_charge_version, units,
-        effective_at, created_at)
+        effective_at, bill_immediately, created_at)
        SELECT json_extract(event.value, '$.id'), ?,
               json_extract(event.value, '$.subscriptionId'),
               json_extract(event.value, '$.fixedChargeId'),
               json_extract(event.value, '$.fixedChargeVersion'),
               json_extract(event.value, '$.units'),
-              json_extract(event.value, '$.effectiveAt'), ?
+              json_extract(event.value, '$.effectiveAt'),
+              CASE WHEN json_extract(event.value, '$.billImmediately') THEN 1 ELSE 0 END, ?
        FROM json_each(?) event
        WHERE EXISTS (
          SELECT 1 FROM subscriptions s

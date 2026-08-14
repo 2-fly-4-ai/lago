@@ -13,14 +13,9 @@ import {
   localDateString,
   type BillingTime,
 } from "../billing/periods";
-import { calculateCouponCredits, couponCreditStatements } from "../billing/coupon-credits";
+import { couponCreditStatements } from "../billing/coupon-credits";
+import { walletAllocationStatements, walletRecreditStatements } from "../billing/wallet-credits";
 import {
-  calculateWalletAllocations,
-  walletAllocationStatements,
-  walletRecreditStatements,
-} from "../billing/wallet-credits";
-import {
-  calculateCreditNoteAllocations,
   creditNoteAllocationStatements,
   creditNoteRecreditStatements,
 } from "../billing/credit-note-credits";
@@ -51,10 +46,16 @@ import {
   totalManualTaxMinor,
 } from "../billing/manual-taxes";
 import { paymentDueDate } from "../billing/payment-terms";
+import { createInitialPayInAdvanceFixedChargeInvoice } from "../billing/pay-in-advance-fixed-charges";
 import { finalizeInvoice } from "../billing/finalize-invoice";
 import { refreshSubscriptionDraft } from "../billing/refresh-draft-invoice";
 import { changeSubscriptionPlan } from "../billing/change-subscription-plan";
-import { invoiceSubscriptionStatement } from "../billing/subscription-invoice-calculation";
+import {
+  calculateInitialSubscriptionInvoice,
+  invoiceSubscriptionStatement,
+  subscriptionInvoiceLineStatements,
+  type BillableSubscription,
+} from "../billing/subscription-invoice-calculation";
 import {
   assertEndingAtAfterStart,
   normalizeEndingAt,
@@ -1123,6 +1124,9 @@ async function createSubscription(
         { requestId },
       );
     }
+    if (!backdated) {
+      await createInitialPayInAdvanceFixedChargeInvoice(env, subscriptionId, startedAt, requestId);
+    }
     await Promise.all([env.DOMAIN_EVENTS.send(event), env.DOMAIN_EVENTS.send(startedEvent)]);
     const active = await findSubscription(database, auth.organizationId, externalId);
     if (!active) throw new ApiError(500, "persistence_error", "Subscription was not persisted");
@@ -1133,67 +1137,36 @@ async function createSubscription(
   const expectedFinalizationDate = issuingDate;
   const dueDate = paymentDueDate(issuingDate, netPaymentTerm);
   const periodEnd = firstPeriodEnd(now, plan.interval, billingTime, billingTimezone).toISOString();
-  const precisePlanAmount = Decimal.parse(plan.amount_minor);
-  const initialPlanAmountMinor = plan.amount_minor;
   const invoiceId = await deterministicUuid("initial-invoice", commandKey);
-  const invoiceLineId = await deterministicUuid("initial-invoice-line", invoiceId);
   const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
-  const couponCredits = await calculateCouponCredits(
+  const calculation = await calculateInitialSubscriptionInvoice(
     database,
-    auth.organizationId,
-    customer.id,
+    {
+      id: subscriptionId,
+      organization_id: auth.organizationId,
+      customer_id: customer.id,
+      plan_id: plan.id,
+      external_id: externalId,
+      current_period_start: timestamp,
+      current_period_end: periodEnd,
+      interval: plan.interval,
+      currency: plan.currency,
+      plan_name: plan.name,
+      subscription_name: name,
+      plan_amount_minor: plan.amount_minor,
+      plan_pay_in_advance: plan.pay_in_advance,
+      net_payment_term: netPaymentTerm,
+      invoice_grace_period: invoiceGracePeriod,
+      billing_time: billingTime,
+      billing_timezone: billingTimezone,
+      trial_started_at: null,
+      trial_end_at: null,
+      trial_ended_at: null,
+    } satisfies BillableSubscription,
     invoiceId,
-    plan.currency,
-    initialPlanAmountMinor,
+    timestamp,
+    periodEnd,
   );
-  const couponsMinor = couponCredits.reduce(
-    (total, credit) => safeAddMinor(total, credit.amountMinor),
-    0,
-  );
-  const invoiceTaxes = await calculateManualTaxes(
-    database,
-    auth.organizationId,
-    invoiceId,
-    [{ id: invoiceLineId, amountMinor: initialPlanAmountMinor }],
-    couponsMinor,
-  );
-  const taxMinor = totalManualTaxMinor(invoiceTaxes);
-  const creditNoteAllocations = await calculateCreditNoteAllocations(
-    database,
-    auth.organizationId,
-    customer.id,
-    invoiceId,
-    plan.currency,
-    initialPlanAmountMinor + taxMinor - couponsMinor,
-  );
-  const creditNotesMinor = creditNoteAllocations.reduce(
-    (total, allocation) => safeAddMinor(total, allocation.amountMinor),
-    0,
-  );
-  const walletAllocations = await calculateWalletAllocations(
-    database,
-    auth.organizationId,
-    customer.id,
-    invoiceId,
-    plan.currency,
-    initialPlanAmountMinor + taxMinor - couponsMinor - creditNotesMinor,
-    [
-      {
-        amountMinor: initialPlanAmountMinor + taxMinor,
-        billableMetricId: null,
-        feeType: "subscription",
-      },
-    ],
-  );
-  const prepaidCreditMinor = walletAllocations.reduce(
-    (total, allocation) => safeAddMinor(total, allocation.amountMinor),
-    0,
-  );
-  const creditsMinor = safeAddMinor(
-    safeAddMinor(couponsMinor, creditNotesMinor),
-    prepaidCreditMinor,
-  );
-  const totalDueMinor = initialPlanAmountMinor + taxMinor - creditsMinor;
   const subscriptionEvent = {
     id: `subscription-created:${subscriptionId}:v1`,
     type: "subscription.created",
@@ -1237,11 +1210,11 @@ async function createSubscription(
       organizationId: auth.organizationId,
       subscriptionId,
       billingCycleId: null,
-      couponsMinor,
-      taxMinor,
-      creditNotesMinor,
-      prepaidCreditMinor,
-      totalDueMinor,
+      couponsMinor: calculation.couponsMinor,
+      taxMinor: calculation.taxMinor,
+      creditNotesMinor: calculation.creditNotesMinor,
+      prepaidCreditMinor: calculation.prepaidCreditMinor,
+      totalDueMinor: calculation.totalDueMinor,
       currency: plan.currency,
       periodStart: timestamp,
       periodEnd,
@@ -1307,46 +1280,24 @@ async function createSubscription(
           invoiceNumber,
           draft ? "draft" : "finalized",
           plan.currency,
-          initialPlanAmountMinor,
-          taxMinor,
-          creditsMinor,
-          totalDueMinor,
+          calculation.subtotalMinor,
+          calculation.taxMinor,
+          calculation.creditsMinor,
+          calculation.totalDueMinor,
           draft ? null : timestamp,
           issuingDate,
           timestamp,
           timestamp,
-          couponsMinor,
-          prepaidCreditMinor,
-          creditNotesMinor,
+          calculation.couponsMinor,
+          calculation.prepaidCreditMinor,
+          calculation.creditNotesMinor,
           netPaymentTerm,
           dueDate,
           expectedFinalizationDate,
           invoiceGracePeriod,
           draft ? timestamp : null,
         ),
-      database
-        .prepare(
-          `INSERT INTO invoice_lines
-         (id, invoice_id, line_type, description, quantity_decimal, unit_amount_decimal,
-          amount_minor, source_type, source_id, metadata_json, created_at)
-         VALUES (?, ?, 'subscription', ?, '1', ?, ?, 'plan', ?, ?, ?)`,
-        )
-        .bind(
-          invoiceLineId,
-          invoiceId,
-          name ?? plan.name,
-          precisePlanAmount.toString(),
-          initialPlanAmountMinor,
-          plan.id,
-          stableJson({
-            contextType: "initial",
-            billingTime,
-            billingTimezone,
-            periodStart: timestamp,
-            periodEnd,
-          }),
-          timestamp,
-        ),
+      ...subscriptionInvoiceLineStatements(database, invoiceId, null, calculation.lines, timestamp),
       database
         .prepare(
           `INSERT INTO subscription_invoice_contexts
@@ -1363,7 +1314,7 @@ async function createSubscription(
           auth.organizationId,
           invoiceId,
           plan.currency,
-          couponCredits,
+          calculation.couponCredits,
           timestamp,
           requestId,
         ),
@@ -1375,12 +1326,12 @@ async function createSubscription(
         auth.organizationId,
         invoiceId,
         plan.currency,
-        invoiceTaxes,
+        calculation.invoiceTaxes,
         timestamp,
       ),
     );
     if (!draft) {
-      for (const allocation of walletAllocations) {
+      for (const allocation of calculation.walletAllocations) {
         statements.push(
           ...walletAllocationStatements(
             database,
@@ -1392,7 +1343,7 @@ async function createSubscription(
           ),
         );
       }
-      for (const allocation of creditNoteAllocations) {
+      for (const allocation of calculation.creditNoteAllocations) {
         statements.push(
           ...creditNoteAllocationStatements(
             database,
@@ -1450,8 +1401,9 @@ async function createSubscription(
     }
     const results = await database.batch(statements);
     if (!draft) {
-      for (let offset = 0; offset < couponCredits.length; offset += 1) {
-        const update = results[5 + offset * 3];
+      const firstCouponUpdate = 3 + calculation.lines.length;
+      for (let offset = 0; offset < calculation.couponCredits.length; offset += 1) {
+        const update = results[firstCouponUpdate + offset * 3];
         if (!update || update.meta.changes < 1) throw new Error("coupon_version_conflict");
       }
     }
