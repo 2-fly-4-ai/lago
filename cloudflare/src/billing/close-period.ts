@@ -2,61 +2,16 @@ import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
-import { rateCharge } from "../rating/charge-models";
-import { Decimal } from "../rating/decimal";
-import { aggregateUsage, type SupportedAggregationType } from "../usage/aggregation";
-import { parseChargeModel } from "../usage/charge-properties";
-import { nextPeriodEnd } from "./periods";
-import { calculateCouponCredits } from "./coupon-credits";
-import { calculateWalletAllocations, walletAllocationStatements } from "./wallet-credits";
-import {
-  calculateCreditNoteAllocations,
-  creditNoteAllocationStatements,
-} from "./credit-note-credits";
-import { calculateManualTaxes, manualTaxStatements, totalManualTaxMinor } from "./manual-taxes";
-import { calculateMinimumCommitmentLine } from "./minimum-commitment";
+import { couponCreditStatements } from "./coupon-credits";
+import { walletAllocationStatements } from "./wallet-credits";
+import { creditNoteAllocationStatements } from "./credit-note-credits";
+import { manualTaxStatements } from "./manual-taxes";
 import { paymentDueDate } from "./payment-terms";
-
-type SubscriptionRow = {
-  id: string;
-  organization_id: string;
-  customer_id: string;
-  plan_id: string;
-  external_id: string;
-  current_period_start: string;
-  current_period_end: string;
-  interval: string;
-  currency: string;
-  plan_name: string;
-  plan_amount_minor: number;
-  net_payment_term: number;
-};
-
-type ChargeRow = {
-  id: string;
-  code: string;
-  invoice_display_name: string | null;
-  charge_model: string;
-  properties_json: string;
-  min_amount_minor: number;
-  metric_id: string;
-  metric_code: string;
-  metric_name: string;
-  aggregation_type: string;
-  field_name: string | null;
-};
-
-type FixedChargeRow = {
-  id: string;
-  code: string;
-  invoice_display_name: string | null;
-  charge_model: string;
-  properties_json: string;
-  units: string;
-  add_on_code: string;
-  add_on_name: string;
-  add_on_invoice_display_name: string | null;
-};
+import {
+  calculateSubscriptionInvoice,
+  findBillableSubscription,
+  subscriptionInvoiceLineStatements,
+} from "./subscription-invoice-calculation";
 
 export type CloseBillingPeriodResult = {
   billingCycleId: string;
@@ -73,7 +28,7 @@ export async function closeBillingPeriod(
   expectedPeriodEnd: string,
   correlationId: string,
 ): Promise<CloseBillingPeriodResult> {
-  const subscription = await findSubscription(env.BILLING_DB, subscriptionId);
+  const subscription = await findBillableSubscription(env.BILLING_DB, subscriptionId);
   if (!subscription) throw new Error("subscription_not_found");
   if (subscription.current_period_end !== expectedPeriodEnd) {
     const replay = await findClosedCycle(
@@ -172,186 +127,42 @@ export async function closeBillingPeriod(
   }
 
   try {
-    const charges = await loadCharges(env.BILLING_DB, subscription);
-    const lines: Array<{
-      id: string;
-      description: string;
-      units: string;
-      precise: string;
-      rounded: number;
-      sourceId: string;
-      lineType: "subscription" | "usage" | "fixed_charge" | "commitment";
-      sourceType: "plan" | "charge" | "fixed_charge" | "commitment";
-      metadataJson: string;
-    }> = [];
-    let subtotal = subscription.plan_amount_minor;
-    lines.push({
-      id: await deterministicUuid("billing-cycle-plan-line", cycleKey),
-      description: subscription.plan_name,
-      units: "1",
-      precise: String(subscription.plan_amount_minor),
-      rounded: subscription.plan_amount_minor,
-      sourceId: subscription.plan_id,
-      lineType: "subscription",
-      sourceType: "plan",
-      metadataJson: stableJson({ billingCycleId: cycleId, periodStart, periodEnd }),
-    });
-    for (const charge of charges) {
-      const events = await loadEvents(
-        env.BILLING_DB,
-        subscription.id,
-        charge.metric_id,
-        periodStartMs,
-        periodEndMs,
-      );
-      const units = aggregateUsage(
-        supportedAggregation(charge.aggregation_type),
-        charge.field_name,
-        events,
-      );
-      let precise = Decimal.parse(
-        rateCharge(
-          units.toString(),
-          parseChargeModel(charge.charge_model, parseObject(charge.properties_json)),
-          {
-            eventsCount: events.length,
-          },
-        ).amountCents,
-      );
-      const minimum = Decimal.parse(charge.min_amount_minor);
-      if (precise.compare(minimum) < 0) precise = minimum;
-      const rounded = safeMinorInteger(precise);
-      subtotal = safeAdd(subtotal, rounded);
-      lines.push({
-        id: await deterministicUuid("billing-cycle-line", `${cycleKey}:${charge.id}`),
-        description: charge.invoice_display_name ?? charge.metric_name,
-        units: units.toString(),
-        precise: precise.toString(),
-        rounded,
-        sourceId: charge.id,
-        lineType: "usage",
-        sourceType: "charge",
-        metadataJson: stableJson({
-          billingCycleId: cycleId,
-          billableMetricCode: charge.metric_code,
-          chargeCode: charge.code,
-          chargeModel: charge.charge_model,
-          eventCount: events.length,
-          periodStart,
-          periodEnd,
-        }),
-      });
-    }
-
-    const fixedCharges = await loadFixedCharges(env.BILLING_DB, subscription);
-    for (const charge of fixedCharges) {
-      const precise = Decimal.parse(
-        rateCharge(
-          charge.units,
-          parseChargeModel(charge.charge_model, parseObject(charge.properties_json)),
-        ).amountCents,
-      );
-      const rounded = safeMinorInteger(precise);
-      subtotal = safeAdd(subtotal, rounded);
-      lines.push({
-        id: await deterministicUuid("billing-cycle-fixed-charge-line", `${cycleKey}:${charge.id}`),
-        description:
-          charge.invoice_display_name ?? charge.add_on_invoice_display_name ?? charge.add_on_name,
-        units: charge.units,
-        precise: precise.toString(),
-        rounded,
-        sourceId: charge.id,
-        lineType: "fixed_charge",
-        sourceType: "fixed_charge",
-        metadataJson: stableJson({
-          billingCycleId: cycleId,
-          fixedChargeCode: charge.code,
-          addOnCode: charge.add_on_code,
-          chargeModel: charge.charge_model,
-          periodStart,
-          periodEnd,
-        }),
-      });
-    }
-
-    const preciseFees = lines.reduce(
-      (total, line) => total.add(Decimal.parse(line.precise)),
-      Decimal.zero(),
-    );
-    const commitmentLine = await calculateMinimumCommitmentLine(
+    const calculation = await calculateSubscriptionInvoice(
       env.BILLING_DB,
-      subscription.plan_id,
+      subscription,
       invoiceId,
-      subtotal,
-      preciseFees,
+      cycleId,
+      periodStart,
+      periodEnd,
     );
-    if (commitmentLine) {
-      subtotal = safeAdd(subtotal, commitmentLine.amountMinor);
-      lines.push({
-        id: commitmentLine.id,
-        description: commitmentLine.description,
-        units: "1",
-        precise: commitmentLine.preciseAmountMinor,
-        rounded: commitmentLine.amountMinor,
-        sourceId: commitmentLine.commitmentId,
-        lineType: "commitment",
-        sourceType: "commitment",
-        metadataJson: stableJson({ billingCycleId: cycleId, periodStart, periodEnd }),
-      });
-    }
-
-    const couponCredits = await calculateCouponCredits(
-      env.BILLING_DB,
-      subscription.organization_id,
-      subscription.customer_id,
-      invoiceId,
-      subscription.currency,
-      subtotal,
-    );
-    const couponsMinor = couponCredits.reduce(
-      (total, credit) => safeAdd(total, credit.amountMinor),
-      0,
-    );
-    const invoiceTaxes = await calculateManualTaxes(
-      env.BILLING_DB,
-      subscription.organization_id,
-      invoiceId,
-      lines.map((line) => ({ id: line.id, amountMinor: line.rounded })),
+    const {
+      lines,
+      subtotalMinor: subtotal,
+      couponCredits,
       couponsMinor,
-    );
-    const taxMinor = totalManualTaxMinor(invoiceTaxes);
-    const creditNoteAllocations = await calculateCreditNoteAllocations(
-      env.BILLING_DB,
-      subscription.organization_id,
-      subscription.customer_id,
-      invoiceId,
-      subscription.currency,
-      subtotal + taxMinor - couponsMinor,
-    );
-    const creditNotesMinor = creditNoteAllocations.reduce(
-      (total, allocation) => safeAdd(total, allocation.amountMinor),
-      0,
-    );
-    const walletAllocations = await calculateWalletAllocations(
-      env.BILLING_DB,
-      subscription.organization_id,
-      subscription.customer_id,
-      invoiceId,
-      subscription.currency,
-      subtotal + taxMinor - couponsMinor - creditNotesMinor,
-    );
-    const prepaidCreditMinor = walletAllocations.reduce(
-      (total, allocation) => safeAdd(total, allocation.amountMinor),
-      0,
-    );
-    const creditsMinor = safeAdd(safeAdd(couponsMinor, creditNotesMinor), prepaidCreditMinor);
-    const totalDue = subtotal + taxMinor - creditsMinor;
-    const nextEnd = nextPeriodEnd(new Date(periodEnd), subscription.interval).toISOString();
+      invoiceTaxes,
+      taxMinor,
+      creditNoteAllocations,
+      creditNotesMinor,
+      walletAllocations,
+      prepaidCreditMinor,
+      creditsMinor,
+      totalDueMinor: totalDue,
+      nextPeriodEnd: nextEnd,
+    } = calculation;
+    const draft = subscription.invoice_grace_period > 0;
     const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
-    const dueDate = paymentDueDate(now, subscription.net_payment_term);
+    const billingDate = periodEnd.slice(0, 10);
+    const issuingDate = shiftCalendarDate(billingDate, -1);
+    const expectedFinalizationDate = shiftCalendarDate(
+      billingDate,
+      subscription.invoice_grace_period,
+    );
+    const dueDate = paymentDueDate(issuingDate, subscription.net_payment_term);
+    const eventType = draft ? "invoice.drafted" : "invoice.finalized";
     const domainEvent: DomainEvent = {
-      id: `invoice-finalized:${invoiceId}:v1`,
-      type: "invoice.finalized",
+      id: `${draft ? "invoice-drafted" : "invoice-finalized"}:${invoiceId}:v1`,
+      type: eventType,
       version: 1,
       aggregateType: "invoice",
       aggregateId: invoiceId,
@@ -371,29 +182,71 @@ export async function closeBillingPeriod(
         currency: subscription.currency,
         periodStart,
         periodEnd,
+        issuingDate,
+        expectedFinalizationDate,
+        appliedGracePeriod: subscription.invoice_grace_period,
       },
     };
+    const couponStatements = draft
+      ? []
+      : couponCreditStatements(
+          env.BILLING_DB,
+          subscription.organization_id,
+          invoiceId,
+          subscription.currency,
+          couponCredits,
+          now,
+          correlationId,
+        );
+    const creditNoteStatements = draft
+      ? []
+      : creditNoteAllocations.flatMap((allocation) =>
+          creditNoteAllocationStatements(
+            env.BILLING_DB,
+            subscription.organization_id,
+            invoiceId,
+            allocation,
+            now,
+            correlationId,
+          ),
+        );
+    const walletStatements = draft
+      ? []
+      : walletAllocations.flatMap((allocation) =>
+          walletAllocationStatements(
+            env.BILLING_DB,
+            subscription.organization_id,
+            invoiceId,
+            allocation,
+            now,
+            correlationId,
+          ),
+        );
     const statements: D1PreparedStatement[] = [
       env.BILLING_DB.prepare(
         `INSERT INTO invoices
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
           finalized_at, issuing_date, created_at, updated_at, coupons_minor, prepaid_credit_minor,
-          credit_notes_minor, net_payment_term, payment_due_date, payment_overdue)
-         VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+          credit_notes_minor, net_payment_term, payment_due_date, payment_overdue,
+          expected_finalization_date, applied_grace_period, ready_to_be_refreshed,
+          last_refreshed_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0,
+                 ?, ?, 0, ?)`,
       ).bind(
         invoiceId,
         subscription.organization_id,
         subscription.customer_id,
         subscription.id,
         invoiceNumber,
+        draft ? "draft" : "finalized",
         subscription.currency,
         subtotal,
         taxMinor,
         creditsMinor,
         totalDue,
-        now,
-        now.slice(0, 10),
+        draft ? null : now,
+        issuingDate,
         now,
         now,
         couponsMinor,
@@ -401,68 +254,12 @@ export async function closeBillingPeriod(
         creditNotesMinor,
         subscription.net_payment_term,
         dueDate,
+        expectedFinalizationDate,
+        subscription.invoice_grace_period,
+        draft ? now : null,
       ),
-      ...lines.map((line) =>
-        env.BILLING_DB.prepare(
-          `INSERT INTO invoice_lines
-           (id, invoice_id, line_type, description, quantity_decimal, unit_amount_decimal,
-            amount_minor, source_type, source_id, metadata_json, created_at,
-            precise_amount_minor, billing_cycle_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(
-          line.id,
-          invoiceId,
-          line.lineType,
-          line.description,
-          line.units,
-          line.units === "0"
-            ? "0"
-            : Decimal.parse(line.precise).divide(Decimal.parse(line.units)).toString(),
-          line.rounded,
-          line.sourceType,
-          line.sourceId,
-          line.metadataJson,
-          now,
-          line.precise,
-          cycleId,
-        ),
-      ),
-      ...couponCredits.flatMap((credit) => [
-        env.BILLING_DB.prepare(
-          `INSERT INTO coupon_credits
-           (id, organization_id, invoice_id, applied_coupon_id, applied_coupon_version,
-            amount_minor, currency, before_taxes, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-        ).bind(
-          credit.id,
-          subscription.organization_id,
-          invoiceId,
-          credit.appliedCouponId,
-          credit.expectedVersion,
-          credit.amountMinor,
-          subscription.currency,
-          now,
-        ),
-        env.BILLING_DB.prepare(
-          `UPDATE applied_coupons
-           SET frequency_duration_remaining = ?,
-               status = CASE WHEN ? = 1 THEN 'terminated' ELSE status END,
-               termination_reason = CASE WHEN ? = 1 THEN 'consumed' ELSE termination_reason END,
-               terminated_at = CASE WHEN ? = 1 THEN ? ELSE terminated_at END,
-               version = version + 1, updated_at = ?
-           WHERE id = ? AND organization_id = ? AND status = 'active' AND version = ?`,
-        ).bind(
-          credit.nextRemaining,
-          credit.terminates ? 1 : 0,
-          credit.terminates ? 1 : 0,
-          credit.terminates ? 1 : 0,
-          now,
-          now,
-          credit.appliedCouponId,
-          subscription.organization_id,
-          credit.expectedVersion,
-        ),
-      ]),
+      ...subscriptionInvoiceLineStatements(env.BILLING_DB, invoiceId, cycleId, lines, now),
+      ...couponStatements,
       ...manualTaxStatements(
         env.BILLING_DB,
         subscription.organization_id,
@@ -471,26 +268,8 @@ export async function closeBillingPeriod(
         invoiceTaxes,
         now,
       ),
-      ...creditNoteAllocations.flatMap((allocation) =>
-        creditNoteAllocationStatements(
-          env.BILLING_DB,
-          subscription.organization_id,
-          invoiceId,
-          allocation,
-          now,
-          correlationId,
-        ),
-      ),
-      ...walletAllocations.flatMap((allocation) =>
-        walletAllocationStatements(
-          env.BILLING_DB,
-          subscription.organization_id,
-          invoiceId,
-          allocation,
-          now,
-          correlationId,
-        ),
-      ),
+      ...creditNoteStatements,
+      ...walletStatements,
       env.BILLING_DB.prepare(
         `UPDATE subscriptions
          SET current_period_start = ?, current_period_end = ?, version = version + 1, updated_at = ?
@@ -519,10 +298,12 @@ export async function closeBillingPeriod(
       ),
     ];
     const results = await env.BILLING_DB.batch(statements);
-    const firstCouponUpdate = 2 + lines.length;
-    for (let offset = 0; offset < couponCredits.length; offset += 1) {
-      const update = results[firstCouponUpdate + offset * 2];
-      if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
+    if (!draft) {
+      const firstCouponUpdate = 2 + lines.length;
+      for (let offset = 0; offset < couponCredits.length; offset += 1) {
+        const update = results[firstCouponUpdate + offset * 3];
+        if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
+      }
     }
     const subscriptionUpdate = results[results.length - 3];
     if (!subscriptionUpdate || subscriptionUpdate.meta.changes !== 1) {
@@ -553,83 +334,11 @@ export async function closeBillingPeriod(
   }
 }
 
-async function findSubscription(database: D1Database, id: string): Promise<SubscriptionRow | null> {
-  return database
-    .prepare(
-      `SELECT s.id, s.organization_id, s.customer_id, s.plan_id, s.external_id,
-              s.current_period_start, s.current_period_end, p.interval, p.currency,
-              p.name AS plan_name, p.amount_minor AS plan_amount_minor,
-              COALESCE(c.net_payment_term, o.net_payment_term) AS net_payment_term
-       FROM subscriptions s JOIN plans p ON p.id = s.plan_id
-       JOIN customers c ON c.id = s.customer_id
-       JOIN organizations o ON o.id = s.organization_id
-       WHERE s.id = ? AND s.status IN ('active', 'past_due') LIMIT 1`,
-    )
-    .bind(id)
-    .first<SubscriptionRow>();
-}
-
-async function loadCharges(
-  database: D1Database,
-  subscription: SubscriptionRow,
-): Promise<ChargeRow[]> {
-  const result = await database
-    .prepare(
-      `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
-              ch.properties_json, ch.min_amount_minor, bm.id AS metric_id,
-              bm.code AS metric_code, bm.name AS metric_name,
-              bm.aggregation_type, bm.field_name
-       FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id
-       WHERE ch.organization_id = ? AND ch.plan_id = ? AND ch.active = 1
-         AND ch.invoiceable = 1 AND ch.pay_in_advance = 0
-       ORDER BY ch.created_at, ch.id`,
-    )
-    .bind(subscription.organization_id, subscription.plan_id)
-    .all<ChargeRow>();
-  return [...result.results];
-}
-
-async function loadFixedCharges(
-  database: D1Database,
-  subscription: SubscriptionRow,
-): Promise<FixedChargeRow[]> {
-  const result = await database
-    .prepare(
-      `SELECT fc.id, fc.code, fc.invoice_display_name, fc.charge_model,
-              fc.properties_json, fc.units, ao.code AS add_on_code, ao.name AS add_on_name,
-              ao.invoice_display_name AS add_on_invoice_display_name
-       FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id
-       WHERE fc.organization_id = ? AND fc.plan_id = ? AND fc.pay_in_advance = 0
-         AND fc.prorated = 0
-       ORDER BY fc.created_at, fc.id`,
-    )
-    .bind(subscription.organization_id, subscription.plan_id)
-    .all<FixedChargeRow>();
-  return [...result.results];
-}
-
-async function loadEvents(
-  database: D1Database,
-  subscriptionId: string,
-  metricId: string,
-  periodStartMs: number,
-  periodEndMs: number,
-): Promise<Array<{ id: string; timestampMs: number; properties: Record<string, unknown> }>> {
-  const result = await database
-    .prepare(
-      `SELECT id, timestamp_ms, properties_json FROM usage_events
-       WHERE subscription_id = ? AND billable_metric_id = ?
-         AND timestamp_ms >= ? AND timestamp_ms < ?
-       ORDER BY timestamp_ms, id LIMIT 10001`,
-    )
-    .bind(subscriptionId, metricId, periodStartMs, periodEndMs)
-    .all<{ id: string; timestamp_ms: number; properties_json: string }>();
-  if (result.results.length > 10000) throw new Error("usage_window_too_large");
-  return result.results.map((row) => ({
-    id: row.id,
-    timestampMs: row.timestamp_ms,
-    properties: parseObject(row.properties_json),
-  }));
+function shiftCalendarDate(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(date.getTime())) throw new Error("invalid_billing_date");
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 async function findCycle(
@@ -719,38 +428,4 @@ function parseCompletedReservation(value: string | null): CloseBillingPeriodResu
   } catch {
     return null;
   }
-}
-
-function parseObject(value: string): Record<string, unknown> {
-  const parsed = JSON.parse(value) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("invalid_stored_json");
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function supportedAggregation(value: string): SupportedAggregationType {
-  if (
-    value === "count_agg" ||
-    value === "sum_agg" ||
-    value === "max_agg" ||
-    value === "unique_count_agg" ||
-    value === "latest_agg"
-  ) {
-    return value;
-  }
-  throw new Error(`unsupported_aggregation_type:${value}`);
-}
-
-function safeMinorInteger(value: Decimal): number {
-  const rounded = value.round();
-  const number = Number(rounded);
-  if (!Number.isSafeInteger(number) || number < 0) throw new Error("invalid_minor_amount");
-  return number;
-}
-
-function safeAdd(left: number, right: number): number {
-  const total = left + right;
-  if (!Number.isSafeInteger(total)) throw new Error("invoice_total_overflow");
-  return total;
 }

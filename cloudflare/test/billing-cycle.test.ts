@@ -266,12 +266,175 @@ describe("billing period close", () => {
       source_type: "commitment",
     });
   });
+
+  it("creates a non-consuming draft, refreshes flagged late usage, and allocates credits only when finalized", async () => {
+    const now = "2026-08-13T00:00:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, currency, metadata_json, invoice_grace_period,
+          created_at, updated_at)
+         VALUES ('customer-draft', 'org-cycle', 'customer-draft-external', 'USD', '{}', 3, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, version, created_at, updated_at)
+         VALUES ('subscription-draft', 'org-cycle', 'customer-draft', 'plan-cycle',
+                 'subscription-draft-external', 'active', '2026-07-31T00:00:00.000Z',
+                 '2026-07-31T00:00:00.000Z', '2026-08-31T00:00:00.000Z', 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO applied_coupons
+         (id, organization_id, customer_id, coupon_id, amount_minor, currency,
+          percentage_rate, frequency, frequency_duration, frequency_duration_remaining,
+          status, termination_reason, reuse_slot, request_sha256, version, created_at, updated_at)
+         VALUES ('applied-draft', 'org-cycle', 'customer-draft', 'coupon-cycle', 100, 'USD',
+                 NULL, 'once', NULL, NULL, 'active', NULL, NULL, 'applied-draft-hash', 1, ?, ?)`,
+      ).bind(now, now),
+      eventStatement(
+        "event-draft-1",
+        "draft-inside-1",
+        "2026-08-13T00:00:00.000Z",
+        "0.1",
+        now,
+        "subscription-draft",
+        "customer-draft",
+      ),
+      eventStatement(
+        "event-draft-2",
+        "draft-inside-2",
+        "2026-08-20T00:00:00.000Z",
+        "0.2",
+        now,
+        "subscription-draft",
+        "customer-draft",
+      ),
+    ]);
+    const drafted = await closeBillingPeriod(
+      env,
+      "subscription-draft",
+      "2026-08-31T00:00:00.000Z",
+      "cycle-draft",
+    );
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT i.status, i.total_due_minor, i.issuing_date, i.expected_finalization_date,
+                i.applied_grace_period, i.version, ac.status AS coupon_status,
+                (SELECT COUNT(*) FROM coupon_credits WHERE invoice_id = i.id) AS coupon_credits,
+                (SELECT COUNT(*) FROM credit_note_applications WHERE invoice_id = i.id) AS credit_notes,
+                (SELECT COUNT(*) FROM wallet_transactions WHERE invoice_id = i.id) AS wallets
+         FROM invoices i JOIN applied_coupons ac ON ac.id = 'applied-draft'
+         WHERE i.id = ?`,
+      )
+        .bind(drafted.invoiceId)
+        .first(),
+    ).resolves.toEqual({
+      status: "draft",
+      total_due_minor: 901,
+      issuing_date: "2026-08-30",
+      expected_finalization_date: "2026-09-03",
+      applied_grace_period: 3,
+      version: 1,
+      coupon_status: "active",
+      coupon_credits: 0,
+      credit_notes: 0,
+      wallets: 0,
+    });
+
+    const lateUsage = await invoiceRequest("/api/v1/events", "POST", {
+      event: {
+        transaction_id: "late-draft-usage",
+        code: "units",
+        external_subscription_id: "subscription-draft-external",
+        timestamp: Date.parse("2026-08-25T00:00:00.000Z") / 1000,
+        properties: { quantity: "1" },
+      },
+    });
+    expect(lateUsage.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare("SELECT ready_to_be_refreshed FROM invoices WHERE id = ?")
+        .bind(drafted.invoiceId)
+        .first(),
+    ).resolves.toEqual({ ready_to_be_refreshed: 1 });
+
+    const refreshed = await invoiceRequest(`/api/v1/invoices/${drafted.invoiceId}/refresh`, "PUT");
+    expect(refreshed.status).toBe(200);
+    await expect(refreshed.json()).resolves.toMatchObject({
+      invoice: { status: "draft", total_amount_cents: 903, version_number: 2 },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT ready_to_be_refreshed,
+                (SELECT COUNT(*) FROM coupon_credits WHERE invoice_id = invoices.id) AS credits
+         FROM invoices WHERE id = ?`,
+      )
+        .bind(drafted.invoiceId)
+        .first(),
+    ).resolves.toEqual({ ready_to_be_refreshed: 0, credits: 0 });
+
+    const finalized = await invoiceRequest(`/api/v1/invoices/${drafted.invoiceId}/finalize`, "PUT");
+    expect(finalized.status).toBe(200);
+    await expect(finalized.json()).resolves.toMatchObject({
+      invoice: { status: "finalized", total_amount_cents: 903, version_number: 3 },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT i.status, i.total_due_minor, ac.status AS coupon_status,
+                (SELECT COUNT(*) FROM coupon_credits WHERE invoice_id = i.id) AS coupon_credits,
+                (SELECT COUNT(*) FROM outbox_events WHERE aggregate_id = i.id
+                  AND event_type = 'invoice.drafted') AS drafted_events,
+                (SELECT COUNT(*) FROM outbox_events WHERE aggregate_id = i.id
+                  AND event_type = 'invoice.refreshed') AS refreshed_events,
+                (SELECT COUNT(*) FROM outbox_events WHERE aggregate_id = i.id
+                  AND event_type = 'invoice.finalized') AS finalized_events
+         FROM invoices i JOIN applied_coupons ac ON ac.id = 'applied-draft'
+         WHERE i.id = ?`,
+      )
+        .bind(drafted.invoiceId)
+        .first(),
+    ).resolves.toEqual({
+      status: "finalized",
+      total_due_minor: 903,
+      coupon_status: "terminated",
+      coupon_credits: 1,
+      drafted_events: 1,
+      refreshed_events: 1,
+      finalized_events: 1,
+    });
+  });
+
+  it("accepts nested customer grace settings but rejects unsupported initial grace billing explicitly", async () => {
+    const customer = await invoiceRequest("/api/v1/customers", "POST", {
+      customer: {
+        external_id: "customer-initial-grace",
+        currency: "USD",
+        billing_configuration: { invoice_grace_period: 2 },
+      },
+    });
+    expect(customer.status).toBe(200);
+    await expect(customer.json()).resolves.toMatchObject({
+      customer: { billing_configuration: { invoice_grace_period: 2 } },
+    });
+    const subscription = await invoiceRequest("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-initial-grace",
+        external_id: "subscription-initial-grace",
+        plan_code: "cycle-plan",
+      },
+    });
+    expect(subscription.status).toBe(422);
+    await expect(subscription.json()).resolves.toMatchObject({
+      code: "unsupported_initial_invoice_grace_period",
+    });
+  });
 });
 
-function invoiceRequest(path: string, method = "GET"): Promise<Response> {
+function invoiceRequest(path: string, method = "GET", body?: unknown): Promise<Response> {
   return SELF.fetch(`https://lago.test${path}`, {
     method,
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
 
@@ -281,16 +444,20 @@ function eventStatement(
   timestamp: string,
   quantity: string,
   createdAt: string,
+  subscriptionId = "subscription-cycle",
+  customerId = "customer-cycle",
 ): D1PreparedStatement {
   return env.BILLING_DB.prepare(
     `INSERT OR IGNORE INTO usage_events
      (id, organization_id, subscription_id, customer_id, billable_metric_id,
       transaction_id, code, timestamp, timestamp_ms, properties_json, request_sha256,
       archive_key, created_at)
-     VALUES (?, 'org-cycle', 'subscription-cycle', 'customer-cycle', 'metric-cycle', ?,
+     VALUES (?, 'org-cycle', ?, ?, 'metric-cycle', ?,
              'units', ?, ?, ?, ?, ?, ?)`,
   ).bind(
     id,
+    subscriptionId,
+    customerId,
     transactionId,
     timestamp,
     Date.parse(timestamp),

@@ -1,6 +1,7 @@
 import type { DomainEvent } from "../domain-events";
 import { stableJson } from "../json";
 import { paymentDueDate } from "./payment-terms";
+import { refreshSubscriptionDraft } from "./refresh-draft-invoice";
 
 type FinalizableInvoice = {
   id: string;
@@ -13,10 +14,11 @@ type FinalizableInvoice = {
   net_payment_term: number;
   issuing_date: string;
   version: number;
+  refreshable_draft: number;
 };
 
 export async function finalizeInvoice(
-  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
+  env: Pick<Env, "BILLING_DB" | "BILLING_ACCOUNTS" | "DOMAIN_EVENTS">,
   invoiceId: string,
   organizationId: string | null,
   finalizedAt: string,
@@ -26,7 +28,9 @@ export async function finalizeInvoice(
   const bindings = organizationId ? [invoiceId, organizationId] : [invoiceId];
   const invoice = await env.BILLING_DB.prepare(
     `SELECT id, organization_id, customer_id, subscription_id, status, currency,
-            total_due_minor, net_payment_term, issuing_date, version
+            total_due_minor, net_payment_term, issuing_date, version,
+            EXISTS(SELECT 1 FROM billing_cycles WHERE invoice_id = invoices.id)
+              AS refreshable_draft
      FROM invoices WHERE id = ?${organizationFilter} LIMIT 1`,
   )
     .bind(...bindings)
@@ -35,6 +39,17 @@ export async function finalizeInvoice(
   if (invoice.status === "finalized") return false;
   if (invoice.status !== "draft") throw new Error("invoice_not_draft");
   if (!invoice.issuing_date) throw new Error("invoice_issuing_date_missing");
+  if (invoice.subscription_id && invoice.refreshable_draft === 1) {
+    const result = await refreshSubscriptionDraft(
+      env,
+      invoice.id,
+      organizationId,
+      finalizedAt,
+      correlationId,
+      true,
+    );
+    return result.changed;
+  }
 
   const nextVersion = invoice.version + 1;
   const paymentDue = paymentDueDate(invoice.issuing_date, invoice.net_payment_term);

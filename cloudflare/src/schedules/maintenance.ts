@@ -1,5 +1,6 @@
 import type { DomainEvent } from "../domain-events";
 import { finalizeInvoice } from "../billing/finalize-invoice";
+import { refreshSubscriptionDraft } from "../billing/refresh-draft-invoice";
 
 type ExpiringCoupon = {
   id: string;
@@ -189,7 +190,7 @@ export async function markInvoicesOverdue(
 }
 
 export async function finalizeDueInvoices(
-  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
+  env: Pick<Env, "BILLING_DB" | "BILLING_ACCOUNTS" | "DOMAIN_EVENTS">,
   cutoff: string,
   correlationId: string,
 ): Promise<number> {
@@ -206,6 +207,30 @@ export async function finalizeDueInvoices(
     if (await finalizeInvoice(env, row.id, null, cutoff, correlationId)) finalized += 1;
   }
   return finalized;
+}
+
+export async function refreshFlaggedDraftInvoices(
+  env: Pick<Env, "BILLING_DB" | "BILLING_ACCOUNTS" | "DOMAIN_EVENTS">,
+  refreshedAt: string,
+  correlationId: string,
+): Promise<number> {
+  const rows = await env.BILLING_DB.prepare(
+    `SELECT id FROM invoices WHERE status = 'draft' AND ready_to_be_refreshed = 1
+     ORDER BY updated_at, id LIMIT 100`,
+  ).all<{ id: string }>();
+  let refreshed = 0;
+  for (const row of rows.results) {
+    const result = await refreshSubscriptionDraft(
+      env,
+      row.id,
+      null,
+      refreshedAt,
+      correlationId,
+      false,
+    );
+    if (result.changed) refreshed += 1;
+  }
+  return refreshed;
 }
 
 export function webhookRetentionCutoff(triggeredAt: string): string {

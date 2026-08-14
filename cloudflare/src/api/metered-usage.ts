@@ -787,6 +787,22 @@ async function createUsageEvent(
         stableJson(domainEvent.payload),
         createdAt,
       ),
+      env.BILLING_DB.prepare(
+        `UPDATE invoices SET ready_to_be_refreshed = 1, updated_at = ?
+         WHERE status = 'draft' AND organization_id = ? AND subscription_id = ?
+           AND id IN (
+             SELECT invoice_id FROM billing_cycles
+             WHERE subscription_id = ? AND invoice_id IS NOT NULL
+               AND period_start_ms <= ? AND period_end_ms > ?
+           )`,
+      ).bind(
+        createdAt,
+        auth.organizationId,
+        context.subscription_id,
+        context.subscription_id,
+        input.timestampMs,
+        input.timestampMs,
+      ),
     ]);
   } catch (error) {
     const concurrent = await findEvent(

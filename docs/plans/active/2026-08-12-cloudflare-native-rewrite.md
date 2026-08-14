@@ -329,16 +329,23 @@ Acceptance:
       Charge/fixed-charge/commitment/tax/threshold graph replacement, deletion, one-time plans,
       trials, pay-in-advance, and monthly split billing remain explicit rejections.
 - [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
-      leased, idempotent recurring period-close finalization path now produces plan and usage lines,
-      and unpaid finalized invoices can be shown with lines and voided idempotently; manual
-      draft/finalize, paid-invoice credit/refund voids, and broader retry transitions remain pending.
+      leased, idempotent recurring period-close path now produces finalized invoices at zero grace
+      or non-consuming preview drafts at positive grace. Usage events flag the owning draft; manual
+      `PUT /invoices/:id/refresh`, the five-minute legacy refresh owner, and finalization all rebuild
+      the same plan/usage/fixed/commitment/coupon/tax/credit-note/wallet calculation. Coupon,
+      credit-note, and wallet balances are consumed only by the final atomic transition. Triggered
+      version guards abort a losing refresh/finalize batch before its line deletes can commit.
+      Grace-period initial subscription invoices remain an explicit unsupported error until their
+      pay-in-advance and period-ownership semantics are ported. Paid-invoice credit/refund voids and
+      broader retry transitions also remain pending.
       Customer net-payment terms now snapshot onto finalized initial, recurring, and one-off
       invoices with deterministic due dates. The legacy hourly overdue transition is replay-safe,
       emits a transactional outbox event, and successful manual or Authorize.Net settlement clears
       overdue state. Lost-dispute exclusion remains pending until dispute state is ported.
       Immutable issuing dates and expected-finalization dates now support tenant-scoped manual
-      finalization plus the legacy hourly `:20` transition with replay-safe version/outbox evidence.
-      Draft creation and recalculation remain pending; the finalizer does not substitute stale math.
+      refresh/finalization plus the legacy five-minute refresh and hourly `:20` finalization
+      transitions with replay-safe version/outbox evidence. Customer grace changes reschedule and
+      flag existing renewal drafts without changing their issuing-date anchor.
       Subscription creation now atomically records `subscription.created` and the initial
       `invoice.finalized` outbox events with the monetary ledger. Name-only subscription update
       emits a versioned `subscription.updated`; scheduling, calendar billing, ending rules,
@@ -374,9 +381,9 @@ Acceptance:
 - [ ] Replace enabled Clockwork entries with deterministic Cron-to-Workflow dispatch.
       All 27 legacy entries now have an exhaustive code-level ownership registry. A deterministic
       five-minute Cron dispatches a versioned Workflow instance and records due/unimplemented
-      schedules in D1. The retained recurring billing, Authorize.Net receipt retry, coupon expiry,
-      wallet expiry, and invoice-overdue paths run on their legacy slots; the other entries remain
-      explicitly `not_started` until their underlying feature families are ported. The two daily
+      schedules in D1. The retained recurring billing, draft refresh, Authorize.Net receipt retry,
+      coupon expiry, wallet expiry, and invoice-overdue paths run on their legacy slots; the other
+      entries remain explicitly `not_started` until their underlying feature families are ported. The two daily
       webhook-retention schedules now enforce Lago's 90-day boundary; inbound receipt deletion uses
       a transactional D1 cleanup queue so R2 failures remain replayable without orphaning payloads.
 - [x] Add outbox publication and dead-letter handling for the implemented payment events.
@@ -853,3 +860,13 @@ resource and mutation described.
   surface remains customer upsert, subscription creation, invoice polling, and hosted payment URL.
   No secret value, customer row, deployed environment, production request, or runtime artifact was
   inspected, and `store-new` and `serp-auth` were not modified.
+- 2026-08-14: Added positive-grace recurring draft creation, customer grace configuration,
+  non-consuming coupon/credit-note/wallet previews, one shared subscription invoice calculator,
+  manual and scheduled draft refresh, usage-event refresh flags, refresh-before-finalize, and
+  idempotent finalized replay. Finalization alone commits credit allocations. A trigger-backed
+  invoice mutation guard proves the losing concurrent batch aborts before destructive line
+  replacement, while customer grace changes reschedule existing drafts. Initial grace-period
+  subscription invoices fail explicitly until their distinct billing ownership is ported. All 77
+  Workers-runtime tests pass across 22 files; all 23 migrations replay from empty D1 state,
+  formatting, lint, generated bindings, TypeScript, and the cross-repository inventory are green,
+  and the dry-run bundle is 449.44 KiB (81.94 KiB gzip).

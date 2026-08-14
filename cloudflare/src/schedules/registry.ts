@@ -6,6 +6,7 @@ export type ScheduleExecutor =
   | "expire_wallets"
   | "finalize_invoices"
   | "mark_invoices_overdue"
+  | "refresh_draft_invoices"
   | "reconcile_provider_receipts";
 
 export type ScheduleParity = "implemented" | "partial" | "not_started";
@@ -44,8 +45,9 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     key: "schedule:refresh_draft_invoices",
     legacyJob: "Clock::RefreshDraftInvoicesJob",
     cadence: everyMinutes(5),
-    owner: "invoice workflow",
-    parity: "not_started",
+    owner: "reconciliation workflow",
+    parity: "implemented",
+    executor: "refresh_draft_invoices",
   },
   {
     key: "schedule:process_subscription_activity",

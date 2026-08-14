@@ -35,6 +35,7 @@ import {
 } from "../billing/manual-taxes";
 import { paymentDueDate } from "../billing/payment-terms";
 import { finalizeInvoice } from "../billing/finalize-invoice";
+import { refreshSubscriptionDraft } from "../billing/refresh-draft-invoice";
 
 type CustomerRow = {
   id: string;
@@ -46,6 +47,7 @@ type CustomerRow = {
   payment_provider: string | null;
   payment_provider_code: string | null;
   net_payment_term: number | null;
+  invoice_grace_period: number | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -188,6 +190,11 @@ export async function handleLagoCompatibilityRequest(
     return finalizeDraftInvoice(decodeURIComponent(invoiceFinalizeMatch[1]), env, auth, requestId);
   }
 
+  const invoiceRefreshMatch = url.pathname.match(/^\/api\/v1\/invoices\/([^/]+)\/refresh$/);
+  if (request.method === "PUT" && invoiceRefreshMatch?.[1]) {
+    return refreshDraftInvoice(decodeURIComponent(invoiceRefreshMatch[1]), env, auth, requestId);
+  }
+
   const invoiceDownloadMatch = url.pathname.match(
     /^\/api\/v1\/invoices\/([^/]+)\/(?:download|download_pdf)$/,
   );
@@ -255,6 +262,17 @@ async function upsertCustomer(
         : input.net_payment_term === null
           ? null
           : nonNegativeInteger(input.net_payment_term, "net_payment_term"),
+    invoiceGracePeriod: (() => {
+      const value =
+        billingConfiguration && "invoice_grace_period" in billingConfiguration
+          ? billingConfiguration.invoice_grace_period
+          : input.invoice_grace_period;
+      return value === undefined
+        ? (existing?.invoice_grace_period ?? null)
+        : value === null
+          ? null
+          : nonNegativeInteger(value, "billing_configuration.invoice_grace_period");
+    })(),
   };
   validateCustomerProvider(normalized.paymentProvider, normalized.paymentProviderCode);
 
@@ -282,8 +300,9 @@ async function upsertCustomer(
         .prepare(
           `INSERT INTO customers
            (id, organization_id, external_id, email, name, currency, metadata_json,
-            payment_provider, payment_provider_code, net_payment_term, version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+            payment_provider, payment_provider_code, net_payment_term, invoice_grace_period,
+            version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .bind(
           id,
@@ -296,6 +315,7 @@ async function upsertCustomer(
           normalized.paymentProvider,
           normalized.paymentProviderCode,
           normalized.netPaymentTerm,
+          normalized.invoiceGracePeriod,
           now,
           now,
         ),
@@ -323,6 +343,7 @@ type NormalizedCustomer = {
   paymentProvider: string | null;
   paymentProviderCode: string | null;
   netPaymentTerm: number | null;
+  invoiceGracePeriod: number | null;
 };
 
 async function updateCustomer(
@@ -348,7 +369,8 @@ async function updateCustomer(
     env.BILLING_DB.prepare(
       `UPDATE customers
        SET email = ?, name = ?, currency = ?, metadata_json = ?, payment_provider = ?,
-           payment_provider_code = ?, net_payment_term = ?, version = version + 1, updated_at = ?
+           payment_provider_code = ?, net_payment_term = ?, invoice_grace_period = ?,
+           version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?`,
     ).bind(
       normalized.email,
@@ -358,6 +380,7 @@ async function updateCustomer(
       normalized.paymentProvider,
       normalized.paymentProviderCode,
       normalized.netPaymentTerm,
+      normalized.invoiceGracePeriod,
       now,
       customer.id,
       auth.organizationId,
@@ -380,6 +403,39 @@ async function updateCustomer(
       requestId,
       stableJson(event.payload),
       now,
+      customer.id,
+      auth.organizationId,
+      nextVersion,
+      now,
+    ),
+    env.BILLING_DB.prepare(
+      `UPDATE invoices
+       SET applied_grace_period = COALESCE(
+             (SELECT invoice_grace_period FROM customers WHERE id = ?),
+             (SELECT invoice_grace_period FROM organizations WHERE id = ?), 0
+           ),
+           expected_finalization_date = date(
+             (SELECT period_end FROM billing_cycles WHERE invoice_id = invoices.id LIMIT 1),
+             printf('+%d days', COALESCE(
+               (SELECT invoice_grace_period FROM customers WHERE id = ?),
+               (SELECT invoice_grace_period FROM organizations WHERE id = ?), 0
+             ))
+           ),
+           ready_to_be_refreshed = 1, updated_at = ?
+       WHERE customer_id = ? AND organization_id = ? AND status = 'draft'
+         AND EXISTS (SELECT 1 FROM billing_cycles WHERE invoice_id = invoices.id)
+         AND EXISTS (
+           SELECT 1 FROM customers
+           WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?
+         )`,
+    ).bind(
+      customer.id,
+      auth.organizationId,
+      customer.id,
+      auth.organizationId,
+      now,
+      customer.id,
+      auth.organizationId,
       customer.id,
       auth.organizationId,
       nextVersion,
@@ -422,7 +478,8 @@ async function listCustomers(
   const result = await database
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
-              payment_provider_code, net_payment_term, version, created_at, updated_at
+              payment_provider_code, net_payment_term, invoice_grace_period, version,
+              created_at, updated_at
        FROM customers WHERE ${where}
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     )
@@ -474,6 +531,21 @@ async function createSubscription(
 
   const customer = await findCustomer(database, auth.organizationId, externalCustomerId);
   if (!customer) throw new ApiError(404, "customer_not_found", "Customer was not found");
+  const organizationBilling = await database
+    .prepare(
+      "SELECT net_payment_term, invoice_grace_period FROM organizations WHERE id = ? LIMIT 1",
+    )
+    .bind(auth.organizationId)
+    .first<{ net_payment_term: number; invoice_grace_period: number }>();
+  const invoiceGracePeriod =
+    customer.invoice_grace_period ?? organizationBilling?.invoice_grace_period ?? 0;
+  if (invoiceGracePeriod > 0) {
+    throw new ApiError(
+      422,
+      "unsupported_initial_invoice_grace_period",
+      "Grace-period initial subscription invoices are not implemented; create with zero grace and update before renewal billing",
+    );
+  }
 
   const plan = await database
     .prepare(
@@ -495,7 +567,7 @@ async function createSubscription(
 
   const now = new Date();
   const timestamp = now.toISOString();
-  const netPaymentTerm = customer.net_payment_term ?? 0;
+  const netPaymentTerm = customer.net_payment_term ?? organizationBilling?.net_payment_term ?? 0;
   const dueDate = paymentDueDate(timestamp, netPaymentTerm);
   const periodEnd = nextPeriodEnd(now, plan.interval).toISOString();
   const commandKey = `${auth.organizationId}:${externalId}`;
@@ -1382,6 +1454,9 @@ async function finalizeDraftInvoice(
 ): Promise<Response> {
   const invoice = await findInvoice(env.BILLING_DB, auth.organizationId, invoiceId);
   if (!invoice) throw new ApiError(404, "invoice_not_found", "Invoice was not found");
+  if (invoice.status === "finalized") {
+    return showInvoice(invoice.id, env.BILLING_DB, auth, requestId);
+  }
   if (invoice.status !== "draft") {
     throw new ApiError(422, "invoice_not_draft", "Only draft invoices can be finalized");
   }
@@ -1396,6 +1471,48 @@ async function finalizeDraftInvoice(
   } catch (error) {
     if (error instanceof Error && error.message === "invoice_version_conflict") {
       throw new ApiError(409, "invoice_version_conflict", "Invoice changed concurrently");
+    }
+    if (error instanceof Error && error.message === "invoice_refresh_in_progress") {
+      throw new ApiError(409, "invoice_refresh_in_progress", "Invoice refresh is in progress");
+    }
+    throw error;
+  }
+  return showInvoice(invoice.id, env.BILLING_DB, auth, requestId);
+}
+
+async function refreshDraftInvoice(
+  invoiceId: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const invoice = await findInvoice(env.BILLING_DB, auth.organizationId, invoiceId);
+  if (!invoice) throw new ApiError(404, "invoice_not_found", "Invoice was not found");
+  if (invoice.status !== "draft") {
+    throw new ApiError(422, "invoice_not_draft", "Only draft invoices can be refreshed");
+  }
+  try {
+    await refreshSubscriptionDraft(
+      env,
+      invoice.id,
+      auth.organizationId,
+      new Date().toISOString(),
+      requestId,
+      false,
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message === "invoice_version_conflict") {
+      throw new ApiError(409, "invoice_version_conflict", "Invoice changed concurrently");
+    }
+    if (error instanceof Error && error.message === "invoice_refresh_in_progress") {
+      throw new ApiError(409, "invoice_refresh_in_progress", "Invoice refresh is in progress");
+    }
+    if (error instanceof Error && error.message === "draft_subscription_not_found") {
+      throw new ApiError(
+        422,
+        "draft_subscription_not_found",
+        "Draft invoice no longer has an active billable subscription",
+      );
     }
     throw error;
   }
@@ -1891,7 +2008,8 @@ async function findCustomer(
   return database
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
-              payment_provider_code, net_payment_term, version, created_at, updated_at
+              payment_provider_code, net_payment_term, invoice_grace_period, version,
+              created_at, updated_at
        FROM customers WHERE organization_id = ? AND external_id = ? LIMIT 1`,
     )
     .bind(organizationId, externalId)
@@ -1935,6 +2053,7 @@ function serializeCustomer(customer: CustomerRow): Record<string, unknown> {
     billing_configuration: {
       payment_provider: customer.payment_provider,
       payment_provider_code: customer.payment_provider_code,
+      invoice_grace_period: customer.invoice_grace_period,
     },
     metadata,
   };
@@ -1968,6 +2087,7 @@ function serializeInvoice(invoice: InvoiceRow): Record<string, unknown> {
     lago_id: invoice.id,
     number: invoice.number,
     issuing_date: invoice.issuing_date,
+    expected_finalization_date: invoice.expected_finalization_date,
     payment_due_date: invoice.payment_due_date,
     payment_overdue: invoice.payment_overdue === 1,
     net_payment_term: invoice.net_payment_term,
@@ -2010,6 +2130,7 @@ function readCustomerBillingConfiguration(value: unknown): Record<string, unknow
   const supported = new Set([
     "payment_provider",
     "payment_provider_code",
+    "invoice_grace_period",
     "sync",
     "sync_with_provider",
   ]);
@@ -2036,6 +2157,7 @@ function rejectUnsupportedCustomerFields(input: Record<string, unknown>): void {
     "metadata",
     "billing_configuration",
     "net_payment_term",
+    "invoice_grace_period",
     "tax_codes",
     "tax_provider_code",
   ]);
@@ -2071,6 +2193,7 @@ function customerMatches(customer: CustomerRow, normalized: NormalizedCustomer):
     customer.payment_provider === normalized.paymentProvider &&
     customer.payment_provider_code === normalized.paymentProviderCode &&
     customer.net_payment_term === normalized.netPaymentTerm &&
+    customer.invoice_grace_period === normalized.invoiceGracePeriod &&
     stableJson(parseCustomerMetadata(customer.metadata_json)) === stableJson(normalized.metadata)
   );
 }
@@ -2119,6 +2242,7 @@ function customerEvent(
       paymentProvider: normalized.paymentProvider,
       paymentProviderCode: normalized.paymentProviderCode,
       netPaymentTerm: normalized.netPaymentTerm,
+      invoiceGracePeriod: normalized.invoiceGracePeriod,
       metadata: normalized.metadata,
     },
   };

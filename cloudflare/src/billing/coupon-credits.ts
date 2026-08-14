@@ -1,4 +1,5 @@
 import { deterministicUuid } from "../identifiers";
+import { stableJson } from "../json";
 import { Decimal } from "../rating/decimal";
 
 type ApplicableCouponRow = {
@@ -74,6 +75,82 @@ export async function calculateCouponCredits(
     remainingInvoice -= amount;
   }
   return credits;
+}
+
+export function couponCreditStatements(
+  database: D1Database,
+  organizationId: string,
+  invoiceId: string,
+  currency: string,
+  credits: CouponCredit[],
+  now: string,
+  correlationId: string,
+): D1PreparedStatement[] {
+  return credits.flatMap((credit) => [
+    database
+      .prepare(
+        `INSERT INTO coupon_credits
+         (id, organization_id, invoice_id, applied_coupon_id, applied_coupon_version,
+          amount_minor, currency, before_taxes, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      )
+      .bind(
+        credit.id,
+        organizationId,
+        invoiceId,
+        credit.appliedCouponId,
+        credit.expectedVersion,
+        credit.amountMinor,
+        currency,
+        now,
+      ),
+    database
+      .prepare(
+        `UPDATE applied_coupons
+         SET frequency_duration_remaining = ?,
+             status = CASE WHEN ? = 1 THEN 'terminated' ELSE status END,
+             termination_reason = CASE WHEN ? = 1 THEN 'consumed' ELSE termination_reason END,
+             terminated_at = CASE WHEN ? = 1 THEN ? ELSE terminated_at END,
+             version = version + 1, updated_at = ?
+         WHERE id = ? AND organization_id = ? AND status = 'active' AND version = ?`,
+      )
+      .bind(
+        credit.nextRemaining,
+        credit.terminates ? 1 : 0,
+        credit.terminates ? 1 : 0,
+        credit.terminates ? 1 : 0,
+        now,
+        now,
+        credit.appliedCouponId,
+        organizationId,
+        credit.expectedVersion,
+      ),
+    database
+      .prepare(
+        `INSERT INTO outbox_events
+         (event_id, organization_id, event_type, event_version, aggregate_type,
+          aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+          occurred_at, published_at)
+         VALUES (?, ?, 'coupon.consumed', 1, 'applied_coupon', ?, ?, ?, ?, ?, ?, NULL)`,
+      )
+      .bind(
+        `coupon-consumed:${credit.id}:v1`,
+        organizationId,
+        credit.appliedCouponId,
+        credit.expectedVersion + 1,
+        invoiceId,
+        correlationId,
+        stableJson({
+          organizationId,
+          invoiceId,
+          appliedCouponId: credit.appliedCouponId,
+          couponCreditId: credit.id,
+          amountMinor: credit.amountMinor,
+          currency,
+        }),
+        now,
+      ),
+  ]);
 }
 
 function availableAmount(coupon: ApplicableCouponRow, baseMinor: number): number {
