@@ -106,7 +106,7 @@ describe("Lago-compatible plan catalog", () => {
     await expect(response.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
   });
 
-  it("updates safe scalar fields with an outbox event and guards graph/deletion workflows", async () => {
+  it("updates safe scalar fields, retires standalone plans, and reuses codes safely", async () => {
     const payload = {
       plan: {
         name: "Mutable",
@@ -166,8 +166,55 @@ describe("Lago-compatible plan catalog", () => {
     expect(graph.status).toBe(422);
     await expect(graph.json()).resolves.toMatchObject({ code: "unsupported_plan_update" });
     const deleted = await api("/api/v1/plans/mutable-renamed", "DELETE");
-    expect(deleted.status).toBe(422);
-    await expect(deleted.json()).resolves.toMatchObject({ code: "unsupported_plan_deletion" });
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toMatchObject({
+      plan: { lago_id: planId, code: "mutable-renamed" },
+    });
+    expect((await api("/api/v1/plans/mutable-renamed")).status).toBe(404);
+    expect((await api("/api/v1/plans/mutable-renamed", "DELETE")).status).toBe(404);
+
+    const recreated = await api("/api/v1/plans", "POST", {
+      plan: {
+        name: "Mutable generation two",
+        code: "mutable-renamed",
+        interval: "monthly",
+        amount_cents: 300,
+        amount_currency: "USD",
+      },
+    });
+    expect(recreated.status).toBe(200);
+    const recreatedId = (await recreated.json<{ plan: { lago_id: string } }>()).plan.lago_id;
+    expect(recreatedId).not.toBe(planId);
+    expect((await api("/api/v1/plans/mutable-renamed", "DELETE")).status).toBe(200);
+    expect(
+      (
+        await api("/api/v1/plans", "POST", {
+          plan: {
+            name: "Mutable generation three",
+            code: "mutable-renamed",
+            interval: "yearly",
+            amount_cents: 400,
+            amount_currency: "USD",
+          },
+        })
+      ).status,
+    ).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT version, active FROM plans
+         WHERE organization_id = 'org-plan-catalog' AND code = 'mutable-renamed'
+         ORDER BY version`,
+      ).all(),
+    ).resolves.toMatchObject({
+      results: [
+        { active: 0, version: 3 },
+        { active: 0, version: 5 },
+        { active: 1, version: 6 },
+      ],
+    });
+    await expect(
+      env.BILLING_DB.prepare("SELECT COUNT(*) AS total FROM plan_mutation_guards").first(),
+    ).resolves.toEqual({ total: 0 });
   });
 
   it("limits attached-plan updates to Rails-safe mutable scalar fields", async () => {
@@ -211,6 +258,88 @@ describe("Lago-compatible plan catalog", () => {
     });
     expect(unsafe.status).toBe(422);
     await expect(unsafe.json()).resolves.toMatchObject({ code: "plan_in_use" });
+    const deleted = await api("/api/v1/plans/attached", "DELETE");
+    expect(deleted.status).toBe(422);
+    await expect(deleted.json()).resolves.toMatchObject({ code: "plan_in_use" });
+  });
+
+  it("retires an unused plan graph while preserving its relational catalog history", async () => {
+    const addOn = await api("/api/v1/add_ons", "POST", {
+      add_on: {
+        name: "Plan lifecycle seats",
+        code: "plan-lifecycle-seats",
+        amount_cents: 100,
+        amount_currency: "USD",
+      },
+    });
+    expect(addOn.status).toBe(200);
+    const addOnId = (await addOn.json<{ add_on: { lago_id: string } }>()).add_on.lago_id;
+    const created = await api("/api/v1/plans", "POST", {
+      plan: {
+        name: "Retirable graph",
+        code: "retirable-graph",
+        interval: "monthly",
+        amount_cents: 500,
+        amount_currency: "USD",
+        charges: [
+          {
+            billable_metric_id: "metric-plan-catalog",
+            code: "retirable-usage",
+            charge_model: "standard",
+            properties: { amount: "2" },
+          },
+        ],
+        fixed_charges: [
+          {
+            add_on_id: addOnId,
+            code: "retirable-fixed",
+            charge_model: "standard",
+            units: "1",
+            properties: { amount: "100" },
+          },
+        ],
+        minimum_commitment: { amount_cents: 1000 },
+      },
+    });
+    expect(created.status).toBe(200);
+    const planId = (await created.json<{ plan: { lago_id: string } }>()).plan.lago_id;
+    const deleted = await api("/api/v1/plans/retirable-graph", "DELETE");
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toMatchObject({
+      plan: {
+        lago_id: planId,
+        charges: [{ code: "retirable-usage" }],
+        fixed_charges: [{ code: "retirable-fixed" }],
+        minimum_commitment: { amount_cents: 1000 },
+      },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT plan.active AS plan_active, plan.version AS plan_version,
+                charge.active AS charge_active, charge.version AS charge_version,
+                fixed.active AS fixed_active, fixed.version AS fixed_version,
+                commitment.amount_minor,
+                (SELECT COUNT(*) FROM outbox_events
+                 WHERE aggregate_type = 'plan' AND aggregate_id = plan.id
+                   AND event_type = 'plan.deleted') AS delete_events
+         FROM plans plan
+         JOIN charges charge ON charge.plan_id = plan.id
+         JOIN fixed_charges fixed ON fixed.plan_id = plan.id
+         JOIN minimum_commitments commitment ON commitment.plan_id = plan.id
+         WHERE plan.id = ?`,
+      )
+        .bind(planId)
+        .first(),
+    ).resolves.toEqual({
+      amount_minor: 1000,
+      charge_active: 0,
+      charge_version: 2,
+      delete_events: 1,
+      fixed_active: 0,
+      fixed_version: 2,
+      plan_active: 0,
+      plan_version: 2,
+    });
   });
 
   it("creates and serializes a minimum commitment while rejecting commitment tax targeting", async () => {

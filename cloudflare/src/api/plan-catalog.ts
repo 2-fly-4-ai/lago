@@ -166,11 +166,7 @@ export async function handlePlanCatalogRequest(
     return updatePlan(decodeURIComponent(match[1]), request, env, auth, requestId);
   }
   if (request.method === "DELETE" && match?.[1]) {
-    throw new ApiError(
-      422,
-      "unsupported_plan_deletion",
-      "Plan deletion requires the unported subscription termination and invoice finalization workflow",
-    );
+    return deletePlan(decodeURIComponent(match[1]), env, auth, requestId);
   }
   return null;
 }
@@ -259,7 +255,8 @@ async function createPlan(
     throw new ApiError(422, "value_already_exist", "Plan code already exists");
   }
 
-  const planId = await deterministicUuid("plan", `${auth.organizationId}:${code}`);
+  const identity = await nextPlanIdentity(database, auth.organizationId, code);
+  const planId = identity.id;
   const charges = await normalizeCharges(
     input.charges,
     database,
@@ -275,9 +272,17 @@ async function createPlan(
     currency,
   );
   const now = new Date().toISOString();
-  const event = planEvent("plan.created", planId, 1, auth.organizationId, requestId, now, {
-    code,
-  });
+  const event = planEvent(
+    "plan.created",
+    planId,
+    identity.version,
+    auth.organizationId,
+    requestId,
+    now,
+    {
+      code,
+    },
+  );
   try {
     await database.batch([
       database
@@ -287,7 +292,7 @@ async function createPlan(
           active, created_at, updated_at, invoice_display_name, description, trial_period,
           pay_in_advance, bill_charges_monthly, bill_fixed_charges_monthly, metadata_json,
           request_sha256, pending_deletion)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
         )
         .bind(
           planId,
@@ -297,6 +302,7 @@ async function createPlan(
           interval,
           amountMinor,
           currency,
+          identity.version,
           now,
           now,
           normalizedRequest.invoiceDisplayName,
@@ -832,12 +838,15 @@ async function updatePlan(
   );
   try {
     const results = await env.BILLING_DB.batch([
+      planMutationGuardStatement(env.BILLING_DB, requestId, auth.organizationId, plan, 1, now),
       env.BILLING_DB.prepare(
         `UPDATE plans SET code = ?, name = ?, invoice_display_name = ?, description = ?,
          interval = ?, amount_minor = ?, currency = ?, trial_period = ?, pay_in_advance = ?,
          bill_charges_monthly = ?, bill_fixed_charges_monthly = ?, metadata_json = ?,
          version = version + 1, updated_at = ?
-         WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?`,
+         WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?
+           AND EXISTS (SELECT 1 FROM plan_mutation_guards
+                       WHERE request_id = ? AND plan_id = ?)`,
       ).bind(
         next.code,
         next.name,
@@ -855,17 +864,27 @@ async function updatePlan(
         plan.id,
         auth.organizationId,
         plan.version,
+        requestId,
+        plan.id,
       ),
-      conditionalOutboxStatement(
+      guardedPlanOutboxStatement(
         env.BILLING_DB,
         auth.organizationId,
         event,
         plan.id,
         plan.version + 1,
         now,
+        1,
+        requestId,
       ),
+      clearPlanMutationGuardStatement(env.BILLING_DB, requestId, plan.id),
     ]);
-    if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
+    if (
+      results[0]?.meta.changes !== 1 ||
+      (results[1]?.meta.changes ?? 0) < 1 ||
+      results[2]?.meta.changes !== 1 ||
+      results[3]?.meta.changes !== 1
+    )
       throw new ApiError(409, "plan_version_conflict", "Plan changed concurrently");
   } catch (error) {
     if (error instanceof ApiError) throw error;
@@ -875,6 +894,84 @@ async function updatePlan(
   const updated = await findPlan(env.BILLING_DB, auth.organizationId, next.code);
   if (!updated) throw new ApiError(500, "persistence_error", "Plan disappeared");
   return json({ plan: await serializePlan(env.BILLING_DB, updated) }, { requestId });
+}
+
+async function deletePlan(
+  code: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const database = env.BILLING_DB;
+  const plan = await findPlan(database, auth.organizationId, code);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const subscription = await database
+    .prepare("SELECT id FROM subscriptions WHERE organization_id = ? AND plan_id = ? LIMIT 1")
+    .bind(auth.organizationId, plan.id)
+    .first();
+  if (subscription)
+    throw new ApiError(
+      422,
+      "plan_in_use",
+      "Plan deletion with subscriptions requires asynchronous termination and draft finalization",
+    );
+
+  const serialized = await serializePlan(database, plan);
+  const now = new Date().toISOString();
+  const event = planEvent(
+    "plan.deleted",
+    plan.id,
+    plan.version + 1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: plan.code },
+  );
+  const guarded = `EXISTS (
+    SELECT 1 FROM plan_mutation_guards WHERE request_id = ? AND plan_id = ?
+  )`;
+  const results = await database.batch([
+    planMutationGuardStatement(database, requestId, auth.organizationId, plan, 0, now),
+    database
+      .prepare(
+        `UPDATE charges SET active = 0, version = version + 1, updated_at = ?
+         WHERE organization_id = ? AND plan_id = ? AND active = 1 AND ${guarded}`,
+      )
+      .bind(now, auth.organizationId, plan.id, requestId, plan.id),
+    database
+      .prepare(
+        `UPDATE fixed_charges SET active = 0, version = version + 1, updated_at = ?
+         WHERE organization_id = ? AND plan_id = ? AND active = 1 AND ${guarded}`,
+      )
+      .bind(now, auth.organizationId, plan.id, requestId, plan.id),
+    database
+      .prepare(
+        `UPDATE plans SET active = 0, pending_deletion = 0,
+                          version = version + 1, updated_at = ?
+         WHERE id = ? AND organization_id = ? AND active = 1 AND version = ? AND ${guarded}`,
+      )
+      .bind(now, plan.id, auth.organizationId, plan.version, requestId, plan.id),
+    guardedPlanOutboxStatement(
+      database,
+      auth.organizationId,
+      event,
+      plan.id,
+      plan.version + 1,
+      now,
+      0,
+      requestId,
+    ),
+    clearPlanMutationGuardStatement(database, requestId, plan.id),
+  ]);
+  if (
+    results[0]?.meta.changes !== 1 ||
+    results[3]?.meta.changes !== 1 ||
+    results[4]?.meta.changes !== 1 ||
+    results[5]?.meta.changes !== 1
+  )
+    throw new ApiError(409, "plan_version_conflict", "Plan changed concurrently");
+  await env.DOMAIN_EVENTS.send(event);
+  return json({ plan: serialized }, { requestId });
 }
 
 function planSelect(): string {
@@ -890,6 +987,32 @@ async function findPlan(database: D1Database, organizationId: string, code: stri
               ORDER BY version DESC LIMIT 1`)
     .bind(organizationId, code)
     .first<PlanRow>();
+}
+
+async function nextPlanIdentity(
+  database: D1Database,
+  organizationId: string,
+  code: string,
+): Promise<{ id: string; version: number }> {
+  const prior = await database
+    .prepare(
+      `SELECT COALESCE(MAX(version), 0) AS version
+       FROM plans WHERE organization_id = ? AND code = ?`,
+    )
+    .bind(organizationId, code)
+    .first<{ version: number }>();
+  const version = (prior?.version ?? 0) + 1;
+  for (let generation = 1; generation <= 100; generation += 1) {
+    const seed =
+      generation === 1 ? `${organizationId}:${code}` : `${organizationId}:${code}:${generation}`;
+    const id = await deterministicUuid("plan", seed);
+    const existing = await database
+      .prepare("SELECT id FROM plans WHERE id = ? LIMIT 1")
+      .bind(id)
+      .first<{ id: string }>();
+    if (!existing) return { id, version };
+  }
+  throw new ApiError(409, "plan_generation_conflict", "Plan code has too many generations");
 }
 
 async function serializePlan(
@@ -1452,21 +1575,46 @@ function outboxStatement(
     );
 }
 
-function conditionalOutboxStatement(
+function planMutationGuardStatement(
+  database: D1Database,
+  requestId: string,
+  organizationId: string,
+  plan: PlanRow,
+  targetActive: 0 | 1,
+  now: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO plan_mutation_guards
+       (request_id, organization_id, plan_id, source_version, target_version,
+        target_active, created_at)
+       SELECT ?, organization_id, id, version, version + 1, ?, ? FROM plans
+       WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?`,
+    )
+    .bind(requestId, targetActive, now, plan.id, organizationId, plan.version);
+}
+
+function guardedPlanOutboxStatement(
   database: D1Database,
   organizationId: string,
   event: DomainEvent,
   planId: string,
   expectedVersion: number,
   expectedUpdatedAt: string,
+  expectedActive: 0 | 1,
+  requestId: string,
 ): D1PreparedStatement {
   return database
     .prepare(
       `INSERT INTO outbox_events
        (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
         aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL FROM plans
-       WHERE id = ? AND organization_id = ? AND active = 1 AND version = ? AND updated_at = ?`,
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+       FROM plans plan JOIN plan_mutation_guards guard
+         ON guard.plan_id = plan.id AND guard.organization_id = plan.organization_id
+       WHERE guard.request_id = ? AND guard.target_active = ? AND guard.target_version = ?
+         AND plan.id = ? AND plan.organization_id = ? AND plan.active = ?
+         AND plan.version = ? AND plan.updated_at = ?`,
     )
     .bind(
       event.id,
@@ -1480,11 +1628,25 @@ function conditionalOutboxStatement(
       event.correlationId,
       stableJson(event.payload),
       event.occurredAt,
+      requestId,
+      expectedActive,
+      expectedVersion,
       planId,
       organizationId,
+      expectedActive,
       expectedVersion,
       expectedUpdatedAt,
     );
+}
+
+function clearPlanMutationGuardStatement(
+  database: D1Database,
+  requestId: string,
+  planId: string,
+): D1PreparedStatement {
+  return database
+    .prepare("DELETE FROM plan_mutation_guards WHERE request_id = ? AND plan_id = ?")
+    .bind(requestId, planId);
 }
 
 function conditionalFixedChargeOutboxStatement(

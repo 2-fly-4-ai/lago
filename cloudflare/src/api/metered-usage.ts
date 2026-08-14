@@ -224,12 +224,12 @@ async function createBillableMetric(
   }
 
   const now = new Date().toISOString();
-  const id = await nextMetricId(database, auth.organizationId, normalized.code);
+  const identity = await nextMetricIdentity(database, auth.organizationId, normalized.code);
   const event = catalogEvent(
     "billable_metric.created",
     "billable_metric",
-    id,
-    1,
+    identity.id,
+    identity.version,
     auth.organizationId,
     requestId,
     now,
@@ -243,16 +243,17 @@ async function createBillableMetric(
        (id, organization_id, code, name, description, aggregation_type, field_name,
         recurring, rounding_function, rounding_precision, weighted_interval, expression,
         properties_json, version, active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, NULL, '{}', 1, 1, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, NULL, '{}', ?, 1, ?, ?)`,
         )
         .bind(
-          id,
+          identity.id,
           auth.organizationId,
           normalized.code,
           normalized.name,
           normalized.description,
           normalized.aggregationType,
           normalized.fieldName,
+          identity.version,
           now,
           now,
         ),
@@ -1692,11 +1693,19 @@ async function findMetric(
     .first<MetricRow>();
 }
 
-async function nextMetricId(
+async function nextMetricIdentity(
   database: D1Database,
   organizationId: string,
   code: string,
-): Promise<string> {
+): Promise<{ id: string; version: number }> {
+  const prior = await database
+    .prepare(
+      `SELECT COALESCE(MAX(version), 0) AS version
+       FROM billable_metrics WHERE organization_id = ? AND code = ?`,
+    )
+    .bind(organizationId, code)
+    .first<{ version: number }>();
+  const version = (prior?.version ?? 0) + 1;
   for (let generation = 1; generation <= 100; generation += 1) {
     const seed =
       generation === 1 ? `${organizationId}:${code}` : `${organizationId}:${code}:${generation}`;
@@ -1705,7 +1714,7 @@ async function nextMetricId(
       .prepare("SELECT id FROM billable_metrics WHERE id = ? LIMIT 1")
       .bind(id)
       .first<{ id: string }>();
-    if (!existing) return id;
+    if (!existing) return { id, version };
   }
   throw new ApiError(
     409,

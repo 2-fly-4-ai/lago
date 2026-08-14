@@ -529,10 +529,39 @@ describe("Lago-compatible metered usage", () => {
       ).first(),
     ).resolves.toEqual({ billable_metric_id: recreatedMetricId });
 
+    expect(
+      (await api("/api/v1/billable_metrics/retirable_units", { method: "DELETE" })).status,
+    ).toBe(200);
+    const third = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Retirable units v3",
+          code: "retirable_units",
+          aggregation_type: "sum_agg",
+          field_name: "tokens",
+        },
+      },
+    });
+    expect(third.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT version, active FROM billable_metrics
+         WHERE organization_id = 'org-usage' AND code = 'retirable_units'
+         ORDER BY version`,
+      ).all(),
+    ).resolves.toMatchObject({
+      results: [
+        { active: 0, version: 2 },
+        { active: 0, version: 4 },
+        { active: 1, version: 5 },
+      ],
+    });
+
     await expect(cleanupDeletedMetricEvents(env)).resolves.toEqual({
-      artifactsDeleted: 1,
-      eventsDeleted: 1,
-      tasksCompleted: 1,
+      artifactsDeleted: 2,
+      eventsDeleted: 2,
+      tasksCompleted: 2,
     });
     expect(archived && (await env.BILLING_ARTIFACTS.head(archived.archive_key))).toBeNull();
     await expect(
