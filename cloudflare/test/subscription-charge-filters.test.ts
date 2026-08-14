@@ -22,6 +22,10 @@ beforeEach(async () => {
       "DELETE FROM fixed_charges WHERE organization_id = 'org-sub-filter' AND parent_id IS NOT NULL",
     ),
     env.BILLING_DB.prepare(
+      `DELETE FROM fixed_charges WHERE organization_id = 'org-sub-filter' AND parent_id IS NULL
+       AND id != 'fixed-sub-filter'`,
+    ),
+    env.BILLING_DB.prepare(
       "DELETE FROM charges WHERE organization_id = 'org-sub-filter' AND parent_id IS NOT NULL",
     ),
     env.BILLING_DB.prepare(
@@ -38,6 +42,12 @@ beforeEach(async () => {
                           filters_json = ?, version = 1, active = 1, updated_at = ?
        WHERE id = 'charge-sub-filter'`,
     ).bind(JSON.stringify([originalFilter]), now),
+    env.BILLING_DB.prepare(
+      `UPDATE fixed_charges SET code = 'support-fixed', invoice_display_name = NULL,
+                                charge_model = 'standard', properties_json = '{"amount":"500"}',
+                                units = '1', version = 1, active = 1, updated_at = ?
+       WHERE id = 'fixed-sub-filter'`,
+    ).bind(now),
   ]);
   await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
@@ -446,6 +456,150 @@ describe("subscription charge-filter overrides", () => {
     expect(deleted.status).toBe(200);
     const retired = await env.BILLING_DB.prepare(
       `SELECT active, version FROM charges WHERE code = 'new-storage-charge'
+       ORDER BY parent_id IS NOT NULL`,
+    ).all<{ active: number; version: number }>();
+    expect(retired.results).toEqual([
+      { active: 0, version: 2 },
+      { active: 0, version: 2 },
+    ]);
+  });
+
+  it("cascades inherited fixed-charge pricing without overwriting child customizations", async () => {
+    const override = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters",
+      "POST",
+      { filter: { properties: { amount: "7" }, values: { region: ["us"] } } },
+    );
+    expect(override.status).toBe(200);
+
+    const cascaded = await api("/api/v1/plans/filter-plan/fixed_charges/support-fixed", "PUT", {
+      fixed_charge: {
+        code: "support-renamed",
+        invoice_display_name: "Parent display only",
+        charge_model: "standard",
+        properties: { amount: "600" },
+        units: "2",
+        cascade_updates: true,
+      },
+    });
+    expect(cascaded.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT code, invoice_display_name, properties_json, units
+         FROM fixed_charges WHERE parent_id = 'fixed-sub-filter'`,
+      ).first(),
+    ).resolves.toEqual({
+      code: "support-renamed",
+      invoice_display_name: null,
+      properties_json: '{"amount":"600"}',
+      units: "2",
+    });
+
+    await env.BILLING_DB.prepare(
+      `UPDATE fixed_charges SET properties_json = '{"amount":"999"}', units = '9'
+       WHERE parent_id = 'fixed-sub-filter'`,
+    ).run();
+    const preserved = await api("/api/v1/plans/filter-plan/fixed_charges/support-renamed", "PUT", {
+      fixed_charge: {
+        code: "support-final",
+        charge_model: "standard",
+        properties: { amount: "700" },
+        units: "3",
+        cascade_updates: true,
+      },
+    });
+    expect(preserved.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT code, properties_json, units FROM fixed_charges
+         WHERE parent_id = 'fixed-sub-filter'`,
+      ).first(),
+    ).resolves.toEqual({
+      code: "support-final",
+      properties_json: '{"amount":"999"}',
+      units: "9",
+    });
+
+    await env.BILLING_DB.prepare(
+      "UPDATE fixed_charges SET charge_model = 'volume' WHERE parent_id = 'fixed-sub-filter'",
+    ).run();
+    const modelMismatch = await api(
+      "/api/v1/plans/filter-plan/fixed_charges/support-final",
+      "PUT",
+      {
+        fixed_charge: {
+          code: "support-parent-model",
+          charge_model: "standard",
+          cascade_updates: true,
+        },
+      },
+    );
+    expect(modelMismatch.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT code, charge_model FROM fixed_charges WHERE parent_id = 'fixed-sub-filter'",
+      ).first(),
+    ).resolves.toEqual({ code: "support-final", charge_model: "volume" });
+  });
+
+  it("creates and retires cascaded fixed charges with independent child identity", async () => {
+    const override = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters",
+      "POST",
+      { filter: { properties: { amount: "7" }, values: { region: ["us"] } } },
+    );
+    expect(override.status).toBe(200);
+
+    const created = await api("/api/v1/plans/filter-plan/fixed_charges", "POST", {
+      fixed_charge: {
+        add_on_id: "addon-sub-filter",
+        code: "priority-support",
+        invoice_display_name: "Priority support",
+        charge_model: "standard",
+        properties: { amount: "800" },
+        units: "4",
+        cascade_updates: true,
+      },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ fixed_charge: { lago_id: string } }>();
+    const rows = await env.BILLING_DB.prepare(
+      `SELECT id, parent_id, plan_id, invoice_display_name, properties_json, units, version, active
+       FROM fixed_charges WHERE code = 'priority-support' ORDER BY parent_id IS NOT NULL`,
+    ).all<{
+      id: string;
+      parent_id: string | null;
+      plan_id: string;
+      invoice_display_name: string | null;
+      properties_json: string;
+      units: string;
+      version: number;
+      active: number;
+    }>();
+    expect(rows.results).toHaveLength(2);
+    expect(rows.results[0]).toMatchObject({
+      id: createdBody.fixed_charge.lago_id,
+      parent_id: null,
+      plan_id: "plan-sub-filter",
+    });
+    expect(rows.results[1]).toMatchObject({
+      parent_id: createdBody.fixed_charge.lago_id,
+      invoice_display_name: "Priority support",
+      properties_json: '{"amount":"800"}',
+      units: "4",
+      version: 1,
+      active: 1,
+    });
+    expect(rows.results[1]?.id).not.toBe(createdBody.fixed_charge.lago_id);
+
+    const deleted = await api(
+      "/api/v1/plans/filter-plan/fixed_charges/priority-support",
+      "DELETE",
+      { fixed_charge: { cascade_updates: true } },
+    );
+    expect(deleted.status).toBe(200);
+    const retired = await env.BILLING_DB.prepare(
+      `SELECT active, version FROM fixed_charges WHERE code = 'priority-support'
        ORDER BY parent_id IS NOT NULL`,
     ).all<{ active: number; version: number }>();
     expect(retired.results).toEqual([

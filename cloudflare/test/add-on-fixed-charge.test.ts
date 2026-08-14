@@ -178,7 +178,11 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
         .first(),
     ).resolves.toEqual({ events: 2, version: 2 });
     expect(
-      (await api("/api/v1/plans/fixed-plan/fixed_charges/seat-extra-renamed", "DELETE")).status,
+      (
+        await api("/api/v1/plans/fixed-plan/fixed_charges/seat-extra-renamed", "DELETE", {
+          fixed_charge: { cascade_updates: true },
+        })
+      ).status,
     ).toBe(200);
     expect((await api("/api/v1/plans/fixed-plan/fixed_charges/seat-extra-renamed")).status).toBe(
       404,
