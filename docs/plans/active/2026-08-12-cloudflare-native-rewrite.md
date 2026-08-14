@@ -2021,3 +2021,18 @@ resource and mutation described.
   aggregate-only verification stayed empty apart from 207 schedule audits. All three
   external-action flags remain `0`; no migration, resource provisioning, production route/domain,
   secret, provider action, customer data, or billing row changed.
+- 2026-08-15: Ported standalone fixed-charge `cascade_updates` across subscription override graphs.
+  Create clones the complete supported fixed charge into every direct child plan with an active or
+  pending subscription and records independent child IDs plus parent links. Update propagates code
+  only to model-compatible children and propagates units/properties only while the child still
+  equals the parent's old model/properties/units; subscriber-customized pricing is preserved,
+  model-mismatched children are skipped, and charge-level display names remain child-local. Delete
+  retires eligible children with the parent. Parent, children, and versioned outbox events commit in
+  one D1 batch guarded by the complete eligible child ID/version set. The synchronous path is
+  bounded to 100 direct children and 512 KiB of prepared cascade JSON. Evidence covers inherited
+  pricing, customized-price preservation, model mismatch, code/display behavior, no-child success,
+  independent child creation, and parent/child retirement. Strict format/lint, inventory, and
+  TypeScript checks pass. The fully parallel suite passed 191/192 before the known
+  draft-termination-credit case exceeded its 10-second harness limit; that file passed 2/2 alone,
+  and bounded groups passed all 192 tests as 45 + 69 + 71 + 7. The dry-run bundle is 947.30 KiB
+  (163.83 KiB gzip). No migration is required. Feature checkpoint: `3b7fa34`.
