@@ -29,14 +29,30 @@ export type PayInAdvanceTerminationResult = {
   creditNoteEvent: DomainEvent | null;
 };
 
-export async function terminatePayInAdvanceWithCredit(
-  env: Env,
+export type PreparedPayInAdvanceTerminationCredit = {
+  organizationId: string;
+  customerId: string;
+  externalId: string;
+  sourceInvoiceId: string;
+  sourceLineId: string;
+  currency: string;
+  creditNoteId: string | null;
+  creditAmountMinor: number;
+  preciseCredit: string;
+  unusedDays: number;
+  fullPeriodDays: number;
+  creditNoteEvent: DomainEvent | null;
+  creationStatements: D1PreparedStatement[];
+};
+
+export async function preparePayInAdvanceTerminationCredit(
+  database: D1Database,
   subscriptionId: string,
   expectedVersion: number,
   terminatedAt: string,
   correlationId: string,
-): Promise<PayInAdvanceTerminationResult> {
-  const source = await findCreditSource(env.BILLING_DB, subscriptionId, expectedVersion);
+): Promise<PreparedPayInAdvanceTerminationCredit> {
+  const source = await findCreditSource(database, subscriptionId, expectedVersion);
   if (!source) throw new Error("unsupported_pay_in_advance_termination_credit");
   const window = terminationBillingWindowUtc(
     source.current_period_start,
@@ -56,7 +72,6 @@ export async function terminatePayInAdvanceWithCredit(
     throw new Error("credit_note_line_balance_corrupt");
   }
   const creditAmountMinor = Math.min(rounded, remainingLine);
-  const now = terminatedAt;
   const aggregateVersion = expectedVersion + 1;
   const creditNoteId =
     creditAmountMinor > 0
@@ -86,7 +101,7 @@ export async function terminatePayInAdvanceWithCredit(
         aggregateType: "credit_note",
         aggregateId: creditNoteId,
         aggregateVersion: 1,
-        occurredAt: now,
+        occurredAt: terminatedAt,
         causationId: correlationId,
         correlationId,
         payload: {
@@ -101,6 +116,100 @@ export async function terminatePayInAdvanceWithCredit(
         },
       }
     : null;
+  const creationStatements: D1PreparedStatement[] = [];
+  if (creditNoteId && itemId) {
+    creationStatements.push(
+      database
+        .prepare(
+          `INSERT INTO credit_notes
+           (id, organization_id, customer_id, invoice_id, sequential_id, number, status,
+            credit_status, reason, description, currency, total_amount_minor, credit_amount_minor,
+            balance_amount_minor, version, idempotency_key, request_sha256, issuing_date, created_at,
+            updated_at)
+           SELECT ?, ?, ?, i.id, sequence.next_id,
+                  COALESCE(i.number, i.id) || '-CN' || printf('%03d', sequence.next_id),
+                  'finalized', 'available', 'order_cancellation', NULL, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?
+           FROM invoices i
+           CROSS JOIN (
+             SELECT COALESCE(MAX(sequential_id), 0) + 1 AS next_id
+             FROM credit_notes WHERE invoice_id = ?
+           ) sequence
+           JOIN subscriptions s ON s.id = i.subscription_id
+           WHERE i.id = ? AND i.status = 'finalized' AND s.id = ?
+             AND s.organization_id = ? AND s.version = ? AND s.status IN ('active', 'past_due')`,
+        )
+        .bind(
+          creditNoteId,
+          source.organization_id,
+          source.customer_id,
+          source.currency,
+          creditAmountMinor,
+          creditAmountMinor,
+          creditAmountMinor,
+          idempotencyKey,
+          requestHash,
+          terminatedAt.slice(0, 10),
+          terminatedAt,
+          terminatedAt,
+          source.invoice_id,
+          source.invoice_id,
+          subscriptionId,
+          source.organization_id,
+          expectedVersion,
+        ),
+      database
+        .prepare(
+          `INSERT INTO credit_note_items
+           (id, organization_id, credit_note_id, invoice_line_id, amount_minor,
+            precise_amount_minor, currency, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          itemId,
+          source.organization_id,
+          creditNoteId,
+          source.line_id,
+          creditAmountMinor,
+          preciseCredit.toString(),
+          source.currency,
+          terminatedAt,
+        ),
+    );
+  }
+  return {
+    organizationId: source.organization_id,
+    customerId: source.customer_id,
+    externalId: source.external_id,
+    sourceInvoiceId: source.invoice_id,
+    sourceLineId: source.line_id,
+    currency: source.currency,
+    creditNoteId,
+    creditAmountMinor,
+    preciseCredit: preciseCredit.toString(),
+    unusedDays,
+    fullPeriodDays: window.fullPeriodDays,
+    creditNoteEvent,
+    creationStatements,
+  };
+}
+
+export async function terminatePayInAdvanceWithCredit(
+  env: Env,
+  subscriptionId: string,
+  expectedVersion: number,
+  terminatedAt: string,
+  correlationId: string,
+): Promise<PayInAdvanceTerminationResult> {
+  const prepared = await preparePayInAdvanceTerminationCredit(
+    env.BILLING_DB,
+    subscriptionId,
+    expectedVersion,
+    terminatedAt,
+    correlationId,
+  );
+  const now = terminatedAt;
+  const aggregateVersion = expectedVersion + 1;
+  const { creditNoteId, creditAmountMinor, creditNoteEvent } = prepared;
   const subscriptionEvent: DomainEvent = {
     id: `subscription-terminated:${subscriptionId}:v${aggregateVersion}`,
     type: "subscription.terminated",
@@ -112,9 +221,9 @@ export async function terminatePayInAdvanceWithCredit(
     causationId: correlationId,
     correlationId,
     payload: {
-      organizationId: source.organization_id,
+      organizationId: prepared.organizationId,
       subscriptionId,
-      externalSubscriptionId: source.external_id,
+      externalSubscriptionId: prepared.externalId,
       terminatedAt,
       finalInvoiceGenerated: false,
       creditNoteGenerated: creditNoteId !== null,
@@ -122,63 +231,8 @@ export async function terminatePayInAdvanceWithCredit(
       creditAmountMinor,
     },
   };
-  const statements: D1PreparedStatement[] = [];
-  if (creditNoteId && itemId && creditNoteEvent) {
-    statements.push(
-      env.BILLING_DB.prepare(
-        `INSERT INTO credit_notes
-         (id, organization_id, customer_id, invoice_id, sequential_id, number, status,
-          credit_status, reason, description, currency, total_amount_minor, credit_amount_minor,
-          balance_amount_minor, version, idempotency_key, request_sha256, issuing_date, created_at,
-          updated_at)
-         SELECT ?, ?, ?, i.id, sequence.next_id,
-                COALESCE(i.number, i.id) || '-CN' || printf('%03d', sequence.next_id),
-                'finalized', 'available', 'order_cancellation', NULL, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?
-         FROM invoices i
-         CROSS JOIN (
-           SELECT COALESCE(MAX(sequential_id), 0) + 1 AS next_id
-           FROM credit_notes WHERE invoice_id = ?
-         ) sequence
-         JOIN subscriptions s ON s.id = i.subscription_id
-         WHERE i.id = ? AND i.status = 'finalized' AND s.id = ?
-           AND s.organization_id = ? AND s.version = ? AND s.status IN ('active', 'past_due')`,
-      ).bind(
-        creditNoteId,
-        source.organization_id,
-        source.customer_id,
-        source.currency,
-        creditAmountMinor,
-        creditAmountMinor,
-        creditAmountMinor,
-        idempotencyKey,
-        requestHash,
-        terminatedAt.slice(0, 10),
-        now,
-        now,
-        source.invoice_id,
-        source.invoice_id,
-        subscriptionId,
-        source.organization_id,
-        expectedVersion,
-      ),
-      env.BILLING_DB.prepare(
-        `INSERT INTO credit_note_items
-         (id, organization_id, credit_note_id, invoice_line_id, amount_minor,
-          precise_amount_minor, currency, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(
-        itemId,
-        source.organization_id,
-        creditNoteId,
-        source.line_id,
-        creditAmountMinor,
-        preciseCredit.toString(),
-        source.currency,
-        now,
-      ),
-    );
-  }
-  statements.push(
+  const statements: D1PreparedStatement[] = [
+    ...prepared.creationStatements,
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
        SET status = 'terminated', terminated_at = ?, current_period_end = ?,
@@ -190,14 +244,14 @@ export async function terminatePayInAdvanceWithCredit(
       terminatedAt,
       now,
       subscriptionId,
-      source.organization_id,
+      prepared.organizationId,
       expectedVersion,
     ),
-  );
+  ];
   if (creditNoteEvent) {
-    statements.push(outboxStatement(env.BILLING_DB, source.organization_id, creditNoteEvent));
+    statements.push(outboxStatement(env.BILLING_DB, prepared.organizationId, creditNoteEvent));
   }
-  statements.push(outboxStatement(env.BILLING_DB, source.organization_id, subscriptionEvent));
+  statements.push(outboxStatement(env.BILLING_DB, prepared.organizationId, subscriptionEvent));
   let results: D1Result<unknown>[];
   try {
     results = await env.BILLING_DB.batch(statements);
@@ -205,14 +259,14 @@ export async function terminatePayInAdvanceWithCredit(
     const current = await env.BILLING_DB.prepare(
       "SELECT version, status FROM subscriptions WHERE id = ? AND organization_id = ?",
     )
-      .bind(subscriptionId, source.organization_id)
+      .bind(subscriptionId, prepared.organizationId)
       .first<{ version: number; status: string }>();
     if (!current || current.version !== expectedVersion || current.status === "terminated") {
       throw new Error("subscription_version_conflict");
     }
     throw error;
   }
-  const subscriptionUpdateIndex = creditNoteId ? 2 : 0;
+  const subscriptionUpdateIndex = prepared.creationStatements.length;
   if (results[subscriptionUpdateIndex]?.meta.changes !== 1) {
     throw new Error("subscription_version_conflict");
   }

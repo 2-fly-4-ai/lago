@@ -341,9 +341,17 @@ describe("subscription lifecycle", () => {
         .first(),
     ).resolves.toEqual({ total: 1 });
 
+    await env.BILLING_DB.prepare(
+      `INSERT INTO customers
+       (id, organization_id, external_id, currency, metadata_json, created_at, updated_at)
+       VALUES ('customer-lifecycle-combined', 'org-lifecycle', 'customer-combined-external',
+               'USD', '{}', ?, ?)`,
+    )
+      .bind(now, now)
+      .run();
     const usageSource = await api("/api/v1/subscriptions", "POST", {
       subscription: {
-        external_customer_id: "customer-external",
+        external_customer_id: "customer-combined-external",
         external_id: "subscription-external-advance-usage",
         plan_code: "monthly-advance",
       },
@@ -356,23 +364,139 @@ describe("subscription lifecycle", () => {
        (id, organization_id, subscription_id, customer_id, billable_metric_id,
         transaction_id, code, timestamp, timestamp_ms, properties_json, request_sha256,
         archive_key, created_at)
-       VALUES ('event-lifecycle-advance', 'org-lifecycle', ?, 'customer-lifecycle',
+       VALUES ('event-lifecycle-advance', 'org-lifecycle', ?, 'customer-lifecycle-combined',
                'metric-lifecycle-advance', 'advance-usage', 'advance-units', ?, ?,
                '{"quantity":"10"}', 'advance-usage-hash', 'advance-usage-archive', ?)`,
     )
       .bind(usageSourceBody.subscription.lago_id, usageAt, Date.parse(usageAt), usageAt)
       .run();
+    const combinedWallet = await api("/api/v1/wallets", "POST", {
+      wallet: {
+        external_customer_id: "customer-combined-external",
+        name: "Combined termination fallback",
+        code: "combined-termination-fallback",
+        currency: "USD",
+        rate_amount: "1",
+        granted_credits: "1",
+      },
+    });
+    expect(combinedWallet.status).toBe(200);
 
-    const combinedGuard = await api(
+    const combinedTerminated = await api(
       "/api/v1/subscriptions/subscription-external-advance-usage",
       "DELETE",
     );
-    expect(combinedGuard.status).toBe(422);
-    await expect(combinedGuard.json()).resolves.toMatchObject({
-      code: "unsupported_termination_invoicing",
+    const combinedTerminatedBody = await combinedTerminated.json();
+    expect({ status: combinedTerminated.status, body: combinedTerminatedBody }).toMatchObject({
+      status: 200,
+      body: { subscription: { status: "terminated" } },
     });
+    const combinedState = await env.BILLING_DB.prepare(
+      `SELECT i.subtotal_minor, i.credit_notes_minor, i.total_due_minor,
+              il.quantity_decimal, il.precise_amount_minor,
+              cn.total_amount_minor AS credit_total_minor,
+              cn.balance_amount_minor AS credit_balance_minor, cn.credit_status,
+              cna.amount_minor AS applied_minor,
+              (SELECT COUNT(*) FROM invoice_lines all_lines
+               WHERE all_lines.invoice_id = i.id AND all_lines.line_type = 'subscription')
+                AS subscription_lines,
+              (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = cn.id
+               AND o.event_type = 'credit_note.created') AS credit_events,
+              (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = cn.id
+               AND o.event_type = 'credit_note.applied') AS applied_events,
+              (SELECT rowid FROM outbox_events o WHERE o.aggregate_id = cn.id
+               AND o.event_type = 'credit_note.created') AS created_event_rowid,
+              (SELECT rowid FROM outbox_events o WHERE o.aggregate_id = cn.id
+               AND o.event_type = 'credit_note.applied') AS applied_event_rowid
+       FROM invoices i JOIN invoice_lines il ON il.invoice_id = i.id AND il.line_type = 'usage'
+       JOIN credit_note_applications cna ON cna.invoice_id = i.id
+       JOIN credit_notes cn ON cn.id = cna.credit_note_id
+       WHERE i.subscription_id = ?`,
+    )
+      .bind(usageSourceBody.subscription.lago_id)
+      .first<{
+        subtotal_minor: number;
+        credit_notes_minor: number;
+        total_due_minor: number;
+        quantity_decimal: string;
+        precise_amount_minor: string;
+        credit_total_minor: number;
+        credit_balance_minor: number;
+        credit_status: string;
+        applied_minor: number;
+        subscription_lines: number;
+        credit_events: number;
+        applied_events: number;
+        created_event_rowid: number;
+        applied_event_rowid: number;
+      }>();
+    expect(combinedState).toMatchObject({
+      subtotal_minor: 25,
+      credit_notes_minor: 25,
+      total_due_minor: 0,
+      quantity_decimal: "10",
+      precise_amount_minor: "25",
+      credit_status: "available",
+      applied_minor: 25,
+      subscription_lines: 0,
+      credit_events: 1,
+      applied_events: 1,
+    });
+    expect(combinedState?.credit_total_minor).toBeGreaterThan(25);
+    expect(combinedState?.credit_balance_minor).toBe((combinedState?.credit_total_minor ?? 0) - 25);
+    expect(combinedState?.created_event_rowid).toBeLessThan(
+      combinedState?.applied_event_rowid ?? 0,
+    );
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT w.balance_minor, w.consumed_minor,
+                (SELECT COUNT(*) FROM wallet_transactions wt
+                 WHERE wt.wallet_id = w.id AND wt.transaction_type = 'outbound') AS outbound
+         FROM wallets w WHERE w.customer_id = 'customer-lifecycle-combined'`,
+      ).first(),
+    ).resolves.toEqual({ balance_minor: 100, consumed_minor: 0, outbound: 0 });
+    expect(
+      (await api("/api/v1/subscriptions/subscription-external-advance-usage", "DELETE")).status,
+    ).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT (SELECT COUNT(*) FROM invoices WHERE subscription_id = ?) AS invoices,
+                (SELECT COUNT(*) FROM credit_notes WHERE invoice_id IN
+                  (SELECT id FROM invoices WHERE subscription_id = ?)) AS credit_notes,
+                (SELECT COUNT(*) FROM credit_note_applications WHERE invoice_id IN
+                  (SELECT id FROM invoices WHERE subscription_id = ?)) AS applications`,
+      )
+        .bind(
+          usageSourceBody.subscription.lago_id,
+          usageSourceBody.subscription.lago_id,
+          usageSourceBody.subscription.lago_id,
+        )
+        .first(),
+    ).resolves.toEqual({ invoices: 2, credit_notes: 1, applications: 1 });
+
+    const skipSource = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-external",
+        external_id: "subscription-external-advance-usage-skip",
+        plan_code: "monthly-advance",
+      },
+    });
+    expect(skipSource.status).toBe(200);
+    const skipSourceBody = await skipSource.json<{ subscription: { lago_id: string } }>();
+    const skipUsageAt = new Date().toISOString();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO usage_events
+       (id, organization_id, subscription_id, customer_id, billable_metric_id,
+        transaction_id, code, timestamp, timestamp_ms, properties_json, request_sha256,
+        archive_key, created_at)
+       VALUES ('event-lifecycle-advance-skip', 'org-lifecycle', ?, 'customer-lifecycle',
+               'metric-lifecycle-advance', 'advance-usage-skip', 'advance-units', ?, ?,
+               '{"quantity":"10"}', 'advance-usage-skip-hash', 'advance-usage-skip-archive', ?)`,
+    )
+      .bind(skipSourceBody.subscription.lago_id, skipUsageAt, Date.parse(skipUsageAt), skipUsageAt)
+      .run();
     const usageTerminated = await api(
-      "/api/v1/subscriptions/subscription-external-advance-usage?on_termination_credit_note=skip",
+      "/api/v1/subscriptions/subscription-external-advance-usage-skip?on_termination_credit_note=skip",
       "DELETE",
     );
     expect(usageTerminated.status).toBe(200);
@@ -389,7 +513,7 @@ describe("subscription lifecycle", () => {
          FROM invoices i JOIN invoice_lines il ON il.invoice_id = i.id
          WHERE i.subscription_id = ? AND il.line_type = 'usage'`,
       )
-        .bind(usageSourceBody.subscription.lago_id)
+        .bind(skipSourceBody.subscription.lago_id)
         .first(),
     ).resolves.toEqual({
       subtotal_minor: 25,
@@ -402,9 +526,64 @@ describe("subscription lifecycle", () => {
     });
     await expect(
       env.BILLING_DB.prepare("SELECT COUNT(*) AS total FROM invoices WHERE subscription_id = ?")
-        .bind(usageSourceBody.subscription.lago_id)
+        .bind(skipSourceBody.subscription.lago_id)
         .first(),
     ).resolves.toEqual({ total: 2 });
+
+    await env.BILLING_DB.prepare(
+      `INSERT INTO customers
+       (id, organization_id, external_id, currency, metadata_json, created_at, updated_at)
+       VALUES ('customer-lifecycle-rollback', 'org-lifecycle', 'customer-rollback-external',
+               'USD', '{}', ?, ?)`,
+    )
+      .bind(now, now)
+      .run();
+    const rollbackSource = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-rollback-external",
+        external_id: "subscription-external-advance-rollback",
+        plan_code: "monthly-advance",
+      },
+    });
+    expect(rollbackSource.status).toBe(200);
+    const rollbackSourceBody = await rollbackSource.json<{ subscription: { lago_id: string } }>();
+    expect(rollbackSourceBody.subscription.lago_id).toMatch(/^[0-9a-f-]{36}$/);
+    await env.BILLING_DB.prepare(
+      `CREATE TRIGGER abort_combined_termination_invoice
+       BEFORE INSERT ON invoices
+       WHEN NEW.subscription_id = '${rollbackSourceBody.subscription.lago_id}'
+         AND NEW.status = 'finalized'
+       BEGIN
+         SELECT RAISE(ABORT, 'synthetic_combined_termination_failure');
+       END`,
+    ).run();
+    const rolledBack = await api(
+      "/api/v1/subscriptions/subscription-external-advance-rollback",
+      "DELETE",
+    );
+    expect(rolledBack.status).toBe(500);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT s.status, s.version,
+                (SELECT COUNT(*) FROM invoices i WHERE i.subscription_id = s.id) AS invoices,
+                (SELECT COUNT(*) FROM credit_notes cn JOIN invoices i ON i.id = cn.invoice_id
+                  WHERE i.subscription_id = s.id) AS credit_notes,
+                (SELECT COUNT(*) FROM credit_note_applications cna JOIN invoices i ON i.id = cna.invoice_id
+                  WHERE i.subscription_id = s.id) AS applications,
+                (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = s.id
+                  AND o.event_type = 'subscription.terminated') AS termination_events
+         FROM subscriptions s WHERE s.id = ?`,
+      )
+        .bind(rollbackSourceBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({
+      status: "active",
+      version: 1,
+      invoices: 1,
+      credit_notes: 0,
+      applications: 0,
+      termination_events: 0,
+    });
 
     await env.BILLING_DB.prepare(
       `INSERT INTO minimum_commitments

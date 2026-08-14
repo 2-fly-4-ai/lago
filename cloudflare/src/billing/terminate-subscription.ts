@@ -5,6 +5,7 @@ import { couponCreditStatements } from "./coupon-credits";
 import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
 import { paymentDueDate } from "./payment-terms";
+import { preparePayInAdvanceTerminationCredit } from "./pay-in-advance-termination-credit";
 import {
   calculateTerminationSubscriptionInvoice,
   findBillableSubscription,
@@ -19,6 +20,8 @@ export type TerminateSubscriptionWithInvoiceResult = {
   lineCount: number;
   invoiceEvent: DomainEvent;
   subscriptionEvent: DomainEvent;
+  creditNoteId: string | null;
+  creditAmountMinor: number;
 };
 
 export async function terminateSubscriptionWithInvoice(
@@ -28,6 +31,7 @@ export async function terminateSubscriptionWithInvoice(
   terminatedAt: string,
   correlationId: string,
   publishImmediately = true,
+  includeUnusedCredit = false,
 ): Promise<TerminateSubscriptionWithInvoiceResult> {
   const subscription = await findBillableSubscription(env.BILLING_DB, subscriptionId);
   if (!subscription) throw new Error("subscription_not_found");
@@ -39,12 +43,27 @@ export async function terminateSubscriptionWithInvoice(
     `${subscription.id}:v${expectedVersion + 1}:${subscription.current_period_start}`,
   );
   const invoiceId = await deterministicUuid("subscription-termination-invoice", terminationId);
+  const unusedCredit = includeUnusedCredit
+    ? await preparePayInAdvanceTerminationCredit(
+        env.BILLING_DB,
+        subscriptionId,
+        expectedVersion,
+        terminatedAt,
+        correlationId,
+      )
+    : null;
   const calculation = await calculateTerminationSubscriptionInvoice(
     env.BILLING_DB,
     subscription,
     invoiceId,
     terminationId,
     terminatedAt,
+    unusedCredit?.creditNoteId
+      ? {
+          creditNoteId: unusedCredit.creditNoteId,
+          amountMinor: unusedCredit.creditAmountMinor,
+        }
+      : undefined,
   );
   const now = terminatedAt;
   const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
@@ -93,7 +112,9 @@ export async function terminateSubscriptionWithInvoice(
       terminatedAt,
       finalInvoiceGenerated: true,
       finalInvoiceId: invoiceId,
-      creditNoteGenerated: false,
+      creditNoteGenerated: Boolean(unusedCredit?.creditNoteId),
+      creditNoteId: unusedCredit?.creditNoteId,
+      creditAmountMinor: unusedCredit?.creditAmountMinor,
     },
   };
   const couponStatements = couponCreditStatements(
@@ -125,7 +146,20 @@ export async function terminateSubscriptionWithInvoice(
       correlationId,
     ),
   );
+  const creditCreationStatements: D1PreparedStatement[] = [
+    ...(unusedCredit?.creationStatements ?? []),
+    ...(unusedCredit?.creditNoteEvent
+      ? [
+          outboxStatement(
+            env.BILLING_DB,
+            subscription.organization_id,
+            unusedCredit.creditNoteEvent,
+          ),
+        ]
+      : []),
+  ];
   const statements: D1PreparedStatement[] = [
+    ...creditCreationStatements,
     env.BILLING_DB.prepare(
       `INSERT INTO invoices
        (id, organization_id, customer_id, subscription_id, number, status, payment_status,
@@ -215,12 +249,13 @@ export async function terminateSubscriptionWithInvoice(
   if (!subscriptionUpdate || subscriptionUpdate.meta.changes !== 1) {
     throw new Error("subscription_version_conflict");
   }
-  const firstCouponUpdate = 2 + calculation.lines.length;
+  const firstCouponUpdate = creditCreationStatements.length + 2 + calculation.lines.length;
   for (let offset = 0; offset < calculation.couponCredits.length; offset += 1) {
     const update = results[firstCouponUpdate + offset * 3];
     if (!update || update.meta.changes !== 1) throw new Error("coupon_version_conflict");
   }
   if (publishImmediately) {
+    if (unusedCredit?.creditNoteEvent) await env.DOMAIN_EVENTS.send(unusedCredit.creditNoteEvent);
     await env.DOMAIN_EVENTS.send(invoiceEvent);
     await env.DOMAIN_EVENTS.send(subscriptionEvent);
   }
@@ -231,6 +266,8 @@ export async function terminateSubscriptionWithInvoice(
     lineCount: calculation.lines.length,
     invoiceEvent,
     subscriptionEvent,
+    creditNoteId: unusedCredit?.creditNoteId ?? null,
+    creditAmountMinor: unusedCredit?.creditAmountMinor ?? 0,
   };
 }
 

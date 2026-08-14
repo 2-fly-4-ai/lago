@@ -248,17 +248,6 @@ async function terminateSubscription(
       "Pay-in-advance termination currently supports only credit or skip",
     );
   }
-  if (
-    onTerminationInvoice === "generate" &&
-    subscription.plan_pay_in_advance === 1 &&
-    onTerminationCreditNote !== "skip"
-  ) {
-    throw new ApiError(
-      422,
-      "unsupported_termination_invoicing",
-      "Combined pay-in-advance final invoicing and unused-period crediting is not implemented atomically",
-    );
-  }
   if (subscription.status !== "active" && subscription.status !== "past_due") {
     throw new ApiError(422, "subscription_not_terminable", "Subscription is not active");
   }
@@ -348,11 +337,14 @@ async function terminateSubscription(
         subscription.version,
         terminatedAt,
         requestId,
+        true,
+        subscription.plan_pay_in_advance === 1 && onTerminationCreditNote === "credit",
       );
       await account.completeCommand(reservationKey, {
         terminatedAt,
         eventId: result.subscriptionEvent.id,
         invoiceId: result.invoiceId,
+        creditNoteId: result.creditNoteId,
       });
       subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
       if (!subscription) throw new ApiError(500, "persistence_error", "Subscription disappeared");

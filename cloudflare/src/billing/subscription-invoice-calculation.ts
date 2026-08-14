@@ -95,6 +95,10 @@ type SubscriptionInvoiceOptions =
       context: "termination";
       terminatedAt: string;
       window: TerminationBillingWindow;
+      additionalCreditNote?: {
+        creditNoteId: string;
+        amountMinor: number;
+      };
     };
 
 export async function findBillableSubscription(
@@ -458,10 +462,27 @@ export async function calculateSubscriptionInvoice(
     subscription.currency,
     subtotalMinor + taxMinor - couponsMinor,
   );
-  const creditNotesMinor = creditNoteAllocations.reduce(
+  let creditNotesMinor = creditNoteAllocations.reduce(
     (total, allocation) => safeAdd(total, allocation.amountMinor),
     0,
   );
+  if (options.context === "termination" && options.additionalCreditNote) {
+    const remainingDue = subtotalMinor + taxMinor - couponsMinor - creditNotesMinor;
+    const amountMinor = Math.min(options.additionalCreditNote.amountMinor, remainingDue);
+    if (amountMinor > 0) {
+      creditNoteAllocations.push({
+        creditNoteId: options.additionalCreditNote.creditNoteId,
+        creditNoteVersion: 1,
+        amountMinor,
+        applicationId: await deterministicUuid(
+          "credit-note-application",
+          `${invoiceId}:${options.additionalCreditNote.creditNoteId}`,
+        ),
+        consumed: amountMinor === options.additionalCreditNote.amountMinor,
+      });
+      creditNotesMinor = safeAdd(creditNotesMinor, amountMinor);
+    }
+  }
   const walletAllocations = await calculateWalletAllocations(
     database,
     subscription.organization_id,
@@ -498,6 +519,7 @@ export async function calculateTerminationSubscriptionInvoice(
   invoiceId: string,
   terminationId: string,
   terminatedAt: string,
+  additionalCreditNote?: { creditNoteId: string; amountMinor: number },
 ): Promise<SubscriptionInvoiceCalculation> {
   const unsupported = await database
     .prepare(
@@ -521,7 +543,7 @@ export async function calculateTerminationSubscriptionInvoice(
     terminationId,
     subscription.current_period_start,
     subscription.current_period_end,
-    { context: "termination", terminatedAt, window },
+    { context: "termination", terminatedAt, window, additionalCreditNote },
   );
 }
 
