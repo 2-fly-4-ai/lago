@@ -27,6 +27,10 @@ remaining Lago feature inventory is dispositioned and ported.
   period. Standalone usage charges support create/list/show, optimistic core updates, soft deletion,
   and deterministic code reuse. Attached plans retain Lago's restricted mutable charge subset;
   every charge mutation invalidates affected drafts while finalized invoice lines remain immutable.
+  Billable metrics expose the same active/version lifecycle: deletion atomically retires attached
+  charges, invalidates drafts, hides retired usage and wallet targets immediately, and enqueues
+  bounded event/R2 cleanup. Deterministic metric generations allow safe same-code recreation while
+  finalized lines and relational event history remain auditable.
   Supported pay-in-arrears, non-prorated fixed charges also expose standalone create/list/show,
   optimistic core update, and soft-delete routes with the same draft/finalized invariants. Their
   retained hard uniqueness constraint means a deleted fixed-charge code cannot yet be reused.
@@ -106,8 +110,9 @@ remaining Lago feature inventory is dispositioned and ported.
   coupon-expiration, wallet-expiration, ongoing wallet projection/threshold-grant, and interval
   wallet top-up paths on their original slots, performs 90-day
   inbound/outbound webhook retention, records each run in D1, publishes the outbox, and reports due
-  schedules whose behavior is not yet ported. Inbound retention records R2 deletion tasks
-  transactionally before removing receipt rows, so storage outages remain retryable.
+  schedules whose behavior is not yet ported. Each run also drains retired billable-metric events
+  in bounded D1/R2 batches. Inbound and usage-event retention records R2 deletion tasks
+  transactionally before removing or tombstoning source rows, so storage outages remain retryable.
 - R2: immutable provider webhook, usage-event, and invoice-document archives.
 - Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `4bc789fe-9d60-4469-9187-56090ddab77e`
+- Latest verified version: `487d002b-4eb1-4332-a2a1-676f9211141a`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -33,7 +33,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `*/5 * * * *`                                                      | Worker scheduled handler  | Deterministic legacy-schedule dispatch                             |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
-Applied D1 migrations: `0001_foundation.sql` through `0042_fixed_charge_lifecycle.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0043_billable_metric_lifecycle.sql`.
 
 ## Verified behavior
 
@@ -367,6 +367,21 @@ Applied D1 migrations: `0001_foundation.sql` through `0042_fixed_charge_lifecycl
   events, wallets, wallet targets, wallet transactions, and outbox events plus 146 schedule audits.
   All three external-action flags remain disabled, with no route, secret, provider action, customer
   data, or billing data added.
+- The billable-metric lifecycle deployment applied only `0043_billable_metric_lifecycle.sql`;
+  remote schema verification found 43 migrations, zero foreign-key violations, the event tombstone
+  column and three partial active-event indexes, plus durable cleanup and transaction-local mutation
+  guard tables. Metric deletion atomically retires attached charges, invalidates drafts, hides
+  retired events and wallet targets, and enqueues bounded five-minute D1/R2 cleanup. Finalized lines
+  remain immutable, relational event history is retained, and deterministic generations permit
+  same-code recreation without primary-key collisions. Isolated Worker version
+  `487d002b-4eb1-4332-a2a1-676f9211141a` retained only the existing workers.dev URL, `*/5` Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow bindings. The deployed bundle was
+  789.20 KiB (137.19 KiB gzip) with a 5 ms startup. Health/readiness returned `200`/`200`, and
+  unauthenticated metric deletion returned `401`. Aggregate-only verification found zero
+  organizations, customers, plans, subscriptions, invoices, billable metrics, usage charges, fixed
+  charges, usage events, wallets, wallet targets, wallet transactions, outbox events, cleanup tasks,
+  and mutation guards plus 151 schedule audits. All three external-action flags remain disabled,
+  with no route, secret, provider action, customer data, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

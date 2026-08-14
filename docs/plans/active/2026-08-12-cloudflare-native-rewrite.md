@@ -1645,3 +1645,31 @@ resource and mutation described.
   verification remained empty apart from 146 schedule audits. All three external-action flags
   remain `0`; no production route, domain, secret, provider action, customer data, or billing row
   was added.
+- 2026-08-15: Ported the provider-free billable-metric lifecycle. Update and deletion use a
+  transaction-local D1 mutation guard so a losing concurrent writer cannot emit a false outbox
+  event. Deletion atomically soft-deletes the metric and every attached active charge, allowing the
+  existing dependency triggers to invalidate affected drafts while finalized invoice lines retain
+  their persisted source IDs and amounts. Retired events and wallet targets disappear from API,
+  rating, allocation, and projection reads immediately. One durable cleanup task per metric lets
+  the five-minute Workflow tombstone raw events and delete immutable R2 archives in bounded,
+  retryable batches without making the API request scale with event history. Relational event rows
+  remain for audit and idempotency, and deterministic metric generations allow safe same-code
+  recreation without colliding with historical primary keys. Evidence covers attached-charge
+  cascade, immediate read exclusion, draft invalidation, immutable finalized history, inactive
+  wallet targeting, event tombstones, R2 cleanup, cleared mutation guards, repeated deletion, and
+  code recreation. All 157 tests across 31 files pass in bounded Workers-runtime groups; the one
+  unrelated termination-credit timeout under a fully parallel run passed immediately in isolation.
+  All 43 migrations replay from empty local D1 with no foreign-key violations. Formatting, strict
+  lint, generated inventory/types, TypeScript, and a 789.20 KiB (137.19 KiB gzip) dry-run bundle
+  are green. Feature checkpoint: `5c8a9d5`.
+- 2026-08-15: Remote preflight on the explicit SERP account showed only
+  `0043_billable_metric_lifecycle.sql` pending and zero organizations, customers, plans,
+  subscriptions, invoices, billable metrics, usage charges, fixed charges, usage events, wallets,
+  targets, transactions, outbox rows, cleanup tasks, and mutation guards. Applied only that
+  migration in 12.49 ms, then verified 43 migrations, zero foreign-key violations, the event
+  tombstone column, all three partial active-event indexes, and both cleanup/guard tables. Deployed
+  isolated Worker version `487d002b-4eb1-4332-a2a1-676f9211141a` with a 5 ms startup;
+  health/readiness returned `200`/`200`, and unauthenticated metric deletion returned `401`.
+  Post-deploy aggregate-only verification remained empty apart from 151 schedule audits. All three
+  external-action flags remain `0`; no production route, domain, secret, provider action, customer
+  data, or billing row was added.
