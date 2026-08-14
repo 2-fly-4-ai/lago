@@ -221,7 +221,11 @@ Required evidence for a new aggregate or a boundary change:
   The default combined mode creates that unused-period note before finalizing bounded in-arrears
   usage, applies the new credit before wallet lots, never repeats the prepaid base line, and commits
   both ledgers plus the subscription transition and ordered outbox evidence in one D1 batch. A
-  separate mode may skip credit creation. At positive grace, an unused-period note tied to a draft
+  separate mode may skip credit creation. Pay-in-advance minimum commitments reconcile the
+  prorated target against gross eligible plan, usage, and fixed-charge fees already invoiced in the
+  same subscription period plus current termination fees; credit notes do not reduce that gross
+  history. The current termination invoice is excluded when its draft is refreshed. At positive
+  grace, an unused-period note tied to a draft
   prepaid source invoice has a separate non-allocatable state. Source refresh preserves the original
   unused/full-period ratio and item identity, source finalization makes the note allocatable and
   emits its event after the invoice event, and a guard prevents the termination draft from
@@ -230,8 +234,8 @@ Required evidence for a new aggregate or a boundary change:
   successive prepaid upgrades, including a combined invoice whose header points at an earlier
   generation; credit repricing matches the exact source plan line. Coupon, tax, or wallet
   adjustments on that still-draft source,
-  tenant-local termination dates, prorated or pay-in-advance fixed charges, split-window or
-  pay-in-advance commitment reconciliation, allocated-source adjustments, refunds, and offsets
+  tenant-local termination dates, prorated or pay-in-advance fixed charges, split-window commitment
+  reconciliation, allocated-source adjustments, refunds, and offsets
   still need explicit lifecycle rules.
 - A base subscription creates an initial invoice only when its plan snapshots
   `pay_in_advance = 1`; in-arrears starts seed the billing period without an invoice. Recurring

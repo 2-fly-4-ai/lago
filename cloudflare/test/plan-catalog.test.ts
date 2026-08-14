@@ -269,6 +269,8 @@ describe("Lago-compatible plan catalog", () => {
         interval: "monthly",
         amount_cents: 900,
         amount_currency: "USD",
+        pay_in_advance: true,
+        minimum_commitment: { amount_cents: 100000 },
       },
     });
     expect(created.status).toBe(200);
@@ -286,11 +288,11 @@ describe("Lago-compatible plan catalog", () => {
         `INSERT INTO subscriptions
          (id, organization_id, customer_id, plan_id, external_id, status, started_at,
           current_period_start, current_period_end, version, created_at, updated_at,
-          subscription_at, generation, transition_kind)
+          subscription_at, generation, transition_kind, on_termination_credit_note)
          VALUES ('subscription-async-active', 'org-plan-catalog', 'customer-async-plan', ?,
                  'subscription-async', 'active', '2026-08-01T00:00:00.000Z',
                  '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 1, ?, ?,
-                 '2026-08-01T00:00:00.000Z', 1, 'initial')`,
+                 '2026-08-01T00:00:00.000Z', 1, 'initial', 'skip')`,
       ).bind(planId, now, now),
       env.BILLING_DB.prepare(
         `INSERT INTO subscriptions
@@ -367,10 +369,14 @@ describe("Lago-compatible plan catalog", () => {
     });
     await expect(
       env.BILLING_DB.prepare(
-        `SELECT status, COUNT(*) AS total FROM invoices
-         WHERE subscription_id = 'subscription-async-active' GROUP BY status`,
+        `SELECT invoice.status, COUNT(*) AS total,
+                (SELECT COUNT(*) FROM invoice_lines line
+                 WHERE line.invoice_id = invoice.id AND line.line_type = 'commitment')
+                  AS commitment_lines
+         FROM invoices invoice
+         WHERE invoice.subscription_id = 'subscription-async-active' GROUP BY invoice.status`,
       ).first(),
-    ).resolves.toEqual({ status: "finalized", total: 1 });
+    ).resolves.toEqual({ status: "finalized", total: 1, commitment_lines: 1 });
     await expect(
       env.BILLING_DB.prepare(
         `SELECT status, COUNT(*) AS total FROM plan_deletion_subscription_tasks

@@ -559,8 +559,18 @@ export async function calculateSubscriptionInvoice(
     (total, line) => total.add(Decimal.parse(line.precise)),
     Decimal.zero(),
   );
+  const historicalCommitmentFees =
+    options.context === "termination" && subscription.plan_pay_in_advance === 1
+      ? await loadHistoricalCommitmentFees(
+          database,
+          subscription,
+          invoiceId,
+          periodStart,
+          periodEnd,
+        )
+      : { roundedMinor: 0, preciseMinor: Decimal.zero() };
   const commitmentTargetMinor =
-    options.context === "termination" && subscription.plan_pay_in_advance === 0
+    options.context === "termination"
       ? safeMinorInteger(
           Decimal.parse(options.window.billableDays)
             .multiply(Decimal.parse(await minimumCommitmentAmount(database, subscription.plan_id)))
@@ -573,8 +583,8 @@ export async function calculateSubscriptionInvoice(
           database,
           subscription.plan_id,
           invoiceId,
-          subtotalMinor,
-          preciseFees,
+          safeAdd(subtotalMinor, historicalCommitmentFees.roundedMinor),
+          preciseFees.add(historicalCommitmentFees.preciseMinor),
           commitmentTargetMinor,
         )
       : null;
@@ -597,6 +607,7 @@ export async function calculateSubscriptionInvoice(
           ? {
               contextType: "termination",
               targetAmountMinor: commitmentTargetMinor,
+              historicalFeesMinor: historicalCommitmentFees.roundedMinor,
               billableDays: options.window.billableDays,
               fullPeriodDays: options.window.fullPeriodDays,
             }
@@ -659,16 +670,6 @@ export async function calculateTerminationSubscriptionInvoice(
   additionalCreditNote?: { creditNoteId: string; amountMinor: number },
   immutablePeriod?: { periodStart: string; periodEnd: string },
 ): Promise<SubscriptionInvoiceCalculation> {
-  const unsupported = await database
-    .prepare(
-      `SELECT EXISTS(SELECT 1 FROM minimum_commitments
-                WHERE organization_id = ? AND plan_id = ?) AS minimum_commitment`,
-    )
-    .bind(subscription.organization_id, subscription.plan_id)
-    .first<{ minimum_commitment: number }>();
-  if (unsupported?.minimum_commitment === 1 && subscription.plan_pay_in_advance === 1) {
-    throw new Error("unsupported_termination_minimum_commitment");
-  }
   const periodStart = immutablePeriod?.periodStart ?? subscription.current_period_start;
   const periodEnd = immutablePeriod?.periodEnd ?? subscription.current_period_end;
   const window = terminationBillingWindowUtc(periodStart, periodEnd, terminatedAt);
@@ -810,6 +811,64 @@ async function minimumCommitmentAmount(database: D1Database, planId: string): Pr
     .bind(planId)
     .first<{ amount_minor: number }>();
   return commitment?.amount_minor ?? 0;
+}
+
+async function loadHistoricalCommitmentFees(
+  database: D1Database,
+  subscription: BillableSubscription,
+  currentInvoiceId: string,
+  periodStart: string,
+  periodEnd: string,
+): Promise<{ roundedMinor: number; preciseMinor: Decimal }> {
+  const result = await database
+    .prepare(
+      `SELECT line.amount_minor,
+              COALESCE(line.precise_amount_minor, CAST(line.amount_minor AS TEXT))
+                AS precise_amount_minor
+       FROM invoice_lines line JOIN invoices invoice ON invoice.id = line.invoice_id
+       WHERE invoice.organization_id = ? AND invoice.id <> ?
+         AND invoice.status IN ('draft', 'finalized')
+         AND EXISTS (
+           SELECT 1 FROM invoice_subscriptions owned
+           WHERE owned.invoice_id = invoice.id AND owned.subscription_id = ?
+             AND owned.period_start IS NOT NULL AND owned.period_end IS NOT NULL
+             AND owned.period_start < ? AND owned.period_end > ?
+         )
+         AND (
+           (line.line_type = 'subscription' AND line.source_type = 'plan'
+             AND line.source_id = ?)
+           OR (line.line_type = 'usage' AND EXISTS (
+             SELECT 1 FROM charges charge
+             WHERE charge.plan_id = ?
+               AND charge.id = COALESCE(json_extract(line.metadata_json, '$.chargeId'),
+                                        line.source_id)
+           ))
+           OR (line.line_type = 'fixed_charge' AND EXISTS (
+             SELECT 1 FROM fixed_charges fixed
+             WHERE fixed.plan_id = ? AND fixed.id = line.source_id
+           ))
+         )
+       ORDER BY invoice.created_at, invoice.id, line.id LIMIT 10001`,
+    )
+    .bind(
+      subscription.organization_id,
+      currentInvoiceId,
+      subscription.id,
+      periodEnd,
+      periodStart,
+      subscription.plan_id,
+      subscription.plan_id,
+      subscription.plan_id,
+    )
+    .all<{ amount_minor: number; precise_amount_minor: string }>();
+  if (result.results.length > 10000) throw new Error("commitment_fee_history_too_large");
+  let roundedMinor = 0;
+  let preciseMinor = Decimal.zero();
+  for (const row of result.results) {
+    roundedMinor = safeAdd(roundedMinor, row.amount_minor);
+    preciseMinor = preciseMinor.add(Decimal.parse(row.precise_amount_minor));
+  }
+  return { roundedMinor, preciseMinor };
 }
 
 async function loadEvents(

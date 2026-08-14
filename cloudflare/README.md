@@ -75,9 +75,12 @@ remaining Lago feature inventory is dispositioned and ported.
   applications do not reduce the creditable source line. The default combined
   command creates that credit, finalizes bounded in-arrears usage without rebilling the base, and
   applies the new balance before wallet credits in one ordered D1 batch. The usage invoice can also
-  be generated while explicitly skipping unused-period crediting. Backdated one-time plans,
-  tenant-local termination dates, refund/offset modes, allocated source invoices,
-  prorated/pay-in-advance fixed charges, and pay-in-advance commitment termination remain guarded.
+  be generated while explicitly skipping unused-period crediting. A pay-in-advance minimum
+  commitment uses the same prorated termination target, subtracting gross eligible plan, usage, and
+  fixed fees already invoiced in the period plus the current termination fees. Credit notes do not
+  reduce that gross fee history, and refresh excludes the current draft so its true-up is stable.
+  Backdated one-time plans, tenant-local termination dates, refund/offset modes, allocated source
+  invoices, and prorated/pay-in-advance fixed charges remain guarded.
   In-arrears termination with a positive grace period instead creates a non-consuming draft from an
   immutable termination context; manual or scheduled refresh uses the original period boundaries,
   and finalization alone allocates coupon, credit-note, and wallet balances. Pay-in-advance grace

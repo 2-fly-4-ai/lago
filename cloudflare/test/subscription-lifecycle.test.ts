@@ -806,7 +806,7 @@ describe("subscription lifecycle", () => {
     await env.BILLING_DB.prepare(
       `INSERT INTO minimum_commitments
        (id, organization_id, plan_id, amount_minor, invoice_display_name, created_at, updated_at)
-       VALUES ('commitment-lifecycle-advance', 'org-lifecycle', 'plan-lifecycle-advance', 2000,
+       VALUES ('commitment-lifecycle-advance', 'org-lifecycle', 'plan-lifecycle-advance', 100000,
                'Advance minimum', ?, ?)`,
     )
       .bind(now, now)
@@ -819,13 +819,101 @@ describe("subscription lifecycle", () => {
       },
     });
     expect(guardedSource.status).toBe(200);
-    const commitmentGuard = await api(
-      "/api/v1/subscriptions/subscription-external-advance-commitment?on_termination_invoice=skip",
+    const guardedSourceBody = await guardedSource.json<{
+      subscription: { lago_id: string };
+    }>();
+    await env.BILLING_DB.prepare(
+      `UPDATE customers SET invoice_grace_period = 2, updated_at = ?
+       WHERE id = 'customer-lifecycle'`,
+    )
+      .bind(now)
+      .run();
+    const commitmentTermination = await api(
+      "/api/v1/subscriptions/subscription-external-advance-commitment",
       "DELETE",
     );
-    expect(commitmentGuard.status).toBe(422);
-    await expect(commitmentGuard.json()).resolves.toMatchObject({
-      code: "unsupported_termination_minimum_commitment",
+    expect(commitmentTermination.status).toBe(200);
+    await expect(commitmentTermination.json()).resolves.toMatchObject({
+      subscription: { status: "terminated" },
+    });
+    const commitmentState = await env.BILLING_DB.prepare(
+      `SELECT invoice.id, invoice.status, invoice.version, line.amount_minor,
+              line.precise_amount_minor, line.metadata_json
+       FROM invoices invoice JOIN invoice_lines line ON line.invoice_id = invoice.id
+       WHERE invoice.subscription_id = ? AND line.line_type = 'commitment' LIMIT 1`,
+    )
+      .bind(guardedSourceBody.subscription.lago_id)
+      .first<{
+        id: string;
+        status: string;
+        version: number;
+        amount_minor: number;
+        precise_amount_minor: string;
+        metadata_json: string;
+      }>();
+    expect(commitmentState).not.toBeNull();
+    const commitmentMetadata = JSON.parse(commitmentState!.metadata_json) as {
+      targetAmountMinor: number;
+      historicalFeesMinor: number;
+      billableDays: number;
+      fullPeriodDays: number;
+    };
+    expect(commitmentState).toMatchObject({
+      status: "draft",
+      version: 1,
+      amount_minor: commitmentMetadata.targetAmountMinor - 1000,
+    });
+    expect(Number(commitmentState!.precise_amount_minor)).toBeCloseTo(
+      commitmentMetadata.targetAmountMinor - 1000,
+      10,
+    );
+    expect(commitmentMetadata).toMatchObject({ historicalFeesMinor: 1000, billableDays: 1 });
+
+    const commitmentRefresh = await api(`/api/v1/invoices/${commitmentState!.id}/refresh`, "PUT");
+    expect(commitmentRefresh.status).toBe(200);
+    await expect(commitmentRefresh.json()).resolves.toMatchObject({
+      invoice: { status: "draft", version_number: 2 },
+    });
+    const refreshedCommitment = await env.BILLING_DB.prepare(
+      `SELECT invoice.status, invoice.version, line.amount_minor, line.precise_amount_minor,
+              line.metadata_json
+       FROM invoices invoice JOIN invoice_lines line ON line.invoice_id = invoice.id
+       WHERE invoice.id = ? AND line.line_type = 'commitment'`,
+    )
+      .bind(commitmentState!.id)
+      .first<{
+        status: string;
+        version: number;
+        amount_minor: number;
+        precise_amount_minor: string;
+        metadata_json: string;
+      }>();
+    expect(refreshedCommitment).toEqual({
+      status: "draft",
+      version: 2,
+      amount_minor: commitmentState!.amount_minor,
+      precise_amount_minor: commitmentState!.precise_amount_minor,
+      metadata_json: commitmentState!.metadata_json,
+    });
+
+    const commitmentFinalize = await api(`/api/v1/invoices/${commitmentState!.id}/finalize`, "PUT");
+    expect(commitmentFinalize.status).toBe(200);
+    await expect(commitmentFinalize.json()).resolves.toMatchObject({
+      invoice: { status: "finalized", version_number: 3 },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT invoice.status, invoice.version, line.amount_minor, line.metadata_json
+         FROM invoices invoice JOIN invoice_lines line ON line.invoice_id = invoice.id
+         WHERE invoice.id = ? AND line.line_type = 'commitment'`,
+      )
+        .bind(commitmentState!.id)
+        .first(),
+    ).resolves.toEqual({
+      status: "finalized",
+      version: 3,
+      amount_minor: commitmentState!.amount_minor,
+      metadata_json: commitmentState!.metadata_json,
     });
   });
 

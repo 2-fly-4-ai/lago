@@ -409,17 +409,6 @@ async function terminateSubscription(
   if (subscription.status !== "active" && subscription.status !== "past_due") {
     throw new ApiError(422, "subscription_not_terminable", "Subscription is not active");
   }
-  if (
-    subscription.plan_pay_in_advance === 1 &&
-    (await hasMinimumCommitment(env.BILLING_DB, auth.organizationId, subscription.id))
-  ) {
-    throw new ApiError(
-      422,
-      "unsupported_termination_minimum_commitment",
-      "Pay-in-advance minimum-commitment termination is not implemented",
-    );
-  }
-
   const requestHash = await sha256Hex(
     stableJson({ externalId, onTerminationCreditNote, onTerminationInvoice }),
   );
@@ -519,8 +508,6 @@ async function terminateSubscription(
       const unsupported: Record<string, string> = {
         unsupported_draft_termination_credit_adjustment:
           "Draft termination credits require an undiscounted, untaxed source invoice without wallet or credit-note allocations",
-        unsupported_termination_minimum_commitment:
-          "Termination invoicing for plans with a minimum commitment is not implemented",
         unsupported_pay_in_advance_termination_credit:
           "Pay-in-advance termination credits require a finalized, undiscounted, untaxed base invoice without wallet or credit-note allocations",
       };
@@ -568,22 +555,6 @@ async function cancelPendingSubscription(
     { subscription: await serializeSubscription(env.BILLING_DB, canceled) },
     { requestId },
   );
-}
-
-async function hasMinimumCommitment(
-  database: D1Database,
-  organizationId: string,
-  subscriptionId: string,
-): Promise<boolean> {
-  const row = await database
-    .prepare(
-      `SELECT 1 AS present
-       FROM subscriptions s JOIN minimum_commitments mc ON mc.plan_id = s.plan_id
-       WHERE s.id = ? AND s.organization_id = ? LIMIT 1`,
-    )
-    .bind(subscriptionId, organizationId)
-    .first<{ present: number }>();
-  return row?.present === 1;
 }
 
 function subscriptionSelect(): string {
