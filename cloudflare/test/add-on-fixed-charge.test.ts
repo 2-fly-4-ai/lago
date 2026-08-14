@@ -2,6 +2,11 @@ import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
 import { closeBillingPeriod } from "../src/billing/close-period";
+import {
+  calculateSubscriptionInvoice,
+  findBillableSubscription,
+} from "../src/billing/subscription-invoice-calculation";
+import { followingPeriodEnd } from "../src/billing/periods";
 
 const apiKey = "add-on-fixed-charge-test-key";
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
@@ -377,7 +382,6 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
     for (const [suffix, unsafe] of [
       ["advance", { pay_in_advance: true }],
       ["prorated", { prorated: true }],
-      ["events", { apply_units_immediately: true }],
     ] as const) {
       const response = await api("/api/v1/plans", "POST", {
         plan: {
@@ -430,6 +434,201 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
         code: expectedCode,
       });
     }
+  });
+
+  it("effective-dates attached-plan fixed-charge creates and unit updates", async () => {
+    const addOn = await api("/api/v1/add_ons", "POST", {
+      add_on: {
+        name: "Timing add-on",
+        code: "timing-addon",
+        amount_cents: 100,
+        amount_currency: "USD",
+      },
+    });
+    expect(addOn.status).toBe(200);
+    const addOnId = (await addOn.json<{ add_on: { lago_id: string } }>()).add_on.lago_id;
+    const plan = await api("/api/v1/plans", "POST", {
+      plan: {
+        name: "Timing plan",
+        code: "timing-plan",
+        interval: "monthly",
+        amount_cents: 0,
+        amount_currency: "USD",
+        fixed_charges: [
+          {
+            add_on_id: addOnId,
+            code: "timing-root",
+            charge_model: "standard",
+            properties: { amount: "100" },
+            units: "1",
+          },
+        ],
+      },
+    });
+    expect(plan.status).toBe(200);
+    expect(
+      (
+        await api("/api/v1/customers", "POST", {
+          customer: { external_id: "timing-customer", currency: "USD" },
+        })
+      ).status,
+    ).toBe(200);
+    const subscriptionResponse = await api("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "timing-customer",
+        external_id: "timing-subscription",
+        plan_code: "timing-plan",
+      },
+    });
+    expect(subscriptionResponse.status).toBe(200);
+    const subscriptionId = (
+      await subscriptionResponse.json<{ subscription: { lago_id: string } }>()
+    ).subscription.lago_id;
+    const subscription = await findBillableSubscription(env.BILLING_DB, subscriptionId);
+    expect(subscription).not.toBeNull();
+    const periodStart = subscription!.current_period_start;
+    const periodEnd = subscription!.current_period_end;
+    const nextEnd = followingPeriodEnd(
+      new Date(periodEnd),
+      subscription!.interval,
+      subscription!.billing_time,
+      subscription!.billing_timezone,
+    ).toISOString();
+
+    const scheduledUpdate = await api(
+      "/api/v1/plans/timing-plan/fixed_charges/timing-root",
+      "PUT",
+      { fixed_charge: { properties: { amount: "100" }, units: "2" } },
+    );
+    expect(scheduledUpdate.status, await scheduledUpdate.clone().text()).toBe(200);
+    const rootId = (await scheduledUpdate.json<{ fixed_charge: { lago_id: string } }>())
+      .fixed_charge.lago_id;
+    let calculation = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      subscription!,
+      "catalog-unit-current-scheduled",
+      "catalog-unit-current-scheduled-cycle",
+      periodStart,
+      periodEnd,
+    );
+    expect(calculation.lines.find((line) => line.sourceId === rootId)).toMatchObject({
+      units: "1",
+      rounded: 100,
+    });
+
+    const immediateUpdate = await api(
+      "/api/v1/plans/timing-plan/fixed_charges/timing-root",
+      "PUT",
+      {
+        fixed_charge: {
+          properties: { amount: "100" },
+          units: "3",
+          apply_units_immediately: true,
+        },
+      },
+    );
+    expect(immediateUpdate.status, await immediateUpdate.clone().text()).toBe(200);
+    const scheduledCreate = await api("/api/v1/plans/timing-plan/fixed_charges", "POST", {
+      fixed_charge: {
+        add_on_id: addOnId,
+        code: "timing-scheduled-create",
+        charge_model: "standard",
+        properties: { amount: "50" },
+        units: "4",
+      },
+    });
+    expect(scheduledCreate.status, await scheduledCreate.clone().text()).toBe(200);
+    const scheduledId = (await scheduledCreate.json<{ fixed_charge: { lago_id: string } }>())
+      .fixed_charge.lago_id;
+    const immediateCreate = await api("/api/v1/plans/timing-plan/fixed_charges", "POST", {
+      fixed_charge: {
+        add_on_id: addOnId,
+        code: "timing-immediate-create",
+        charge_model: "standard",
+        properties: { amount: "50" },
+        units: "4",
+        apply_units_immediately: true,
+      },
+    });
+    expect(immediateCreate.status, await immediateCreate.clone().text()).toBe(200);
+    const immediateId = (await immediateCreate.json<{ fixed_charge: { lago_id: string } }>())
+      .fixed_charge.lago_id;
+
+    calculation = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      subscription!,
+      "catalog-unit-current-immediate",
+      "catalog-unit-current-immediate-cycle",
+      periodStart,
+      periodEnd,
+    );
+    expect(calculation.lines.find((line) => line.sourceId === rootId)).toMatchObject({
+      units: "3",
+      rounded: 300,
+    });
+    expect(calculation.lines.find((line) => line.sourceId === scheduledId)).toMatchObject({
+      units: "0",
+      rounded: 0,
+    });
+    expect(calculation.lines.find((line) => line.sourceId === immediateId)).toMatchObject({
+      units: "4",
+      rounded: 200,
+    });
+    const next = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      subscription!,
+      "catalog-unit-next",
+      "catalog-unit-next-cycle",
+      periodEnd,
+      nextEnd,
+    );
+    expect(next.lines.find((line) => line.sourceId === rootId)).toMatchObject({
+      units: "3",
+      rounded: 300,
+    });
+    expect(next.lines.find((line) => line.sourceId === scheduledId)).toMatchObject({
+      units: "4",
+      rounded: 200,
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT fixed_charge_id, fixed_charge_version, units, effective_at
+         FROM fixed_charge_unit_events WHERE subscription_id = ?
+         ORDER BY fixed_charge_id, fixed_charge_version`,
+      )
+        .bind(subscriptionId)
+        .all(),
+    ).resolves.toMatchObject({
+      results: expect.arrayContaining([
+        expect.objectContaining({
+          fixed_charge_id: rootId,
+          fixed_charge_version: 0,
+          units: "1",
+        }),
+        expect.objectContaining({
+          fixed_charge_id: rootId,
+          fixed_charge_version: 2,
+          units: "2",
+          effective_at: periodEnd,
+        }),
+        expect.objectContaining({
+          fixed_charge_id: rootId,
+          fixed_charge_version: 3,
+          units: "3",
+        }),
+        expect.objectContaining({
+          fixed_charge_id: scheduledId,
+          fixed_charge_version: 1,
+          units: "4",
+          effective_at: periodEnd,
+        }),
+        expect.objectContaining({
+          fixed_charge_id: immediateId,
+          fixed_charge_version: 1,
+          units: "4",
+        }),
+      ]),
+    });
   });
 });
 

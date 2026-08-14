@@ -552,6 +552,32 @@ describe("subscription charge-filter overrides", () => {
       properties_json: '{"amount":"600"}',
       units: "2",
     });
+    const subscription = await findBillableSubscription(env.BILLING_DB, "subscription-sub-filter");
+    expect(subscription).not.toBeNull();
+    const current = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      subscription!,
+      "fixed-cascade-current",
+      "fixed-cascade-current-cycle",
+      "2026-08-01T00:00:00.000Z",
+      "2026-09-01T00:00:00.000Z",
+    );
+    const next = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      subscription!,
+      "fixed-cascade-next",
+      "fixed-cascade-next-cycle",
+      "2026-09-01T00:00:00.000Z",
+      "2026-10-01T00:00:00.000Z",
+    );
+    expect(current.lines.find((line) => line.lineType === "fixed_charge")).toMatchObject({
+      units: "1",
+      rounded: 600,
+    });
+    expect(next.lines.find((line) => line.lineType === "fixed_charge")).toMatchObject({
+      units: "2",
+      rounded: 1200,
+    });
 
     await env.BILLING_DB.prepare(
       `UPDATE fixed_charges SET properties_json = '{"amount":"999"}', units = '9'
@@ -649,6 +675,32 @@ describe("subscription charge-filter overrides", () => {
       active: 1,
     });
     expect(rows.results[1]?.id).not.toBe(createdBody.fixed_charge.lago_id);
+    const subscription = await findBillableSubscription(env.BILLING_DB, "subscription-sub-filter");
+    expect(subscription).not.toBeNull();
+    const current = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      subscription!,
+      "fixed-create-cascade-current",
+      "fixed-create-cascade-current-cycle",
+      "2026-08-01T00:00:00.000Z",
+      "2026-09-01T00:00:00.000Z",
+    );
+    const next = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      subscription!,
+      "fixed-create-cascade-next",
+      "fixed-create-cascade-next-cycle",
+      "2026-09-01T00:00:00.000Z",
+      "2026-10-01T00:00:00.000Z",
+    );
+    expect(current.lines.find((line) => line.sourceId === rows.results[1]?.id)).toMatchObject({
+      units: "0",
+      rounded: 0,
+    });
+    expect(next.lines.find((line) => line.sourceId === rows.results[1]?.id)).toMatchObject({
+      units: "4",
+      rounded: 3200,
+    });
 
     const deleted = await api(
       "/api/v1/plans/filter-plan/fixed_charges/priority-support",

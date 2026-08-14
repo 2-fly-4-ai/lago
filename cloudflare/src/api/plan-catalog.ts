@@ -108,14 +108,47 @@ type NormalizedFixedCharge = {
   chargeModel: "standard" | "graduated" | "volume";
   properties: Record<string, unknown>;
   units: string;
+  applyUnitsImmediately: boolean;
 };
 
 type PreparedFixedChargeCascadeUpdate = {
   id: string;
+  planId: string;
   code: string;
   version: number;
+  previousUnits: string;
   propertiesJson: string;
   units: string;
+};
+
+type FixedChargeUnitChange = {
+  fixedChargeId: string;
+  fixedChargeVersion: number;
+  planId: string;
+  previousUnits: string | null;
+  units: string;
+};
+
+type PreparedFixedChargeUnitEvent = {
+  id: string;
+  subscriptionId: string;
+  fixedChargeId: string;
+  fixedChargeVersion: number;
+  units: string;
+  effectiveAt: string;
+};
+
+type PreparedFixedChargeUnitEvents = {
+  events: PreparedFixedChargeUnitEvent[];
+  requiredChangeCount: number;
+  changes: FixedChargeUnitChange[];
+  guards: Array<{
+    subscriptionId: string;
+    planId: string;
+    version: number;
+    currentPeriodStart: string | null;
+    currentPeriodEnd: string | null;
+  }>;
 };
 
 type PreparedFixedChargeCascade = {
@@ -558,6 +591,31 @@ async function createFixedCharge(
   );
   const cascadeEnabled = cascade ? 1 : 0;
   const cascadeCount = cascadeCreates.length;
+  const unitEvents = await prepareFixedChargeUnitEvents(
+    database,
+    auth.organizationId,
+    [
+      {
+        fixedChargeId: normalized.id,
+        fixedChargeVersion: 1,
+        planId: plan.id,
+        previousUnits: null,
+        units: normalized.units,
+      },
+      ...cascadeCreates.map((child) => ({
+        fixedChargeId: child.id,
+        fixedChargeVersion: 1,
+        planId: child.planId,
+        previousUnits: null,
+        units: child.units,
+      })),
+    ],
+    normalized.applyUnitsImmediately,
+    now,
+  );
+  const unitEventGuardEnabled = unitEvents.changes.length > 0 ? 1 : 0;
+  const unitEventGuardJson = stableJson(unitEvents.guards);
+  const unitEventChangesJson = stableJson(unitEvents.changes);
   const event = fixedChargeEvent(
     "fixed_charge.created",
     normalized.id,
@@ -583,22 +641,48 @@ async function createFixedCharge(
             charge_model, properties_json, units, pay_in_advance, prorated, version, active,
             created_at, updated_at)
            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, 1, ?, ?
-           WHERE ? = 0 OR (
-             ? = (
-               SELECT COUNT(*) FROM json_each(?) expected
-               JOIN plans child ON child.id = json_extract(expected.value, '$.id')
-               WHERE child.organization_id = ? AND child.active = 1
-                 AND child.parent_id = ?
-                 AND child.version = json_extract(expected.value, '$.version')
+           WHERE (
+             ? = 0 OR (
+               ? = (
+                 SELECT COUNT(*) FROM json_each(?) expected
+                 JOIN plans child ON child.id = json_extract(expected.value, '$.id')
+                 WHERE child.organization_id = ? AND child.active = 1
+                   AND child.parent_id = ?
+                   AND child.version = json_extract(expected.value, '$.version')
+               )
+               AND ? = (
+                 SELECT COUNT(*) FROM plans child
+                 WHERE child.organization_id = ? AND child.active = 1 AND child.parent_id = ?
+                   AND EXISTS (
+                     SELECT 1 FROM subscriptions subscription
+                     WHERE subscription.plan_id = child.id
+                       AND subscription.status IN ('active', 'pending')
+                   )
+               )
              )
-             AND ? = (
-               SELECT COUNT(*) FROM plans child
-               WHERE child.organization_id = ? AND child.active = 1 AND child.parent_id = ?
-                 AND EXISTS (
-                   SELECT 1 FROM subscriptions subscription
-                   WHERE subscription.plan_id = child.id
-                     AND subscription.status IN ('active', 'pending')
-                 )
+           )
+           AND (
+             ? = 0 OR (
+               ? = (
+                 SELECT COUNT(*) FROM json_each(?) expected
+                 JOIN subscriptions subscription
+                   ON subscription.id = json_extract(expected.value, '$.subscriptionId')
+                 WHERE subscription.organization_id = ?
+                   AND subscription.status IN ('active', 'past_due')
+                   AND subscription.plan_id = json_extract(expected.value, '$.planId')
+                   AND subscription.version = json_extract(expected.value, '$.version')
+                   AND subscription.current_period_start
+                         IS json_extract(expected.value, '$.currentPeriodStart')
+                   AND subscription.current_period_end
+                         IS json_extract(expected.value, '$.currentPeriodEnd')
+               )
+               AND ? = (
+                 SELECT COUNT(*) FROM json_each(?) change
+                 JOIN subscriptions subscription
+                   ON subscription.plan_id = json_extract(change.value, '$.planId')
+                 WHERE subscription.organization_id = ?
+                   AND subscription.status IN ('active', 'past_due')
+               )
              )
            )`,
         )
@@ -622,6 +706,13 @@ async function createFixedCharge(
           cascadeCount,
           auth.organizationId,
           plan.id,
+          unitEventGuardEnabled,
+          unitEvents.requiredChangeCount,
+          unitEventGuardJson,
+          auth.organizationId,
+          unitEvents.requiredChangeCount,
+          unitEventChangesJson,
+          auth.organizationId,
         ),
       database
         .prepare(
@@ -652,6 +743,7 @@ async function createFixedCharge(
           auth.organizationId,
           now,
         ),
+      fixedChargeUnitEventInsertStatement(database, auth.organizationId, unitEvents.events, now),
       conditionalFixedChargeOutboxStatement(
         database,
         auth.organizationId,
@@ -673,8 +765,9 @@ async function createFixedCharge(
     if (
       (results[0]?.meta.changes ?? 0) < 1 ||
       (results[1]?.meta.changes ?? 0) < cascadeCount ||
-      results[2]?.meta.changes !== 1 ||
-      (results[3]?.meta.changes ?? 0) !== cascadeCount
+      results[2]?.meta.changes !== unitEvents.requiredChangeCount ||
+      results[3]?.meta.changes !== 1 ||
+      (results[4]?.meta.changes ?? 0) !== cascadeCount
     ) {
       throw new ApiError(
         409,
@@ -743,6 +836,7 @@ async function updateFixedCharge(
       input.units === undefined
         ? fixedCharge.units
         : nonNegativeDecimal(input.units, "fixed_charge.units"),
+    applyUnitsImmediately: input.apply_units_immediately === true,
   } satisfies NormalizedFixedCharge;
   validateFixedChargeRating(next.units, next.chargeModel, next.properties, "fixed_charge");
   if (next.code !== fixedCharge.code) {
@@ -761,6 +855,31 @@ async function updateFixedCharge(
   const cascadeEnabled = fixedChargeCascade.enabled ? 1 : 0;
   const cascadeCount = fixedChargeCascade.updates.length;
   const cascadeGuardCount = fixedChargeCascade.guards.length;
+  const unitEvents = await prepareFixedChargeUnitEvents(
+    database,
+    auth.organizationId,
+    [
+      {
+        fixedChargeId: fixedCharge.id,
+        fixedChargeVersion: fixedCharge.version + 1,
+        planId: fixedCharge.plan_id,
+        previousUnits: fixedCharge.units,
+        units: next.units,
+      },
+      ...fixedChargeCascade.updates.map((child) => ({
+        fixedChargeId: child.id,
+        fixedChargeVersion: child.version + 1,
+        planId: child.planId,
+        previousUnits: child.previousUnits,
+        units: child.units,
+      })),
+    ],
+    next.applyUnitsImmediately,
+    now,
+  );
+  const unitEventGuardEnabled = unitEvents.changes.length > 0 ? 1 : 0;
+  const unitEventGuardJson = stableJson(unitEvents.guards);
+  const unitEventChangesJson = stableJson(unitEvents.changes);
   const event = fixedChargeEvent(
     "fixed_charge.updated",
     fixedCharge.id,
@@ -807,6 +926,30 @@ async function updateFixedCharge(
                      )
                  )
                )
+             )
+             AND (
+               ? = 0 OR (
+                 ? = (
+                   SELECT COUNT(*) FROM json_each(?) expected
+                   JOIN subscriptions subscription
+                     ON subscription.id = json_extract(expected.value, '$.subscriptionId')
+                   WHERE subscription.organization_id = ?
+                     AND subscription.status IN ('active', 'past_due')
+                     AND subscription.plan_id = json_extract(expected.value, '$.planId')
+                     AND subscription.version = json_extract(expected.value, '$.version')
+                     AND subscription.current_period_start
+                           IS json_extract(expected.value, '$.currentPeriodStart')
+                     AND subscription.current_period_end
+                           IS json_extract(expected.value, '$.currentPeriodEnd')
+                 )
+                 AND ? = (
+                   SELECT COUNT(*) FROM json_each(?) change
+                   JOIN subscriptions subscription
+                     ON subscription.plan_id = json_extract(change.value, '$.planId')
+                   WHERE subscription.organization_id = ?
+                     AND subscription.status IN ('active', 'past_due')
+                 )
+               )
              )`,
         )
         .bind(
@@ -828,6 +971,13 @@ async function updateFixedCharge(
           cascadeGuardCount,
           auth.organizationId,
           fixedCharge.id,
+          unitEventGuardEnabled,
+          unitEvents.requiredChangeCount,
+          unitEventGuardJson,
+          auth.organizationId,
+          unitEvents.requiredChangeCount,
+          unitEventChangesJson,
+          auth.organizationId,
         ),
       database
         .prepare(
@@ -873,6 +1023,7 @@ async function updateFixedCharge(
           fixedCharge.version + 1,
           now,
         ),
+      fixedChargeUnitEventInsertStatement(database, auth.organizationId, unitEvents.events, now),
       conditionalFixedChargeOutboxStatement(
         database,
         auth.organizationId,
@@ -894,8 +1045,9 @@ async function updateFixedCharge(
     if (
       (results[0]?.meta.changes ?? 0) < 1 ||
       (results[1]?.meta.changes ?? 0) < cascadeCount ||
-      results[2]?.meta.changes !== 1 ||
-      (results[3]?.meta.changes ?? 0) !== cascadeCount
+      (results[2]?.meta.changes ?? 0) < unitEvents.requiredChangeCount ||
+      results[3]?.meta.changes !== 1 ||
+      (results[4]?.meta.changes ?? 0) !== cascadeCount
     )
       throw new ApiError(409, "fixed_charge_version_conflict", "Fixed charge changed concurrently");
   } catch (error) {
@@ -1643,6 +1795,7 @@ function sameFixedCharge(charge: FixedChargeRow, normalized: NormalizedFixedChar
 
 const MAX_FIXED_CHARGE_CASCADE_CHILDREN = 100;
 const MAX_FIXED_CHARGE_CASCADE_JSON_BYTES = 512 * 1024;
+const MAX_FIXED_CHARGE_UNIT_EVENT_SUBSCRIPTIONS = 200;
 
 async function prepareFixedChargeCreateCascade(
   database: D1Database,
@@ -1734,8 +1887,10 @@ async function prepareFixedChargeUpdateCascade(
     ) {
       updates.push({
         id: child.id,
+        planId: child.plan_id,
         code: next.code,
         version: child.version,
+        previousUnits: child.units,
         propertiesJson: stableJson(properties),
         units,
       });
@@ -1775,6 +1930,154 @@ async function prepareFixedChargeDeleteCascade(
 
 function emptyFixedChargeCascade(): PreparedFixedChargeCascade {
   return { enabled: false, guards: [], updates: [] };
+}
+
+async function prepareFixedChargeUnitEvents(
+  database: D1Database,
+  organizationId: string,
+  changes: FixedChargeUnitChange[],
+  applyUnitsImmediately: boolean,
+  now: string,
+): Promise<PreparedFixedChargeUnitEvents> {
+  const unitChanges = changes.filter(
+    (change) =>
+      change.previousUnits === null ||
+      Decimal.parse(change.previousUnits).compare(Decimal.parse(change.units)) !== 0,
+  );
+  if (unitChanges.length === 0) {
+    return { events: [], requiredChangeCount: 0, changes: [], guards: [] };
+  }
+  const result = await database
+    .prepare(
+      `SELECT subscription.id AS subscription_id, subscription.version AS subscription_version,
+              subscription.started_at AS subscription_started_at,
+              subscription.current_period_start, subscription.current_period_end,
+              json_extract(change.value, '$.planId') AS plan_id,
+              json_extract(change.value, '$.fixedChargeId') AS fixed_charge_id,
+              json_extract(change.value, '$.fixedChargeVersion') AS fixed_charge_version,
+              json_extract(change.value, '$.previousUnits') AS previous_units,
+              json_extract(change.value, '$.units') AS units
+       FROM json_each(?) change
+       JOIN subscriptions subscription
+         ON subscription.plan_id = json_extract(change.value, '$.planId')
+       WHERE subscription.organization_id = ?
+         AND subscription.status IN ('active', 'past_due')
+       ORDER BY subscription.id, fixed_charge_id
+       LIMIT ?`,
+    )
+    .bind(stableJson(unitChanges), organizationId, MAX_FIXED_CHARGE_UNIT_EVENT_SUBSCRIPTIONS + 1)
+    .all<{
+      subscription_id: string;
+      subscription_version: number;
+      subscription_started_at: string | null;
+      current_period_start: string | null;
+      current_period_end: string | null;
+      plan_id: string;
+      fixed_charge_id: string;
+      fixed_charge_version: number;
+      previous_units: string | null;
+      units: string;
+    }>();
+  if (result.results.length > MAX_FIXED_CHARGE_UNIT_EVENT_SUBSCRIPTIONS) {
+    throw new ApiError(
+      422,
+      "fixed_charge_unit_events_too_large",
+      `Fixed-charge unit changes support at most ${MAX_FIXED_CHARGE_UNIT_EVENT_SUBSCRIPTIONS} active subscription event targets`,
+    );
+  }
+  const events: PreparedFixedChargeUnitEvent[] = [];
+  for (const row of result.results) {
+    const periodStart = row.current_period_start ?? row.subscription_started_at;
+    const periodEnd = row.current_period_end;
+    if (
+      !periodStart ||
+      !periodEnd ||
+      !Number.isFinite(Date.parse(periodStart)) ||
+      !Number.isFinite(Date.parse(periodEnd))
+    ) {
+      throw new ApiError(
+        409,
+        "subscription_period_unavailable",
+        "Fixed-charge units require an active billing period",
+      );
+    }
+    if (row.previous_units !== null) {
+      events.push({
+        id: await deterministicUuid(
+          "fixed-charge-unit-event",
+          `${row.subscription_id}:${row.fixed_charge_id}:v0`,
+        ),
+        subscriptionId: row.subscription_id,
+        fixedChargeId: row.fixed_charge_id,
+        fixedChargeVersion: 0,
+        units: row.previous_units,
+        effectiveAt: periodStart,
+      });
+    }
+    events.push({
+      id: await deterministicUuid(
+        "fixed-charge-unit-event",
+        `${row.subscription_id}:${row.fixed_charge_id}:v${row.fixed_charge_version}`,
+      ),
+      subscriptionId: row.subscription_id,
+      fixedChargeId: row.fixed_charge_id,
+      fixedChargeVersion: row.fixed_charge_version,
+      units: row.units,
+      effectiveAt: applyUnitsImmediately ? now : periodEnd,
+    });
+  }
+  if (
+    new TextEncoder().encode(stableJson(events)).byteLength > MAX_FIXED_CHARGE_CASCADE_JSON_BYTES
+  ) {
+    throw new ApiError(
+      422,
+      "fixed_charge_unit_events_too_large",
+      "Fixed-charge unit event data exceeds the supported size",
+    );
+  }
+  return {
+    events,
+    requiredChangeCount: result.results.length,
+    changes: unitChanges,
+    guards: result.results.map((row) => ({
+      subscriptionId: row.subscription_id,
+      planId: row.plan_id,
+      version: row.subscription_version,
+      currentPeriodStart: row.current_period_start,
+      currentPeriodEnd: row.current_period_end,
+    })),
+  };
+}
+
+function fixedChargeUnitEventInsertStatement(
+  database: D1Database,
+  organizationId: string,
+  events: PreparedFixedChargeUnitEvent[],
+  createdAt: string,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT OR IGNORE INTO fixed_charge_unit_events
+       (id, organization_id, subscription_id, fixed_charge_id, fixed_charge_version, units,
+        effective_at, created_at)
+       SELECT json_extract(event.value, '$.id'), ?,
+              json_extract(event.value, '$.subscriptionId'),
+              json_extract(event.value, '$.fixedChargeId'),
+              json_extract(event.value, '$.fixedChargeVersion'),
+              json_extract(event.value, '$.units'),
+              json_extract(event.value, '$.effectiveAt'), ?
+       FROM json_each(?) event
+       WHERE EXISTS (
+         SELECT 1 FROM subscriptions subscription
+         JOIN fixed_charges fixed ON fixed.plan_id = subscription.plan_id
+         WHERE subscription.id = json_extract(event.value, '$.subscriptionId')
+           AND subscription.organization_id = ?
+           AND fixed.id = json_extract(event.value, '$.fixedChargeId')
+           AND fixed.organization_id = ?
+           AND fixed.active = 1
+       )`,
+    )
+    .bind(organizationId, createdAt, stableJson(events), organizationId, organizationId);
 }
 
 function assertFixedChargeCascadeSize(value: unknown): void {
@@ -1973,12 +2276,11 @@ async function normalizeFixedCharges(
         "unsupported_fixed_charge_feature",
         "Prorated fixed charges are not implemented",
       );
-    if (input.apply_units_immediately === true)
-      throw new ApiError(
-        422,
-        "unsupported_fixed_charge_feature",
-        "Immediate fixed-charge unit events are not implemented",
-      );
+    if (
+      input.apply_units_immediately !== undefined &&
+      typeof input.apply_units_immediately !== "boolean"
+    )
+      throw new ApiError(422, "validation_error", "apply_units_immediately must be boolean");
     if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
       throw new ApiError(
         422,
@@ -2016,6 +2318,7 @@ async function normalizeFixedCharges(
       chargeModel,
       properties,
       units,
+      applyUnitsImmediately: input.apply_units_immediately === true,
     });
   }
   return fixedCharges;
@@ -2072,12 +2375,11 @@ function rejectUnsupportedFixedChargeMutation(
       "unsupported_fixed_charge_feature",
       "Prorated fixed charges are not implemented",
     );
-  if (input.apply_units_immediately === true)
-    throw new ApiError(
-      422,
-      "unsupported_fixed_charge_feature",
-      "Immediate fixed-charge unit events are not implemented",
-    );
+  if (
+    input.apply_units_immediately !== undefined &&
+    typeof input.apply_units_immediately !== "boolean"
+  )
+    throw new ApiError(422, "validation_error", "apply_units_immediately must be boolean");
   if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
     throw new ApiError(
       422,
