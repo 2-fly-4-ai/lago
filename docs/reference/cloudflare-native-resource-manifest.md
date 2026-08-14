@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `d08b6572-2af6-4b44-818e-a522d62b9864`
+- Latest verified version: `07c31a20-04ea-46ea-bb2e-e3662f032ff7`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -340,6 +340,18 @@ Applied D1 migrations: `0001_foundation.sql` through `0041_event_targeted_wallet
   organizations, customers, invoices, usage events, wallets, wallet targets, wallet transactions,
   and outbox events plus 140 schedule audits. All three external-action flags remain disabled, with
   no route, secret, provider action, customer data, or billing/wallet data added.
+- The code-only standalone-charge lifecycle deployment required no D1 migration. It added
+  optimistic core charge updates, no-op replay, trigger-backed draft invalidation, soft deletion,
+  immutable finalized-line retention, and deterministic code generations after rename/deletion;
+  filter, tax, pricing-unit, and child-plan cascades remain explicit guards. Isolated Worker version
+  `07c31a20-04ea-46ea-bb2e-e3662f032ff7` retained only the existing workers.dev URL, `*/5` Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow bindings. The deployed bundle was
+  768.14 KiB (134.49 KiB gzip) with a 5 ms startup. Health/readiness returned `200`/`200`, and
+  unauthenticated charge access returned `401`. Remote verification found no pending migrations,
+  zero foreign-key violations, and zero organizations, customers, plans, subscriptions, invoices,
+  charges, usage events, wallets, wallet targets, wallet transactions, and outbox events plus 143
+  schedule audits. All three external-action flags remain disabled, with no route, secret,
+  provider action, customer data, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

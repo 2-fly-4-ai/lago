@@ -1600,3 +1600,23 @@ resource and mutation described.
   `401`/`401`. Post-deploy aggregate-only verification remained empty apart from 140 schedule
   audits. All three external-action flags remain `0`; no production route, domain, secret, provider
   action, customer data, or billing row was added.
+- 2026-08-15: Ported the provider-free standalone usage-charge lifecycle. Core updates use tenant
+  scope, active metric validation, attached-plan restrictions, exact rating-property validation,
+  optimistic versions, conditional transactional outbox rows, and no-op replay. Soft deletion
+  removes a charge only from future catalog/rating reads; the existing dependency trigger flags
+  affected drafts for refresh, while finalized invoice lines retain their persisted source ID and
+  amount. Deterministic charge generations permit safe code reuse after deletion or rename without
+  colliding with historical primary keys. Filter, tax, pricing-unit, and child-plan cascades remain
+  explicit `422` guards. Evidence covers attached and unattached updates, immutable finalized
+  lines, draft invalidation, replay, deletion, guarded cascade input, and code recreation. All 156
+  tests across 31 files pass in bounded Workers-runtime batches. Formatting, strict lint, generated
+  inventory/types, TypeScript, and a 768.14 KiB (134.49 KiB gzip) dry-run bundle are green. No D1
+  migration was required. Feature checkpoint: `18a3332`.
+- 2026-08-15: Code-only remote preflight on the explicit SERP account found no pending migrations,
+  zero foreign-key violations, and zero organizations, customers, plans, subscriptions, invoices,
+  charges, usage events, wallets, targets, transactions, and outbox rows. Deployed isolated Worker
+  version `07c31a20-04ea-46ea-bb2e-e3662f032ff7` with a 5 ms startup; health/readiness returned
+  `200`/`200`, and unauthenticated charge access returned `401`. Post-deploy aggregate-only
+  verification remained empty apart from 143 schedule audits. All three external-action flags
+  remain `0`; no production route, domain, secret, provider action, customer data, or billing row
+  was added.

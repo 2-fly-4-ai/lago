@@ -24,7 +24,11 @@ remaining Lago feature inventory is dispositioned and ported.
   subscription, usage, and fixed-charge fees.
 - Plan catalog: idempotent creation and optimistic scalar updates with transactional versioned
   outbox events, including the base subscription’s pay-in-advance mode and non-negative trial
-  period. Catalog graph replacement and destructive plan lifecycle remain guarded.
+  period. Standalone usage charges support create/list/show, optimistic core updates, soft deletion,
+  and deterministic code reuse. Attached plans retain Lago's restricted mutable charge subset;
+  every charge mutation invalidates affected drafts while finalized invoice lines remain immutable.
+  Filter/tax/pricing-unit cascades, catalog graph replacement, and destructive plan lifecycle remain
+  guarded.
 - Subscription lifecycle: pay-in-advance starts create their initial invoice atomically, while
   in-arrears starts create no initial invoice. A supported future UTC `subscription_at` creates a
   pending subscription with no invoice, and the five-minute activation owner applies the same

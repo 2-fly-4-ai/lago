@@ -141,6 +141,11 @@ this document does not silently redefine that behavior.
   Updates use `WHERE version = ?` and increment version. A zero-row update is a conflict, not success.
 - Outbox IDs are deterministic from event type, aggregate identity/version, and causation. Consumers
   deduplicate by `event_id`; provider calls and webhook delivery remain behind explicit kill switches.
+- Standalone charge creation chooses the first unused deterministic generation for a plan/code so a
+  renamed or soft-deleted code can be reused without colliding with history. Charge updates and
+  deletes share the optimistic version/outbox batch; deletion sets `active = 0`, the dependency
+  trigger invalidates affected drafts, and finalized invoice lines never re-read mutable charge
+  pricing.
 - Any R2 operation that cannot share a D1 transaction uses a durable intent row. For deletion, write
   the cleanup task transactionally before deleting the object, then retry until both are absent.
 
