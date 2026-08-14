@@ -58,6 +58,7 @@ export async function normalizeChargeFilters(
   metricFilters: BillableMetricFilter[],
   chargeModel: string,
   chargeId: string,
+  identityScope = chargeId,
 ): Promise<ChargeFilter[]> {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
@@ -126,7 +127,7 @@ export async function normalizeChargeFilters(
     delete properties.presentation_group_keys;
     parseChargeModel(chargeModel, properties);
     filters.push({
-      lagoId: await deterministicUuid("charge-filter", `${chargeId}:${identity}`),
+      lagoId: await deterministicUuid("charge-filter", `${identityScope}:${identity}`),
       invoiceDisplayName: optionalText(
         input.invoice_display_name,
         `filters[${index}].invoice_display_name`,

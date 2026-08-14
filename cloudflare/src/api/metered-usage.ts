@@ -223,6 +223,78 @@ export async function handleMeteredUsageRequest(
       requestId,
     );
   }
+  const chargeFiltersMatch = url.pathname.match(
+    /^\/api\/v1\/plans\/([^/]+)\/charges\/([^/]+)\/filters$/,
+  );
+  if (request.method === "GET" && chargeFiltersMatch?.[1] && chargeFiltersMatch[2]) {
+    return listChargeFilters(
+      decodeURIComponent(chargeFiltersMatch[1]),
+      decodeURIComponent(chargeFiltersMatch[2]),
+      url,
+      env.BILLING_DB,
+      auth,
+      requestId,
+    );
+  }
+  if (request.method === "POST" && chargeFiltersMatch?.[1] && chargeFiltersMatch[2]) {
+    return createChargeFilter(
+      decodeURIComponent(chargeFiltersMatch[1]),
+      decodeURIComponent(chargeFiltersMatch[2]),
+      request,
+      env,
+      auth,
+      requestId,
+    );
+  }
+  const chargeFilterMatch = url.pathname.match(
+    /^\/api\/v1\/plans\/([^/]+)\/charges\/([^/]+)\/filters\/([^/]+)$/,
+  );
+  if (
+    request.method === "GET" &&
+    chargeFilterMatch?.[1] &&
+    chargeFilterMatch[2] &&
+    chargeFilterMatch[3]
+  ) {
+    return showChargeFilter(
+      decodeURIComponent(chargeFilterMatch[1]),
+      decodeURIComponent(chargeFilterMatch[2]),
+      decodeURIComponent(chargeFilterMatch[3]),
+      env.BILLING_DB,
+      auth,
+      requestId,
+    );
+  }
+  if (
+    request.method === "PUT" &&
+    chargeFilterMatch?.[1] &&
+    chargeFilterMatch[2] &&
+    chargeFilterMatch[3]
+  ) {
+    return updateChargeFilter(
+      decodeURIComponent(chargeFilterMatch[1]),
+      decodeURIComponent(chargeFilterMatch[2]),
+      decodeURIComponent(chargeFilterMatch[3]),
+      request,
+      env,
+      auth,
+      requestId,
+    );
+  }
+  if (
+    request.method === "DELETE" &&
+    chargeFilterMatch?.[1] &&
+    chargeFilterMatch[2] &&
+    chargeFilterMatch[3]
+  ) {
+    return deleteChargeFilter(
+      decodeURIComponent(chargeFilterMatch[1]),
+      decodeURIComponent(chargeFilterMatch[2]),
+      decodeURIComponent(chargeFilterMatch[3]),
+      env,
+      auth,
+      requestId,
+    );
+  }
 
   if (request.method === "POST" && url.pathname === "/api/v1/events/batch") {
     return createUsageEventBatch(request, env, auth, requestId);
@@ -1061,6 +1133,245 @@ async function showCharge(
     .first<CatalogChargeRow>();
   if (!charge) throw new ApiError(404, "charge_not_found", "Charge was not found");
   return json({ charge: serializeCatalogCharge(charge) }, { requestId });
+}
+
+async function listChargeFilters(
+  planCode: string,
+  chargeCode: string,
+  url: URL,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const charge = await requireCatalogCharge(database, auth.organizationId, planCode, chargeCode);
+  const filters = catalogChargeFilters(charge);
+  const page = positiveInteger(url.searchParams.get("page"), 1);
+  const perPage = Math.min(positiveInteger(url.searchParams.get("per_page"), 20), 100);
+  const offset = (page - 1) * perPage;
+  return json(
+    {
+      filters: filters
+        .slice(offset, offset + perPage)
+        .map((filter) => serializeChargeFilter(filter, charge.code)),
+      meta: pagination(filters.length, page, perPage),
+    },
+    { requestId },
+  );
+}
+
+async function showChargeFilter(
+  planCode: string,
+  chargeCode: string,
+  filterId: string,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const charge = await requireCatalogCharge(database, auth.organizationId, planCode, chargeCode);
+  const filter = requireChargeFilter(charge, filterId);
+  return json({ filter: serializeChargeFilter(filter, charge.code) }, { requestId });
+}
+
+async function createChargeFilter(
+  planCode: string,
+  chargeCode: string,
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const charge = await requireMutableCatalogCharge(
+    env.BILLING_DB,
+    auth.organizationId,
+    planCode,
+    chargeCode,
+  );
+  const input = objectAt(await parseJsonObject(request), "filter");
+  rejectChargeFilterCascade(input);
+  const filters = catalogChargeFilters(charge);
+  const created = (
+    await normalizeChargeFilters(
+      [input],
+      parseStoredBillableMetricFilters(charge.metric_filters_json),
+      charge.charge_model,
+      charge.id,
+      `${charge.id}:v${charge.version + 1}`,
+    )
+  )[0]!;
+  if (filters.some((filter) => stableJson(filter.values) === stableJson(created.values))) {
+    throw new ApiError(422, "value_already_exist", "Charge filter values already exist");
+  }
+  assertChargeFilterCompatibility(
+    charge.aggregation_type,
+    charge.accepts_target_wallet,
+    charge.min_amount_minor,
+    [...filters, created],
+  );
+  await persistChargeFilters(charge, [...filters, created], planCode, env, auth, requestId);
+  return json({ filter: serializeChargeFilter(created, charge.code) }, { requestId });
+}
+
+async function updateChargeFilter(
+  planCode: string,
+  chargeCode: string,
+  filterId: string,
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const charge = await requireMutableCatalogCharge(
+    env.BILLING_DB,
+    auth.organizationId,
+    planCode,
+    chargeCode,
+  );
+  const filters = catalogChargeFilters(charge);
+  const current = requireChargeFilter(charge, filterId);
+  const input = objectAt(await parseJsonObject(request), "filter");
+  rejectChargeFilterCascade(input);
+  const normalized = (
+    await normalizeChargeFilters(
+      [
+        {
+          invoice_display_name:
+            input.invoice_display_name === undefined
+              ? current.invoiceDisplayName
+              : input.invoice_display_name,
+          properties: input.properties === undefined ? current.properties : input.properties,
+          values: current.values,
+        },
+      ],
+      parseStoredBillableMetricFilters(charge.metric_filters_json),
+      charge.charge_model,
+      charge.id,
+    )
+  )[0]!;
+  const updated = { ...normalized, lagoId: current.lagoId };
+  const next = filters.map((filter) => (filter.lagoId === filterId ? updated : filter));
+  if (stableJson(filters) !== stableJson(next)) {
+    await persistChargeFilters(charge, next, planCode, env, auth, requestId);
+  }
+  return json({ filter: serializeChargeFilter(updated, charge.code) }, { requestId });
+}
+
+async function deleteChargeFilter(
+  planCode: string,
+  chargeCode: string,
+  filterId: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const charge = await requireMutableCatalogCharge(
+    env.BILLING_DB,
+    auth.organizationId,
+    planCode,
+    chargeCode,
+  );
+  const filters = catalogChargeFilters(charge);
+  const deleted = requireChargeFilter(charge, filterId);
+  await persistChargeFilters(
+    charge,
+    filters.filter((filter) => filter.lagoId !== filterId),
+    planCode,
+    env,
+    auth,
+    requestId,
+  );
+  return json({ filter: serializeChargeFilter(deleted, charge.code) }, { requestId });
+}
+
+async function requireCatalogCharge(
+  database: D1Database,
+  organizationId: string,
+  planCode: string,
+  chargeCode: string,
+): Promise<CatalogChargeRow> {
+  const plan = await findPlanId(database, organizationId, planCode);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const charge = await findCatalogCharge(database, plan.id, chargeCode);
+  if (!charge) throw new ApiError(404, "charge_not_found", "Charge was not found");
+  return charge;
+}
+
+async function requireMutableCatalogCharge(
+  database: D1Database,
+  organizationId: string,
+  planCode: string,
+  chargeCode: string,
+): Promise<CatalogChargeRow> {
+  const plan = await findPlanId(database, organizationId, planCode);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  assertCatalogPlanMutationAvailable(plan);
+  const charge = await findCatalogCharge(database, plan.id, chargeCode);
+  if (!charge) throw new ApiError(404, "charge_not_found", "Charge was not found");
+  return charge;
+}
+
+function catalogChargeFilters(charge: CatalogChargeRow): ChargeFilter[] {
+  return parseStoredChargeFilters(
+    charge.filters_json,
+    parseStoredBillableMetricFilters(charge.metric_filters_json),
+    charge.charge_model,
+    charge.id,
+  );
+}
+
+function requireChargeFilter(charge: CatalogChargeRow, filterId: string): ChargeFilter {
+  const filter = catalogChargeFilters(charge).find((candidate) => candidate.lagoId === filterId);
+  if (!filter) throw new ApiError(404, "charge_filter_not_found", "Charge filter was not found");
+  return filter;
+}
+
+async function persistChargeFilters(
+  charge: CatalogChargeRow,
+  filters: ChargeFilter[],
+  planCode: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<void> {
+  const now = new Date().toISOString();
+  const event = catalogEvent(
+    "charge.updated",
+    "charge",
+    charge.id,
+    charge.version + 1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: charge.code, planCode },
+  );
+  const results = await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `UPDATE charges SET filters_json = ?, version = version + 1, updated_at = ?
+       WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?`,
+    ).bind(stableJson(filters), now, charge.id, auth.organizationId, charge.version),
+    conditionalChargeOutboxStatement(
+      env.BILLING_DB,
+      auth.organizationId,
+      event,
+      charge.id,
+      charge.version + 1,
+      now,
+      1,
+    ),
+  ]);
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
+    throw new ApiError(409, "charge_version_conflict", "Charge changed concurrently");
+  }
+  await env.DOMAIN_EVENTS.send(event);
+}
+
+function rejectChargeFilterCascade(input: Record<string, unknown>): void {
+  if (input.cascade_updates === true) {
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      "Charge filter cascade updates are not implemented",
+    );
+  }
 }
 
 function findPlanId(database: D1Database, organizationId: string, code: string) {

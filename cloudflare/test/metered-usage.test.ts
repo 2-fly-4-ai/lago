@@ -683,6 +683,140 @@ describe("Lago-compatible metered usage", () => {
     await expect(invalidMetric.json()).resolves.toMatchObject({ code: "invalid_expression" });
   });
 
+  it("lists, shows, creates, updates, and deletes standalone plan charge filters", async () => {
+    const metric = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Filter API events",
+          code: "filter_api_events",
+          aggregation_type: "count_agg",
+          filters: [{ key: "region", values: ["eu", "us"] }],
+        },
+      },
+    }).then((response) => response.json<{ billable_metric: { lago_id: string } }>());
+    const charge = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metric.billable_metric.lago_id,
+          code: "filter-api-charge",
+          charge_model: "standard",
+          properties: { amount: "1" },
+          filters: [
+            {
+              invoice_display_name: "United States",
+              properties: { amount: "2" },
+              values: { region: ["us"] },
+            },
+          ],
+        },
+      },
+    }).then((response) =>
+      response.json<{
+        charge: { lago_id: string; filters: Array<{ lago_id: string }> };
+      }>(),
+    );
+    const firstFilterId = charge.charge.filters[0]!.lago_id;
+    const collectionPath = "/api/v1/plans/metered-plan/charges/filter-api-charge/filters";
+
+    await expect(api(collectionPath).then((response) => response.json())).resolves.toMatchObject({
+      filters: [{ lago_id: firstFilterId, values: { region: ["us"] } }],
+      meta: { total_count: 1, total_pages: 1 },
+    });
+    await expect(
+      api(`${collectionPath}/${firstFilterId}`).then((response) => response.json()),
+    ).resolves.toMatchObject({
+      filter: { invoice_display_name: "United States", properties: { amount: "2" } },
+    });
+
+    const createdResponse = await api(collectionPath, {
+      method: "POST",
+      body: {
+        filter: {
+          invoice_display_name: "Europe",
+          properties: { amount: "3", presentation_group_keys: [{ value: "region" }] },
+          values: { region: ["eu"] },
+        },
+      },
+    });
+    expect(createdResponse.status).toBe(200);
+    const created = await createdResponse.json<{
+      filter: { lago_id: string; properties: Record<string, unknown> };
+    }>();
+    expect(created.filter.properties).toEqual({ amount: "3" });
+
+    const updated = await api(`${collectionPath}/${created.filter.lago_id}`, {
+      method: "PUT",
+      body: {
+        filter: {
+          invoice_display_name: "Europe updated",
+          properties: { amount: "4" },
+          values: { region: ["us"] },
+        },
+      },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      filter: {
+        lago_id: created.filter.lago_id,
+        invoice_display_name: "Europe updated",
+        properties: { amount: "4" },
+        values: { region: ["eu"] },
+      },
+    });
+
+    const deleted = await api(`${collectionPath}/${created.filter.lago_id}`, {
+      method: "DELETE",
+    });
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toMatchObject({
+      filter: { lago_id: created.filter.lago_id, values: { region: ["eu"] } },
+    });
+    await expect(api(collectionPath).then((response) => response.json())).resolves.toMatchObject({
+      filters: [{ lago_id: firstFilterId }],
+      meta: { total_count: 1 },
+    });
+    expect((await api(`${collectionPath}/${created.filter.lago_id}`)).status).toBe(404);
+    expect((await api("/api/v1/plans/missing/charges/filter-api-charge/filters")).status).toBe(404);
+    expect((await api("/api/v1/plans/metered-plan/charges/missing/filters")).status).toBe(404);
+
+    const cascade = await api(collectionPath, {
+      method: "POST",
+      body: {
+        filter: {
+          cascade_updates: true,
+          properties: { amount: "3" },
+          values: { region: ["eu"] },
+        },
+      },
+    });
+    expect(cascade.status).toBe(422);
+    await expect(cascade.json()).resolves.toMatchObject({ code: "unsupported_charge_feature" });
+
+    const recreated = await api(collectionPath, {
+      method: "POST",
+      body: {
+        filter: { properties: { amount: "3" }, values: { region: ["eu"] } },
+      },
+    }).then((response) => response.json<{ filter: { lago_id: string } }>());
+    expect(recreated.filter.lago_id).not.toBe(created.filter.lago_id);
+
+    const events = await env.BILLING_DB.prepare(
+      `SELECT event_type, aggregate_version FROM outbox_events
+       WHERE aggregate_type = 'charge' AND aggregate_id = ? ORDER BY aggregate_version`,
+    )
+      .bind(charge.charge.lago_id)
+      .all<{ aggregate_version: number; event_type: string }>();
+    expect(events.results).toEqual([
+      { aggregate_version: 1, event_type: "charge.created" },
+      { aggregate_version: 2, event_type: "charge.updated" },
+      { aggregate_version: 3, event_type: "charge.updated" },
+      { aggregate_version: 4, event_type: "charge.updated" },
+      { aggregate_version: 5, event_type: "charge.updated" },
+    ]);
+  });
+
   it("rejects metric options the current usage engine cannot honor", async () => {
     for (const [suffix, unsupported] of [["recurring", { recurring: true }]] as const) {
       const response = await api("/api/v1/billable_metrics", {
