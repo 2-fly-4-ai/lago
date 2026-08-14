@@ -921,3 +921,9 @@ resource and mutation described.
   allocation. All 77 Workers-runtime tests pass across 22 files; all 26 migrations replay from
   empty D1 state, formatting, lint, generated bindings, TypeScript, and the cross-repository
   inventory are green, and the dry-run bundle is 453.74 KiB (82.78 KiB gzip).
+- 2026-08-14: Applied only `0026_terminated_draft_refresh.sql` to the isolated development D1 and
+  deployed Worker version `8b98d25b-d945-44cb-8eab-70626a71c056`. Follow-up migration inventory was
+  empty; remote health/readiness returned `200`, unauthenticated skip/skip termination returned
+  `401`, and aggregate-only verification confirmed all 22 invalidation triggers, zero
+  organizations/invoices/initial contexts/mutation guards, and 21 Cron audits. No route, secret,
+  seeded billing data, or disabled external flag changed.

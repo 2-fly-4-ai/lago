@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `ae1cc8b4-9fc2-4d5d-abb1-095338efd8e0`
+- Latest verified version: `8b98d25b-d945-44cb-8eab-70626a71c056`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -33,7 +33,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `*/5 * * * *`                                                      | Worker scheduled handler  | Deterministic legacy-schedule dispatch                             |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
-Applied D1 migrations: `0001_foundation.sql` through `0025_draft_dependency_invalidation.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0026_terminated_draft_refresh.sql`.
 
 ## Verified behavior
 
@@ -102,6 +102,12 @@ Applied D1 migrations: `0001_foundation.sql` through `0025_draft_dependency_inva
   health/readiness returned `200`/`200`, unauthenticated draft refresh returned `401`, and no
   migration remained pending. Aggregate-only verification found zero organizations, invoices,
   initial contexts, and mutation guards; 20 Cron audits prove the dispatcher remains active. All
+  external-action flags remain disabled, with no route, secret, or billing data added.
+- The terminated-draft deployment extended the subscription invalidation trigger to termination and
+  kept existing immutable-context drafts refreshable after explicit skip-invoice/skip-credit
+  termination. Remote health/readiness returned `200`/`200`, unauthenticated termination returned
+  `401`, and no migration remained pending. Aggregate-only verification found all 22 invalidation
+  triggers, zero organizations/invoices/initial contexts/mutation guards, and 21 Cron audits. All
   external-action flags remain disabled, with no route, secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
