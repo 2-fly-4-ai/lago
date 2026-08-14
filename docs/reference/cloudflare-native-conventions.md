@@ -147,9 +147,11 @@ Required evidence for a new aggregate or a boundary change:
   immutable context. Final termination invoices currently cover only zero-grace in-arrears plans
   without fixed charges or minimum commitments, using explicit UTC civil-day semantics. Those plans
   may also persist a future UTC `ending_at`, which the hourly owner executes before billing close.
+  Credit-only pay-in-advance termination may issue an unused-period balance against a finalized base
+  line only when the source invoice has no coupon, tax, wallet, or prior credit-note allocation.
   Positive-grace termination drafts, tenant-local termination dates, fixed-charge/commitment
-  proration, pay-in-advance final invoicing, and termination credit notes still need explicit
-  lifecycle rules.
+  proration, pay-in-advance final usage invoicing, allocated-source adjustments, refunds, and offsets
+  still need explicit lifecycle rules.
 - A base subscription creates an initial invoice only when its plan snapshots
   `pay_in_advance = 1`; in-arrears starts seed the billing period without an invoice. Recurring
   pay-in-advance base lines snapshot the next period, while in-arrears base lines, usage, fixed

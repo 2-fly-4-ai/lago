@@ -31,9 +31,12 @@ remaining Lago feature inventory is dispositioned and ported.
   exactly once and takes precedence over the recurring close. Explicit skip-invoice/skip-credit
   termination remains idempotent; any existing draft is invalidated and remains refreshable/
   finalizable from its immutable invoice context. At renewal, pay-in-advance base fees snapshot the
-  next period while in-arrears base fees and usage snapshot the closed period. Backdating, calendar
-  billing, tenant-local termination dates, positive-grace termination drafts, pay-in-advance
-  termination credits, and termination with fixed charges or commitments remain guarded.
+  next period while in-arrears base fees and usage snapshot the closed period. Credit-only
+  pay-in-advance termination can return exact unused UTC service days when its source base invoice
+  is finalized and has no discount, tax, wallet, or prior credit allocation. Backdating, calendar
+  billing, tenant-local termination dates, positive-grace termination drafts, pay-in-advance final
+  usage invoices, refund/offset modes, allocated source invoices, and termination with fixed charges
+  or commitments remain guarded.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.

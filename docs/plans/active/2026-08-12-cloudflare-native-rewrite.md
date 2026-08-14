@@ -1057,3 +1057,19 @@ resource and mutation described.
   ending creation returned `401`, and aggregate-only verification confirmed the ending index, zero
   organizations, subscriptions, scheduled endings, and invoices plus 39 Cron audits. No route,
   secret, seeded billing data, or disabled external flag changed.
+- 2026-08-14: Added credit-only unused-period handling for pay-in-advance termination when final
+  invoicing is explicitly skipped. The service locates the immutable base line for the current
+  initial or renewal period, computes unused UTC civil days with exact decimal arithmetic, caps the
+  amount by the line's remaining creditable balance, and writes the credit note/item, subscription
+  transition, and both outbox events in one version-guarded D1 batch. The initial safe subset
+  requires a finalized source invoice with no coupon, tax, wallet, or prior credit-note allocation;
+  refunds, offsets, source-allocation adjustments, and pay-in-advance final usage invoices remain
+  explicit guards. The complete 85-test Workers suite passes across 22 files; formatting, lint,
+  generated bindings, TypeScript, inventory, and the dry-run bundle are green at 515.29 KiB
+  (91.94 KiB gzip). No migration is required.
+- 2026-08-14: Confirmed no remote migration was pending and deployed unused advance-period credits
+  as isolated Worker version `958a6269-1741-404d-b76c-0363a4f54e09`. Follow-up inventory remained
+  empty; remote health/readiness returned `200`, unauthenticated termination returned `401`, and
+  aggregate-only verification confirmed zero organizations, subscriptions, invoices, credit notes,
+  and credit-note items plus 40 Cron audits. No route, secret, seeded billing data, or disabled
+  external flag changed.

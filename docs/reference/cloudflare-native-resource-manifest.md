@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `bdd3b5db-bae8-4765-9482-1eeb01068ce3`
+- Latest verified version: `958a6269-1741-404d-b76c-0363a4f54e09`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -164,6 +164,14 @@ Applied D1 migrations: `0001_foundation.sql` through
   migration remained pending. Aggregate-only verification found the expected index, zero
   organizations, subscriptions, scheduled endings, and invoices plus 39 Cron audits. The stack
   remains unseeded and all external-action flags remain disabled, with no route or secret added.
+- The code-only unused-advance-credit deployment reuses the credit-note aggregate to atomically
+  terminate a pay-in-advance subscription and issue a credit-only balance for exact unused UTC
+  service days. It is intentionally limited to finalized base invoices without coupon, tax, wallet,
+  or prior credit-note allocations; final usage invoicing, refunds, offsets, and allocated-source
+  adjustments remain guarded. Remote health/readiness returned `200`/`200`, unauthenticated
+  termination returned `401`, and no migration was pending. Aggregate-only verification found zero
+  organizations, subscriptions, invoices, credit notes, and credit-note items plus 40 Cron audits.
+  All external-action flags remain disabled, with no route, secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
