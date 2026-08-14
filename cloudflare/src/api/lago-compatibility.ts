@@ -87,6 +87,7 @@ type InvoiceRow = {
   prepaid_credit_minor: number;
   total_due_minor: number;
   total_paid_minor: number;
+  invoice_type: "subscription" | "one_off";
   version: number;
   finalized_at: string | null;
   voided_at: string | null;
@@ -154,6 +155,10 @@ export async function handleLagoCompatibilityRequest(
 
   if (request.method === "POST" && url.pathname === "/api/v1/subscriptions") {
     return createSubscription(request, env, auth, requestId);
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/v1/invoices") {
+    return createOneOffInvoice(request, env, auth, requestId);
   }
 
   if (request.method === "GET" && url.pathname === "/api/v1/invoices") {
@@ -857,7 +862,7 @@ async function listInvoices(
     .prepare(
       `SELECT i.id, i.customer_id, c.external_id AS customer_external_id,
               c.payment_provider, c.payment_provider_code, i.number, i.status,
-              i.payment_status, i.currency, i.subtotal_minor, i.tax_minor,
+              i.payment_status, i.invoice_type, i.currency, i.subtotal_minor, i.tax_minor,
               i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
               i.total_due_minor,
               COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
@@ -909,6 +914,266 @@ async function showInvoice(
     },
     { requestId },
   );
+}
+
+async function createOneOffInvoice(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const input = objectAt(await parseJsonObject(request), "invoice");
+  const supported = new Set(["external_customer_id", "currency", "skip_psp", "fees"]);
+  const unsupported = Object.keys(input).find((key) => !supported.has(key));
+  if (unsupported)
+    throw new ApiError(
+      422,
+      "unsupported_one_off_invoice_feature",
+      `${unsupported} is not implemented by the Cloudflare one-off invoice ledger`,
+    );
+  if (input.skip_psp !== true)
+    throw new ApiError(
+      422,
+      "automatic_payment_not_supported",
+      "One-off invoices require skip_psp=true until automatic payment workflow dispatch is ported",
+    );
+  const externalCustomerId = requiredString(input, "external_customer_id");
+  const customer = await findCustomer(env.BILLING_DB, auth.organizationId, externalCustomerId);
+  if (!customer) throw new ApiError(404, "customer_not_found", "Customer was not found");
+  const requestedCurrency = optionalString(input, "currency")?.toUpperCase() ?? customer.currency;
+  if (!requestedCurrency)
+    throw new ApiError(422, "currency_required", "Customer or invoice currency is required");
+  if (customer.currency !== requestedCurrency)
+    throw new ApiError(
+      422,
+      "currency_mismatch",
+      "Invoice currency must match the configured customer currency",
+    );
+  if (!Array.isArray(input.fees) || input.fees.length === 0)
+    throw new ApiError(422, "validation_error", "fees must be a non-empty array");
+  if (input.fees.length > 100)
+    throw new ApiError(422, "validation_error", "fees cannot contain more than 100 entries");
+
+  const normalizedFees = await Promise.all(
+    input.fees.map(async (value, index) => {
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        throw new ApiError(422, "validation_error", `fees[${index}] must be an object`);
+      const fee = value as Record<string, unknown>;
+      const allowed = new Set([
+        "add_on_code",
+        "invoice_display_name",
+        "unit_amount_cents",
+        "units",
+        "description",
+        "tax_codes",
+      ]);
+      const unsupportedFee = Object.keys(fee).find((key) => !allowed.has(key));
+      if (unsupportedFee)
+        throw new ApiError(
+          422,
+          "unsupported_one_off_invoice_feature",
+          `fees[${index}].${unsupportedFee} is not implemented`,
+        );
+      if (fee.tax_codes !== undefined) {
+        if (!Array.isArray(fee.tax_codes))
+          throw new ApiError(422, "validation_error", `fees[${index}].tax_codes must be an array`);
+        if (fee.tax_codes.length > 0)
+          throw new ApiError(
+            422,
+            "unsupported_tax_target",
+            "One-off fee tax targeting is not implemented; use organization-default taxes",
+          );
+      }
+      const code = requiredString(fee, "add_on_code");
+      const addOn = await env.BILLING_DB.prepare(
+        `SELECT id, code, name, invoice_display_name, description, amount_minor, currency
+         FROM add_ons WHERE organization_id = ? AND code = ? AND status = 'active' LIMIT 1`,
+      )
+        .bind(auth.organizationId, code)
+        .first<{
+          id: string;
+          code: string;
+          name: string;
+          invoice_display_name: string | null;
+          description: string | null;
+          amount_minor: number;
+          currency: string;
+        }>();
+      if (!addOn) throw new ApiError(404, "add_on_not_found", `Add-on ${code} was not found`);
+      if (addOn.currency !== requestedCurrency)
+        throw new ApiError(422, "currency_mismatch", `Add-on ${code} currency does not match`);
+      const unitAmountMinor =
+        fee.unit_amount_cents === undefined
+          ? addOn.amount_minor
+          : nonNegativeInteger(fee.unit_amount_cents, `fees[${index}].unit_amount_cents`);
+      const units = positiveDecimal(fee.units ?? 1, `fees[${index}].units`);
+      const precise = Decimal.parse(unitAmountMinor).multiply(Decimal.parse(units));
+      const rounded = Number(precise.round());
+      if (!Number.isSafeInteger(rounded) || rounded < 0)
+        throw new ApiError(422, "invalid_minor_amount", `fees[${index}] amount is invalid`);
+      return {
+        addOn,
+        description: optionalString(fee, "description") ?? addOn.description ?? addOn.name,
+        invoiceDisplayName:
+          optionalString(fee, "invoice_display_name") ?? addOn.invoice_display_name ?? addOn.name,
+        precise: precise.toString(),
+        rounded,
+        unitAmountMinor,
+        units,
+      };
+    }),
+  );
+  const normalized = {
+    currency: requestedCurrency,
+    externalCustomerId,
+    fees: normalizedFees.map((fee) => ({
+      addOnCode: fee.addOn.code,
+      description: fee.description,
+      invoiceDisplayName: fee.invoiceDisplayName,
+      precise: fee.precise,
+      unitAmountMinor: fee.unitAmountMinor,
+      units: fee.units,
+    })),
+    skipPsp: true,
+  };
+  const requestHash = await sha256Hex(stableJson(normalized));
+  const replay = await env.BILLING_DB.prepare(
+    `SELECT id FROM invoices WHERE organization_id = ? AND invoice_type = 'one_off'
+     AND request_sha256 = ? LIMIT 1`,
+  )
+    .bind(auth.organizationId, requestHash)
+    .first<{ id: string }>();
+  if (replay) return showInvoice(replay.id, env.BILLING_DB, auth, requestId);
+
+  const invoiceId = await deterministicUuid(
+    "one-off-invoice",
+    `${auth.organizationId}:${requestHash}`,
+  );
+  const now = new Date().toISOString();
+  const lines = await Promise.all(
+    normalizedFees.map(async (fee, index) => ({
+      ...fee,
+      id: await deterministicUuid("one-off-invoice-line", `${invoiceId}:${index}`),
+    })),
+  );
+  const subtotalMinor = lines.reduce((sum, line) => safeAddMinor(sum, line.rounded), 0);
+  const invoiceTaxes = await calculateManualTaxes(
+    env.BILLING_DB,
+    auth.organizationId,
+    invoiceId,
+    lines.map((line) => ({ id: line.id, amountMinor: line.rounded })),
+    0,
+  );
+  const taxMinor = totalManualTaxMinor(invoiceTaxes);
+  const totalDueMinor = safeAddMinor(subtotalMinor, taxMinor);
+  const paymentStatus = totalDueMinor === 0 ? "succeeded" : "pending";
+  const eventId = `invoice-one-off-created:${invoiceId}:v1`;
+  const eventPayload = {
+    organizationId: auth.organizationId,
+    invoiceId,
+    customerId: customer.id,
+    externalCustomerId,
+    currency: requestedCurrency,
+    subtotalMinor,
+    taxMinor,
+    totalDueMinor,
+  };
+  const statements: D1PreparedStatement[] = [
+    env.BILLING_DB.prepare(
+      `INSERT INTO invoices
+       (id, organization_id, customer_id, subscription_id, number, status, payment_status,
+        currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
+        finalized_at, created_at, updated_at, invoice_type, request_sha256)
+       VALUES (?, ?, ?, NULL, ?, 'finalized', ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, 'one_off', ?)`,
+    ).bind(
+      invoiceId,
+      auth.organizationId,
+      customer.id,
+      `INV-${invoiceId.slice(0, 8).toUpperCase()}`,
+      paymentStatus,
+      requestedCurrency,
+      subtotalMinor,
+      taxMinor,
+      totalDueMinor,
+      now,
+      now,
+      now,
+      requestHash,
+    ),
+    ...lines.map((line, index) =>
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoice_lines
+         (id, invoice_id, line_type, description, quantity_decimal, unit_amount_decimal,
+          amount_minor, source_type, source_id, metadata_json, created_at, precise_amount_minor,
+          display_order)
+         VALUES (?, ?, 'add_on', ?, ?, ?, ?, 'add_on', ?, ?, ?, ?, ?)`,
+      ).bind(
+        line.id,
+        invoiceId,
+        line.description,
+        line.units,
+        String(line.unitAmountMinor),
+        line.rounded,
+        line.addOn.id,
+        stableJson({
+          code: line.addOn.code,
+          invoiceDisplayName: line.invoiceDisplayName,
+          name: line.addOn.name,
+        }),
+        now,
+        line.precise,
+        index,
+      ),
+    ),
+    ...manualTaxStatements(
+      env.BILLING_DB,
+      auth.organizationId,
+      invoiceId,
+      requestedCurrency,
+      invoiceTaxes,
+      now,
+    ),
+    env.BILLING_DB.prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type,
+        aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+        occurred_at, published_at)
+       VALUES (?, ?, 'invoice.one_off_created', 1, 'invoice', ?, 1, ?, ?, ?, ?, NULL)`,
+    ).bind(
+      eventId,
+      auth.organizationId,
+      invoiceId,
+      requestId,
+      requestId,
+      stableJson(eventPayload),
+      now,
+    ),
+  ];
+  try {
+    await env.BILLING_DB.batch(statements);
+  } catch (error) {
+    const concurrent = await env.BILLING_DB.prepare(
+      `SELECT id FROM invoices WHERE organization_id = ? AND invoice_type = 'one_off'
+       AND request_sha256 = ? LIMIT 1`,
+    )
+      .bind(auth.organizationId, requestHash)
+      .first<{ id: string }>();
+    if (concurrent) return showInvoice(concurrent.id, env.BILLING_DB, auth, requestId);
+    throw error;
+  }
+  await env.DOMAIN_EVENTS.send({
+    id: eventId,
+    type: "invoice.one_off_created",
+    version: 1,
+    aggregateType: "invoice",
+    aggregateId: invoiceId,
+    aggregateVersion: 1,
+    occurredAt: now,
+    causationId: requestId,
+    correlationId: requestId,
+    payload: eventPayload,
+  });
+  return showInvoice(invoiceId, env.BILLING_DB, auth, requestId);
 }
 
 async function voidInvoice(
@@ -1134,7 +1399,7 @@ async function findInvoice(
     .prepare(
       `SELECT i.id, i.customer_id, c.external_id AS customer_external_id,
               c.email AS customer_email, c.payment_provider, c.payment_provider_code,
-              i.number, i.status, i.payment_status, i.currency, i.subtotal_minor,
+              i.number, i.status, i.payment_status, i.invoice_type, i.currency, i.subtotal_minor,
               i.tax_minor, i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
               i.total_due_minor,
               COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
@@ -1155,8 +1420,8 @@ async function serializeInvoiceLines(
   const result = await database
     .prepare(
       `SELECT id, line_type, description, quantity_decimal, unit_amount_decimal,
-              amount_minor, source_type, source_id, precise_amount_minor, created_at
-       FROM invoice_lines WHERE invoice_id = ? ORDER BY created_at, id`,
+              amount_minor, source_type, source_id, metadata_json, precise_amount_minor, created_at
+       FROM invoice_lines WHERE invoice_id = ? ORDER BY display_order, created_at, id`,
     )
     .bind(invoice.id)
     .all<{
@@ -1168,12 +1433,14 @@ async function serializeInvoiceLines(
       amount_minor: number;
       source_type: string;
       source_id: string;
+      metadata_json: string;
       precise_amount_minor: string | null;
       created_at: string;
     }>();
   return Promise.all(
     result.results.map(async (line) => {
       const appliedTaxes = await serializeInvoiceLineTaxes(database, line.id);
+      const metadata = parseObjectJson(line.metadata_json);
       return {
         lago_id: line.id,
         lago_invoice_id: invoice.id,
@@ -1181,10 +1448,13 @@ async function serializeInvoiceLines(
         lago_subscription_id: null,
         item: {
           type: line.line_type,
-          code: line.source_id,
-          name: line.description,
+          code: typeof metadata.code === "string" ? metadata.code : line.source_id,
+          name: typeof metadata.name === "string" ? metadata.name : line.description,
           description: line.description,
-          invoice_display_name: line.description,
+          invoice_display_name:
+            typeof metadata.invoiceDisplayName === "string"
+              ? metadata.invoiceDisplayName
+              : line.description,
           lago_item_id: line.source_id,
           item_type: line.source_type,
         },
@@ -1389,7 +1659,7 @@ async function generateInvoicePaymentUrl(
     `SELECT i.id, i.customer_id, c.external_id AS customer_external_id,
             c.email AS customer_email,
             c.payment_provider, c.payment_provider_code, i.number, i.status,
-            i.payment_status, i.currency, i.subtotal_minor, i.tax_minor,
+            i.payment_status, i.invoice_type, i.currency, i.subtotal_minor, i.tax_minor,
             i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
             i.total_due_minor,
             COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
@@ -1632,7 +1902,7 @@ function serializeInvoice(invoice: InvoiceRow): Record<string, unknown> {
     number: invoice.number,
     issuing_date: invoice.finalized_at?.slice(0, 10) ?? null,
     payment_due_date: null,
-    invoice_type: "subscription",
+    invoice_type: invoice.invoice_type,
     status: invoice.status,
     payment_status: invoice.payment_status,
     currency: invoice.currency,
@@ -1839,6 +2109,35 @@ function normalizeMetadata(
 
 function normalizeEmail(email: string | null): string | null {
   return email?.trim().toLowerCase() || null;
+}
+
+function nonNegativeInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0)
+    throw new ApiError(422, "validation_error", `${field} must be a non-negative integer`);
+  return value as number;
+}
+
+function positiveDecimal(value: unknown, field: string): string {
+  if (typeof value !== "string" && typeof value !== "number")
+    throw new ApiError(422, "validation_error", `${field} must be a positive decimal`);
+  try {
+    const decimal = Decimal.parse(value);
+    if (decimal.isNegative() || decimal.isZero()) throw new Error("not_positive");
+    return decimal.toString();
+  } catch {
+    throw new ApiError(422, "validation_error", `${field} must be a positive decimal`);
+  }
+}
+
+function parseObjectJson(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function positiveInteger(value: string | null, fallback: number): number {
