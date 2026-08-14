@@ -27,7 +27,9 @@ remaining Lago feature inventory is dispositioned and ported.
   historical instant without generating a retroactive invoice, then resumes from the billing
   period containing creation time. Pending starts can be moved to another future instant or
   canceled without producing an invoice. Immediate, historical, and scheduled activation emit a
-  transactional `subscription.started` event. Zero-grace in-arrears subscriptions can terminate
+  transactional `subscription.started` event. Subscription create, update, and plan replacement
+  persist Lago's `manual` or provider-default payment policy; provider-specific method IDs remain
+  guarded until the tenant-scoped registry is ported. Zero-grace in-arrears subscriptions can terminate
   with an atomic final invoice: the base fee and minimum-commitment target are prorated by inclusive
   UTC service days, usage is bounded to the following UTC-day boundary, and supported
   non-prorated pay-in-arrears fixed charges retain their full amount. The same constrained plans may persist a

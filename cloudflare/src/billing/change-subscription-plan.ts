@@ -47,6 +47,8 @@ type CurrentGeneration = {
   trial_ended_at: string | null;
   invoice_grace_period: number;
   net_payment_term: number;
+  payment_method_type: "manual" | "provider" | null;
+  payment_method_id: string | null;
 };
 
 type TargetPlan = {
@@ -69,6 +71,8 @@ export type ChangeSubscriptionPlanInput = {
   endingAt: string | null;
   requestHash: string;
   requestId: string;
+  paymentMethodType?: "manual" | "provider" | null;
+  paymentMethodId?: string | null;
 };
 
 export type ChangeSubscriptionPlanResult = {
@@ -173,6 +177,12 @@ async function updateInitialPending(
   const changedAt = new Date().toISOString();
   const initialStartedAt = current.subscription_at;
   const trialEndAt = trialEnd(target, initialStartedAt, current.billing_timezone);
+  const paymentMethodType =
+    input.paymentMethodType === undefined ? current.payment_method_type : input.paymentMethodType;
+  const paymentMethodId =
+    input.paymentMethodType === undefined
+      ? current.payment_method_id
+      : (input.paymentMethodId ?? null);
   const event = subscriptionEvent(
     "subscription.updated",
     current.id,
@@ -191,6 +201,7 @@ async function updateInitialPending(
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
        SET plan_id = ?, name = ?, ending_at = ?, request_sha256 = ?,
+           payment_method_type = ?, payment_method_id = ?,
            trial_started_at = ?, trial_end_at = ?, trial_ended_at = NULL,
            version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ? AND status = 'pending'
@@ -200,6 +211,8 @@ async function updateInitialPending(
       input.name,
       input.endingAt ?? current.ending_at,
       input.requestHash,
+      paymentMethodType,
+      paymentMethodId,
       trialEndAt ? initialStartedAt : null,
       trialEndAt,
       changedAt,
@@ -295,9 +308,9 @@ async function scheduleDowngrade(
         created_at, updated_at, name, request_sha256, subscription_at, ending_at,
         on_termination_credit_note, on_termination_invoice, billing_time, billing_timezone,
         trial_started_at, trial_end_at, trial_ended_at, previous_subscription_id,
-        transition_kind, transition_at, generation)
+        transition_kind, transition_at, generation, payment_method_type, payment_method_id)
        SELECT ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, NULL, 1, ?, ?, ?, ?, ?, ?,
-              NULL, NULL, ?, ?, ?, ?, ?, ?, 'downgrade', ?, ?
+              NULL, NULL, ?, ?, ?, ?, ?, ?, 'downgrade', ?, ?, ?, ?
        FROM subscriptions previous
        WHERE previous.id = ? AND previous.organization_id = ? AND previous.version = ?
          AND previous.status IN ('active', 'past_due')`,
@@ -323,6 +336,10 @@ async function scheduleDowngrade(
       current.id,
       current.current_period_end,
       nextGeneration,
+      input.paymentMethodType === undefined ? current.payment_method_type : input.paymentMethodType,
+      input.paymentMethodType === undefined
+        ? current.payment_method_id
+        : (input.paymentMethodId ?? null),
       current.id,
       current.organization_id,
       current.version,
@@ -608,9 +625,9 @@ async function upgradeActiveGeneration(
         created_at, updated_at, name, request_sha256, subscription_at, ending_at,
         on_termination_credit_note, on_termination_invoice, billing_time, billing_timezone,
         trial_started_at, trial_end_at, trial_ended_at, previous_subscription_id,
-        transition_kind, transition_at, generation)
+        transition_kind, transition_at, generation, payment_method_type, payment_method_id)
        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, NULL, 1, ?, ?, ?, ?, ?, ?, NULL, NULL,
-               ?, ?, ?, ?, ?, ?, 'upgrade', ?, ?)`,
+               ?, ?, ?, ?, ?, ?, 'upgrade', ?, ?, ?, ?)`,
     ).bind(
       nextId,
       current.organization_id,
@@ -634,6 +651,10 @@ async function upgradeActiveGeneration(
       current.id,
       changedAt,
       nextGeneration,
+      input.paymentMethodType === undefined ? current.payment_method_type : input.paymentMethodType,
+      input.paymentMethodType === undefined
+        ? current.payment_method_id
+        : (input.paymentMethodId ?? null),
     ),
     env.BILLING_DB.prepare(
       `INSERT INTO invoice_subscriptions
@@ -786,6 +807,7 @@ async function findCurrentGeneration(
       `SELECT s.id, s.organization_id, s.customer_id, s.plan_id, s.external_id, s.status,
               s.subscription_at, s.started_at, s.current_period_start, s.current_period_end,
               s.ending_at, s.billing_time, s.billing_timezone, s.generation, s.version,
+              s.payment_method_type, s.payment_method_id,
               s.trial_started_at, s.trial_end_at, s.trial_ended_at,
               p.amount_minor AS plan_amount_minor, p.currency AS plan_currency,
               p.interval AS plan_interval, p.pay_in_advance AS plan_pay_in_advance,

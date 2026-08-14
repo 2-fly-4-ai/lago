@@ -60,6 +60,10 @@ this document does not silently redefine that behavior.
   end. A base already issued for that window wins, including the exact `:10` boundary case. Trial
   drafts reuse an immutable initial context, remain non-consuming during refresh, and allocate
   credits only at finalization.
+- Subscription payment policy is separate from provider credentials. `manual`, provider-default,
+  and clearing the override are persisted on each generation and serialized through the API.
+  Provider-specific payment method IDs remain rejected until their customer/provider registry and
+  deletion lifecycle exist; checkout method labels from `store-new` are not treated as Lago IDs.
 - A subscription external ID is a logical chain, not a single mutable row. Each plan change creates
   an immutable generation with a tenant/external/generation key and a `previous_subscription_id`.
   D1 partial unique indexes permit exactly one active/past-due generation and one pending successor.

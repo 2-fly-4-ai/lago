@@ -10,6 +10,7 @@ import { terminatePayInAdvanceWithCredit } from "../billing/pay-in-advance-termi
 import type { BillingTime } from "../billing/periods";
 import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../http";
 import { stableJson } from "../json";
+import { normalizeSubscriptionPaymentMethod } from "./subscription-payment-method";
 import {
   assertEndingAtAfterStart,
   assertFutureEndingAt,
@@ -51,6 +52,8 @@ type SubscriptionRow = {
   previous_plan_code: string | null;
   next_plan_code: string | null;
   downgrade_plan_date: string | null;
+  payment_method_type: "manual" | "provider" | null;
+  payment_method_id: string | null;
 };
 
 export async function handleSubscriptionLifecycleRequest(
@@ -99,8 +102,15 @@ async function updateSubscription(
           "ending_at",
           "on_termination_credit_note",
           "on_termination_invoice",
+          "payment_method",
         ]
-      : ["name", "ending_at", "on_termination_credit_note", "on_termination_invoice"];
+      : [
+          "name",
+          "ending_at",
+          "on_termination_credit_note",
+          "on_termination_invoice",
+          "payment_method",
+        ];
   const unsupported = Object.keys(input).find((key) => !allowed.includes(key));
   if (unsupported)
     throw new ApiError(
@@ -109,6 +119,13 @@ async function updateSubscription(
       `${unsupported} update is not implemented by the Cloudflare subscription lifecycle`,
     );
   const name = input.name === undefined ? subscription.name : optionalString(input, "name");
+  const paymentMethod = normalizeSubscriptionPaymentMethod(input.payment_method);
+  const paymentMethodType =
+    paymentMethod === undefined
+      ? subscription.payment_method_type
+      : paymentMethod.paymentMethodType;
+  const paymentMethodId =
+    paymentMethod === undefined ? subscription.payment_method_id : paymentMethod.paymentMethodId;
   const nowDate = new Date();
   const now = nowDate.toISOString();
   let subscriptionAt = subscription.subscription_at;
@@ -160,13 +177,16 @@ async function updateSubscription(
       endingAt,
       onTerminationCreditNote,
       onTerminationInvoice,
+      paymentMethodId,
+      paymentMethodType,
     },
   };
   const results = await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
        SET name = ?, subscription_at = ?, ending_at = ?, on_termination_credit_note = ?,
-           on_termination_invoice = ?, version = version + 1, updated_at = ?
+           on_termination_invoice = ?, payment_method_type = ?, payment_method_id = ?,
+           version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?
          AND status = ?`,
     ).bind(
@@ -175,6 +195,8 @@ async function updateSubscription(
       endingAt,
       onTerminationCreditNote,
       onTerminationInvoice,
+      paymentMethodType,
+      paymentMethodId,
       now,
       subscription.id,
       auth.organizationId,
@@ -539,7 +561,7 @@ function subscriptionSelect(): string {
                  s.ending_at, s.on_termination_credit_note, s.on_termination_invoice,
                  s.terminated_at, s.created_at, s.updated_at, s.version,
                  s.billing_time, s.billing_timezone, s.trial_started_at, s.trial_end_at,
-                 s.trial_ended_at,
+                 s.trial_ended_at, s.payment_method_type, s.payment_method_id,
                  (SELECT pp.code FROM subscriptions ps JOIN plans pp ON pp.id = ps.plan_id
                   WHERE ps.id = s.previous_subscription_id LIMIT 1) AS previous_plan_code,
                  (SELECT np.code FROM subscriptions ns JOIN plans np ON np.id = ns.plan_id
@@ -612,7 +634,10 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     previous_plan_code: subscription.previous_plan_code,
     next_plan_code: subscription.next_plan_code,
     downgrade_plan_date: subscription.downgrade_plan_date?.slice(0, 10) ?? null,
-    payment_method: { payment_method_id: null, payment_method_type: null },
+    payment_method: {
+      payment_method_id: subscription.payment_method_id,
+      payment_method_type: subscription.payment_method_type,
+    },
   };
 }
 

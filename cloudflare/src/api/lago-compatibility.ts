@@ -35,6 +35,7 @@ import { Decimal } from "../rating/decimal";
 import { handleWebhookEndpointRequest } from "./webhook-endpoints";
 import { handleAddOnLedgerRequest } from "./add-on-ledger";
 import { handlePaymentLedgerRequest } from "./payment-ledger";
+import { normalizeSubscriptionPaymentMethod } from "./subscription-payment-method";
 import {
   calculateManualTaxes,
   manualTaxStatements,
@@ -98,6 +99,8 @@ type SubscriptionRow = {
   trial_ended_at: string | null;
   previous_subscription_id: string | null;
   generation: number;
+  payment_method_type: "manual" | "provider" | null;
+  payment_method_id: string | null;
   previous_plan_code: string | null;
   next_plan_code: string | null;
   downgrade_plan_date: string | null;
@@ -566,6 +569,7 @@ async function createSubscription(
   const now = new Date();
   const timestamp = now.toISOString();
   const subscriptionAt = normalizeSubscriptionAt(input.subscription_at);
+  const paymentMethod = normalizeSubscriptionPaymentMethod(input.payment_method);
   const billingTime = normalizeBillingTime(input.billing_time);
   const endingAt = normalizeEndingAt(input.ending_at);
   const onTerminationCreditNote = normalizeTerminationCreditAction(
@@ -578,6 +582,7 @@ async function createSubscription(
   if (endingAt) requestIdentity.endingAt = endingAt;
   if (onTerminationCreditNote) requestIdentity.onTerminationCreditNote = onTerminationCreditNote;
   if (onTerminationInvoice) requestIdentity.onTerminationInvoice = onTerminationInvoice;
+  if (paymentMethod !== undefined) requestIdentity.paymentMethod = paymentMethod;
   const requestHash = await sha256Hex(JSON.stringify(requestIdentity));
 
   const existing = await findSubscription(database, auth.organizationId, externalId);
@@ -653,6 +658,8 @@ async function createSubscription(
         endingAt,
         requestHash,
         requestId,
+        paymentMethodId: paymentMethod?.paymentMethodId,
+        paymentMethodType: paymentMethod?.paymentMethodType,
       });
       const responseSubscription = await findSubscriptionById(
         database,
@@ -751,8 +758,8 @@ async function createSubscription(
               ending_at, on_termination_credit_note, on_termination_invoice,
               started_at, current_period_start, current_period_end, version, created_at,
               updated_at, name, request_sha256, billing_time, billing_timezone,
-              trial_started_at, trial_end_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, NULL, NULL, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              trial_started_at, trial_end_at, payment_method_type, payment_method_id)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, NULL, NULL, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             subscriptionId,
@@ -772,6 +779,8 @@ async function createSubscription(
             billingTimezone,
             trialEndAt ? effectiveStart : null,
             trialEndAt,
+            paymentMethod?.paymentMethodType ?? null,
+            paymentMethod?.paymentMethodId ?? null,
           ),
         database
           .prepare(
@@ -885,8 +894,8 @@ async function createSubscription(
               ending_at, on_termination_credit_note, on_termination_invoice,
               started_at, current_period_start, current_period_end, version, created_at,
               updated_at, name, request_sha256, billing_time, billing_timezone,
-              trial_started_at, trial_end_at)
-             VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              trial_started_at, trial_end_at, payment_method_type, payment_method_id)
+             VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             subscriptionId,
@@ -909,6 +918,8 @@ async function createSubscription(
             billingTimezone,
             trialEndAt ? effectiveStart : null,
             trialEndAt,
+            paymentMethod?.paymentMethodType ?? null,
+            paymentMethod?.paymentMethodId ?? null,
           ),
         database
           .prepare(
@@ -1092,8 +1103,9 @@ async function createSubscription(
           ending_at, on_termination_credit_note, on_termination_invoice,
           started_at,
           current_period_start, current_period_end, version, created_at, updated_at,
-          name, request_sha256, billing_time, billing_timezone)
-         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+          name, request_sha256, billing_time, billing_timezone, payment_method_type,
+          payment_method_id)
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           subscriptionId,
@@ -1114,6 +1126,8 @@ async function createSubscription(
           requestHash,
           billingTime,
           billingTimezone,
+          paymentMethod?.paymentMethodType ?? null,
+          paymentMethod?.paymentMethodId ?? null,
         ),
       database
         .prepare(
@@ -1352,7 +1366,6 @@ function rejectUnsupportedSubscriptionCreate(
     "progressive_billing_disabled",
     "invoice_custom_section",
     "activation_rules",
-    "payment_method",
     "usage_thresholds",
     "plan_overrides",
   ]) {
@@ -2584,7 +2597,7 @@ async function findSubscription(
               s.on_termination_invoice,
               s.canceled_at, s.terminated_at, s.created_at, s.billing_time,
               s.billing_timezone, s.trial_started_at, s.trial_end_at, s.trial_ended_at,
-              s.previous_subscription_id, s.generation
+              s.previous_subscription_id, s.generation, s.payment_method_type, s.payment_method_id
               ,(SELECT pp.code FROM subscriptions ps JOIN plans pp ON pp.id = ps.plan_id
                 WHERE ps.id = s.previous_subscription_id LIMIT 1) AS previous_plan_code
               ,(SELECT np.code FROM subscriptions ns JOIN plans np ON np.id = ns.plan_id
@@ -2624,7 +2637,7 @@ async function findSubscriptionById(
               s.on_termination_credit_note, s.on_termination_invoice,
               s.canceled_at, s.terminated_at, s.created_at, s.billing_time,
               s.billing_timezone, s.trial_started_at, s.trial_end_at, s.trial_ended_at,
-              s.previous_subscription_id, s.generation,
+              s.previous_subscription_id, s.generation, s.payment_method_type, s.payment_method_id,
               (SELECT pp.code FROM subscriptions ps JOIN plans pp ON pp.id = ps.plan_id
                WHERE ps.id = s.previous_subscription_id LIMIT 1) AS previous_plan_code,
               (SELECT np.code FROM subscriptions ns JOIN plans np ON np.id = ns.plan_id
@@ -2692,7 +2705,10 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
     previous_plan_code: subscription.previous_plan_code,
     next_plan_code: subscription.next_plan_code,
     downgrade_plan_date: subscription.downgrade_plan_date?.slice(0, 10) ?? null,
-    payment_method: { payment_method_id: null, payment_method_type: null },
+    payment_method: {
+      payment_method_id: subscription.payment_method_id,
+      payment_method_type: subscription.payment_method_type,
+    },
   };
 }
 

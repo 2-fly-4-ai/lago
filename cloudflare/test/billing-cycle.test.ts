@@ -227,6 +227,96 @@ describe("billing period close", () => {
     expect(invoiceEvents?.total).toBe(1);
   });
 
+  it("persists manual or provider-default policy across pending plan replacement", async () => {
+    const now = new Date().toISOString();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO plans
+       (id, organization_id, code, name, interval, amount_minor, currency, pay_in_advance,
+        version, active, created_at, updated_at)
+       VALUES ('plan-policy-target', 'org-cycle', 'policy-target', 'Policy target', 'monthly',
+               1200, 'USD', 1, 1, 1, ?, ?)`,
+    )
+      .bind(now, now)
+      .run();
+    const customer = await invoiceRequest("/api/v1/customers", "POST", {
+      customer: { external_id: "customer-policy-external", currency: "USD" },
+    });
+    expect(customer.status).toBe(200);
+    const subscriptionAt = new Date(Date.now() + 86_400_000).toISOString();
+    const created = await invoiceRequest("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-policy-external",
+        external_id: "subscription-policy-external",
+        plan_code: "cycle-plan",
+        subscription_at: subscriptionAt,
+        payment_method: { payment_method_type: "manual" },
+      },
+    });
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      subscription: {
+        status: "pending",
+        payment_method: { payment_method_id: null, payment_method_type: "manual" },
+      },
+    });
+
+    const replaced = await invoiceRequest("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-policy-external",
+        external_id: "subscription-policy-external",
+        plan_code: "policy-target",
+        subscription_at: subscriptionAt,
+      },
+    });
+    expect(replaced.status).toBe(200);
+    await expect(replaced.json()).resolves.toMatchObject({
+      subscription: {
+        plan_code: "policy-target",
+        payment_method: { payment_method_id: null, payment_method_type: "manual" },
+      },
+    });
+
+    const providerDefault = await invoiceRequest(
+      "/api/v1/subscriptions/subscription-policy-external",
+      "PUT",
+      { subscription: { payment_method: { payment_method_type: "provider" } } },
+    );
+    expect(providerDefault.status).toBe(200);
+    await expect(providerDefault.json()).resolves.toMatchObject({
+      subscription: {
+        payment_method: { payment_method_id: null, payment_method_type: "provider" },
+      },
+    });
+    const rejected = await invoiceRequest(
+      "/api/v1/subscriptions/subscription-policy-external",
+      "PUT",
+      {
+        subscription: {
+          payment_method: { payment_method_id: "pm_external", payment_method_type: "provider" },
+        },
+      },
+    );
+    expect(rejected.status).toBe(422);
+    await expect(rejected.json()).resolves.toMatchObject({
+      code: "unsupported_subscription_payment_method",
+    });
+    const cleared = await invoiceRequest(
+      "/api/v1/subscriptions/subscription-policy-external",
+      "PUT",
+      { subscription: { payment_method: null } },
+    );
+    expect(cleared.status).toBe(200);
+    await expect(cleared.json()).resolves.toMatchObject({
+      subscription: { payment_method: { payment_method_id: null, payment_method_type: null } },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `UPDATE subscriptions SET payment_method_id = 'unowned-provider-id'
+         WHERE organization_id = 'org-cycle' AND external_id = 'subscription-policy-external'`,
+      ).run(),
+    ).rejects.toThrow("invalid_subscription_payment_method");
+  });
+
   it("activates a backdated subscription without creating a retroactive invoice", async () => {
     const subscriptionAt = new Date(Date.now() - 45 * 86_400_000).toISOString();
     const customerResponse = await invoiceRequest("/api/v1/customers", "POST", {
