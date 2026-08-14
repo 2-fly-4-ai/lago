@@ -8,6 +8,13 @@ import { rateCharge } from "../rating/charge-models";
 import { Decimal } from "../rating/decimal";
 import { parseChargeModel } from "../usage/charge-properties";
 import {
+  normalizeChargeFilters,
+  parseStoredBillableMetricFilters,
+  parseStoredChargeFilters,
+  serializeChargeFilter,
+  type ChargeFilter,
+} from "../usage/charge-filters";
+import {
   ensurePlanDeletionWorkflow,
   findPlanDeletionTask,
   preparePlanDeletion,
@@ -42,6 +49,8 @@ type ChargeRow = {
   invoice_display_name: string | null;
   charge_model: string;
   properties_json: string;
+  filters_json: string;
+  metric_filters_json: string;
   invoiceable: number;
   pay_in_advance: number;
   prorated: number;
@@ -79,6 +88,7 @@ type NormalizedCharge = {
   prorated: number;
   minAmountMinor: number;
   acceptsTargetWallet: number;
+  filters: ChargeFilter[];
 };
 
 type NormalizedCommitment = {
@@ -324,9 +334,9 @@ async function createPlan(
           .prepare(
             `INSERT INTO charges
            (id, organization_id, plan_id, billable_metric_id, code, invoice_display_name,
-            charge_model, properties_json, invoiceable, pay_in_advance, prorated,
+            charge_model, properties_json, filters_json, invoiceable, pay_in_advance, prorated,
             min_amount_minor, accepts_target_wallet, version, active, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
           )
           .bind(
             charge.id,
@@ -337,6 +347,7 @@ async function createPlan(
             charge.invoiceDisplayName,
             charge.chargeModel,
             stableJson(charge.properties),
+            stableJson(charge.filters),
             charge.invoiceable,
             charge.payInAdvance,
             charge.prorated,
@@ -1091,9 +1102,9 @@ async function serializePlan(
   const charges = await database
     .prepare(
       `SELECT ch.id, ch.billable_metric_id, bm.code AS billable_metric_code, ch.code,
-              ch.invoice_display_name, ch.charge_model, ch.properties_json, ch.invoiceable,
+              ch.invoice_display_name, ch.charge_model, ch.properties_json, ch.filters_json, ch.invoiceable,
               ch.pay_in_advance, ch.prorated, ch.min_amount_minor, ch.created_at
-              , ch.accepts_target_wallet
+              , ch.accepts_target_wallet, bm.filters_json AS metric_filters_json
        FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id
        WHERE ch.plan_id = ? AND ch.active = 1 ORDER BY ch.created_at, ch.id`,
     )
@@ -1229,7 +1240,12 @@ function serializeCharge(charge: ChargeRow): Record<string, unknown> {
     min_amount_cents: charge.min_amount_minor,
     accepts_target_wallet: charge.accepts_target_wallet === 1,
     properties: parseObject(charge.properties_json),
-    filters: [],
+    filters: parseStoredChargeFilters(
+      charge.filters_json,
+      parseStoredBillableMetricFilters(charge.metric_filters_json),
+      charge.charge_model,
+      charge.id,
+    ).map((filter) => serializeChargeFilter(filter, charge.code)),
     taxes: [],
     applied_pricing_unit: null,
     lago_parent_id: null,
@@ -1257,11 +1273,11 @@ async function normalizeCharges(
     const metricId = requiredString(input, "billable_metric_id");
     const metric = await database
       .prepare(
-        `SELECT id, code FROM billable_metrics
+        `SELECT id, code, aggregation_type, filters_json FROM billable_metrics
          WHERE organization_id = ? AND id = ? AND active = 1 LIMIT 1`,
       )
       .bind(organizationId, metricId)
-      .first<{ id: string; code: string }>();
+      .first<{ id: string; code: string; aggregation_type: string; filters_json: string }>();
     if (!metric)
       throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
     const code = optionalString(input, "code") ?? `${planCode}-${metric.code}`;
@@ -1282,8 +1298,26 @@ async function normalizeCharges(
         "unsupported_charge_feature",
         "Prorated usage charges are not implemented",
       );
+    const id = await deterministicUuid("charge", `${planId}:${code}`);
+    const minAmountMinor =
+      input.min_amount_cents === undefined
+        ? 0
+        : nonNegativeInteger(input.min_amount_cents, "min_amount_cents");
+    const acceptsTargetWallet = booleanInteger(input.accepts_target_wallet, false);
+    const filters = await normalizeChargeFilters(
+      input.filters,
+      parseStoredBillableMetricFilters(metric.filters_json),
+      chargeModel,
+      id,
+    );
+    assertChargeFilterCompatibility(
+      metric.aggregation_type,
+      acceptsTargetWallet,
+      minAmountMinor,
+      filters,
+    );
     charges.push({
-      id: await deterministicUuid("charge", `${planId}:${code}`),
+      id,
       metricId,
       code,
       invoiceDisplayName: optionalString(input, "invoice_display_name"),
@@ -1292,18 +1326,16 @@ async function normalizeCharges(
       invoiceable: booleanInteger(input.invoiceable, true),
       payInAdvance: booleanInteger(input.pay_in_advance, false),
       prorated: booleanInteger(input.prorated, false),
-      minAmountMinor:
-        input.min_amount_cents === undefined
-          ? 0
-          : nonNegativeInteger(input.min_amount_cents, "min_amount_cents"),
-      acceptsTargetWallet: booleanInteger(input.accepts_target_wallet, false),
+      minAmountMinor,
+      acceptsTargetWallet,
+      filters,
     });
   }
   return charges;
 }
 
 function rejectUnsupportedChargeFeatures(input: Record<string, unknown>): void {
-  for (const field of ["filters", "applied_pricing_unit", "regroup_paid_fees", "cascade_updates"]) {
+  for (const field of ["applied_pricing_unit", "regroup_paid_fees", "cascade_updates"]) {
     const value = input[field];
     if (value === undefined || value === null || value === false) continue;
     if (Array.isArray(value) && value.length === 0) continue;
@@ -1319,6 +1351,29 @@ function rejectUnsupportedChargeFeatures(input: Record<string, unknown>): void {
       "unsupported_tax_target",
       "Charge-specific tax targeting is not implemented",
     );
+}
+
+function assertChargeFilterCompatibility(
+  aggregationType: string,
+  acceptsTargetWallet: number,
+  minAmountMinor: number,
+  filters: ChargeFilter[],
+): void {
+  if (aggregationType === "weighted_sum_agg" && acceptsTargetWallet === 1) {
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      "Weighted-sum charges cannot target wallets",
+    );
+  }
+  if (filters.length === 0) return;
+  if (aggregationType === "weighted_sum_agg" || acceptsTargetWallet === 1 || minAmountMinor > 0) {
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      "Charge filters cannot yet be combined with weighted usage, target wallets, or minimums",
+    );
+  }
 }
 
 async function normalizeFixedCharges(

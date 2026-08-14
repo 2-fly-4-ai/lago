@@ -14,6 +14,16 @@ import {
 } from "../usage/aggregation";
 import { parseChargeModel } from "../usage/charge-properties";
 import {
+  normalizeBillableMetricFilters,
+  normalizeChargeFilters,
+  parseStoredBillableMetricFilters,
+  parseStoredChargeFilters,
+  partitionUsageEvents,
+  serializeChargeFilter,
+  type BillableMetricFilter,
+  type ChargeFilter,
+} from "../usage/charge-filters";
+import {
   evaluateUsageExpression,
   UsageExpressionError,
   validateUsageExpression,
@@ -32,6 +42,7 @@ type MetricRow = {
   rounding_precision: number | null;
   weighted_interval: string | null;
   expression: string | null;
+  filters_json: string;
   version: number;
   created_at: string;
   updated_at: string;
@@ -83,6 +94,8 @@ type ChargeUsageRow = {
   rounding_function: AggregationRoundingFunction | null;
   rounding_precision: number | null;
   accepts_target_wallet: number;
+  filters_json: string;
+  metric_filters_json: string;
 };
 
 type CatalogChargeRow = ChargeUsageRow & {
@@ -310,8 +323,8 @@ async function createBillableMetric(
           `INSERT INTO billable_metrics
        (id, organization_id, code, name, description, aggregation_type, field_name,
         recurring, rounding_function, rounding_precision, weighted_interval, expression,
-        properties_json, version, active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, 1, ?, ?)`,
+        properties_json, filters_json, version, active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, 1, ?, ?)`,
         )
         .bind(
           identity.id,
@@ -326,6 +339,7 @@ async function createBillableMetric(
           normalized.roundingPrecision,
           normalized.weightedInterval,
           normalized.expression,
+          stableJson(normalized.filters),
           identity.version,
           now,
           now,
@@ -364,7 +378,7 @@ async function listBillableMetrics(
   const result = await database
     .prepare(
       `SELECT id, code, name, description, aggregation_type, field_name, recurring,
-              rounding_function, rounding_precision, weighted_interval, expression, version,
+              rounding_function, rounding_precision, weighted_interval, expression, filters_json, version,
               created_at, updated_at
        FROM billable_metrics WHERE organization_id = ? AND active = 1
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
@@ -403,12 +417,6 @@ async function updateBillableMetric(
   if (!metric)
     throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
   const input = objectAt(await parseJsonObject(request), "billable_metric");
-  if (input.filters !== undefined)
-    throw new ApiError(
-      422,
-      "unsupported_billable_metric_feature",
-      "Billable metric filters are not implemented",
-    );
   const attached = await env.BILLING_DB.prepare(
     "SELECT id FROM charges WHERE billable_metric_id = ? AND active = 1 LIMIT 1",
   )
@@ -441,6 +449,10 @@ async function updateBillableMetric(
     input.rounding_precision === undefined
       ? metric.rounding_precision
       : normalizeRoundingPrecision(input.rounding_precision);
+  const nextFilters =
+    input.filters === undefined
+      ? parseStoredBillableMetricFilters(metric.filters_json)
+      : normalizeBillableMetricFilters(input.filters);
   validateMetricConfiguration(
     nextAggregation,
     nextFieldName,
@@ -457,7 +469,8 @@ async function updateBillableMetric(
       input.rounding_function !== undefined ||
       input.rounding_precision !== undefined ||
       input.weighted_interval !== undefined ||
-      input.expression !== undefined)
+      input.expression !== undefined ||
+      stableJson(nextFilters) !== stableJson(parseStoredBillableMetricFilters(metric.filters_json)))
   )
     throw new ApiError(
       422,
@@ -476,6 +489,7 @@ async function updateBillableMetric(
       input.description === undefined ? metric.description : optionalString(input, "description"),
     aggregationType: nextAggregation,
     fieldName: nextFieldName,
+    filters: nextFilters,
   };
   const now = new Date().toISOString();
   const event = catalogEvent(
@@ -494,7 +508,7 @@ async function updateBillableMetric(
       env.BILLING_DB.prepare(
         `UPDATE billable_metrics SET code = ?, name = ?, description = ?,
          aggregation_type = ?, field_name = ?, recurring = ?, rounding_function = ?,
-         rounding_precision = ?, weighted_interval = ?, expression = ?,
+         rounding_precision = ?, weighted_interval = ?, expression = ?, filters_json = ?,
          version = version + 1, updated_at = ?
          WHERE id = ? AND organization_id = ? AND active = 1 AND version = ?
            AND EXISTS (SELECT 1 FROM billable_metric_mutation_guards
@@ -510,6 +524,7 @@ async function updateBillableMetric(
         nextRoundingPrecision,
         nextWeightedInterval,
         nextExpression,
+        stableJson(next.filters),
         now,
         metric.id,
         auth.organizationId,
@@ -672,11 +687,11 @@ async function createCharge(
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
   const metric = await database
     .prepare(
-      `SELECT id, aggregation_type FROM billable_metrics
+      `SELECT id, aggregation_type, filters_json FROM billable_metrics
        WHERE organization_id = ? AND id = ? AND active = 1 LIMIT 1`,
     )
     .bind(auth.organizationId, metricId)
-    .first<{ id: string; aggregation_type: string }>();
+    .first<{ id: string; aggregation_type: string; filters_json: string }>();
   if (!metric)
     throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
   const normalized = {
@@ -685,16 +700,39 @@ async function createCharge(
     minAmountMinor: optionalNonNegativeInteger(input.min_amount_cents, 0),
     acceptsTargetWallet: booleanInteger(input.accepts_target_wallet, false),
   };
-  assertWeightedTargetWalletCompatibility(metric.aggregation_type, normalized.acceptsTargetWallet);
   const existing = await findCatalogCharge(database, plan.id, code);
   if (existing) {
-    if (sameCatalogCharge(existing, metric.id, chargeModel, properties, normalized))
+    const filters = await normalizeChargeFilters(
+      input.filters,
+      parseStoredBillableMetricFilters(metric.filters_json),
+      chargeModel,
+      existing.id,
+    );
+    assertChargeFilterCompatibility(
+      metric.aggregation_type,
+      normalized.acceptsTargetWallet,
+      normalized.minAmountMinor,
+      filters,
+    );
+    if (sameCatalogCharge(existing, metric.id, chargeModel, properties, filters, normalized))
       return json({ charge: serializeCatalogCharge(existing) }, { requestId });
     throw new ApiError(422, "value_already_exist", "Charge code already exists");
   }
 
   const now = new Date().toISOString();
   const id = await nextCatalogChargeId(database, plan.id, code);
+  const filters = await normalizeChargeFilters(
+    input.filters,
+    parseStoredBillableMetricFilters(metric.filters_json),
+    chargeModel,
+    id,
+  );
+  assertChargeFilterCompatibility(
+    metric.aggregation_type,
+    normalized.acceptsTargetWallet,
+    normalized.minAmountMinor,
+    filters,
+  );
   const event = catalogEvent(
     "charge.created",
     "charge",
@@ -711,9 +749,9 @@ async function createCharge(
         .prepare(
           `INSERT INTO charges
        (id, organization_id, plan_id, billable_metric_id, code, invoice_display_name,
-        charge_model, properties_json, invoiceable, pay_in_advance, prorated,
+        charge_model, properties_json, filters_json, invoiceable, pay_in_advance, prorated,
         min_amount_minor, accepts_target_wallet, version, active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
         )
         .bind(
           id,
@@ -724,6 +762,7 @@ async function createCharge(
           normalized.invoiceDisplayName,
           chargeModel,
           stableJson(properties),
+          stableJson(filters),
           normalized.invoiceable,
           0,
           0,
@@ -736,7 +775,10 @@ async function createCharge(
     ]);
   } catch (error) {
     const concurrent = await findCatalogCharge(database, plan.id, code);
-    if (concurrent && sameCatalogCharge(concurrent, metric.id, chargeModel, properties, normalized))
+    if (
+      concurrent &&
+      sameCatalogCharge(concurrent, metric.id, chargeModel, properties, filters, normalized)
+    )
       return json({ charge: serializeCatalogCharge(concurrent) }, { requestId });
     if (concurrent) throw new ApiError(422, "value_already_exist", "Charge code already exists");
     throw error;
@@ -826,19 +868,40 @@ async function updateCharge(
   };
   const metric = await database
     .prepare(
-      `SELECT id, aggregation_type FROM billable_metrics
+      `SELECT id, aggregation_type, filters_json FROM billable_metrics
        WHERE organization_id = ? AND id = ? AND active = 1 LIMIT 1`,
     )
     .bind(auth.organizationId, next.metricId)
-    .first<{ id: string; aggregation_type: string }>();
+    .first<{ id: string; aggregation_type: string; filters_json: string }>();
   if (!metric)
     throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
-  assertWeightedTargetWalletCompatibility(metric.aggregation_type, next.acceptsTargetWallet);
+  const nextFilters =
+    input.filters === undefined
+      ? parseStoredChargeFilters(
+          charge.filters_json,
+          parseStoredBillableMetricFilters(metric.filters_json),
+          nextChargeModel,
+          charge.id,
+        )
+      : await normalizeChargeFilters(
+          input.filters,
+          parseStoredBillableMetricFilters(metric.filters_json),
+          nextChargeModel,
+          charge.id,
+        );
+  assertChargeFilterCompatibility(
+    metric.aggregation_type,
+    next.acceptsTargetWallet,
+    next.minAmountMinor,
+    nextFilters,
+  );
   if (next.code !== charge.code) {
     const duplicate = await findCatalogCharge(database, plan.id, next.code);
     if (duplicate) throw new ApiError(422, "value_already_exist", "Charge code already exists");
   }
-  if (sameCatalogCharge(charge, next.metricId, next.chargeModel, next.properties, next))
+  if (
+    sameCatalogCharge(charge, next.metricId, next.chargeModel, next.properties, nextFilters, next)
+  )
     return json({ charge: serializeCatalogCharge(charge) }, { requestId });
 
   const now = new Date().toISOString();
@@ -857,7 +920,7 @@ async function updateCharge(
       database
         .prepare(
           `UPDATE charges SET billable_metric_id = ?, code = ?, invoice_display_name = ?,
-           charge_model = ?, properties_json = ?, invoiceable = ?, min_amount_minor = ?,
+           charge_model = ?, properties_json = ?, filters_json = ?, invoiceable = ?, min_amount_minor = ?,
            accepts_target_wallet = ?, version = version + 1, updated_at = ?
            WHERE id = ? AND organization_id = ? AND plan_id = ? AND active = 1 AND version = ?`,
         )
@@ -867,6 +930,7 @@ async function updateCharge(
           next.invoiceDisplayName,
           next.chargeModel,
           stableJson(next.properties),
+          stableJson(nextFilters),
           next.invoiceable,
           next.minAmountMinor,
           next.acceptsTargetWallet,
@@ -1022,11 +1086,11 @@ function assertCatalogPlanMutationAvailable(plan: { pending_deletion: number }):
 
 function chargeSelect(): string {
   return `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
-                 ch.properties_json, ch.min_amount_minor, ch.invoiceable,
+                 ch.properties_json, ch.filters_json, ch.min_amount_minor, ch.invoiceable,
                  ch.pay_in_advance, ch.prorated, ch.version, ch.created_at, ch.updated_at,
                  ch.accepts_target_wallet,
                  bm.id AS metric_id, bm.code AS metric_code, bm.name AS metric_name,
-                 bm.aggregation_type, bm.field_name
+                 bm.aggregation_type, bm.field_name, bm.filters_json AS metric_filters_json
           FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id`;
 }
 
@@ -1059,6 +1123,7 @@ function sameCatalogCharge(
   metricId: string,
   chargeModel: string,
   properties: Record<string, unknown>,
+  filters: ChargeFilter[],
   normalized: {
     invoiceDisplayName: string | null;
     invoiceable: number;
@@ -1071,6 +1136,14 @@ function sameCatalogCharge(
     charge.invoice_display_name === normalized.invoiceDisplayName &&
     charge.charge_model === chargeModel &&
     stableJson(parseStoredObject(charge.properties_json)) === stableJson(properties) &&
+    stableJson(
+      parseStoredChargeFilters(
+        charge.filters_json,
+        parseStoredBillableMetricFilters(charge.metric_filters_json),
+        charge.charge_model,
+        charge.id,
+      ),
+    ) === stableJson(filters) &&
     charge.invoiceable === normalized.invoiceable &&
     charge.pay_in_advance === 0 &&
     charge.prorated === 0 &&
@@ -1094,7 +1167,12 @@ function serializeCatalogCharge(charge: CatalogChargeRow): Record<string, unknow
     min_amount_cents: charge.min_amount_minor,
     accepts_target_wallet: charge.accepts_target_wallet === 1,
     properties: parseStoredObject(charge.properties_json),
-    filters: [],
+    filters: parseStoredChargeFilters(
+      charge.filters_json,
+      parseStoredBillableMetricFilters(charge.metric_filters_json),
+      charge.charge_model,
+      charge.id,
+    ).map((filter) => serializeChargeFilter(filter, charge.code)),
     taxes: [],
     applied_pricing_unit: null,
     lago_parent_id: null,
@@ -1614,11 +1692,12 @@ async function currentUsage(
   const charges = await database
     .prepare(
       `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
-              ch.properties_json, ch.min_amount_minor, ch.accepts_target_wallet,
+              ch.properties_json, ch.filters_json, ch.min_amount_minor, ch.accepts_target_wallet,
               bm.id AS metric_id,
               bm.code AS metric_code, bm.name AS metric_name,
               bm.aggregation_type, bm.field_name, bm.recurring, bm.weighted_interval,
-              bm.rounding_function, bm.rounding_precision
+              bm.rounding_function, bm.rounding_precision,
+              bm.filters_json AS metric_filters_json
        FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id
        WHERE ch.organization_id = ? AND ch.plan_id = ? AND ch.active = 1
          AND ch.invoiceable = 1 AND ch.pay_in_advance = 0
@@ -1633,13 +1712,18 @@ async function currentUsage(
     const events = await usageEventsForPeriod(database, subscription, charge.metric_id);
     const aggregationType = supportedAggregation(charge.aggregation_type);
     assertStoredWeightedConfiguration(aggregationType, charge.weighted_interval);
-    if (aggregationType === "weighted_sum_agg" && charge.accepts_target_wallet === 1) {
-      throw new ApiError(
-        422,
-        "unsupported_charge_feature",
-        "Weighted-sum charges cannot target wallets",
-      );
-    }
+    const filters = parseStoredChargeFilters(
+      charge.filters_json,
+      parseStoredBillableMetricFilters(charge.metric_filters_json),
+      charge.charge_model,
+      charge.id,
+    );
+    assertChargeFilterCompatibility(
+      aggregationType,
+      charge.accepts_target_wallet,
+      charge.min_amount_minor,
+      filters,
+    );
     const periodStartMs = Date.parse(subscription.current_period_start);
     const periodEndMs = Date.parse(subscription.current_period_end);
     const initialValue =
@@ -1653,40 +1737,57 @@ async function currentUsage(
             periodStartMs,
           )
         : Decimal.zero();
-    const aggregation = aggregateUsageResult(aggregationType, charge.field_name, events, {
-      periodStartMs,
-      periodEndMs,
-      periodDurationDays:
-        aggregationType === "weighted_sum_agg"
-          ? billingPeriodDurationDays(
-              new Date(periodStartMs),
-              new Date(periodEndMs),
-              subscription.billing_time,
-              subscription.interval,
-              subscription.billing_timezone,
-            )
-          : undefined,
-      initialValue,
-    });
-    const units = applyAggregationRounding(
-      aggregation.units,
-      charge.rounding_function,
-      charge.rounding_precision,
+    const partitions = partitionUsageEvents(events, filters);
+    const ratePartition = (partitionEvents: typeof events, properties: Record<string, unknown>) => {
+      const aggregation = aggregateUsageResult(
+        aggregationType,
+        charge.field_name,
+        partitionEvents,
+        {
+          periodStartMs,
+          periodEndMs,
+          periodDurationDays:
+            aggregationType === "weighted_sum_agg"
+              ? billingPeriodDurationDays(
+                  new Date(periodStartMs),
+                  new Date(periodEndMs),
+                  subscription.billing_time,
+                  subscription.interval,
+                  subscription.billing_timezone,
+                )
+              : undefined,
+          initialValue,
+        },
+      );
+      const units = applyAggregationRounding(
+        aggregation.units,
+        charge.rounding_function,
+        charge.rounding_precision,
+      );
+      const amount = Decimal.parse(
+        rateCharge(units.toString(), parseChargeModel(charge.charge_model, properties), {
+          eventsCount: partitionEvents.length,
+        }).amountCents,
+      );
+      return { aggregation, amount, events: partitionEvents, units };
+    };
+    const base = ratePartition(partitions.base, parseStoredObject(charge.properties_json));
+    const ratedFilters = partitions.filters.map(({ filter, events: filterEvents }) => ({
+      filter,
+      ...ratePartition(filterEvents, filter.properties),
+    }));
+    const units = ratedFilters.reduce((sum, filter) => sum.add(filter.units), base.units);
+    const totalAggregatedUnits = ratedFilters.reduce(
+      (sum, filter) => sum.add(filter.aggregation.totalAggregatedUnits),
+      base.aggregation.totalAggregatedUnits,
     );
-    const properties = parseStoredObject(charge.properties_json);
-    const rated = rateCharge(units.toString(), parseChargeModel(charge.charge_model, properties), {
-      eventsCount: events.length,
-    });
-    let amount = Decimal.parse(rated.amountCents);
+    let amount = ratedFilters.reduce((sum, filter) => sum.add(filter.amount), base.amount);
     const minimum = Decimal.parse(charge.min_amount_minor);
     if (amount.compare(minimum) < 0) amount = minimum;
     total = total.add(amount);
     chargeUsage.push({
       units: units.toString(),
-      total_aggregated_units:
-        aggregationType === "weighted_sum_agg"
-          ? aggregation.totalAggregatedUnits.toString()
-          : units.toString(),
+      total_aggregated_units: totalAggregatedUnits.toString(),
       events_count: events.length,
       amount_cents: jsonDecimal(amount),
       amount_currency: subscription.currency,
@@ -1701,7 +1802,15 @@ async function currentUsage(
         code: charge.metric_code,
         aggregation_type: charge.aggregation_type,
       },
-      filters: [],
+      filters: ratedFilters.map((filter) => ({
+        units: filter.units.toString(),
+        total_aggregated_units: filter.aggregation.totalAggregatedUnits.toString(),
+        events_count: filter.events.length,
+        amount_cents: jsonDecimal(filter.amount),
+        pricing_unit_details: null,
+        invoice_display_name: filter.filter.invoiceDisplayName,
+        values: filter.filter.values,
+      })),
       grouped_usage: [],
       pricing_unit_details: null,
       presentation_breakdowns: [],
@@ -1906,7 +2015,7 @@ async function findMetric(
   return database
     .prepare(
       `SELECT id, code, name, description, aggregation_type, field_name, recurring,
-              rounding_function, rounding_precision, weighted_interval, expression, version,
+              rounding_function, rounding_precision, weighted_interval, expression, filters_json, version,
               created_at, updated_at
        FROM billable_metrics
        WHERE organization_id = ? AND code = ? AND active = 1 LIMIT 1`,
@@ -1984,7 +2093,7 @@ function serializeMetric(metric: MetricRow): Record<string, unknown> {
     active_subscriptions_count: 0,
     draft_invoices_count: 0,
     plans_count: 0,
-    filters: [],
+    filters: parseStoredBillableMetricFilters(metric.filters_json),
   };
 }
 
@@ -2183,15 +2292,10 @@ type NormalizedMetric = {
   expression: string | null;
   roundingFunction: AggregationRoundingFunction | null;
   roundingPrecision: number | null;
+  filters: BillableMetricFilter[];
 };
 
 function normalizeMetricInput(input: Record<string, unknown>): NormalizedMetric {
-  if (input.filters !== undefined)
-    throw new ApiError(
-      422,
-      "unsupported_billable_metric_feature",
-      "Billable metric filters are not implemented",
-    );
   const aggregationType = supportedMetricAggregation(input.aggregation_type);
   const fieldName = optionalString(input, "field_name");
   const recurring = booleanInteger(input.recurring, false);
@@ -2199,6 +2303,7 @@ function normalizeMetricInput(input: Record<string, unknown>): NormalizedMetric 
   const expression = optionalString(input, "expression");
   const roundingFunction = normalizeRoundingFunction(input.rounding_function);
   const roundingPrecision = normalizeRoundingPrecision(input.rounding_precision);
+  const filters = normalizeBillableMetricFilters(input.filters);
   validateMetricConfiguration(aggregationType, fieldName, expression, recurring, weightedInterval);
   return {
     code: requiredString(input, "code"),
@@ -2211,6 +2316,7 @@ function normalizeMetricInput(input: Record<string, unknown>): NormalizedMetric 
     expression,
     roundingFunction,
     roundingPrecision,
+    filters,
   };
 }
 
@@ -2296,7 +2402,7 @@ function validateMetricConfiguration(
 }
 
 function rejectUnsupportedChargeInput(input: Record<string, unknown>): void {
-  for (const field of ["filters", "applied_pricing_unit", "regroup_paid_fees", "cascade_updates"]) {
+  for (const field of ["applied_pricing_unit", "regroup_paid_fees", "cascade_updates"]) {
     const value = input[field];
     if (value === undefined || value === null || value === false) continue;
     if (Array.isArray(value) && value.length === 0) continue;
@@ -2312,6 +2418,37 @@ function rejectUnsupportedChargeInput(input: Record<string, unknown>): void {
       "unsupported_tax_target",
       "Charge-specific tax targeting is not implemented",
     );
+}
+
+function assertChargeFilterCompatibility(
+  aggregationType: string,
+  acceptsTargetWallet: number,
+  minAmountMinor: number,
+  filters: ChargeFilter[],
+): void {
+  assertWeightedTargetWalletCompatibility(aggregationType, acceptsTargetWallet);
+  if (filters.length === 0) return;
+  if (aggregationType === "weighted_sum_agg") {
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      "Weighted-sum charge filters require per-filter recurring baselines",
+    );
+  }
+  if (acceptsTargetWallet === 1) {
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      "Charge filters cannot be combined with target-wallet grouping",
+    );
+  }
+  if (minAmountMinor > 0) {
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      "Filtered charge minimums require charge-wide true-up allocation",
+    );
+  }
 }
 
 function assertWeightedTargetWalletCompatibility(
@@ -2347,7 +2484,9 @@ function sameMetric(metric: MetricRow, normalized: NormalizedMetric): boolean {
     metric.rounding_function === normalized.roundingFunction &&
     metric.rounding_precision === normalized.roundingPrecision &&
     metric.weighted_interval === normalized.weightedInterval &&
-    metric.expression === normalized.expression
+    metric.expression === normalized.expression &&
+    stableJson(parseStoredBillableMetricFilters(metric.filters_json)) ===
+      stableJson(normalized.filters)
   );
 }
 

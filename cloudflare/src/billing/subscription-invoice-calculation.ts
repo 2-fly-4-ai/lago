@@ -9,6 +9,12 @@ import {
   type SupportedAggregationType,
 } from "../usage/aggregation";
 import { parseChargeModel } from "../usage/charge-properties";
+import {
+  parseStoredBillableMetricFilters,
+  parseStoredChargeFilters,
+  partitionUsageEvents,
+  type ChargeFilter,
+} from "../usage/charge-filters";
 import { calculateCouponCredits, type CouponCredit } from "./coupon-credits";
 import { calculateCreditNoteAllocations, type CreditNoteAllocation } from "./credit-note-credits";
 import { calculateManualTaxes, totalManualTaxMinor, type InvoiceTax } from "./manual-taxes";
@@ -63,6 +69,8 @@ type ChargeRow = {
   rounding_function: AggregationRoundingFunction | null;
   rounding_precision: number | null;
   accepts_target_wallet: number;
+  filters_json: string;
+  metric_filters_json: string;
 };
 
 type FixedChargeRow = {
@@ -481,6 +489,13 @@ export async function calculateSubscriptionInvoice(
     if (aggregationType === "weighted_sum_agg" && charge.accepts_target_wallet === 1) {
       throw new Error("weighted_sum_target_wallet_unsupported");
     }
+    const filters = parseStoredChargeFilters(
+      charge.filters_json,
+      parseStoredBillableMetricFilters(charge.metric_filters_json),
+      charge.charge_model,
+      charge.id,
+    );
+    assertChargeFilterCompatibility(charge, filters);
     const initialValue =
       aggregationType === "weighted_sum_agg" && charge.recurring === 1
         ? await recurringWeightedBaseline(
@@ -491,7 +506,29 @@ export async function calculateSubscriptionInvoice(
             periodStartMs,
           )
         : Decimal.zero();
-    for (const group of targetWalletEventGroups(events, charge.accepts_target_wallet === 1)) {
+    const filtered = partitionUsageEvents(events, filters);
+    const groups =
+      filters.length > 0
+        ? [
+            ...filtered.filters.map(({ filter, events: filterEvents }) => ({
+              events: filterEvents,
+              filter,
+              properties: filter.properties,
+              targetWalletCode: null,
+            })),
+            {
+              events: filtered.base,
+              filter: null,
+              properties: parseObject(charge.properties_json),
+              targetWalletCode: null,
+            },
+          ]
+        : targetWalletEventGroups(events, charge.accepts_target_wallet === 1).map((group) => ({
+            ...group,
+            filter: null,
+            properties: parseObject(charge.properties_json),
+          }));
+    for (const group of groups) {
       const aggregation = aggregateUsageResult(aggregationType, charge.field_name, group.events, {
         periodStartMs,
         periodEndMs: calculationPeriodEndMs,
@@ -513,11 +550,9 @@ export async function calculateSubscriptionInvoice(
         charge.rounding_precision,
       );
       let precise = Decimal.parse(
-        rateCharge(
-          units.toString(),
-          parseChargeModel(charge.charge_model, parseObject(charge.properties_json)),
-          { eventsCount: group.events.length },
-        ).amountCents,
+        rateCharge(units.toString(), parseChargeModel(charge.charge_model, group.properties), {
+          eventsCount: group.events.length,
+        }).amountCents,
       );
       const minimum = Decimal.parse(charge.min_amount_minor);
       if (precise.compare(minimum) < 0) precise = minimum;
@@ -525,19 +560,27 @@ export async function calculateSubscriptionInvoice(
       subtotalMinor = safeAdd(subtotalMinor, rounded);
       const groupKey = group.targetWalletCode ?? "untargeted";
       const targeted = charge.accepts_target_wallet === 1;
+      const filteredLine = group.filter !== null;
       lines.push({
         id: await deterministicUuid(
           "billing-cycle-line",
-          targeted ? `${cycleKey}:${charge.id}:wallet:${groupKey}` : `${cycleKey}:${charge.id}`,
+          filteredLine
+            ? `${cycleKey}:${charge.id}:filter:${group.filter.lagoId}`
+            : targeted
+              ? `${cycleKey}:${charge.id}:wallet:${groupKey}`
+              : `${cycleKey}:${charge.id}`,
         ),
-        description: charge.invoice_display_name ?? charge.metric_name,
+        description:
+          group.filter?.invoiceDisplayName ?? charge.invoice_display_name ?? charge.metric_name,
         units: units.toString(),
         precise: precise.toString(),
         rounded,
         sourceId: charge.id,
-        persistenceSourceId: targeted
-          ? await deterministicUuid("charge-wallet-group-source", `${charge.id}:${groupKey}`)
-          : charge.id,
+        persistenceSourceId: filteredLine
+          ? group.filter.lagoId
+          : targeted
+            ? await deterministicUuid("charge-wallet-group-source", `${charge.id}:${groupKey}`)
+            : charge.id,
         lineType: "usage",
         sourceType: "charge",
         billableMetricId: charge.metric_id,
@@ -553,6 +596,14 @@ export async function calculateSubscriptionInvoice(
             : {}),
           periodStart,
           periodEnd: calculationPeriodEnd,
+          ...(filteredLine
+            ? {
+                billableMetricId: charge.metric_id,
+                chargeId: charge.id,
+                chargeFilterId: group.filter.lagoId,
+                chargeFilterValues: group.filter.values,
+              }
+            : {}),
           ...(targeted
             ? {
                 billableMetricId: charge.metric_id,
@@ -817,10 +868,11 @@ async function loadCharges(
   const result = await database
     .prepare(
       `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
-              ch.properties_json, ch.min_amount_minor, bm.id AS metric_id,
+              ch.properties_json, ch.filters_json, ch.min_amount_minor, bm.id AS metric_id,
               bm.code AS metric_code, bm.name AS metric_name,
               bm.aggregation_type, bm.field_name, bm.recurring, bm.weighted_interval,
-              bm.rounding_function, bm.rounding_precision, ch.accepts_target_wallet
+              bm.rounding_function, bm.rounding_precision, ch.accepts_target_wallet,
+              bm.filters_json AS metric_filters_json
        FROM charges ch JOIN billable_metrics bm ON bm.id = ch.billable_metric_id
        WHERE ch.organization_id = ? AND ch.plan_id = ? AND ch.active = 1
          AND ch.invoiceable = 1 AND ch.pay_in_advance = 0
@@ -996,6 +1048,19 @@ function targetWalletEventGroups(
       targetWalletCode,
       events: groupedEvents,
     }));
+}
+
+function assertChargeFilterCompatibility(charge: ChargeRow, filters: ChargeFilter[]): void {
+  if (filters.length === 0) return;
+  if (charge.aggregation_type === "weighted_sum_agg") {
+    throw new Error("weighted_sum_charge_filters_unsupported");
+  }
+  if (charge.accepts_target_wallet === 1) {
+    throw new Error("target_wallet_charge_filters_unsupported");
+  }
+  if (charge.min_amount_minor > 0) {
+    throw new Error("minimum_charge_filters_unsupported");
+  }
 }
 
 function parseObject(value: string): Record<string, unknown> {

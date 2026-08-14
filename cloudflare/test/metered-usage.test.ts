@@ -293,6 +293,141 @@ describe("Lago-compatible metered usage", () => {
     ).resolves.toEqual({ total: 0 });
   });
 
+  it("persists metric and charge filters and rates each event in exactly one partition", async () => {
+    const metricResponse = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Filtered requests",
+          code: "filtered_requests",
+          aggregation_type: "count_agg",
+          filters: [
+            { key: "region", values: ["eu", "us"] },
+            { key: "cloud", values: ["aws", "gcp"] },
+          ],
+        },
+      },
+    });
+    expect(metricResponse.status).toBe(200);
+    const metric = await metricResponse.json<{
+      billable_metric: { lago_id: string; filters: Array<{ key: string }> };
+    }>();
+    expect(metric.billable_metric.filters.map(({ key }) => key)).toEqual(["cloud", "region"]);
+
+    const chargeResponse = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metric.billable_metric.lago_id,
+          code: "filtered-request-charge",
+          charge_model: "standard",
+          properties: { amount: "5" },
+          filters: [
+            {
+              invoice_display_name: "Europe",
+              properties: { amount: "10" },
+              values: { region: ["eu"] },
+            },
+            {
+              invoice_display_name: "Europe AWS",
+              properties: { amount: "20" },
+              values: { cloud: ["aws"], region: ["eu"] },
+            },
+          ],
+        },
+      },
+    });
+    expect(chargeResponse.status).toBe(200);
+    await expect(chargeResponse.json()).resolves.toMatchObject({
+      charge: {
+        filters: [
+          { invoice_display_name: "Europe", values: { region: ["eu"] } },
+          {
+            invoice_display_name: "Europe AWS",
+            values: { cloud: ["aws"], region: ["eu"] },
+          },
+        ],
+      },
+    });
+
+    for (const [transactionId, properties] of [
+      ["filtered-specific", { cloud: "aws", region: "eu" }],
+      ["filtered-broad", { cloud: "gcp", region: "eu" }],
+      ["filtered-base", { cloud: "aws", region: "us" }],
+      ["filtered-missing", {}],
+    ] as const) {
+      const response = await api("/api/v1/events", {
+        method: "POST",
+        body: {
+          event: {
+            transaction_id: transactionId,
+            code: "filtered_requests",
+            external_subscription_id: "subscription-external",
+            timestamp: 1786579200,
+            properties,
+          },
+        },
+      });
+      expect(response.status).toBe(200);
+    }
+
+    const usage = await api(
+      "/api/v1/customers/customer-external/current_usage?external_subscription_id=subscription-external",
+    ).then((response) =>
+      response.json<{
+        customer_usage: {
+          charges_usage: Array<{
+            amount_cents: number;
+            units: string;
+            billable_metric: { code: string };
+            filters: Array<{
+              amount_cents: number;
+              events_count: number;
+              units: string;
+              values: Record<string, string[]>;
+            }>;
+          }>;
+        };
+      }>(),
+    );
+    const filtered = usage.customer_usage.charges_usage.find(
+      (entry) => entry.billable_metric.code === "filtered_requests",
+    );
+    expect(filtered).toMatchObject({ amount_cents: 40, units: "4" });
+    expect(filtered?.filters).toEqual([
+      expect.objectContaining({
+        amount_cents: 10,
+        events_count: 1,
+        units: "1",
+        values: { region: ["eu"] },
+      }),
+      expect.objectContaining({
+        amount_cents: 20,
+        events_count: 1,
+        units: "1",
+        values: { cloud: ["aws"], region: ["eu"] },
+      }),
+    ]);
+
+    const unsupportedMinimum = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metric.billable_metric.lago_id,
+          code: "filtered-minimum",
+          charge_model: "standard",
+          properties: { amount: "5" },
+          min_amount_cents: 10,
+          filters: [{ properties: { amount: "10" }, values: { region: ["eu"] } }],
+        },
+      },
+    });
+    expect(unsupportedMinimum.status).toBe(422);
+    await expect(unsupportedMinimum.json()).resolves.toMatchObject({
+      code: "unsupported_charge_feature",
+    });
+  });
+
   it("rejects unknown subscriptions, metrics, and malformed aggregation properties", async () => {
     const missingMetric = await createEvent("missing-metric", "1", "absent_metric");
     expect(missingMetric.status).toBe(404);
@@ -549,10 +684,7 @@ describe("Lago-compatible metered usage", () => {
   });
 
   it("rejects metric options the current usage engine cannot honor", async () => {
-    for (const [suffix, unsupported] of [
-      ["recurring", { recurring: true }],
-      ["filters", { filters: [{ key: "region", values: ["us"] }] }],
-    ] as const) {
+    for (const [suffix, unsupported] of [["recurring", { recurring: true }]] as const) {
       const response = await api("/api/v1/billable_metrics", {
         method: "POST",
         body: {

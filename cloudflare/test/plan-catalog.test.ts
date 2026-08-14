@@ -92,6 +92,55 @@ describe("Lago-compatible plan catalog", () => {
     await expect(changed.json()).resolves.toMatchObject({ code: "value_already_exist" });
   });
 
+  it("creates embedded charge filters from the metric filter catalog", async () => {
+    await env.BILLING_DB.prepare(
+      `UPDATE billable_metrics SET filters_json = '[{"key":"region","values":["eu","us"]}]'
+       WHERE id = 'metric-plan-catalog'`,
+    ).run();
+    const response = await api("/api/v1/plans", "POST", {
+      plan: {
+        name: "Filtered",
+        code: "filtered-plan",
+        interval: "monthly",
+        amount_cents: 0,
+        amount_currency: "USD",
+        charges: [
+          {
+            billable_metric_id: "metric-plan-catalog",
+            code: "filtered-requests",
+            charge_model: "standard",
+            properties: { amount: "1" },
+            filters: [
+              {
+                invoice_display_name: "Europe",
+                properties: { amount: "2" },
+                values: { region: ["eu"] },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      plan: {
+        charges: [
+          {
+            code: "filtered-requests",
+            filters: [
+              {
+                charge_code: "filtered-requests",
+                invoice_display_name: "Europe",
+                properties: { amount: "2" },
+                values: { region: ["eu"] },
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
   it("fails explicitly for catalog behavior not yet implemented", async () => {
     const response = await api("/api/v1/plans", "POST", {
       plan: {
