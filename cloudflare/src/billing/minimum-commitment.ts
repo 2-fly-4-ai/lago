@@ -21,6 +21,7 @@ export async function calculateMinimumCommitmentLine(
   invoiceId: string,
   roundedFeesMinor: number,
   preciseFeesMinor: Decimal,
+  targetAmountMinor?: number,
 ): Promise<CommitmentLine | null> {
   const commitment = await database
     .prepare(
@@ -29,13 +30,16 @@ export async function calculateMinimumCommitmentLine(
     )
     .bind(planId)
     .first<CommitmentRow>();
-  if (!commitment || roundedFeesMinor >= commitment.amount_minor) return null;
-  const preciseAmount = Decimal.parse(commitment.amount_minor).subtract(preciseFeesMinor);
+  if (!commitment) return null;
+  const target = targetAmountMinor ?? commitment.amount_minor;
+  if (!Number.isSafeInteger(target) || target < 0) throw new Error("invalid_commitment_target");
+  if (roundedFeesMinor >= target) return null;
+  const preciseAmount = Decimal.parse(target).subtract(preciseFeesMinor);
   return {
     id: await deterministicUuid("minimum-commitment-line", `${invoiceId}:${commitment.id}`),
     commitmentId: commitment.id,
     description: commitment.invoice_display_name ?? "Minimum commitment",
-    amountMinor: commitment.amount_minor - roundedFeesMinor,
+    amountMinor: target - roundedFeesMinor,
     preciseAmountMinor: preciseAmount.compare(Decimal.zero()) > 0 ? preciseAmount.toString() : "0",
   };
 }

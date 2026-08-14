@@ -384,14 +384,23 @@ export async function calculateSubscriptionInvoice(
     (total, line) => total.add(Decimal.parse(line.precise)),
     Decimal.zero(),
   );
+  const commitmentTargetMinor =
+    options.context === "termination" && subscription.plan_pay_in_advance === 0
+      ? safeMinorInteger(
+          Decimal.parse(options.window.billableDays)
+            .multiply(Decimal.parse(await minimumCommitmentAmount(database, subscription.plan_id)))
+            .divideByInteger(BigInt(options.window.fullPeriodDays)),
+        )
+      : undefined;
   const commitmentLine =
-    options.context === "renewal"
+    options.context === "renewal" || commitmentTargetMinor !== undefined
       ? await calculateMinimumCommitmentLine(
           database,
           subscription.plan_id,
           invoiceId,
           subtotalMinor,
           preciseFees,
+          commitmentTargetMinor,
         )
       : null;
   if (commitmentLine) {
@@ -405,7 +414,19 @@ export async function calculateSubscriptionInvoice(
       sourceId: commitmentLine.commitmentId,
       lineType: "commitment",
       sourceType: "commitment",
-      metadataJson: stableJson({ billingCycleId, periodStart, periodEnd }),
+      metadataJson: stableJson({
+        billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
+        periodStart,
+        periodEnd: calculationPeriodEnd,
+        ...(options.context === "termination"
+          ? {
+              contextType: "termination",
+              targetAmountMinor: commitmentTargetMinor,
+              billableDays: options.window.billableDays,
+              fullPeriodDays: options.window.fullPeriodDays,
+            }
+          : {}),
+      }),
     });
   }
 
@@ -485,7 +506,7 @@ export async function calculateTerminationSubscriptionInvoice(
     )
     .bind(subscription.organization_id, subscription.plan_id)
     .first<{ minimum_commitment: number }>();
-  if (unsupported?.minimum_commitment === 1) {
+  if (unsupported?.minimum_commitment === 1 && subscription.plan_pay_in_advance === 1) {
     throw new Error("unsupported_termination_minimum_commitment");
   }
   const window = terminationBillingWindowUtc(
@@ -622,6 +643,14 @@ async function loadFixedCharges(
     .bind(subscription.organization_id, subscription.plan_id)
     .all<FixedChargeRow>();
   return [...result.results];
+}
+
+async function minimumCommitmentAmount(database: D1Database, planId: string): Promise<number> {
+  const commitment = await database
+    .prepare("SELECT amount_minor FROM minimum_commitments WHERE plan_id = ? LIMIT 1")
+    .bind(planId)
+    .first<{ amount_minor: number }>();
+  return commitment?.amount_minor ?? 0;
 }
 
 async function loadEvents(

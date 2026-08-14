@@ -589,14 +589,7 @@ async function createSubscription(
     }>();
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
   if (endingAt) {
-    await assertScheduledTerminationPlanSupported(
-      database,
-      auth.organizationId,
-      plan.id,
-      plan.pay_in_advance,
-      plan.interval,
-      invoiceGracePeriod,
-    );
+    assertScheduledTerminationPlanSupported(plan.pay_in_advance, plan.interval, invoiceGracePeriod);
   }
 
   const netPaymentTerm = customer.net_payment_term ?? organizationBilling?.net_payment_term ?? 0;
@@ -1185,14 +1178,11 @@ function rejectUnsupportedSubscriptionCreate(
     );
 }
 
-async function assertScheduledTerminationPlanSupported(
-  database: D1Database,
-  organizationId: string,
-  planId: string,
+function assertScheduledTerminationPlanSupported(
   payInAdvance: number,
   interval: string,
   invoiceGracePeriod: number,
-): Promise<void> {
+): void {
   if (payInAdvance === 1 || interval === "one_time") {
     throw new ApiError(
       422,
@@ -1205,20 +1195,6 @@ async function assertScheduledTerminationPlanSupported(
       422,
       "unsupported_scheduled_termination",
       "ending_at requires a zero invoice grace period",
-    );
-  }
-  const unsupported = await database
-    .prepare(
-      `SELECT EXISTS(SELECT 1 FROM minimum_commitments
-                WHERE organization_id = ? AND plan_id = ?) AS minimum_commitment`,
-    )
-    .bind(organizationId, planId)
-    .first<{ minimum_commitment: number }>();
-  if (unsupported?.minimum_commitment === 1) {
-    throw new ApiError(
-      422,
-      "unsupported_scheduled_termination",
-      "ending_at is not implemented for plans with minimum commitments",
     );
   }
 }
