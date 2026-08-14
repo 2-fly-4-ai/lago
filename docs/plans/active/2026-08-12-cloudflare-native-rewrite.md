@@ -1165,3 +1165,10 @@ resource and mutation described.
   across 22 files; all 29 migrations replay from an empty local D1, and formatting, strict lint,
   generated inventory/types, TypeScript, and the dry-run bundle are green at 520.83 KiB (92.94 KiB
   gzip).
+- 2026-08-14: Remote inventory showed exactly `0029_termination_invoice_drafts.sql`; applied only
+  that migration, confirmed the follow-up inventory was empty, and deployed positive-grace
+  termination drafts as isolated Worker version `68149384-b3cd-4cb4-8b25-de6f366e55e0`. Remote
+  health/readiness returned `200`, unauthenticated termination returned `401`, and aggregate-only
+  verification confirmed the new termination-context column, zero organizations, subscriptions,
+  invoices, invoice lines, invoice contexts, and outbox events plus 53 Cron audits. No route,
+  secret, seeded billing data, or disabled external flag changed.
