@@ -34,10 +34,14 @@ remaining Lago feature inventory is dispositioned and ported.
   Supported pay-in-arrears, non-prorated fixed charges also expose standalone create/list/show,
   optimistic core update, and soft-delete routes with the same draft/finalized invariants. Their
   retained hard uniqueness constraint means a deleted fixed-charge code cannot yet be reused.
-  Unused plans can also be retired atomically with their active usage/fixed charges; commitments
-  and relational catalog rows remain historical, and monotonic deterministic generations permit
-  repeated same-code recreation. Filter/tax/pricing-unit/child-plan cascades, catalog graph
-  replacement, and deletion of plans with subscriptions remain guarded.
+  Unused plans can be retired atomically with their active usage/fixed charges. Plans with
+  subscription history instead enter a durable deletion Workflow that closes the attachment
+  snapshot, terminates active generations, cancels pending generations, recalculates/finalizes
+  plan-linked drafts, and only then retires the catalog graph. The Workflow uses bounded batches,
+  deterministic continuation instances, DELETE replay, and five-minute dispatch repair.
+  Commitments and relational catalog/billing rows remain historical, and monotonic deterministic
+  generations permit repeated same-code recreation. Filter/tax/pricing-unit/child-plan cascades
+  and catalog graph replacement remain guarded.
 - Subscription lifecycle: pay-in-advance starts create their initial invoice atomically, while
   in-arrears starts create no initial invoice. A supported future UTC `subscription_at` creates a
   pending subscription with no invoice, and the five-minute activation owner applies the same
@@ -113,8 +117,11 @@ remaining Lago feature inventory is dispositioned and ported.
   wallet top-up paths on their original slots, performs 90-day
   inbound/outbound webhook retention, records each run in D1, publishes the outbox, and reports due
   schedules whose behavior is not yet ported. Each run also drains retired billable-metric events
-  in bounded D1/R2 batches. Inbound and usage-event retention records R2 deletion tasks
-  transactionally before removing or tombstoning source rows, so storage outages remain retryable.
+  in bounded D1/R2 batches and repairs pending plan-deletion Workflow dispatches. Subscription-
+  bearing plan deletion has its own Workflow, durable D1 task/snapshot, bounded subscription and
+  draft batches, and deterministic continuation handoff. Inbound and usage-event retention records
+  R2 deletion tasks transactionally before removing or tombstoning source rows, so storage outages
+  remain retryable.
 - R2: immutable provider webhook, usage-event, and invoice-document archives.
 - Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
