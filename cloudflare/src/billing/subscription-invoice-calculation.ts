@@ -86,6 +86,21 @@ export async function findBillableSubscription(
   database: D1Database,
   id: string,
 ): Promise<BillableSubscription | null> {
+  return findSubscriptionForCalculation(database, id, false);
+}
+
+export async function findRefreshableSubscription(
+  database: D1Database,
+  id: string,
+): Promise<BillableSubscription | null> {
+  return findSubscriptionForCalculation(database, id, true);
+}
+
+async function findSubscriptionForCalculation(
+  database: D1Database,
+  id: string,
+  includeTerminated: boolean,
+): Promise<BillableSubscription | null> {
   return database
     .prepare(
       `SELECT s.id, s.organization_id, s.customer_id, s.plan_id, s.external_id,
@@ -97,7 +112,8 @@ export async function findBillableSubscription(
        FROM subscriptions s JOIN plans p ON p.id = s.plan_id
        JOIN customers c ON c.id = s.customer_id
        JOIN organizations o ON o.id = s.organization_id
-       WHERE s.id = ? AND s.status IN ('active', 'past_due') LIMIT 1`,
+       WHERE s.id = ? AND s.status IN (${includeTerminated ? "'active', 'past_due', 'terminated'" : "'active', 'past_due'"})
+       LIMIT 1`,
     )
     .bind(id)
     .first<BillableSubscription>();

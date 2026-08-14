@@ -296,7 +296,7 @@ async function terminateSubscription(
         terminatedAt,
       ),
     ]);
-    if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1) {
+    if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
       throw new Error("subscription_version_conflict");
     }
     await env.DOMAIN_EVENTS.send(event);

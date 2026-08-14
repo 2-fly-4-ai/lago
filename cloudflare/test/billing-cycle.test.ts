@@ -511,10 +511,29 @@ describe("billing period close", () => {
       invoice: { status: "draft", version_number: 4, total_amount_cents: 1100 },
     });
 
+    const terminated = await invoiceRequest(
+      "/api/v1/subscriptions/subscription-initial-grace?on_termination_invoice=skip&on_termination_credit_note=skip",
+      "DELETE",
+    );
+    expect(terminated.status).toBe(200);
+    await expect(terminated.json()).resolves.toMatchObject({
+      subscription: { status: "terminated" },
+    });
+    await expect(draftRefreshState(initial?.id)).resolves.toMatchObject({
+      ready_to_be_refreshed: 1,
+    });
+    const terminatedRefresh = await invoiceRequest(
+      `/api/v1/invoices/${initial?.id}/refresh`,
+      "PUT",
+    );
+    await expect(terminatedRefresh.json()).resolves.toMatchObject({
+      invoice: { status: "draft", version_number: 5, total_amount_cents: 1100 },
+    });
+
     const finalized = await invoiceRequest(`/api/v1/invoices/${initial?.id}/finalize`, "PUT");
     expect(finalized.status).toBe(200);
     await expect(finalized.json()).resolves.toMatchObject({
-      invoice: { status: "finalized", version_number: 5, total_amount_cents: 1100 },
+      invoice: { status: "finalized", version_number: 6, total_amount_cents: 1100 },
     });
     await expect(draftRefreshState(initial?.id)).resolves.toEqual({
       ready_to_be_refreshed: 0,

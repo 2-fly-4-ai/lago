@@ -18,6 +18,9 @@ remaining Lago feature inventory is dispositioned and ported.
   subscription, usage, and fixed-charge fees.
 - Plan catalog: idempotent creation and optimistic scalar updates with transactional versioned
   outbox events. Catalog graph replacement and destructive plan lifecycle remain guarded.
+- Subscription lifecycle: explicit skip-invoice/skip-credit termination is idempotent; any existing
+  draft is invalidated and remains refreshable/finalizable from its immutable invoice context.
+  Prorated termination invoices and termination credit notes remain guarded.
 - Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
   and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
 - Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.

@@ -8,7 +8,7 @@ import { paymentDueDate } from "./payment-terms";
 import {
   calculateInitialSubscriptionInvoice,
   calculateSubscriptionInvoice,
-  findBillableSubscription,
+  findRefreshableSubscription,
   subscriptionInvoiceLineStatements,
 } from "./subscription-invoice-calculation";
 import { walletAllocationStatements } from "./wallet-credits";
@@ -57,7 +57,7 @@ export async function refreshSubscriptionDraft(
   if (!invoice.issuing_date) throw new Error("invoice_issuing_date_missing");
   await assertDraftHasNoCommittedAllocations(env.BILLING_DB, invoice.id);
 
-  const subscription = await findBillableSubscription(env.BILLING_DB, invoice.subscription_id);
+  const subscription = await findRefreshableSubscription(env.BILLING_DB, invoice.subscription_id);
   if (!subscription || subscription.organization_id !== invoice.organization_id) {
     throw new Error("draft_subscription_not_found");
   }

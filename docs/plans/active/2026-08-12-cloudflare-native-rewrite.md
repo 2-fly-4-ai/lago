@@ -337,9 +337,11 @@ Acceptance:
       version guards abort a losing refresh/finalize batch before its line deletes can commit.
       Grace-period initial subscription invoices use a distinct immutable initial context, create
       the same non-consuming preview, refresh manually or on schedule, and allocate credits only
-      while finalizing; they do not masquerade as renewal cycles. Paid-invoice credit/refund voids,
-      subscription termination during grace, destructive plan/charge graph replacement, and
-      broader retry transitions remain pending.
+      while finalizing; they do not masquerade as renewal cycles. Explicit skip-invoice/
+      skip-credit subscription termination flags an existing draft and keeps it refreshable from
+      its immutable initial or renewal context. Paid-invoice credit/refund voids, prorated
+      termination invoices/credits, destructive plan/charge graph replacement, and broader retry
+      transitions remain pending.
       Customer net-payment terms now snapshot onto finalized initial, recurring, and one-off
       invoices with deterministic due dates. The legacy hourly overdue transition is replay-safe,
       emits a transactional outbox event, and successful manual or Authorize.Net settlement clears
@@ -910,3 +912,12 @@ resource and mutation described.
   verification confirmed 22 invalidation triggers, zero organizations/invoices/initial contexts/
   mutation guards, and 20 Cron audits. No route, secret, seeded billing data, or disabled external
   flag changed.
+- 2026-08-14: Preserved refresh/finalization for existing drafts after an explicit
+  `on_termination_invoice=skip&on_termination_credit_note=skip` transition. Recurring close still
+  selects only active/past-due subscriptions, while draft refresh may load a terminated historical
+  subscription through its immutable invoice context. Termination now flags the draft, retains the
+  exact one-row outbox guard, and remains replay-safe. Integration evidence terminates after coupon,
+  rename, and reprice refreshes, then refreshes and finalizes the same initial draft without double
+  allocation. All 77 Workers-runtime tests pass across 22 files; all 26 migrations replay from
+  empty D1 state, formatting, lint, generated bindings, TypeScript, and the cross-repository
+  inventory are green, and the dry-run bundle is 453.74 KiB (82.78 KiB gzip).
