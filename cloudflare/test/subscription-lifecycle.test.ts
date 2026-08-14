@@ -409,6 +409,24 @@ describe("subscription lifecycle", () => {
 
   it("terminates a due UTC ending_at exactly once with a final in-arrears invoice", async () => {
     const endingAt = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    const now = new Date().toISOString();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO add_ons
+         (id, organization_id, code, name, amount_minor, currency, status, version,
+          request_sha256, created_at, updated_at)
+         VALUES ('add-on-scheduled-end', 'org-lifecycle', 'scheduled-seat', 'Scheduled seat',
+                 100, 'USD', 'active', 1, 'scheduled-seat-hash', ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO fixed_charges
+         (id, organization_id, plan_id, add_on_id, code, charge_model, properties_json,
+          units, pay_in_advance, prorated, created_at, updated_at)
+         VALUES ('fixed-scheduled-end', 'org-lifecycle', 'plan-lifecycle',
+                 'add-on-scheduled-end', 'scheduled-seat-fixed', 'standard',
+                 '{"amount":"100"}', '2.5', 0, 0, ?, ?)`,
+      ).bind(now, now),
+    ]);
     const created = await api("/api/v1/subscriptions", "POST", {
       subscription: {
         external_customer_id: "customer-external",
@@ -463,6 +481,8 @@ describe("subscription lifecycle", () => {
       env.BILLING_DB.prepare(
         `SELECT s.status, s.ending_at, s.terminated_at,
                 (SELECT COUNT(*) FROM invoices i WHERE i.subscription_id = s.id) AS invoices,
+                (SELECT COUNT(*) FROM invoice_lines il JOIN invoices i ON i.id = il.invoice_id
+                  WHERE i.subscription_id = s.id AND il.line_type = 'fixed_charge') AS fixed_lines,
                 (SELECT COUNT(*) FROM outbox_events o WHERE o.aggregate_id = s.id
                   AND o.event_type = 'subscription.terminated') AS terminated_events,
                 (SELECT COUNT(*) FROM outbox_events o JOIN invoices i ON i.id = o.aggregate_id
@@ -477,6 +497,7 @@ describe("subscription lifecycle", () => {
       ending_at: endingAt,
       terminated_at: endingAt,
       invoices: 1,
+      fixed_lines: 1,
       terminated_events: 1,
       invoice_events: 1,
     });
@@ -503,6 +524,22 @@ describe("subscription lifecycle", () => {
           version, active, created_at, updated_at)
          VALUES ('plan-termination', 'org-termination', 'termination-plan', 'Termination plan',
                  'monthly', 1000, 'USD', 0, 1, 1, ?, ?)`,
+      ).bind(periodStart, periodStart),
+      env.BILLING_DB.prepare(
+        `INSERT INTO add_ons
+         (id, organization_id, code, name, amount_minor, currency, status, version,
+          request_sha256, created_at, updated_at)
+         VALUES ('add-on-termination', 'org-termination', 'termination-seat',
+                 'Termination seat', 100, 'USD', 'active', 1,
+                 'termination-seat-hash', ?, ?)`,
+      ).bind(periodStart, periodStart),
+      env.BILLING_DB.prepare(
+        `INSERT INTO fixed_charges
+         (id, organization_id, plan_id, add_on_id, code, charge_model, properties_json,
+          units, pay_in_advance, prorated, created_at, updated_at)
+         VALUES ('fixed-termination', 'org-termination', 'plan-termination',
+                 'add-on-termination', 'termination-seat-fixed', 'standard',
+                 '{"amount":"100"}', '2.5', 0, 0, ?, ?)`,
       ).bind(periodStart, periodStart),
       env.BILLING_DB.prepare(
         `INSERT INTO subscriptions
@@ -561,7 +598,7 @@ describe("subscription lifecycle", () => {
       terminatedAt,
       "termination-test",
     );
-    expect(result).toMatchObject({ totalDueMinor: 97, lineCount: 2, terminatedAt });
+    expect(result).toMatchObject({ totalDueMinor: 347, lineCount: 3, terminatedAt });
     await expect(
       env.BILLING_DB.prepare(
         `SELECT s.status, s.version, s.terminated_at, s.current_period_end,
@@ -580,8 +617,8 @@ describe("subscription lifecycle", () => {
       terminated_at: terminatedAt,
       current_period_end: terminatedAt,
       invoice_status: "finalized",
-      subtotal_minor: 97,
-      total_due_minor: 97,
+      subtotal_minor: 347,
+      total_due_minor: 347,
       invoice_events: 1,
       subscription_events: 1,
     });
@@ -599,6 +636,12 @@ describe("subscription lifecycle", () => {
       }>();
     expect(lines.results.map(({ metadata_json: _metadata, ...line }) => line)).toEqual([
       {
+        line_type: "fixed_charge",
+        quantity_decimal: "2.5",
+        precise_amount_minor: "250",
+        amount_minor: 250,
+      },
+      {
         line_type: "subscription",
         quantity_decimal: "1",
         precise_amount_minor: "66.666666666666666667",
@@ -612,6 +655,12 @@ describe("subscription lifecycle", () => {
       },
     ]);
     expect(lines.results.map((line) => JSON.parse(line.metadata_json))).toMatchObject([
+      {
+        contextType: "termination",
+        fixedChargeCode: "termination-seat-fixed",
+        periodStart,
+        periodEnd: "2023-09-07T00:00:00.000Z",
+      },
       {
         contextType: "termination",
         billableDays: 2,

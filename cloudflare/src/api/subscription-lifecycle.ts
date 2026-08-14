@@ -402,8 +402,6 @@ async function terminateSubscription(
       const unsupported: Record<string, string> = {
         unsupported_termination_invoice_grace_period:
           "Termination invoices with a grace period are not implemented",
-        unsupported_termination_fixed_charges:
-          "Termination invoicing for plans with fixed charges is not implemented",
         unsupported_termination_minimum_commitment:
           "Termination invoicing for plans with a minimum commitment is not implemented",
         unsupported_pay_in_advance_termination_credit:

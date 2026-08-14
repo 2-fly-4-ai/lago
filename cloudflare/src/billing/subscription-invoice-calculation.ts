@@ -349,9 +349,7 @@ export async function calculateSubscriptionInvoice(
     });
   }
 
-  for (const charge of options.context === "renewal"
-    ? await loadFixedCharges(database, subscription)
-    : []) {
+  for (const charge of await loadFixedCharges(database, subscription)) {
     const precise = Decimal.parse(
       rateCharge(
         charge.units,
@@ -371,12 +369,13 @@ export async function calculateSubscriptionInvoice(
       lineType: "fixed_charge",
       sourceType: "fixed_charge",
       metadataJson: stableJson({
-        billingCycleId,
+        billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
         fixedChargeCode: charge.code,
         addOnCode: charge.add_on_code,
         chargeModel: charge.charge_model,
         periodStart,
-        periodEnd,
+        periodEnd: calculationPeriodEnd,
+        ...(options.context === "termination" ? { contextType: "termination" } : {}),
       }),
     });
   }
@@ -481,22 +480,11 @@ export async function calculateTerminationSubscriptionInvoice(
 ): Promise<SubscriptionInvoiceCalculation> {
   const unsupported = await database
     .prepare(
-      `SELECT
-         EXISTS(SELECT 1 FROM fixed_charges
-                WHERE organization_id = ? AND plan_id = ? AND pay_in_advance = 0) AS fixed_charges,
-         EXISTS(SELECT 1 FROM minimum_commitments
+      `SELECT EXISTS(SELECT 1 FROM minimum_commitments
                 WHERE organization_id = ? AND plan_id = ?) AS minimum_commitment`,
     )
-    .bind(
-      subscription.organization_id,
-      subscription.plan_id,
-      subscription.organization_id,
-      subscription.plan_id,
-    )
-    .first<{ fixed_charges: number; minimum_commitment: number }>();
-  if (unsupported?.fixed_charges === 1) {
-    throw new Error("unsupported_termination_fixed_charges");
-  }
+    .bind(subscription.organization_id, subscription.plan_id)
+    .first<{ minimum_commitment: number }>();
   if (unsupported?.minimum_commitment === 1) {
     throw new Error("unsupported_termination_minimum_commitment");
   }

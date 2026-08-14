@@ -1209,19 +1209,16 @@ async function assertScheduledTerminationPlanSupported(
   }
   const unsupported = await database
     .prepare(
-      `SELECT
-         EXISTS(SELECT 1 FROM fixed_charges
-                WHERE organization_id = ? AND plan_id = ? AND pay_in_advance = 0) AS fixed_charges,
-         EXISTS(SELECT 1 FROM minimum_commitments
+      `SELECT EXISTS(SELECT 1 FROM minimum_commitments
                 WHERE organization_id = ? AND plan_id = ?) AS minimum_commitment`,
     )
-    .bind(organizationId, planId, organizationId, planId)
-    .first<{ fixed_charges: number; minimum_commitment: number }>();
-  if (unsupported?.fixed_charges === 1 || unsupported?.minimum_commitment === 1) {
+    .bind(organizationId, planId)
+    .first<{ minimum_commitment: number }>();
+  if (unsupported?.minimum_commitment === 1) {
     throw new ApiError(
       422,
       "unsupported_scheduled_termination",
-      "ending_at is not implemented for plans with fixed charges or minimum commitments",
+      "ending_at is not implemented for plans with minimum commitments",
     );
   }
 }
