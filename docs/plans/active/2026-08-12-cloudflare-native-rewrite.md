@@ -1099,3 +1099,9 @@ resource and mutation described.
   85-test suite passes across 22 files; formatting, strict lint, inventory, generated bindings,
   TypeScript, and the dry-run bundle are green at 514.93 KiB (91.86 KiB gzip). No migration is
   required.
+- 2026-08-14: Confirmed no remote migration was pending and deployed fixed-charge termination as
+  isolated Worker version `8768d17b-b3f7-4ddd-9a70-ee6d0f4f2b9b`. Follow-up inventory remained
+  empty; remote health/readiness returned `200`, unauthenticated termination returned `401`, and
+  aggregate-only verification confirmed zero organizations, subscriptions, invoices, invoice
+  lines, fixed charges, and minimum commitments plus 44 Cron audits. No route, secret, seeded
+  billing data, or disabled external flag changed.
