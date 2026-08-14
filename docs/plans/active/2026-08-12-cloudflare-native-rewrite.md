@@ -370,7 +370,9 @@ Acceptance:
       five-minute Cron dispatches a versioned Workflow instance and records due/unimplemented
       schedules in D1. The retained recurring billing, Authorize.Net receipt retry, coupon expiry,
       wallet expiry, and invoice-overdue paths run on their legacy slots; the other entries remain
-      explicitly `not_started` until their underlying feature families are ported.
+      explicitly `not_started` until their underlying feature families are ported. The two daily
+      webhook-retention schedules now enforce Lago's 90-day boundary; inbound receipt deletion uses
+      a transactional D1 cleanup queue so R2 failures remain replayable without orphaning payloads.
 - [x] Add outbox publication and dead-letter handling for the implemented payment events.
 - [x] Add outbound HMAC webhook signing, endpoint filters, idempotency, bounded retry, URL safety,
       and delivery audit state. Deployment remains disabled until a signing secret is separately
@@ -815,3 +817,8 @@ resource and mutation described.
   Cron workflow audits now prove the five-minute dispatcher is firing; all are correctly `partial`
   because due unported schedules are explicitly reported. No route, provider secret, seeded billing
   row, or disabled mutation/delivery flag changed.
+- 2026-08-14: Ported both daily 90-day webhook-retention schedules. Outbound delivery rows are
+  deleted in bounded batches; inbound receipt deletion transactionally records R2 cleanup work and
+  retries object deletion after synthetic storage failure. All 72 Workers-runtime tests pass across
+  21 files; all 21 migrations replay from empty D1 state, generated bindings and the
+  cross-repository inventory are current, and the dry-run bundle is 423.91 KiB.

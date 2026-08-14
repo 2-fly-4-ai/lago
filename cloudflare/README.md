@@ -22,8 +22,9 @@ remaining Lago feature inventory is dispositioned and ported.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs the retained billing-close, invoice-overdue,
   Authorize.Net receipt retry, coupon-expiration, and wallet-expiration paths on their original
-  slots, records each run in D1, publishes the outbox, and reports due schedules whose behavior is
-  not yet ported.
+  slots, performs 90-day inbound/outbound webhook retention, records each run in D1, publishes the
+  outbox, and reports due schedules whose behavior is not yet ported. Inbound retention records R2
+  deletion tasks transactionally before removing receipt rows, so storage outages remain retryable.
 - R2: immutable provider webhook, usage-event, and invoice-document archives.
 - Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
 

@@ -1,6 +1,13 @@
 import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
-import { expireCoupons, expireWallets, markInvoicesOverdue } from "../src/schedules/maintenance";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanupInboundWebhookReceipts,
+  cleanupOutboundWebhookDeliveries,
+  expireCoupons,
+  expireWallets,
+  markInvoicesOverdue,
+  webhookRetentionCutoff,
+} from "../src/schedules/maintenance";
 import {
   dueLegacySchedules,
   LEGACY_SCHEDULES,
@@ -39,6 +46,8 @@ describe("legacy schedule ownership", () => {
       "schedule:mark_invoices_as_payment_overdue",
       "schedule:terminate_coupons",
       "schedule:terminate_wallets",
+      "schedule:clean_webhooks",
+      "schedule:clean_inbound_webhooks",
       "schedule:retry_inbound_webhooks",
     ]);
   });
@@ -61,6 +70,80 @@ describe("legacy schedule ownership", () => {
 });
 
 describe("scheduled ledger maintenance", () => {
+  it("deletes webhook records after 90 days and drains archived payloads exactly once", async () => {
+    const oldAt = "2026-05-15T00:00:00.000Z";
+    const recentAt = "2026-08-13T00:00:00.000Z";
+    const oldArchiveKey = "webhooks/test/old.json";
+    await env.BILLING_ARTIFACTS.put(oldArchiveKey, "old payload");
+    await env.BILLING_DB.batch([
+      webhookEndpointStatement(recentAt),
+      outboundDeliveryStatement("delivery-old", oldAt),
+      outboundDeliveryStatement("delivery-recent", recentAt),
+      inboundReceiptStatement("receipt-old", oldAt, oldArchiveKey),
+      inboundReceiptStatement("receipt-recent", recentAt, null),
+    ]);
+    const cutoff = webhookRetentionCutoff("2026-08-14T01:10:00.000Z");
+    expect(cutoff).toBe("2026-05-16T01:10:00.000Z");
+
+    await expect(cleanupOutboundWebhookDeliveries(env, cutoff)).resolves.toBe(1);
+    await expect(cleanupOutboundWebhookDeliveries(env, cutoff)).resolves.toBe(0);
+    await expect(cleanupInboundWebhookReceipts(env, cutoff)).resolves.toEqual({
+      artifactsDeleted: 1,
+      receiptsDeleted: 1,
+    });
+    await expect(cleanupInboundWebhookReceipts(env, cutoff)).resolves.toEqual({
+      artifactsDeleted: 0,
+      receiptsDeleted: 0,
+    });
+
+    await expect(env.BILLING_ARTIFACTS.get(oldArchiveKey)).resolves.toBeNull();
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM outbound_webhook_deliveries) AS deliveries,
+           (SELECT COUNT(*) FROM webhook_receipts) AS receipts,
+           (SELECT COUNT(*) FROM artifact_cleanup_tasks) AS cleanup_tasks`,
+      ).first(),
+    ).resolves.toEqual({ cleanup_tasks: 0, deliveries: 1, receipts: 1 });
+  });
+
+  it("retains an R2 deletion task after object storage failure and drains it on retry", async () => {
+    const cutoff = webhookRetentionCutoff("2026-08-14T01:10:00.000Z");
+    const archiveKey = "webhooks/test/retry.json";
+    await env.BILLING_ARTIFACTS.put(archiveKey, "retry payload");
+    await env.BILLING_DB.prepare(
+      `INSERT INTO webhook_receipts
+       (id, provider, provider_account_code, provider_event_id, signature_valid,
+        payload_sha256, received_at, processed_at, processing_error_code, archive_key)
+       VALUES ('receipt-retry', 'authorize_net', 'org-schedule', 'retry', 1,
+               'hash-retry', '2026-05-15T00:00:00.000Z', NULL, NULL, ?)`,
+    )
+      .bind(archiveKey)
+      .run();
+    const failingEnv = {
+      ...env,
+      BILLING_ARTIFACTS: { delete: vi.fn().mockRejectedValue(new Error("synthetic_r2_failure")) },
+    } as unknown as Env;
+    await expect(cleanupInboundWebhookReceipts(failingEnv, cutoff)).rejects.toThrow(
+      "synthetic_r2_failure",
+    );
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM webhook_receipts WHERE id = 'receipt-retry') AS receipts,
+           (SELECT COUNT(*) FROM artifact_cleanup_tasks WHERE archive_key = ?) AS cleanup_tasks`,
+      )
+        .bind(archiveKey)
+        .first(),
+    ).resolves.toEqual({ cleanup_tasks: 1, receipts: 0 });
+
+    await expect(cleanupInboundWebhookReceipts(env, cutoff)).resolves.toEqual({
+      artifactsDeleted: 1,
+      receiptsDeleted: 0,
+    });
+    await expect(env.BILLING_ARTIFACTS.get(archiveKey)).resolves.toBeNull();
+  });
+
   it("marks due invoices overdue exactly once with outbox evidence", async () => {
     const cutoff = "2026-08-14T00:25:00.000Z";
     await expect(markInvoicesOverdue(env, cutoff, "schedule-test")).resolves.toBe(1);
@@ -161,4 +244,37 @@ function walletStatement(
      VALUES (?, 'org-schedule', 'customer-schedule', ?, ?, 'USD', 2, '1', 50, 100, 0,
              'active', ?, 1, ?, ?, ?, NULL)`,
   ).bind(id, code, code, expirationAt, `hash-${id}`, now, now);
+}
+
+function webhookEndpointStatement(now: string): D1PreparedStatement {
+  return env.BILLING_DB.prepare(
+    `INSERT OR IGNORE INTO webhook_endpoints
+     (id, organization_id, webhook_url, signature_algo, name, event_types_json, status,
+      version, created_at, updated_at, deleted_at)
+     VALUES ('endpoint-schedule', 'org-schedule', 'https://example.test/webhooks', 'hmac',
+             'Schedule endpoint', NULL, 'active', 1, ?, ?, NULL)`,
+  ).bind(now, now);
+}
+
+function outboundDeliveryStatement(id: string, updatedAt: string): D1PreparedStatement {
+  return env.BILLING_DB.prepare(
+    `INSERT OR IGNORE INTO outbound_webhook_deliveries
+     (id, organization_id, webhook_endpoint_id, event_id, event_type, payload_json, status,
+      attempts, created_at, updated_at)
+     VALUES (?, 'org-schedule', 'endpoint-schedule', ?, 'invoice.finalized', '{}', 'succeeded',
+             1, ?, ?)`,
+  ).bind(id, `event-${id}`, updatedAt, updatedAt);
+}
+
+function inboundReceiptStatement(
+  id: string,
+  receivedAt: string,
+  archiveKey: string | null,
+): D1PreparedStatement {
+  return env.BILLING_DB.prepare(
+    `INSERT OR IGNORE INTO webhook_receipts
+     (id, provider, provider_account_code, provider_event_id, signature_valid,
+      payload_sha256, received_at, processed_at, processing_error_code, archive_key)
+     VALUES (?, 'authorize_net', 'org-schedule', ?, 1, ?, ?, ?, NULL, ?)`,
+  ).bind(id, id, `hash-${id}`, receivedAt, receivedAt, archiveKey);
 }

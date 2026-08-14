@@ -1,4 +1,6 @@
 export type ScheduleExecutor =
+  | "cleanup_inbound_webhooks"
+  | "cleanup_outbound_webhooks"
   | "close_billing_periods"
   | "expire_coupons"
   | "expire_wallets"
@@ -171,15 +173,17 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     key: "schedule:clean_webhooks",
     legacyJob: "Clock::WebhooksCleanupJob",
     cadence: daily(1, 0),
-    owner: "webhook retention workflow",
-    parity: "not_started",
+    owner: "reconciliation workflow",
+    parity: "implemented",
+    executor: "cleanup_outbound_webhooks",
   },
   {
     key: "schedule:clean_inbound_webhooks",
     legacyJob: "Clock::InboundWebhooksCleanupJob",
     cadence: daily(1, 10),
-    owner: "webhook retention workflow",
-    parity: "not_started",
+    owner: "reconciliation workflow",
+    parity: "implemented",
+    executor: "cleanup_inbound_webhooks",
   },
   {
     key: "schedule:post_validate_events",

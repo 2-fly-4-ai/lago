@@ -22,6 +22,19 @@ type DueInvoice = {
   version: number;
 };
 
+type RetainedWebhookReceipt = {
+  id: string;
+  archive_key: string | null;
+};
+
+type ArtifactCleanupTask = {
+  archive_key: string;
+};
+
+type RetentionEnv = Pick<Env, "BILLING_ARTIFACTS" | "BILLING_DB">;
+
+const RETENTION_DAYS = 90;
+
 export async function expireCoupons(
   env: Env,
   cutoff: string,
@@ -172,6 +185,80 @@ export async function markInvoicesOverdue(
     overdue += results[1]?.meta.changes ?? 0;
   }
   return overdue;
+}
+
+export function webhookRetentionCutoff(triggeredAt: string): string {
+  const cutoff = new Date(triggeredAt);
+  if (!Number.isFinite(cutoff.getTime())) throw new Error("invalid_retention_timestamp");
+  cutoff.setUTCDate(cutoff.getUTCDate() - RETENTION_DAYS);
+  return cutoff.toISOString();
+}
+
+export async function cleanupOutboundWebhookDeliveries(
+  env: Pick<Env, "BILLING_DB">,
+  cutoff: string,
+): Promise<number> {
+  const result = await env.BILLING_DB.prepare(
+    `DELETE FROM outbound_webhook_deliveries WHERE id IN (
+       SELECT id FROM outbound_webhook_deliveries WHERE updated_at < ?
+       ORDER BY updated_at, id LIMIT 1000
+     )`,
+  )
+    .bind(cutoff)
+    .run();
+  return result.meta.changes;
+}
+
+export async function cleanupInboundWebhookReceipts(
+  env: RetentionEnv,
+  cutoff: string,
+): Promise<{ artifactsDeleted: number; receiptsDeleted: number }> {
+  let artifactsDeleted = await drainArtifactCleanupTasks(env);
+  const rows = await env.BILLING_DB.prepare(
+    `SELECT id, archive_key FROM webhook_receipts WHERE received_at < ?
+     ORDER BY received_at, id LIMIT 100`,
+  )
+    .bind(cutoff)
+    .all<RetainedWebhookReceipt>();
+  let receiptsDeleted = 0;
+  for (const row of rows.results) {
+    const statements: D1PreparedStatement[] = [];
+    if (row.archive_key) {
+      statements.push(
+        env.BILLING_DB.prepare(
+          `INSERT OR IGNORE INTO artifact_cleanup_tasks
+           (archive_key, resource_type, resource_id, created_at)
+           SELECT ?, 'webhook_receipt', id, ? FROM webhook_receipts
+           WHERE id = ? AND received_at < ?`,
+        ).bind(row.archive_key, cutoff, row.id, cutoff),
+      );
+    }
+    statements.push(
+      env.BILLING_DB.prepare("DELETE FROM webhook_receipts WHERE id = ? AND received_at < ?").bind(
+        row.id,
+        cutoff,
+      ),
+    );
+    const results = await env.BILLING_DB.batch(statements);
+    receiptsDeleted += results.at(-1)?.meta.changes ?? 0;
+  }
+  artifactsDeleted += await drainArtifactCleanupTasks(env);
+  return { artifactsDeleted, receiptsDeleted };
+}
+
+async function drainArtifactCleanupTasks(env: RetentionEnv): Promise<number> {
+  const result = await env.BILLING_DB.prepare(
+    `SELECT archive_key FROM artifact_cleanup_tasks ORDER BY created_at, archive_key LIMIT 100`,
+  ).all<ArtifactCleanupTask>();
+  const keys = result.results.map((row) => row.archive_key);
+  if (keys.length === 0) return 0;
+  await env.BILLING_ARTIFACTS.delete(keys);
+  await env.BILLING_DB.batch(
+    keys.map((key) =>
+      env.BILLING_DB.prepare("DELETE FROM artifact_cleanup_tasks WHERE archive_key = ?").bind(key),
+    ),
+  );
+  return keys.length;
 }
 
 function conditionalOutboxStatement(

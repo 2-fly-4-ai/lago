@@ -2,7 +2,14 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { reconcileAuthorizeNetReceipt } from "../reconciliation/authorize-net";
 import type { DomainEvent } from "../domain-events";
 import { closeBillingPeriod } from "../billing/close-period";
-import { expireCoupons, expireWallets, markInvoicesOverdue } from "../schedules/maintenance";
+import {
+  cleanupInboundWebhookReceipts,
+  cleanupOutboundWebhookDeliveries,
+  expireCoupons,
+  expireWallets,
+  markInvoicesOverdue,
+  webhookRetentionCutoff,
+} from "../schedules/maintenance";
 import { dueLegacySchedules, scheduleInstanceId } from "../schedules/registry";
 
 type ReconciliationParams = {
@@ -128,6 +135,22 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           )
         : 0;
 
+      const retentionCutoff = webhookRetentionCutoff(triggeredAtIso);
+      const deletedOutboundWebhooks = executors.has("cleanup_outbound_webhooks")
+        ? await step.do(
+            "delete retained outbound webhooks",
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => cleanupOutboundWebhookDeliveries(this.env, retentionCutoff),
+          )
+        : 0;
+      const deletedInboundWebhooks = executors.has("cleanup_inbound_webhooks")
+        ? await step.do(
+            "delete retained inbound webhooks",
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => cleanupInboundWebhookReceipts(this.env, retentionCutoff),
+          )
+        : { artifactsDeleted: 0, receiptsDeleted: 0 };
+
       const publishedEvents = await step.do(
         "publish pending outbox events",
         { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" }, timeout: "1 minute" },
@@ -149,6 +172,8 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         expiredCoupons,
         expiredWallets,
         overdueInvoices,
+        deletedOutboundWebhooks,
+        deletedInboundWebhooks,
         publishedEvents,
       };
       await step.do("complete schedule run", async () => {
