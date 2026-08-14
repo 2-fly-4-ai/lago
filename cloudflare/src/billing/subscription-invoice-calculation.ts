@@ -486,9 +486,6 @@ export async function calculateSubscriptionInvoice(
     if (aggregationType === "weighted_sum_agg" && charge.weighted_interval !== "seconds") {
       throw new Error("invalid_weighted_interval");
     }
-    if (aggregationType === "weighted_sum_agg" && charge.accepts_target_wallet === 1) {
-      throw new Error("weighted_sum_target_wallet_unsupported");
-    }
     const filters = parseStoredChargeFilters(
       charge.filters_json,
       parseStoredBillableMetricFilters(charge.metric_filters_json),
@@ -504,6 +501,7 @@ export async function calculateSubscriptionInvoice(
             charge.field_name,
             periodStartMs,
             filters,
+            charge.accepts_target_wallet === 1,
           )
         : zeroWeightedBaselines(filters);
     const filtered = partitionUsageEvents(events, filters);
@@ -511,32 +509,41 @@ export async function calculateSubscriptionInvoice(
       filters.length > 0
         ? [
             ...filtered.filters.flatMap(({ filter, events: filterEvents }) =>
-              targetWalletEventGroups(filterEvents, charge.accepts_target_wallet === 1).map(
-                (group) => ({
-                  ...group,
-                  filter,
-                  properties: filter.properties,
-                }),
-              ),
-            ),
-            ...targetWalletEventGroups(filtered.base, charge.accepts_target_wallet === 1).map(
-              (group) => ({
+              targetWalletEventGroups(
+                filterEvents,
+                charge.accepts_target_wallet === 1,
+                initialValues.filters.get(filter.lagoId)?.keys(),
+              ).map((group) => ({
                 ...group,
-                filter: null,
-                properties: parseObject(charge.properties_json),
-              }),
+                filter,
+                properties: filter.properties,
+              })),
             ),
+            ...targetWalletEventGroups(
+              filtered.base,
+              charge.accepts_target_wallet === 1,
+              initialValues.base.keys(),
+            ).map((group) => ({
+              ...group,
+              filter: null,
+              properties: parseObject(charge.properties_json),
+            })),
           ]
-        : targetWalletEventGroups(events, charge.accepts_target_wallet === 1).map((group) => ({
+        : targetWalletEventGroups(
+            events,
+            charge.accepts_target_wallet === 1,
+            initialValues.base.keys(),
+          ).map((group) => ({
             ...group,
             filter: null,
             properties: parseObject(charge.properties_json),
           }));
     const chargeLineStart = lines.length;
     for (const group of groups) {
-      const initialValue = group.filter
-        ? (initialValues.filters.get(group.filter.lagoId) ?? Decimal.zero())
+      const partitionInitialValues = group.filter
+        ? (initialValues.filters.get(group.filter.lagoId) ?? new Map())
         : initialValues.base;
+      const initialValue = partitionInitialValues.get(group.targetWalletCode) ?? Decimal.zero();
       const aggregation = aggregateUsageResult(aggregationType, charge.field_name, group.events, {
         periodStartMs,
         periodEndMs: calculationPeriodEndMs,
@@ -1049,15 +1056,17 @@ async function loadEvents(
   }));
 }
 
+type WeightedTargetBaselines = Map<string | null, Decimal>;
+
 type WeightedBaselines = {
-  base: Decimal;
-  filters: Map<string, Decimal>;
+  base: WeightedTargetBaselines;
+  filters: Map<string, WeightedTargetBaselines>;
 };
 
 function zeroWeightedBaselines(filters: ChargeFilter[]): WeightedBaselines {
   return {
-    base: Decimal.zero(),
-    filters: new Map(filters.map((filter) => [filter.lagoId, Decimal.zero()])),
+    base: new Map(),
+    filters: new Map(filters.map((filter) => [filter.lagoId, new Map()])),
   };
 }
 
@@ -1068,6 +1077,7 @@ async function recurringWeightedBaseline(
   fieldName: string | null,
   periodStartMs: number,
   filters: ChargeFilter[],
+  acceptsTargetWallet: boolean,
 ): Promise<WeightedBaselines> {
   if (!fieldName) throw new Error("aggregation_field_name_required");
   const result = await database
@@ -1086,20 +1096,29 @@ async function recurringWeightedBaseline(
     properties: parseObject(event.properties_json),
   }));
   const partitions = partitionUsageEvents(events, filters);
-  const sum = (partitionEvents: typeof events) =>
-    partitionEvents.reduce((total, event) => {
-      const value = event.properties[fieldName];
-      if (typeof value !== "string" && typeof value !== "number") {
-        throw new Error("aggregation_property_must_be_numeric");
-      }
-      return total.add(Decimal.parse(value));
-    }, Decimal.zero());
+  const sumGroups = (partitionEvents: typeof events): WeightedTargetBaselines => {
+    if (acceptsTargetWallet && partitionEvents.length === 0) return new Map();
+    return new Map(
+      targetWalletEventGroups(partitionEvents, acceptsTargetWallet).map(
+        ({ targetWalletCode, events: groupEvents }) => [
+          targetWalletCode,
+          groupEvents.reduce((total, event) => {
+            const value = event.properties[fieldName];
+            if (typeof value !== "string" && typeof value !== "number") {
+              throw new Error("aggregation_property_must_be_numeric");
+            }
+            return total.add(Decimal.parse(value));
+          }, Decimal.zero()),
+        ],
+      ),
+    );
+  };
   return {
-    base: sum(partitions.base),
+    base: sumGroups(partitions.base),
     filters: new Map(
       partitions.filters.map(({ filter, events: filterEvents }) => [
         filter.lagoId,
-        sum(filterEvents),
+        sumGroups(filterEvents),
       ]),
     ),
   };
@@ -1110,10 +1129,11 @@ type RatedUsageEvent = Awaited<ReturnType<typeof loadEvents>>[number];
 function targetWalletEventGroups(
   events: RatedUsageEvent[],
   acceptsTargetWallet: boolean,
+  baselineCodes: Iterable<string | null> = [],
 ): Array<{ targetWalletCode: string | null; events: RatedUsageEvent[] }> {
   if (!acceptsTargetWallet) return [{ targetWalletCode: null, events }];
   const grouped = new Map<string | null, RatedUsageEvent[]>();
-  if (events.length === 0) grouped.set(null, []);
+  for (const code of baselineCodes) grouped.set(code, []);
   for (const event of events) {
     const value = event.properties.target_wallet_code;
     const code = typeof value === "string" && value.trim() ? value.trim() : null;
@@ -1121,6 +1141,7 @@ function targetWalletEventGroups(
     values.push(event);
     grouped.set(code, values);
   }
+  if (grouped.size === 0) grouped.set(null, []);
   return [...grouped.entries()]
     .sort(([left], [right]) => {
       if (left === right) return 0;

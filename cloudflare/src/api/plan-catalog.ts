@@ -1310,7 +1310,6 @@ async function normalizeCharges(
       chargeModel,
       id,
     );
-    assertWeightedTargetWalletCompatibility(metric.aggregation_type, acceptsTargetWallet);
     charges.push({
       id,
       metricId,
@@ -1346,19 +1345,6 @@ function rejectUnsupportedChargeFeatures(input: Record<string, unknown>): void {
       "unsupported_tax_target",
       "Charge-specific tax targeting is not implemented",
     );
-}
-
-function assertWeightedTargetWalletCompatibility(
-  aggregationType: string,
-  acceptsTargetWallet: number,
-): void {
-  if (aggregationType === "weighted_sum_agg" && acceptsTargetWallet === 1) {
-    throw new ApiError(
-      422,
-      "unsupported_charge_feature",
-      "Weighted-sum charges cannot target wallets",
-    );
-  }
 }
 
 async function normalizeFixedCharges(

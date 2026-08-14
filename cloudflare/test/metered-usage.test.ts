@@ -906,7 +906,7 @@ describe("Lago-compatible metered usage", () => {
     }>();
     expect(metric.billable_metric).toMatchObject({ recurring: true, weighted_interval: "seconds" });
 
-    const rejectedTarget = await api("/api/v1/plans/metered-plan/charges", {
+    const targetedCharge = await api("/api/v1/plans/metered-plan/charges", {
       method: "POST",
       body: {
         charge: {
@@ -918,10 +918,10 @@ describe("Lago-compatible metered usage", () => {
         },
       },
     });
-    expect(rejectedTarget.status).toBe(422);
-    await expect(rejectedTarget.json()).resolves.toMatchObject({
-      code: "unsupported_charge_feature",
-    });
+    expect(targetedCharge.status).toBe(200);
+    await env.BILLING_DB.prepare(
+      "UPDATE charges SET active = 0 WHERE organization_id = 'org-usage' AND code = 'weighted-targeted'",
+    ).run();
 
     const charge = await api("/api/v1/plans/metered-plan/charges", {
       method: "POST",

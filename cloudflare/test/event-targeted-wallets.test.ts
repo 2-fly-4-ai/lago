@@ -292,6 +292,169 @@ describe("events targeting wallets", () => {
     });
   });
 
+  it("carries recurring weighted state per filter and wallet, including an idle wallet group", async () => {
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare("UPDATE charges SET active = 0 WHERE id = 'charge-target-events'"),
+      env.BILLING_DB.prepare("DELETE FROM subscriptions WHERE id = 'subscription-target-events'"),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, version, created_at, updated_at)
+         VALUES ('subscription-target-weighted', 'org-target-events', 'customer-target-events',
+                 'plan-target-events', 'subscription-target-weighted-external', 'active',
+                 '2026-07-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z', ?, 1, ?, ?)`,
+      ).bind(periodEnd, now, now),
+    ]);
+    const metricResponse = await api("/api/v1/billable_metrics", "POST", {
+      billable_metric: {
+        name: "Weighted target seats",
+        code: "weighted_target_seats",
+        aggregation_type: "weighted_sum_agg",
+        field_name: "delta",
+        recurring: true,
+        weighted_interval: "seconds",
+        filters: [{ key: "region", values: ["eu", "us"] }],
+      },
+    });
+    expect(metricResponse.status).toBe(200);
+    const metricId = (await metricResponse.json<{ billable_metric: { lago_id: string } }>())
+      .billable_metric.lago_id;
+    const chargeResponse = await api("/api/v1/plans/target-plan/charges", "POST", {
+      charge: {
+        billable_metric_id: metricId,
+        code: "weighted-target-charge",
+        charge_model: "standard",
+        accepts_target_wallet: true,
+        properties: { amount: "1" },
+        filters: [
+          {
+            invoice_display_name: "Weighted Europe",
+            properties: { amount: "2" },
+            values: { region: ["eu"] },
+          },
+        ],
+      },
+    });
+    expect(chargeResponse.status).toBe(200);
+    const charge = await chargeResponse.json<{
+      charge: { lago_id: string; filters: Array<{ lago_id: string }> };
+    }>();
+    const filterId = charge.charge.filters[0]!.lago_id;
+
+    for (const [id, timestamp, delta, region, targetWalletCode] of [
+      ["weighted-target-prior-eu-one", "2026-07-15T00:00:00.000Z", "10", "eu", "wallet_1"],
+      ["weighted-target-prior-eu-two", "2026-07-15T00:01:00.000Z", "20", "eu", "wallet_2"],
+      ["weighted-target-prior-us-one", "2026-07-15T00:02:00.000Z", "30", "us", "wallet_1"],
+      ["weighted-target-current-eu-one", "2026-08-01T00:00:00.000Z", "2", "eu", "wallet_1"],
+      ["weighted-target-current-us-one", "2026-08-01T00:00:00.000Z", "4", "us", "wallet_1"],
+    ] as const) {
+      const response = await api("/api/v1/events", "POST", {
+        event: {
+          transaction_id: id,
+          code: "weighted_target_seats",
+          external_subscription_id: "subscription-target-weighted-external",
+          timestamp: Date.parse(timestamp) / 1000,
+          properties: { delta, region, target_wallet_code: targetWalletCode },
+        },
+      });
+      expect(response.status).toBe(200);
+    }
+
+    const usage = await api(
+      "/api/v1/customers/customer-target-events-external/current_usage?external_subscription_id=subscription-target-weighted-external",
+    ).then((response) =>
+      response.json<{
+        customer_usage: {
+          amount_cents: number;
+          charges_usage: Array<{
+            units: string;
+            total_aggregated_units: string;
+            filters: Array<{
+              units: string;
+              total_aggregated_units: string;
+              amount_cents: number;
+            }>;
+          }>;
+        };
+      }>(),
+    );
+    expect(usage.customer_usage).toMatchObject({
+      amount_cents: 98,
+      charges_usage: [
+        {
+          units: "66",
+          total_aggregated_units: "66",
+          filters: [{ units: "32", total_aggregated_units: "32", amount_cents: 64 }],
+        },
+      ],
+    });
+
+    const closed = await closeBillingPeriod(
+      env,
+      "subscription-target-weighted",
+      periodEnd,
+      "weighted-target-close",
+    );
+    expect(closed).toMatchObject({ lineCount: 4, totalDueMinor: 0 });
+    const lines = await env.BILLING_DB.prepare(
+      `SELECT amount_minor, quantity_decimal, source_id, metadata_json
+       FROM invoice_lines WHERE invoice_id = ? AND line_type = 'usage'
+       ORDER BY amount_minor`,
+    )
+      .bind(closed.invoiceId)
+      .all<{
+        amount_minor: number;
+        quantity_decimal: string;
+        source_id: string;
+        metadata_json: string;
+      }>();
+    expect(
+      lines.results.map(({ amount_minor, quantity_decimal }) => ({
+        amount_minor,
+        quantity_decimal,
+      })),
+    ).toEqual([
+      { amount_minor: 24, quantity_decimal: "12" },
+      { amount_minor: 34, quantity_decimal: "34" },
+      { amount_minor: 40, quantity_decimal: "20" },
+    ]);
+    expect(new Set(lines.results.map(({ source_id }) => source_id)).size).toBe(3);
+    expect(lines.results.map(({ metadata_json }) => JSON.parse(metadata_json))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          chargeFilterId: filterId,
+          eventCount: 1,
+          targetWalletCode: "wallet_1",
+          totalAggregatedUnits: "12",
+        }),
+        expect.objectContaining({
+          chargeFilterId: filterId,
+          eventCount: 0,
+          targetWalletCode: "wallet_2",
+          totalAggregatedUnits: "20",
+        }),
+        expect.objectContaining({
+          eventCount: 1,
+          targetWalletCode: "wallet_1",
+          totalAggregatedUnits: "34",
+        }),
+      ]),
+    );
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT wallet_id, amount_minor FROM wallet_transactions
+         WHERE invoice_id = ? ORDER BY wallet_id`,
+      )
+        .bind(closed.invoiceId)
+        .all(),
+    ).resolves.toMatchObject({
+      results: [
+        { amount_minor: 58, wallet_id: "wallet-target-one" },
+        { amount_minor: 40, wallet_id: "wallet-target-two" },
+      ],
+    });
+  });
+
   it("ignores target properties for an opt-out charge and validates malformed codes", async () => {
     await env.BILLING_DB.prepare(
       "UPDATE charges SET accepts_target_wallet = 0 WHERE id = 'charge-target-events'",
