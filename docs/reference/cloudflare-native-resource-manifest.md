@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `f88803aa-0b4c-4a9c-a707-fb153280d706`
+- Latest verified version: `943b9159-4f62-4f52-9061-a3424f578e0c`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -34,7 +34,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0033_subscription_generations.sql`.
+`0034_subscription_payment_policy.sql`.
 
 ## Verified behavior
 
@@ -268,6 +268,15 @@ Applied D1 migrations: `0001_foundation.sql` through
   aggregate-only verification found zero organizations, customers, plans, subscriptions, invoices,
   credit notes, and outbox events plus 96 Cron audits. All three external-action flags remain
   disabled, with no route, secret, or billing data added.
+- The subscription payment-policy deployment applied only
+  `0034_subscription_payment_policy.sql`, then verified an empty pending inventory, 34 migrations,
+  both new columns and guards, and no foreign-key violations. Worker version
+  `943b9159-4f62-4f52-9061-a3424f578e0c` retained only the existing workers.dev URL, `*/5` Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow bindings. Health/readiness returned
+  `200`/`200`; unauthenticated subscription access returned `401`; aggregate-only verification
+  found zero organizations, customers, plans, subscriptions, invoices, credit notes, and outbox
+  events plus 98 Cron audits. All three external-action flags remain disabled, with no route,
+  secret, provider action, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

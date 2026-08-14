@@ -1333,18 +1333,6 @@ resource and mutation described.
   returned `401`, and post-deploy aggregate-only verification remained empty for every billing
   entity. No production route, domain, secret, provider action, migration, or billing record
   changed.
-- 2026-08-14: Ported the subscription-level payment-policy subset without conflating checkout
-  labels with Lago provider method IDs. Migration `0034_subscription_payment_policy.sql` adds
-  constrained policy/id columns and insert/update guards. Create and update now persist `manual`,
-  provider-default, or a cleared override; pending replacement, upgrade, and downgrade generations
-  inherit the current policy unless explicitly changed. Provider-specific IDs remain an explicit
-  `422` until the tenant-scoped method registry exists. Evidence covers create serialization,
-  pending plan replacement, provider-default update, clear, rejected ID non-mutation, existing plan
-  transitions, and D1 guards. All 123 tests pass across 27 files; all 34 migrations replay from
-  empty D1 with no foreign-key violations, and formatting, strict lint, generated inventory/types,
-  TypeScript, and a 624.07 KiB (109.88 KiB gzip) dry-run bundle are green. At this local
-  pre-deployment checkpoint, isolated remote D1 remains on migration `0033` and Worker version
-  `f88803aa-0b4c-4a9c-a707-fb153280d706`.
 - 2026-08-14: Ported Lago's backdated subscription activation contract for supported recurring
   plans. A normalized start on an earlier customer-local day now persists as both the historical
   subscription/start instant, emits exactly one created/started event pair, generates no
@@ -1365,3 +1353,24 @@ resource and mutation described.
   returned `401`, and post-deploy aggregate-only verification remained empty for every billing
   entity. No production route, domain, secret, provider action, migration, or billing record
   changed.
+- 2026-08-14: Ported the subscription-level payment-policy subset without conflating checkout
+  labels with Lago provider method IDs. Migration `0034_subscription_payment_policy.sql` adds
+  constrained policy/id columns and insert/update guards. Create and update now persist `manual`,
+  provider-default, or a cleared override; pending replacement, upgrade, and downgrade generations
+  inherit the current policy unless explicitly changed. Provider-specific IDs remain an explicit
+  `422` until the tenant-scoped method registry exists. Evidence covers create serialization,
+  pending plan replacement, provider-default update, clear, rejected ID non-mutation, existing plan
+  transitions, and D1 guards. All 123 tests pass across 27 files; all 34 migrations replay from
+  empty D1 with no foreign-key violations, and formatting, strict lint, generated inventory/types,
+  TypeScript, and a 624.07 KiB (109.88 KiB gzip) dry-run bundle are green. At this local
+  pre-deployment checkpoint, isolated remote D1 remained on migration `0033` and Worker version
+  `f88803aa-0b4c-4a9c-a707-fb153280d706`.
+- 2026-08-14: Remote preflight showed exactly `0034_subscription_payment_policy.sql` pending and
+  zero organizations, customers, plans, subscriptions, invoices, credit notes, and outbox events
+  plus 98 Cron audits. Applied only that migration, confirmed the follow-up inventory was empty,
+  and verified 34 migrations, both policy columns and guards, and no foreign-key violations before
+  deploying isolated Worker version `943b9159-4f62-4f52-9061-a3424f578e0c`. Remote
+  health/readiness returned `200`/`200`, unauthenticated subscription access returned `401`, and
+  aggregate-only verification remained empty. The deployed version retained all three disabled
+  external-action flags and only the existing isolated bindings/triggers. No production route,
+  domain, secret, provider action, or billing record changed.
