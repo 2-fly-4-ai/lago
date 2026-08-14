@@ -238,10 +238,13 @@ test fixture, parity status, and migration/rollback notes.
 - [x] Add non-secret fixtures for the four verified `store-new` REST interactions.
 - [x] Inventory Rails controllers, GraphQL files, jobs, schedules, models, services, migrations,
       and frontend source files. Route/operation/screen semantic extraction remains pending.
-- [ ] Define money, time, identifier, pagination, error, and idempotency conventions.
-- [ ] Define aggregate boundaries and prove the required transaction invariants.
-- [ ] Record explicitly enabled SERP capabilities using code/config evidence only; do not inspect
-      secrets, customer data, or production runtime artifacts.
+- [x] Define money, time, identifier, pagination, error, and idempotency conventions in
+      `docs/reference/cloudflare-native-conventions.md`.
+- [x] Define aggregate boundaries and the D1, Durable Object, outbox, R2, concurrency, and replay
+      evidence required to prove their transaction invariants in that conventions reference.
+- [x] Record explicitly enabled SERP capabilities using code/config evidence only in
+      `docs/reference/serp-enabled-lago-capabilities.md`; no secrets, customer data, or production
+      runtime artifacts were inspected.
 
 Acceptance:
 
@@ -491,19 +494,19 @@ Acceptance:
 
 ## Verification Matrix
 
-| Risk | Required evidence |
-| --- | --- |
-| Duplicate charge | kill/retry and duplicate-command tests with provider fake |
-| Lost payment outcome | webhook plus provider-read reconciliation test |
-| Incorrect invoice | golden line-item, rounding, tax, coupon, credit, and total fixtures |
-| Cross-tenant access | organization-scope authorization tests on every repository method |
-| Queue reordering | permuted domain-event and webhook suites |
-| Workflow retry | interruption after every external and durable boundary |
-| Schedule duplication | deterministic instance IDs and replay tests |
-| Document drift | visual render and embedded-data/checksum comparison |
-| Migration loss | row counts, aggregate totals, checksums, replay, reverse procedure |
-| Secret exposure | redacted logs, secret scan, no credentials in fixtures/config |
-| Silent feature loss | complete feature-disposition inventory and UI route audit |
+| Risk                 | Required evidence                                                   |
+| -------------------- | ------------------------------------------------------------------- |
+| Duplicate charge     | kill/retry and duplicate-command tests with provider fake           |
+| Lost payment outcome | webhook plus provider-read reconciliation test                      |
+| Incorrect invoice    | golden line-item, rounding, tax, coupon, credit, and total fixtures |
+| Cross-tenant access  | organization-scope authorization tests on every repository method   |
+| Queue reordering     | permuted domain-event and webhook suites                            |
+| Workflow retry       | interruption after every external and durable boundary              |
+| Schedule duplication | deterministic instance IDs and replay tests                         |
+| Document drift       | visual render and embedded-data/checksum comparison                 |
+| Migration loss       | row counts, aggregate totals, checksums, replay, reverse procedure  |
+| Secret exposure      | redacted logs, secret scan, no credentials in fixtures/config       |
+| Silent feature loss  | complete feature-disposition inventory and UI route audit           |
 
 ## Rollout Order
 
@@ -843,3 +846,10 @@ resource and mutation described.
   remote health/readiness returned `200`, unauthenticated finalization returned `401`, and direct
   aggregate-only counts confirmed zero organizations, invoices, and drafts. Eight Cron audits now
   exist; no route, secret, seeded billing row, or disabled mutation/delivery flag changed.
+- 2026-08-14: Closed the remaining M0 contract gaps with normative money, decimal, time, identifier,
+  pagination, error, idempotency, aggregate-boundary, and transaction-proof conventions. Recorded
+  an evidence-only SERP capability map: checked-in configuration enables the Lago feature only for
+  the safe store, while routing still defaults off unless explicitly selected; the frozen consumer
+  surface remains customer upsert, subscription creation, invoice polling, and hosted payment URL.
+  No secret value, customer row, deployed environment, production request, or runtime artifact was
+  inspected, and `store-new` and `serp-auth` were not modified.

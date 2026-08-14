@@ -84,4 +84,10 @@ surface:
 3. `GET /api/v1/invoices`
 4. `POST /api/v1/invoices/:id/payment_url`
 
+The normative money, time, pagination, error, idempotency, and aggregate-boundary rules are in
+`../docs/reference/cloudflare-native-conventions.md`. The code/config-only record of which SERP
+consumer capabilities are explicitly selected is in
+`../docs/reference/serp-enabled-lago-capabilities.md`; it deliberately does not infer production
+runtime state.
+
 `store-new` and `serp-auth` are not modified by this branch.
