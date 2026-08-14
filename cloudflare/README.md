@@ -33,8 +33,11 @@ remaining Lago feature inventory is dispositioned and ported.
   bounded event/R2 cleanup. Deterministic metric generations allow safe same-code recreation while
   finalized lines and relational event history remain auditable.
   Supported pay-in-arrears, non-prorated fixed charges also expose standalone create/list/show,
-  optimistic core update, and soft-delete routes with the same draft/finalized invariants. Their
-  retained hard uniqueness constraint means a deleted fixed-charge code cannot yet be reused.
+  optimistic core update, and soft-delete routes with the same draft/finalized invariants. Creates
+  and inherited unit updates on attached plans are effective-dated per active subscription: the
+  default takes effect at the next period boundary, while `apply_units_immediately: true` affects
+  the open period. Their retained hard uniqueness constraint means a deleted fixed-charge code
+  cannot yet be reused.
   Unused plans can be retired atomically with their active usage/fixed charges. Plans with
   subscription history instead enter a durable deletion Workflow that closes the attachment
   snapshot, terminates active generations, cancels pending generations, recalculates/finalizes
@@ -161,8 +164,9 @@ remaining Lago feature inventory is dispositioned and ported.
   clones the complete active pricing graph into a hidden child plan, while later updates mutate the
   same child fixed charge with optimistic versions and transactional outbox events. Immediate unit
   application writes an effective-dated event for the open period; the default schedules the new
-  units at the next boundary. Fixed-charge-specific tax targeting remains an explicit unsupported
-  boundary.
+  units at the next boundary. Catalog fixed-charge create/update and their inherited child-plan
+  cascades use the same timing contract. Fixed-charge-specific tax targeting remains an explicit
+  unsupported boundary.
 
 No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or
 OS command is required by this package.

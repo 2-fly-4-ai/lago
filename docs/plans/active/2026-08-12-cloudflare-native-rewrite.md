@@ -342,13 +342,15 @@ Acceptance:
       Tenant-scoped add-ons now support idempotent create/list/show/update/terminate with versioned
       outbox events, and plans support standard/graduated/volume recurring pay-in-arrears fixed
       charges. Fixed fees enter the exact recurring invoice pipeline before minimum commitments,
-      coupons, taxes, credit notes, and wallets. Pay-in-advance charges, proration, catalog-wide
-      unit-event propagation, and targeted taxes remain pending and fail explicitly. Subscription
+      coupons, taxes, credit notes, and wallets. Pay-in-advance charges, proration, and targeted
+      taxes remain pending and fail explicitly. Subscription
       fixed-charge list/show/update is ported; override mutations clone the full active pricing
       graph and persist effective-dated units so the default applies at the next boundary while an
       explicit immediate update affects the open period.
-      Standalone fixed-charge list/show routes expose the same ledger; standalone create/update/
-      delete remain guarded because they require per-subscription unit-event and rebilling flows.
+      Standalone fixed-charge create/list/show/update/delete routes expose the same ledger. Catalog
+      create/update and inherited child-plan cascades now persist per-subscription unit events: the
+      default applies at the next boundary and `apply_units_immediately: true` affects the open
+      period.
       Plan creation now emits transactional versioned outbox events, and scalar plan updates
       support the Rails-safe mutable subset for attached plans with optimistic concurrency. The
       base plan’s `pay_in_advance` mode is accepted at creation and can change only before a
@@ -2118,3 +2120,18 @@ resource and mutation described.
   remain, and post-deploy aggregate-only verification stayed empty apart from 222 schedule audits.
   All three external-action flags remain `0`; no resource provisioning, production route/domain,
   secret, provider action, customer data, or billing row changed.
+- 2026-08-15: Extended the effective-dated fixed-charge unit ledger to catalog create/update and
+  `cascade_updates`. New supported charges and inherited unit changes now emit one unit value per
+  active or past-due subscription at the next period boundary by default, or at mutation time when
+  `apply_units_immediately: true` is explicit. Updates preserve an open-period baseline, skip
+  unit-event writes when units are unchanged, leave pending subscriptions on row fallback until
+  activation, and propagate the same timing to eligible child-plan charges without modifying
+  subscriber-customized pricing. The first catalog mutation is guarded by the exact prepared
+  subscription ID, plan, version, status, and billing-period set, so a concurrent activation,
+  period move, or graph change cannot commit catalog state without its ledger rows. The synchronous
+  contract is bounded to 200 active subscription event targets and 512 KiB of prepared event JSON.
+  Strict format/lint, inventory, generated types, TypeScript, and Wrangler dry run pass. The fully
+  parallel suite reached 198/199 before the known `draft-termination-credit` 10-second timeout;
+  bounded groups pass all 199 tests as 37 + 43 + 70 + 42 + 7, including Store checkout
+  compatibility. The dry-run bundle is 981.94 KiB (169.22 KiB gzip). No migration is required;
+  this reuses migration `0049_fixed_charge_unit_events.sql`. Feature checkpoint: `c964e7c`.
