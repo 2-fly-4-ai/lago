@@ -66,6 +66,15 @@ type ChargeUsageRow = {
   accepts_target_wallet: number;
 };
 
+type CatalogChargeRow = ChargeUsageRow & {
+  created_at: string;
+  updated_at: string;
+  version: number;
+  invoiceable: number;
+  pay_in_advance: number;
+  prorated: number;
+};
+
 type EventInput = {
   transactionId: string;
   code: string;
@@ -159,17 +168,23 @@ export async function handleMeteredUsageRequest(
     );
   }
   if (request.method === "PUT" && chargeMatch?.[1] && chargeMatch[2]) {
-    throw new ApiError(
-      422,
-      "unsupported_charge_update",
-      "Charge update requires the unported draft-invoice refresh and cascade workflow",
+    return updateCharge(
+      request,
+      decodeURIComponent(chargeMatch[1]),
+      decodeURIComponent(chargeMatch[2]),
+      env,
+      auth,
+      requestId,
     );
   }
   if (request.method === "DELETE" && chargeMatch?.[1] && chargeMatch[2]) {
-    throw new ApiError(
-      422,
-      "unsupported_charge_deletion",
-      "Charge deletion requires the unported filter cleanup and cascade workflow",
+    return deleteCharge(
+      request,
+      decodeURIComponent(chargeMatch[1]),
+      decodeURIComponent(chargeMatch[2]),
+      env,
+      auth,
+      requestId,
     );
   }
 
@@ -487,7 +502,7 @@ async function createCharge(
   }
 
   const now = new Date().toISOString();
-  const id = await deterministicUuid("charge", `${plan.id}:${code}`);
+  const id = await nextCatalogChargeId(database, plan.id, code);
   const event = catalogEvent(
     "charge.created",
     "charge",
@@ -540,6 +555,208 @@ async function createCharge(
   return json({ charge: serializeCatalogCharge(created) }, { requestId });
 }
 
+async function updateCharge(
+  request: Request,
+  planCode: string,
+  chargeCode: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const database = env.BILLING_DB;
+  const plan = await findPlanId(database, auth.organizationId, planCode);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const charge = await findCatalogCharge(database, plan.id, chargeCode);
+  if (!charge) throw new ApiError(404, "charge_not_found", "Charge was not found");
+
+  const input = objectAt(await parseJsonObject(request), "charge");
+  rejectUnsupportedChargeInput(input);
+  if (booleanInteger(input.pay_in_advance, charge.pay_in_advance === 1) === 1)
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      "Pay-in-advance usage charges are not implemented",
+    );
+  if (booleanInteger(input.prorated, charge.prorated === 1) === 1)
+    throw new ApiError(
+      422,
+      "unsupported_charge_feature",
+      "Prorated usage charges are not implemented",
+    );
+
+  const attached = await database
+    .prepare("SELECT id FROM subscriptions WHERE plan_id = ? LIMIT 1")
+    .bind(plan.id)
+    .first();
+  const nextCode =
+    attached || input.code === undefined ? charge.code : requiredString(input, "code");
+  const nextMetricId =
+    attached || input.billable_metric_id === undefined
+      ? charge.metric_id
+      : requiredString(input, "billable_metric_id");
+  const nextChargeModel =
+    attached || input.charge_model === undefined
+      ? charge.charge_model
+      : requiredString(input, "charge_model");
+  if (!SUPPORTED_CHARGE_MODELS.has(nextChargeModel))
+    throw new ApiError(
+      422,
+      "unsupported_charge_model",
+      `Unsupported charge model: ${nextChargeModel}`,
+    );
+  const nextProperties =
+    input.properties === undefined
+      ? parseStoredObject(charge.properties_json)
+      : optionalObject(input.properties, "properties");
+  parseChargeModel(nextChargeModel, nextProperties);
+  const next = {
+    code: nextCode,
+    metricId: nextMetricId,
+    invoiceDisplayName:
+      input.invoice_display_name === undefined
+        ? charge.invoice_display_name
+        : optionalString(input, "invoice_display_name"),
+    chargeModel: nextChargeModel,
+    properties: nextProperties,
+    invoiceable:
+      attached || input.invoiceable === undefined
+        ? charge.invoiceable
+        : booleanInteger(input.invoiceable, charge.invoiceable === 1),
+    minAmountMinor:
+      attached || input.min_amount_cents === undefined
+        ? charge.min_amount_minor
+        : optionalNonNegativeInteger(input.min_amount_cents, charge.min_amount_minor),
+    acceptsTargetWallet:
+      input.accepts_target_wallet === undefined
+        ? charge.accepts_target_wallet
+        : booleanInteger(input.accepts_target_wallet, charge.accepts_target_wallet === 1),
+  };
+  const metric = await database
+    .prepare(
+      `SELECT id FROM billable_metrics
+       WHERE organization_id = ? AND id = ? AND active = 1 LIMIT 1`,
+    )
+    .bind(auth.organizationId, next.metricId)
+    .first<{ id: string }>();
+  if (!metric)
+    throw new ApiError(404, "billable_metric_not_found", "Billable metric was not found");
+  if (next.code !== charge.code) {
+    const duplicate = await findCatalogCharge(database, plan.id, next.code);
+    if (duplicate) throw new ApiError(422, "value_already_exist", "Charge code already exists");
+  }
+  if (sameCatalogCharge(charge, next.metricId, next.chargeModel, next.properties, next))
+    return json({ charge: serializeCatalogCharge(charge) }, { requestId });
+
+  const now = new Date().toISOString();
+  const event = catalogEvent(
+    "charge.updated",
+    "charge",
+    charge.id,
+    charge.version + 1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: next.code, planCode },
+  );
+  try {
+    const results = await database.batch([
+      database
+        .prepare(
+          `UPDATE charges SET billable_metric_id = ?, code = ?, invoice_display_name = ?,
+           charge_model = ?, properties_json = ?, invoiceable = ?, min_amount_minor = ?,
+           accepts_target_wallet = ?, version = version + 1, updated_at = ?
+           WHERE id = ? AND organization_id = ? AND plan_id = ? AND active = 1 AND version = ?`,
+        )
+        .bind(
+          next.metricId,
+          next.code,
+          next.invoiceDisplayName,
+          next.chargeModel,
+          stableJson(next.properties),
+          next.invoiceable,
+          next.minAmountMinor,
+          next.acceptsTargetWallet,
+          now,
+          charge.id,
+          auth.organizationId,
+          plan.id,
+          charge.version,
+        ),
+      conditionalChargeOutboxStatement(
+        database,
+        auth.organizationId,
+        event,
+        charge.id,
+        charge.version + 1,
+        now,
+        1,
+      ),
+    ]);
+    if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
+      throw new ApiError(409, "charge_version_conflict", "Charge changed concurrently");
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(422, "value_already_exist", "Charge code already exists");
+  }
+  await env.DOMAIN_EVENTS.send(event);
+  const updated = await findCatalogCharge(database, plan.id, next.code);
+  if (!updated) throw new ApiError(500, "persistence_error", "Charge disappeared");
+  return json({ charge: serializeCatalogCharge(updated) }, { requestId });
+}
+
+async function deleteCharge(
+  request: Request,
+  planCode: string,
+  chargeCode: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const database = env.BILLING_DB;
+  const plan = await findPlanId(database, auth.organizationId, planCode);
+  if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const charge = await findCatalogCharge(database, plan.id, chargeCode);
+  if (!charge) throw new ApiError(404, "charge_not_found", "Charge was not found");
+  if (request.body !== null) {
+    const body = await parseJsonObject(request);
+    const input = objectAt(body, "charge");
+    rejectUnsupportedChargeInput(input);
+  }
+
+  const now = new Date().toISOString();
+  const event = catalogEvent(
+    "charge.deleted",
+    "charge",
+    charge.id,
+    charge.version + 1,
+    auth.organizationId,
+    requestId,
+    now,
+    { code: charge.code, planCode },
+  );
+  const results = await database.batch([
+    database
+      .prepare(
+        `UPDATE charges SET active = 0, version = version + 1, updated_at = ?
+         WHERE id = ? AND organization_id = ? AND plan_id = ? AND active = 1 AND version = ?`,
+      )
+      .bind(now, charge.id, auth.organizationId, plan.id, charge.version),
+    conditionalChargeOutboxStatement(
+      database,
+      auth.organizationId,
+      event,
+      charge.id,
+      charge.version + 1,
+      now,
+      0,
+    ),
+  ]);
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
+    throw new ApiError(409, "charge_version_conflict", "Charge changed concurrently");
+  await env.DOMAIN_EVENTS.send(event);
+  return json({ charge: serializeCatalogCharge(charge) }, { requestId });
+}
+
 async function listCharges(
   planCode: string,
   url: URL,
@@ -560,14 +777,7 @@ async function listCharges(
     .prepare(`${chargeSelect()} WHERE ch.plan_id = ? AND ch.active = 1
               ORDER BY ch.created_at DESC, ch.id DESC LIMIT ? OFFSET ?`)
     .bind(plan.id, perPage, offset)
-    .all<
-      ChargeUsageRow & {
-        created_at: string;
-        invoiceable: number;
-        pay_in_advance: number;
-        prorated: number;
-      }
-    >();
+    .all<CatalogChargeRow>();
   return json(
     {
       charges: result.results.map(serializeCatalogCharge),
@@ -589,14 +799,7 @@ async function showCharge(
   const charge = await database
     .prepare(`${chargeSelect()} WHERE ch.plan_id = ? AND ch.code = ? AND ch.active = 1 LIMIT 1`)
     .bind(plan.id, chargeCode)
-    .first<
-      ChargeUsageRow & {
-        created_at: string;
-        invoiceable: number;
-        pay_in_advance: number;
-        prorated: number;
-      }
-    >();
+    .first<CatalogChargeRow>();
   if (!charge) throw new ApiError(404, "charge_not_found", "Charge was not found");
   return json({ charge: serializeCatalogCharge(charge) }, { requestId });
 }
@@ -614,7 +817,7 @@ function findPlanId(database: D1Database, organizationId: string, code: string) 
 function chargeSelect(): string {
   return `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
                  ch.properties_json, ch.min_amount_minor, ch.invoiceable,
-                 ch.pay_in_advance, ch.prorated, ch.created_at,
+                 ch.pay_in_advance, ch.prorated, ch.version, ch.created_at, ch.updated_at,
                  ch.accepts_target_wallet,
                  bm.id AS metric_id, bm.code AS metric_code, bm.name AS metric_name,
                  bm.aggregation_type, bm.field_name
@@ -625,22 +828,28 @@ function findCatalogCharge(database: D1Database, planId: string, code: string) {
   return database
     .prepare(`${chargeSelect()} WHERE ch.plan_id = ? AND ch.code = ? AND ch.active = 1 LIMIT 1`)
     .bind(planId, code)
-    .first<
-      ChargeUsageRow & {
-        created_at: string;
-        invoiceable: number;
-        pay_in_advance: number;
-        prorated: number;
-      }
-    >();
+    .first<CatalogChargeRow>();
+}
+
+async function nextCatalogChargeId(
+  database: D1Database,
+  planId: string,
+  code: string,
+): Promise<string> {
+  for (let generation = 1; generation <= 100; generation += 1) {
+    const seed = generation === 1 ? `${planId}:${code}` : `${planId}:${code}:${generation}`;
+    const id = await deterministicUuid("charge", seed);
+    const existing = await database
+      .prepare("SELECT id FROM charges WHERE id = ? LIMIT 1")
+      .bind(id)
+      .first<{ id: string }>();
+    if (!existing) return id;
+  }
+  throw new ApiError(409, "charge_generation_conflict", "Charge code has too many generations");
 }
 
 function sameCatalogCharge(
-  charge: ChargeUsageRow & {
-    invoiceable: number;
-    pay_in_advance: number;
-    prorated: number;
-  },
+  charge: CatalogChargeRow,
   metricId: string,
   chargeModel: string,
   properties: Record<string, unknown>,
@@ -664,14 +873,7 @@ function sameCatalogCharge(
   );
 }
 
-function serializeCatalogCharge(
-  charge: ChargeUsageRow & {
-    created_at: string;
-    invoiceable: number;
-    pay_in_advance: number;
-    prorated: number;
-  },
-): Record<string, unknown> {
+function serializeCatalogCharge(charge: CatalogChargeRow): Record<string, unknown> {
   return {
     lago_id: charge.id,
     lago_billable_metric_id: charge.metric_id,
@@ -1803,6 +2005,43 @@ function conditionalMetricOutboxStatement(
       event.occurredAt,
       metricId,
       organizationId,
+      expectedVersion,
+      expectedUpdatedAt,
+    );
+}
+
+function conditionalChargeOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+  chargeId: string,
+  expectedVersion: number,
+  expectedUpdatedAt: string,
+  expectedActive: 0 | 1,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL FROM charges
+       WHERE id = ? AND organization_id = ? AND active = ? AND version = ? AND updated_at = ?`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+      chargeId,
+      organizationId,
+      expectedActive,
       expectedVersion,
       expectedUpdatedAt,
     );

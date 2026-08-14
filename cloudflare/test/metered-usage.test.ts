@@ -410,17 +410,258 @@ describe("Lago-compatible metered usage", () => {
       });
       expect(response.status).toBe(422);
     }
-    const update = await api("/api/v1/plans/metered-plan/charges/anything", {
-      method: "PUT",
-      body: { charge: { invoice_display_name: "Changed" } },
+  });
+
+  it("updates, invalidates drafts, soft-deletes, and safely recreates standalone charges", async () => {
+    const metricResponse = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Mutable units",
+          code: "mutable_units",
+          aggregation_type: "sum_agg",
+          field_name: "units",
+        },
+      },
     });
-    expect(update.status).toBe(422);
-    await expect(update.json()).resolves.toMatchObject({ code: "unsupported_charge_update" });
-    const deletion = await api("/api/v1/plans/metered-plan/charges/anything", {
+    const metricId = (await metricResponse.json<{ billable_metric: { lago_id: string } }>())
+      .billable_metric.lago_id;
+    const created = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metricId,
+          code: "mutable-charge",
+          charge_model: "standard",
+          properties: { amount: "10" },
+        },
+      },
+    });
+    expect(created.status).toBe(200);
+    const createdCharge = await created.json<{ charge: { lago_id: string } }>();
+    const now = "2026-08-13T01:00:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices
+         (id, organization_id, customer_id, subscription_id, number, status, payment_status,
+          currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
+          created_at, updated_at)
+         VALUES ('charge-draft', 'org-usage', 'customer-usage', 'subscription-usage', NULL,
+                 'draft', 'pending', 'USD', 0, 0, 0, 0, 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices
+         (id, organization_id, customer_id, subscription_id, number, status, payment_status,
+          currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
+          finalized_at, created_at, updated_at)
+         VALUES ('charge-finalized', 'org-usage', 'customer-usage', 'subscription-usage',
+                 'INV-CHARGE-FINAL', 'finalized', 'pending', 'USD', 123, 0, 0, 123, 1, ?, ?, ?)`,
+      ).bind(now, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoice_lines
+         (id, invoice_id, line_type, description, quantity_decimal, unit_amount_decimal,
+          amount_minor, source_type, source_id, metadata_json, created_at)
+         VALUES ('charge-final-line', 'charge-finalized', 'charge', 'Historical charge', '1',
+                 '123', 123, 'charge', ?, '{}', ?)`,
+      ).bind(createdCharge.charge.lago_id, now),
+    ]);
+
+    const updated = await api("/api/v1/plans/metered-plan/charges/mutable-charge", {
+      method: "PUT",
+      body: {
+        charge: {
+          code: "ignored-on-attached-plan",
+          charge_model: "volume",
+          invoice_display_name: "Updated usage",
+          invoiceable: false,
+          min_amount_cents: 999,
+          accepts_target_wallet: true,
+          properties: { amount: "20" },
+        },
+      },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      charge: {
+        lago_id: createdCharge.charge.lago_id,
+        code: "mutable-charge",
+        charge_model: "standard",
+        invoice_display_name: "Updated usage",
+        invoiceable: true,
+        min_amount_cents: 0,
+        accepts_target_wallet: true,
+        properties: { amount: "20" },
+      },
+    });
+    const replay = await api("/api/v1/plans/metered-plan/charges/mutable-charge", {
+      method: "PUT",
+      body: {
+        charge: {
+          invoice_display_name: "Updated usage",
+          accepts_target_wallet: true,
+          properties: { amount: "20" },
+        },
+      },
+    });
+    expect(replay.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT ch.version, i.ready_to_be_refreshed,
+                (SELECT COUNT(*) FROM outbox_events
+                 WHERE aggregate_type = 'charge' AND aggregate_id = ch.id) AS events
+         FROM charges ch JOIN invoices i ON i.id = 'charge-draft'
+         WHERE ch.id = ?`,
+      )
+        .bind(createdCharge.charge.lago_id)
+        .first(),
+    ).resolves.toEqual({ events: 2, ready_to_be_refreshed: 1, version: 2 });
+
+    const deleted = await api("/api/v1/plans/metered-plan/charges/mutable-charge", {
       method: "DELETE",
     });
-    expect(deletion.status).toBe(422);
-    await expect(deletion.json()).resolves.toMatchObject({ code: "unsupported_charge_deletion" });
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toMatchObject({
+      charge: { lago_id: createdCharge.charge.lago_id, code: "mutable-charge" },
+    });
+    expect((await api("/api/v1/plans/metered-plan/charges/mutable-charge")).status).toBe(404);
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT COUNT(*) AS total FROM charges WHERE code = 'mutable-charge' AND active = 1",
+      ).first(),
+    ).resolves.toEqual({ total: 0 });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT ch.active, ch.version, il.amount_minor,
+                (SELECT COUNT(*) FROM outbox_events
+                 WHERE aggregate_type = 'charge' AND aggregate_id = ch.id) AS events
+         FROM charges ch JOIN invoice_lines il ON il.id = 'charge-final-line'
+         WHERE ch.id = ?`,
+      )
+        .bind(createdCharge.charge.lago_id)
+        .first(),
+    ).resolves.toEqual({ active: 0, amount_minor: 123, events: 3, version: 3 });
+
+    const recreated = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metricId,
+          code: "mutable-charge",
+          charge_model: "standard",
+          properties: { amount: "30" },
+        },
+      },
+    });
+    expect(recreated.status).toBe(200);
+    const recreatedCharge = await recreated.json<{ charge: { lago_id: string } }>();
+    expect(recreatedCharge.charge.lago_id).not.toBe(createdCharge.charge.lago_id);
+    const cascadeDelete = await api("/api/v1/plans/metered-plan/charges/mutable-charge", {
+      method: "DELETE",
+      body: { charge: { cascade_updates: true } },
+    });
+    expect(cascadeDelete.status).toBe(422);
+    await expect(cascadeDelete.json()).resolves.toMatchObject({
+      code: "unsupported_charge_feature",
+    });
+    expect(
+      (await api("/api/v1/plans/metered-plan/charges/mutable-charge", { method: "DELETE" })).status,
+    ).toBe(200);
+    expect(
+      (await api("/api/v1/plans/metered-plan/charges/mutable-charge", { method: "DELETE" })).status,
+    ).toBe(404);
+  });
+
+  it("updates the full supported charge shape before a plan has subscriptions", async () => {
+    const [firstMetricResponse, secondMetricResponse] = await Promise.all([
+      api("/api/v1/billable_metrics", {
+        method: "POST",
+        body: {
+          billable_metric: {
+            name: "Catalog metric one",
+            code: "catalog_metric_one",
+            aggregation_type: "sum_agg",
+            field_name: "units",
+          },
+        },
+      }),
+      api("/api/v1/billable_metrics", {
+        method: "POST",
+        body: {
+          billable_metric: {
+            name: "Catalog metric two",
+            code: "catalog_metric_two",
+            aggregation_type: "sum_agg",
+            field_name: "units",
+          },
+        },
+      }),
+    ]);
+    const firstMetricId = (
+      await firstMetricResponse.json<{ billable_metric: { lago_id: string } }>()
+    ).billable_metric.lago_id;
+    const secondMetricId = (
+      await secondMetricResponse.json<{ billable_metric: { lago_id: string } }>()
+    ).billable_metric.lago_id;
+    expect(
+      (
+        await api("/api/v1/plans", {
+          method: "POST",
+          body: {
+            plan: {
+              name: "Unattached catalog",
+              code: "unattached-catalog",
+              interval: "monthly",
+              amount_cents: 0,
+              amount_currency: "USD",
+            },
+          },
+        })
+      ).status,
+    ).toBe(200);
+    const created = await api("/api/v1/plans/unattached-catalog/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: firstMetricId,
+          code: "full-mutable",
+          charge_model: "standard",
+          properties: { amount: "10" },
+        },
+      },
+    });
+    expect(created.status).toBe(200);
+    const chargeId = (await created.json<{ charge: { lago_id: string } }>()).charge.lago_id;
+    const updated = await api("/api/v1/plans/unattached-catalog/charges/full-mutable", {
+      method: "PUT",
+      body: {
+        charge: {
+          billable_metric_id: secondMetricId,
+          code: "full-mutated",
+          invoice_display_name: "Packages",
+          charge_model: "package",
+          properties: { amount: "50", package_size: "10" },
+          invoiceable: false,
+          min_amount_cents: 25,
+          accepts_target_wallet: true,
+        },
+      },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      charge: {
+        lago_id: chargeId,
+        lago_billable_metric_id: secondMetricId,
+        billable_metric_code: "catalog_metric_two",
+        code: "full-mutated",
+        invoice_display_name: "Packages",
+        charge_model: "package",
+        properties: { amount: "50", package_size: "10" },
+        invoiceable: false,
+        min_amount_cents: 25,
+        accepts_target_wallet: true,
+      },
+    });
+    expect((await api("/api/v1/plans/unattached-catalog/charges/full-mutable")).status).toBe(404);
   });
 });
 
