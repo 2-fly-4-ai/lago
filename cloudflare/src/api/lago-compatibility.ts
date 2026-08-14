@@ -6,6 +6,7 @@ import { stableJson } from "../json";
 import type { DomainEvent } from "../domain-events";
 import { createAuthorizeNetPaymentUrl } from "../providers/authorize-net";
 import {
+  activeBillingPeriod,
   addTrialDays,
   assertBillingTimezone,
   firstPeriodEnd,
@@ -46,7 +47,6 @@ import { changeSubscriptionPlan } from "../billing/change-subscription-plan";
 import { invoiceSubscriptionStatement } from "../billing/subscription-invoice-calculation";
 import {
   assertEndingAtAfterStart,
-  assertFutureSubscriptionAt,
   normalizeEndingAt,
   normalizeSubscriptionAt,
 } from "../subscriptions/time";
@@ -581,7 +581,6 @@ async function createSubscription(
   const requestHash = await sha256Hex(JSON.stringify(requestIdentity));
 
   const existing = await findSubscription(database, auth.organizationId, externalId);
-  if (!existing && subscriptionAt) assertFutureSubscriptionAt(subscriptionAt, now);
   if (!existing && endingAt) assertEndingAtAfterStart(endingAt, subscriptionAt ?? timestamp);
 
   const customer = await findCustomer(database, auth.organizationId, externalCustomerId);
@@ -698,11 +697,24 @@ async function createSubscription(
   const commandKey = `${auth.organizationId}:${externalId}`;
   const subscriptionId = await deterministicUuid("subscription", commandKey);
   const effectiveStart = subscriptionAt ?? timestamp;
+  const futureActivation = subscriptionAt !== null && Date.parse(subscriptionAt) > now.getTime();
+  const backdated =
+    subscriptionAt !== null &&
+    !futureActivation &&
+    localDateString(new Date(subscriptionAt), billingTimezone) <
+      localDateString(now, billingTimezone);
+  if (backdated && plan.interval === "one_time") {
+    throw new ApiError(
+      422,
+      "unsupported_subscription_feature",
+      "Backdated one-time subscriptions are not implemented by the Cloudflare lifecycle",
+    );
+  }
   const trialEndAt =
     plan.trial_period !== null && plan.trial_period > 0
       ? addTrialDays(new Date(effectiveStart), plan.trial_period, billingTimezone).toISOString()
       : null;
-  if (subscriptionAt) {
+  if (futureActivation && subscriptionAt) {
     const event: DomainEvent = {
       id: `subscription-created:${subscriptionId}:v1`,
       type: "subscription.created",
@@ -800,13 +812,22 @@ async function createSubscription(
     if (!pending) throw new ApiError(500, "persistence_error", "Subscription was not persisted");
     return json({ subscription: serializeSubscription(pending) }, { requestId });
   }
-  if (plan.pay_in_advance !== 1 || trialEndAt !== null) {
-    const periodEnd = firstPeriodEnd(
-      now,
-      plan.interval,
-      billingTime,
-      billingTimezone,
-    ).toISOString();
+  if (plan.pay_in_advance !== 1 || trialEndAt !== null || backdated) {
+    const startedAt = backdated ? effectiveStart : timestamp;
+    const activePeriod = backdated
+      ? activeBillingPeriod(
+          new Date(effectiveStart),
+          now,
+          plan.interval,
+          billingTime,
+          billingTimezone,
+        )
+      : {
+          periodStart: now,
+          periodEnd: firstPeriodEnd(now, plan.interval, billingTime, billingTimezone),
+        };
+    const periodStart = activePeriod.periodStart.toISOString();
+    const periodEnd = activePeriod.periodEnd.toISOString();
     const event: DomainEvent = {
       id: `subscription-created:${subscriptionId}:v1`,
       type: "subscription.created",
@@ -826,12 +847,12 @@ async function createSubscription(
         status: "active",
         billingTime,
         billingTimezone,
-        subscriptionAt: timestamp,
+        subscriptionAt: effectiveStart,
         trialEndAt,
         endingAt,
         onTerminationCreditNote,
         onTerminationInvoice,
-        startedAt: timestamp,
+        startedAt,
         initialInvoiceGenerated: false,
       },
     };
@@ -849,9 +870,9 @@ async function createSubscription(
         organizationId: auth.organizationId,
         subscriptionId,
         externalSubscriptionId: externalId,
-        subscriptionAt: timestamp,
+        subscriptionAt: effectiveStart,
         endingAt,
-        startedAt: timestamp,
+        startedAt,
         initialInvoiceGenerated: false,
       },
     };
@@ -873,12 +894,12 @@ async function createSubscription(
             customer.id,
             plan.id,
             externalId,
-            timestamp,
+            effectiveStart,
             endingAt,
             onTerminationCreditNote,
             onTerminationInvoice,
-            timestamp,
-            timestamp,
+            startedAt,
+            periodStart,
             periodEnd,
             timestamp,
             timestamp,
@@ -886,7 +907,7 @@ async function createSubscription(
             requestHash,
             billingTime,
             billingTimezone,
-            trialEndAt ? timestamp : null,
+            trialEndAt ? effectiveStart : null,
             trialEndAt,
           ),
         database
@@ -1033,7 +1054,7 @@ async function createSubscription(
       organizationId: auth.organizationId,
       subscriptionId,
       externalSubscriptionId: externalId,
-      subscriptionAt: timestamp,
+      subscriptionAt: effectiveStart,
       endingAt,
       startedAt: timestamp,
       initialInvoiceGenerated: true,
@@ -1080,7 +1101,7 @@ async function createSubscription(
           customer.id,
           plan.id,
           externalId,
-          timestamp,
+          effectiveStart,
           endingAt,
           onTerminationCreditNote,
           onTerminationInvoice,

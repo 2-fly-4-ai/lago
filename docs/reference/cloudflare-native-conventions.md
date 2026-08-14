@@ -48,7 +48,11 @@ this document does not silently redefine that behavior.
 - The retained future-start subset accepts an explicit instant, persists its normalized UTC value
   as `subscription_at`, creates no invoice while pending, and uses that exact supplied instant for
   the initial billing-period and trial anchor even if the activation Workflow runs later.
-  Backdated starts remain unsupported.
+  A start on an earlier customer-local day instead becomes active at that exact historical instant
+  without creating a retroactive invoice. Its persisted current period is the half-open calendar
+  or anniversary period containing creation time, so the normal close owner resumes with one
+  current-period invoice rather than backfilling missed cycles. Backdated one-time plans remain
+  unsupported.
 - A positive plan `trial_period` snapshots `trial_started_at` and `trial_end_at` on the
   subscription. The hourly `:35` owner closes any missed trial-covered periods first, atomically
   sets `trial_ended_at`, and emits `subscription.trial_ended`. In-arrears plans wait until period

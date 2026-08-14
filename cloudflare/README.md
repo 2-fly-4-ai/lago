@@ -23,12 +23,14 @@ remaining Lago feature inventory is dispositioned and ported.
 - Subscription lifecycle: pay-in-advance starts create their initial invoice atomically, while
   in-arrears starts create no initial invoice. A supported future UTC `subscription_at` creates a
   pending subscription with no invoice, and the five-minute activation owner applies the same
-  billing-mode rule exactly once. Pending starts can be moved to another future instant or canceled
-  without producing an invoice. Immediate and scheduled activation both emit a transactional
-  `subscription.started` event. Zero-grace in-arrears subscriptions can terminate with an atomic
-  final invoice: the base fee and minimum-commitment target are prorated by inclusive UTC service
-  days, usage is bounded to the following UTC-day boundary, and supported non-prorated
-  pay-in-arrears fixed charges retain their full amount. The same constrained plans may persist a
+  billing-mode rule exactly once. A start on an earlier customer-local day activates at that
+  historical instant without generating a retroactive invoice, then resumes from the billing
+  period containing creation time. Pending starts can be moved to another future instant or
+  canceled without producing an invoice. Immediate, historical, and scheduled activation emit a
+  transactional `subscription.started` event. Zero-grace in-arrears subscriptions can terminate
+  with an atomic final invoice: the base fee and minimum-commitment target are prorated by inclusive
+  UTC service days, usage is bounded to the following UTC-day boundary, and supported
+  non-prorated pay-in-arrears fixed charges retain their full amount. The same constrained plans may persist a
   future UTC `ending_at`; the legacy hourly `:05` owner applies it exactly once and takes precedence
   over the recurring close. Supported active and pending updates can set or clear that instant and
   persist Lago's `on_termination_invoice` action; pay-in-advance subscriptions can additionally
@@ -44,8 +46,8 @@ remaining Lago feature inventory is dispositioned and ported.
   applications do not reduce the creditable source line. The default combined
   command creates that credit, finalizes bounded in-arrears usage without rebilling the base, and
   applies the new balance before wallet credits in one ordered D1 batch. The usage invoice can also
-  be generated while explicitly skipping unused-period crediting. Backdating, tenant-local
-  termination dates, refund/offset modes, allocated source invoices,
+  be generated while explicitly skipping unused-period crediting. Backdated one-time plans,
+  tenant-local termination dates, refund/offset modes, allocated source invoices,
   prorated/pay-in-advance fixed charges, and pay-in-advance commitment termination remain guarded.
   In-arrears termination with a positive grace period instead creates a non-consuming draft from an
   immutable termination context; manual or scheduled refresh uses the original period boundaries,

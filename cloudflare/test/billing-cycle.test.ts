@@ -227,19 +227,133 @@ describe("billing period close", () => {
     expect(invoiceEvents?.total).toBe(1);
   });
 
-  it("rejects a new backdated subscription instead of silently activating it", async () => {
+  it("activates a backdated subscription without creating a retroactive invoice", async () => {
+    const subscriptionAt = new Date(Date.now() - 45 * 86_400_000).toISOString();
+    const customerResponse = await invoiceRequest("/api/v1/customers", "POST", {
+      customer: { external_id: "customer-backdated-external", currency: "USD" },
+    });
+    expect(customerResponse.status).toBe(200);
+    const response = await invoiceRequest("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-backdated-external",
+        external_id: "subscription-backdated-external",
+        plan_code: "cycle-plan",
+        billing_time: "anniversary",
+        subscription_at: subscriptionAt,
+      },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json<{ subscription: { lago_id: string } }>();
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT status, subscription_at, started_at, current_period_start, current_period_end,
+                (SELECT COUNT(*) FROM invoices WHERE subscription_id = subscriptions.id) AS invoices,
+                (SELECT COUNT(*) FROM outbox_events
+                 WHERE aggregate_id = subscriptions.id AND event_type = 'subscription.created')
+                  AS created_events,
+                (SELECT COUNT(*) FROM outbox_events
+                 WHERE aggregate_id = subscriptions.id AND event_type = 'subscription.started')
+                  AS started_events
+         FROM subscriptions WHERE id = ?`,
+      )
+        .bind(body.subscription.lago_id)
+        .first<{
+          status: string;
+          subscription_at: string;
+          started_at: string;
+          current_period_start: string;
+          current_period_end: string;
+          invoices: number;
+          created_events: number;
+          started_events: number;
+        }>(),
+    ).resolves.toMatchObject({
+      status: "active",
+      subscription_at: subscriptionAt,
+      started_at: subscriptionAt,
+      invoices: 0,
+      created_events: 1,
+      started_events: 1,
+    });
+    const persisted = await env.BILLING_DB.prepare(
+      "SELECT current_period_start, current_period_end FROM subscriptions WHERE id = ?",
+    )
+      .bind(body.subscription.lago_id)
+      .first<{ current_period_start: string; current_period_end: string }>();
+    expect(Date.parse(persisted!.current_period_start)).toBeLessThanOrEqual(Date.now());
+    expect(Date.parse(persisted!.current_period_end)).toBeGreaterThan(Date.now());
+
+    const replay = await invoiceRequest("/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: "customer-backdated-external",
+        external_id: "subscription-backdated-external",
+        plan_code: "cycle-plan",
+        billing_time: "anniversary",
+        subscription_at: subscriptionAt,
+      },
+    });
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({
+      subscription: { lago_id: body.subscription.lago_id, status: "active" },
+    });
+    await expect(
+      env.BILLING_DB.prepare("SELECT COUNT(*) AS total FROM subscriptions WHERE external_id = ?")
+        .bind("subscription-backdated-external")
+        .first(),
+    ).resolves.toEqual({ total: 1 });
+
+    const close = await closeBillingPeriod(
+      env,
+      body.subscription.lago_id,
+      persisted!.current_period_end,
+      "backdated-cycle-close",
+    );
+    expect(close.replayed).toBe(false);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT json_extract(metadata_json, '$.periodStart') AS period_start,
+                json_extract(metadata_json, '$.periodEnd') AS period_end
+         FROM invoice_lines WHERE invoice_id = ? AND line_type = 'subscription'`,
+      )
+        .bind(close.invoiceId)
+        .first(),
+    ).resolves.toEqual({
+      period_start: persisted!.current_period_end,
+      period_end: close.nextPeriodEnd,
+    });
+    await expect(
+      closeBillingPeriod(
+        env,
+        body.subscription.lago_id,
+        persisted!.current_period_end,
+        "backdated-cycle-replay",
+      ),
+    ).resolves.toMatchObject({ invoiceId: close.invoiceId, replayed: true });
+  });
+
+  it("keeps backdated one-time subscriptions behind an explicit guard", async () => {
+    const now = new Date().toISOString();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO plans
+       (id, organization_id, code, name, interval, amount_minor, currency, pay_in_advance,
+        version, active, created_at, updated_at)
+       VALUES ('plan-backdated-one-time', 'org-cycle', 'backdated-one-time', 'One time',
+               'one_time', 1000, 'USD', 1, 1, 1, ?, ?)`,
+    )
+      .bind(now, now)
+      .run();
     const response = await invoiceRequest("/api/v1/subscriptions", "POST", {
       subscription: {
         external_customer_id: "customer-cycle-external",
-        external_id: "subscription-backdated-external",
-        plan_code: "cycle-plan",
-        subscription_at: new Date(Date.now() - 60_000).toISOString(),
+        external_id: "subscription-backdated-one-time",
+        plan_code: "backdated-one-time",
+        subscription_at: new Date(Date.now() - 45 * 86_400_000).toISOString(),
       },
     });
     expect(response.status).toBe(422);
     await expect(response.json()).resolves.toMatchObject({
       code: "unsupported_subscription_feature",
-      message: "subscription_at currently supports future activation only",
+      message: "Backdated one-time subscriptions are not implemented by the Cloudflare lifecycle",
     });
   });
 

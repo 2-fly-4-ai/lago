@@ -386,8 +386,10 @@ Acceptance:
       uniqueness. Prepaid grace upgrades retain non-allocatable source-credit contexts, finalize
       source-first manually or through the scheduler, and support repeated generation changes
       through the multi-subscription invoice graph.
-      Backdating, payment-method, custom-section, and threshold inputs fail explicitly. Calendar
-      billing and trial dates use a snapshotted customer IANA
+      Backdated calendar/anniversary starts on an earlier customer-local day activate at the exact
+      supplied instant without a retroactive invoice and resume in the period containing creation;
+      backdated one-time, payment-method, custom-section, and threshold inputs fail explicitly.
+      Calendar billing and trial dates use a snapshotted customer IANA
       timezone; the retained termination subset remains UTC-specific.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
 - [ ] Add deterministic replay and total reconciliation.
@@ -1329,3 +1331,15 @@ resource and mutation described.
   returned `401`, and post-deploy aggregate-only verification remained empty for every billing
   entity. No production route, domain, secret, provider action, migration, or billing record
   changed.
+- 2026-08-14: Ported Lago's backdated subscription activation contract for supported recurring
+  plans. A normalized start on an earlier customer-local day now persists as both the historical
+  subscription/start instant, emits exactly one created/started event pair, generates no
+  retroactive invoice (including pay-in-advance plans), and advances calendar or anniversary
+  boundaries to the half-open period containing creation time. The normal close owner then bills
+  that current period or next prepaid service period exactly once; replay reuses the same row and
+  invoice. Backdated one-time plans remain guarded. Evidence covers month-end clamping, DST-aware
+  calendar catch-up, zero-invoice creation, event and row idempotency, the next prepaid period, and
+  close replay. All 122 tests pass across 27 files; formatting, strict lint, generated inventory/
+  types, TypeScript, and a 619.97 KiB (109.20 KiB gzip) dry-run bundle are green. This is a code-only
+  local checkpoint; isolated remote D1 remains on migration `0033` and Worker version
+  `52f2f3e2-d402-4c9c-bb04-be095fe5b7f8`.

@@ -11,6 +11,11 @@ export type ProrationWindow = {
   fullPeriodDays: number;
 };
 
+export type ActiveBillingPeriod = {
+  periodStart: Date;
+  periodEnd: Date;
+};
+
 const LOCAL_PARTS_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
 
 export function assertBillingTimezone(timezone: string): string {
@@ -45,6 +50,29 @@ export function followingPeriodEnd(
   if (billingTime === "anniversary") return nextPeriodEnd(periodEnd, interval);
   const local = localDate(periodEnd, timezone);
   return localMidnightUtc(addCalendarInterval(local, interval), timezone);
+}
+
+export function activeBillingPeriod(
+  start: Date,
+  reference: Date,
+  interval: string,
+  billingTime: BillingTime,
+  timezone: string,
+): ActiveBillingPeriod {
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(reference.getTime()))
+    throw new Error("invalid_billing_timestamp");
+  if (start.getTime() > reference.getTime()) throw new Error("billing_period_not_started");
+
+  let periodStart = start;
+  let periodEnd = firstPeriodEnd(start, interval, billingTime, timezone);
+  for (let periods = 0; periodEnd.getTime() <= reference.getTime(); periods += 1) {
+    if (periods >= 10_000) throw new Error("billing_period_search_exhausted");
+    const nextEnd = followingPeriodEnd(periodEnd, interval, billingTime, timezone);
+    if (nextEnd.getTime() <= periodEnd.getTime()) throw new Error("invalid_billing_period");
+    periodStart = periodEnd;
+    periodEnd = nextEnd;
+  }
+  return { periodStart, periodEnd };
 }
 
 export function initialPlanProration(
