@@ -10,8 +10,8 @@ remaining Lago feature inventory is dispositioned and ported.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
-  pay-in-arrears fixed charges, effective-dated subscription fixed-charge units, customer payment
-  terms, immutable invoice due-date snapshots,
+  pay-in-arrears fixed charges with local-day proration, effective-dated subscription fixed-charge
+  units, customer payment terms, immutable invoice due-date snapshots,
   customer invoice-grace settings, distinct initial/renewal invoice contexts, refreshable draft
   state, dependency-invalidation triggers and mutation guards, immutable issuing/finalization dates,
   tenant-scoped invoice custom-section catalog records, subscription selections, and immutable
@@ -32,7 +32,7 @@ remaining Lago feature inventory is dispositioned and ported.
   charges, invalidates drafts, hides retired usage and wallet targets immediately, and enqueues
   bounded event/R2 cleanup. Deterministic metric generations allow safe same-code recreation while
   finalized lines and relational event history remain auditable.
-  Supported pay-in-arrears, non-prorated fixed charges also expose standalone create/list/show,
+  Supported pay-in-arrears fixed charges also expose standalone create/list/show,
   optimistic core update, and soft-delete routes with the same draft/finalized invariants. Creates
   and inherited unit updates on attached plans are effective-dated per active subscription: the
   default takes effect at the next period boundary, while `apply_units_immediately: true` affects
@@ -62,8 +62,9 @@ remaining Lago feature inventory is dispositioned and ported.
   generations start without inherited selections unless explicitly supplied. Zero-grace
   in-arrears subscriptions can terminate
   with an atomic final invoice: the base fee and minimum-commitment target are prorated by inclusive
-  UTC service days, usage is bounded to the following UTC-day boundary, and supported
-  non-prorated pay-in-arrears fixed charges retain their full amount. The same constrained plans may persist a
+  UTC service days, usage is bounded to the following UTC-day boundary, non-prorated fixed charges
+  retain their full amount, and prorated fixed charges use event-weighted customer-local calendar
+  days through termination. The same constrained plans may persist a
   future UTC `ending_at`; the legacy hourly `:05` owner applies it exactly once and takes precedence
   over the recurring close. Supported active and pending updates can set or clear that instant and
   persist Lago's `on_termination_invoice` action; pay-in-advance subscriptions can additionally
@@ -84,7 +85,7 @@ remaining Lago feature inventory is dispositioned and ported.
   fixed fees already invoiced in the period plus the current termination fees. Credit notes do not
   reduce that gross fee history, and refresh excludes the current draft so its true-up is stable.
   Backdated one-time plans, tenant-local termination dates, refund/offset modes, allocated source
-  invoices, and prorated/pay-in-advance fixed charges remain guarded.
+  invoices and pay-in-advance fixed charges remain guarded.
   In-arrears termination with a positive grace period instead creates a non-consuming draft from an
   immutable termination context; manual or scheduled refresh uses the original period boundaries,
   and finalization alone allocates coupon, credit-note, and wallet balances. Pay-in-advance grace
@@ -165,7 +166,8 @@ remaining Lago feature inventory is dispositioned and ported.
   same child fixed charge with optimistic versions and transactional outbox events. Immediate unit
   application writes an effective-dated event for the open period; the default schedules the new
   units at the next boundary. Catalog fixed-charge create/update and their inherited child-plan
-  cascades use the same timing contract. Fixed-charge-specific tax targeting remains an explicit
+  cascades use the same timing contract. In-arrears prorated charges rate the event-weighted units
+  across customer-local calendar days; fixed-charge-specific tax targeting remains an explicit
   unsupported boundary.
 
 No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or

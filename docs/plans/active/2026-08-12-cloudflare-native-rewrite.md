@@ -342,8 +342,10 @@ Acceptance:
       Tenant-scoped add-ons now support idempotent create/list/show/update/terminate with versioned
       outbox events, and plans support standard/graduated/volume recurring pay-in-arrears fixed
       charges. Fixed fees enter the exact recurring invoice pipeline before minimum commitments,
-      coupons, taxes, credit notes, and wallets. Pay-in-advance charges, proration, and targeted
-      taxes remain pending and fail explicitly. Subscription
+      coupons, taxes, credit notes, and wallets. In-arrears standard, volume, and graduated charges
+      support event-weighted customer-local calendar-day proration for renewal, current usage, and
+      termination. Pay-in-advance charges and targeted taxes remain pending and fail explicitly.
+      Subscription
       fixed-charge list/show/update is ported; override mutations clone the full active pricing
       graph and persist effective-dated units so the default applies at the next boundary while an
       explicit immediate update affects the open period.
@@ -2144,3 +2146,21 @@ resource and mutation described.
   post-deploy aggregate-only verification stayed empty apart from 228 schedule audits. All three
   external-action flags remain `0`; no migration, resource provisioning, production route/domain,
   secret, provider action, customer data, or billing row changed.
+- 2026-08-15: Ported in-arrears fixed-charge proration for standard, volume, and graduated pricing.
+  Migration `0050_prorated_fixed_charges.sql` admits `prorated` catalog rows while retaining the
+  explicit pay-in-advance guard and restoring all eight fixed-charge draft/deletion triggers after
+  the D1 table rebuild. Period calculation uses the effective-dated unit ledger, customer-local
+  civil days, half-open billing boundaries, and six-decimal half-up segment weighting. Standard
+  and volume models rate the weighted units; graduated pricing selects tiers from the final full
+  units, prorates per-unit portions, and retains reached flat amounts. The bounded invoice read
+  accepts at most 1,000 current-period events plus the latest prior state, and later-version
+  immediate values supersede earlier scheduled values. Renewal, current-usage, cascade, DST, and
+  immediate/scheduled termination evidence cover the retained contract. All 50 migrations replay
+  in a fresh isolated D1 with zero foreign-key violations. A second actual-D1 preservation audit
+  seeded a root/child plan graph, fixed charges, an active subscription, and a child unit event
+  through migrations 1-49; applying migration 0050 preserved all rows and parent links, restored
+  all eight triggers, and left zero foreign-key violations. Strict format/lint, inventory,
+  generated types, TypeScript, and Wrangler dry run pass. The fully parallel suite reached 203/204
+  before the known `draft-termination-credit` 10-second timeout; bounded groups pass all 204 tests
+  as 37 + 35 + 71 + 54 + 7, including Store checkout compatibility. The dry-run bundle is 988.90
+  KiB (170.59 KiB gzip). Feature checkpoint: `edd0ee0`.
