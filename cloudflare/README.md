@@ -127,9 +127,11 @@ remaining Lago feature inventory is dispositioned and ported.
   charge-specific price overrides are validated and stored atomically in D1; each event is assigned
   to the first most-specific matching filter or the unmatched base charge, with wildcard values
   still requiring the event property to exist. Current usage and invoice lines preserve the same
-  exact partition, and filter invoice lines use deterministic source identities. Filters combined
-  with weighted sums, target-wallet grouping, or a charge minimum fail explicitly until per-filter
-  baselines and charge-wide true-up allocation are ported.
+  exact partition, and filter invoice lines use deterministic source identities. Current usage
+  reports actual rated usage without applying charge minimums; invoices add one charge-wide,
+  termination-prorated true-up line across all filter/base fees. Filters combined with weighted
+  sums or target-wallet grouping fail explicitly until per-filter baselines and multidimensional
+  grouping are ported.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,

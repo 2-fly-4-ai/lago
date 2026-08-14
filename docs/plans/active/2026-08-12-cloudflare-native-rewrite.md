@@ -299,8 +299,9 @@ Acceptance:
       create/list/show/update/delete supports the exact in-arrears rating models, nested
       filter-specific price overrides, and standalone filter list/show/create/update/delete.
       Pay-in-advance, proration, targeted taxes, pricing units, and cascades fail explicitly until
-      their billing and cleanup workflows are ported; combining filters with weighted usage,
-      target-wallet grouping, or charge minimums remains guarded.
+      their billing and cleanup workflows are ported; combining filters with weighted usage or
+      target-wallet grouping remains guarded. Charge minimums now create one charge-wide,
+      termination-prorated true-up line after all filter/base fees are rated.
 - [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
       and rounding behavior according to feature disposition. Unrestricted fixed/percentage
       coupons now support once/recurring/forever application, initial and renewal invoice
@@ -500,10 +501,11 @@ Acceptance:
       reconstructed across subscription generations. Nested metric/charge filters use bounded D1
       documents, strict allowed-value validation, wildcard key-presence semantics, and first
       most-specific event assignment for current usage and invoice lines. Weighted target-wallet
-      grouping, custom aggregation, filter/weighted or filter/wallet combinations, charge-wide
-      filtered minimum true-ups, and advanced adjustments remain pending. Optional round/ceil/floor
-      metric configuration applies to aggregate units before current-usage and recurring-invoice
-      rating, including negative precision.
+      grouping, custom aggregation, filter/weighted or filter/wallet combinations, and advanced
+      adjustments remain pending. Optional round/ceil/floor metric configuration applies to
+      aggregate units before current-usage and recurring-invoice rating, including negative
+      precision. Filtered and unfiltered charge minimums are excluded from current usage and emit a
+      separate charge-wide invoice true-up, matching the legacy fee contract.
 - [x] Replace the Ruby subprocess and Go/Rust native library with a restricted TypeScript parser or
       a supported precompiled Wasm module. The pinned `lago-expression` Rust extension is now
       replaced by a bounded TypeScript parser/evaluator with no dynamic evaluation; the separately
@@ -1859,6 +1861,24 @@ resource and mutation described.
   isolated Worker as version `7c1bf413-994b-46d5-a215-ececc802e28b` with a 5 ms startup.
   Health/readiness returned `200`/`200`, unauthenticated standalone filter access returned `401`,
   and post-deploy aggregate-only verification remained empty apart from 182 schedule audits.
+  `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`;
+  no migration, resource provisioning, production route/domain, secret, provider action, customer
+  data, or billing row changed.
+- 2026-08-15: Replaced per-partition minimum clamping with Lago-compatible charge-wide true-ups.
+  Current usage now reports actual rated usage without a minimum. Renewal and termination invoices
+  sum all filter/base (or target-wallet) fees, prorate the minimum for a termination window, and add
+  one separate true-up line only for the remaining shortfall. The line has units `1`, zero events, a
+  deterministic persistence identity, the owning charge and metric in metadata, and an auditable
+  true-up-parent source. Evidence covers a 35-cent three-partition filtered charge becoming exactly
+  100 cents through one 65-cent line and a same-metric current projection remaining at its actual
+  30 cents. Formatting, strict lint, inventory, generated types, and TypeScript are green; bounded
+  Worker groups pass all 181 tests as 49 + 69 + 63. The dry-run bundle is 876.77 KiB (152.61 KiB
+  gzip). Feature checkpoint: `9263089`.
+- 2026-08-15: Remote preflight on the explicit SERP account found no pending migration and zero
+  organizations, customers, plans, subscriptions, invoices, and usage events. Deployed only the
+  isolated Worker as version `7ba328a1-da36-4f72-b9e6-a6c96b0ad674` with a 5 ms startup.
+  Health/readiness returned `200`/`200`, unauthenticated standalone filter access returned `401`,
+  and post-deploy aggregate-only verification remained empty apart from 184 schedule audits.
   `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`;
   no migration, resource provisioning, production route/domain, secret, provider action, customer
   data, or billing row changed.
