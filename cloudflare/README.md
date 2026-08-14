@@ -168,15 +168,19 @@ the customer's timezone, clip month-end/leap-day anchors like Lago, skip the wal
 and create at most one top-up per wallet/local date. Rule expiration and interval top-up retain
 Lago's hourly `:50` and `:55` schedule slots.
 
-The five-minute wallet owner projects current-period calculator output plus persisted draft
-liability onto the first active unrestricted wallet in application priority order. Ongoing usage
-may exceed settled balance, so API `ongoing_balance_cents` and `credits_ongoing_balance` can be
-negative. A fixed threshold rule compares that projection plus pending credits, then atomically
-settles the granted lot with a rule/projection-version idempotency key. Per-customer batches use
-wallet-version guards and roll back every projection, grant, and event together. Rule-level custom
-sections remain resource-only and metadata/name are copied to generated transactions. Paid credits,
-target rules, payment methods, successful-payment requirements, targeted wallets, progressive
-billing, and dedicated-organization cadence remain explicitly unsupported.
+Wallet create/update accepts `applies_to.fee_types` and tenant-local
+`applies_to.billable_metric_codes`. Invoice allocation groups tax-inclusive fee caps, drains only
+matching positive wallets in application priority order, and treats a wallet with no limitations as
+unrestricted. The five-minute owner uses the same matcher for current-period calculator output and
+persisted draft lines, but assigns each fee wholly to its first match without capping by settled
+balance. Ongoing balance may therefore be negative; only a non-depleted to depleted transition
+emits `wallet.depleted_ongoing_balance`. A fixed threshold rule compares that projection plus
+pending credits, then atomically settles the granted lot with a rule/projection-version idempotency
+key. Per-customer batches use wallet-version guards and roll back every projection, grant, and event
+together. Rule-level custom sections remain resource-only and metadata/name are copied to generated
+transactions. Paid credits, target recurring rules, payment methods, successful-payment
+requirements, event `target_wallet_code` ingestion, progressive billing, and
+dedicated-organization cadence remain explicitly unsupported.
 
 ## Safety defaults
 

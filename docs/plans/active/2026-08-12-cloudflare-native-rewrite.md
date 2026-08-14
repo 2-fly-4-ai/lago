@@ -312,12 +312,14 @@ Acceptance:
       threshold-triggered recurring granted-credit rule per wallet now supports tenant-safe
       create/update/replace/termination, metadata, and resource custom-section selection. Interval
       rules retain customer-local clipped anniversaries, deterministic daily replay, and legacy
-      `:50` expiration/`:55` top-up ownership. The five-minute wallet owner now projects
-      current-period and draft liability onto the highest-priority unrestricted active wallet,
-      permits a negative ongoing balance, tracks depleted transitions, and atomically creates a
-      threshold grant only when projected plus pending credits do not clear the border. Paid/target
-      rules, provider funding, wallet fee/metric targets, and dedicated-organization cadence remain
-      pending.
+      `:50` expiration/`:55` top-up ownership. Wallet create/update now persists fee-type and
+      billable-metric limitations with tenant-safe target replacement. Invoice allocation drains
+      matching fee buckets across positive wallets in application order; the five-minute owner
+      assigns each current-period or persisted-draft fee wholly to the first metric, fee-type, or
+      unrestricted match, permits a negative ongoing balance, tracks depleted transitions, and
+      atomically creates a threshold grant only when projected plus pending credits do not clear
+      the border. Paid/target recurring rules, provider funding, event `target_wallet_code`
+      routing, and dedicated-organization cadence remain pending.
       Organization-default manual percentage taxes now support create/list/show/update/terminate,
       coupon-adjusted fee taxable bases, exact rounding, and immutable invoice/fee snapshots;
       customer/plan/charge targeting, external providers, exemptions, tax identifiers, and
@@ -1544,3 +1546,30 @@ resource and mutation described.
   threshold rules, and outbox rows plus 130 schedule audits. All three external-action flags remain
   `0`; no production route, domain, secret, provider action, customer data, or billing row was
   added.
+- 2026-08-15: Ported wallet fee-type and billable-metric limitations. Migration
+  `0040_wallet_limitations.sql` adds checked fee-type JSON, the strict wallet-to-metric target
+  table, and a cross-tenant insert guard. Create replay hashes resolved targets, unknown or
+  cross-tenant metric codes fail before mutation, list/show serialize target codes in bulk, and
+  update replaces limitations with the wallet optimistic version and outbox in one D1 batch.
+  Invoice settlement builds tax-inclusive per-fee caps, preserves Lago's largest-bucket and wallet
+  ordering, drains across applicable wallets subject to settled balances, and retains one outbound
+  transaction per wallet. Ongoing projection shares the applicability rules but assigns each fee
+  wholly to its first match without capping by settled balance; historical line-less drafts retain
+  their aggregate fallback. Event-directed `target_wallet_code` grouping remains guarded until
+  charge/event line identity is ported. Evidence covers matching, grouping, priority drain, API
+  replay, tenant validation, exact replacement, late outbox rollback, and fee-specific draft
+  projection. All 151 tests across 30 files pass in bounded Workers-runtime batches. All 40
+  migrations replay from empty local D1 with no foreign-key violations. Formatting, strict lint,
+  generated inventory/types, TypeScript, and a 754.08 KiB (132.28 KiB gzip) dry-run bundle are
+  green. Feature checkpoint: `941ed72`.
+- 2026-08-15: Remote preflight on the explicit SERP account showed only
+  `0040_wallet_limitations.sql` pending and zero organizations, customers, invoices, wallets,
+  wallet transactions, and outbox rows. Applied only that migration, then verified 40 migrations,
+  zero foreign-key violations, zero wallet targets, and zero invalid wallet fee JSON rows. Deployed
+  isolated Worker version `d2dffa91-f546-4220-a9df-c05fc5c76d57` with a 4 ms startup;
+  health/readiness returned `200`/`200`, and unauthenticated plan/wallet access returned
+  `401`/`401`. A first read-only audit query named the nonexistent `schedule_run_audits` table and
+  failed without mutation; the corrected `schedule_runs` query found 135 audits. Post-deploy
+  aggregate-only verification remained empty for every tenant/billing/wallet/target/outbox entity.
+  All three external-action flags remain `0`; no production route, domain, secret, provider action,
+  customer data, or billing row was added.

@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `ad896271-925f-4723-9114-fd7917d9616c`
+- Latest verified version: `d2dffa91-f546-4220-a9df-c05fc5c76d57`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -33,8 +33,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `*/5 * * * *`                                                      | Worker scheduled handler  | Deterministic legacy-schedule dispatch                             |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
-Applied D1 migrations: `0001_foundation.sql` through
-`0039_wallet_ongoing_balances.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0040_wallet_limitations.sql`.
 
 ## Verified behavior
 
@@ -321,6 +320,16 @@ Applied D1 migrations: `0001_foundation.sql` through
   transactions, interval rules, threshold rules, and outbox events plus 130 schedule audits. All
   three external-action flags remain disabled, with no route, secret, provider action, customer
   data, or billing/wallet data added.
+- The wallet-limitation deployment applied only `0040_wallet_limitations.sql`; remote schema
+  verification found 40 migrations, zero foreign-key violations, the strict wallet-target table
+  and tenant guard, zero target rows, and zero invalid fee-type JSON rows. Isolated Worker version
+  `d2dffa91-f546-4220-a9df-c05fc5c76d57` retained only the existing workers.dev URL, `*/5` Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow bindings. The deployed bundle was
+  754.08 KiB (132.28 KiB gzip) with a 4 ms startup. Health/readiness returned `200`/`200`;
+  unauthenticated plan/wallet access returned `401`/`401`; aggregate-only verification found zero
+  organizations, customers, invoices, wallets, wallet transactions, wallet targets, and outbox
+  events plus 135 schedule audits. All three external-action flags remain disabled, with no route,
+  secret, provider action, customer data, or billing/wallet data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

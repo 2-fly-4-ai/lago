@@ -160,7 +160,7 @@ concurrent request, or replay converge on one valid result.
 | Billing cycle             | `closeBillingPeriod`                                                          | cycle lease/result, invoice graph, credits, next period, and outbox                                  | deterministic cycle key; cycle request hash; customer DO reservation; D1 batch; version predicates                      |
 | Invoice                   | one-off, billing-cycle, refresh/finalize, void, and payment services          | invoice header/version, lines/taxes/credits, linked ledgers, and outbox                              | immutable source IDs; line uniqueness; total `CHECK`; optimistic version; deterministic event IDs                       |
 | Coupon application        | coupon ledger and invoice credit service                                      | coupon/application version, credit row, invoice credit total, and outbox                             | unique application/reuse slot; request hash; DO reservation; optimistic version                                         |
-| Wallet                    | wallet ledger, invoice credits, and five-minute projection owner              | wallet version/balance, ongoing projection, transaction lots/consumption, invoice credit, and outbox | current-version/available-lot/projection guards; unique idempotency and invoice-wallet rows; per-customer D1 batch      |
+| Wallet                    | wallet ledger, fee/metric target allocator, invoice credits, and five-minute projection owner | wallet version/balance/limitations, targets, ongoing projection, transaction lots/consumption, invoice credit, and outbox | current-version/available-lot/projection and target-tenant guards; unique idempotency and invoice-wallet rows; per-customer D1 batch |
 | Recurring wallet rule     | wallet API and five-minute/`:50`/`:55` reconciliation owners                  | rule lifecycle/sections or one wallet version, interval/threshold lot, and outbox                    | one active rule across both stores; tenant/origin triggers; deterministic local-date or projection-version key          |
 | Credit note               | credit-note ledger and credit consumption service                             | note balance/version, consumption, invoice credit, and outbox                                        | required idempotency key/hash; balance/version predicate; unique consumption source                                     |
 | Payment                   | payment ledger and provider reconciliation                                    | attempt/version, invoice payment projection/link invalidation, and outbox                            | tenant idempotency uniqueness; provider transaction uniqueness; terminal-state/version guards                           |
@@ -235,11 +235,14 @@ Required evidence for a new aggregate or a boundary change:
   rules retain their own attach/skip state and use customer-local clipped anniversaries plus a
   deterministic wallet/local-date transaction key. Fixed threshold rules use the same section and
   metadata contract, but execute from the version-guarded five-minute ongoing-balance projection.
-  The retained no-target subset assigns current-period plus draft liability to the first active
-  unrestricted wallet in application order and may persist a negative ongoing balance; a threshold
-  grant is atomic with that projection and is suppressed when pending credits clear the threshold.
-  Paid, target, payment-method, targeted-wallet, progressive-billing, and dedicated-organization
-  behavior remains guarded. Multi-billing-entity routing, system-generated sections, and a broader
-  operator UI remain pending.
+  Wallet limitations are the union of allowed fee types and tenant-local billable metrics; a
+  wallet with neither is unrestricted. Invoice settlement evaluates largest fee buckets while
+  draining positive wallets in application order. Projection instead assigns each whole fee to
+  the first applicable wallet and may persist a negative ongoing balance; a threshold grant is
+  atomic with that projection and is suppressed when pending credits clear the threshold. Explicit
+  event `target_wallet_code` takes precedence in the shared matcher but is not yet admitted by
+  charge/event APIs. Paid, target-recurring, payment-method, event-targeted, progressive-billing,
+  and dedicated-organization behavior remains guarded. Multi-billing-entity routing,
+  system-generated sections, and a broader operator UI remain pending.
 - Advanced tax providers, multi-provider payment behavior, refunds, and several document families
   remain explicitly unsupported or incomplete in the generated feature inventory.
