@@ -352,10 +352,14 @@ Acceptance:
       flag existing initial and renewal drafts without changing their issuing-date anchor. D1
       triggers also flag the affected drafts after supported subscription, plan/rating, applied
       coupon, tax, credit-note, wallet, and usage mutations.
-      Subscription creation now atomically records `subscription.created` and the initial
-      `invoice.finalized` outbox events with the monetary ledger. Name-only subscription update
-      emits a versioned `subscription.updated`; scheduling, calendar billing, ending rules,
-      overrides, activation, payment-method, custom-section, and threshold inputs fail explicitly.
+      Immediate subscription creation atomically records `subscription.created` and the initial
+      invoice event with the monetary ledger. A normalized future UTC `subscription_at` instead
+      persists a replay-safe pending subscription without an invoice; the five-minute activation
+      owner atomically starts it, seeds its billing period, creates the same zero-grace or
+      grace-period initial invoice, and emits `subscription.started`. Name-only subscription update
+      emits a versioned `subscription.updated`; backdating, tenant-local calendar interpretation,
+      calendar billing, ending rules, overrides, payment-method, custom-section, and threshold
+      inputs fail explicitly.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
 - [ ] Add deterministic replay and total reconciliation.
 
@@ -387,11 +391,12 @@ Acceptance:
 - [ ] Replace enabled Clockwork entries with deterministic Cron-to-Workflow dispatch.
       All 27 legacy entries now have an exhaustive code-level ownership registry. A deterministic
       five-minute Cron dispatches a versioned Workflow instance and records due/unimplemented
-      schedules in D1. The retained recurring billing, draft refresh, Authorize.Net receipt retry,
-      coupon expiry, wallet expiry, and invoice-overdue paths run on their legacy slots; the other
-      entries remain explicitly `not_started` until their underlying feature families are ported. The two daily
-      webhook-retention schedules now enforce Lago's 90-day boundary; inbound receipt deletion uses
-      a transactional D1 cleanup queue so R2 failures remain replayable without orphaning payloads.
+      schedules in D1. The retained pending-subscription activation, recurring billing, draft
+      refresh, Authorize.Net receipt retry, coupon expiry, wallet expiry, and invoice-overdue paths
+      run on their legacy slots; the other entries remain explicitly `not_started` until their
+      underlying feature families are ported. The two daily webhook-retention schedules now enforce
+      Lago's 90-day boundary; inbound receipt deletion uses a transactional D1 cleanup queue so R2
+      failures remain replayable without orphaning payloads.
 - [x] Add outbox publication and dead-letter handling for the implemented payment events.
 - [x] Add outbound HMAC webhook signing, endpoint filters, idempotency, bounded retry, URL safety,
       and delivery audit state. Deployment remains disabled until a signing secret is separately
@@ -940,4 +945,18 @@ resource and mutation described.
   isolated Worker version `96a7f31c-ae48-4e6b-9e44-980095c15080`. Remote health/readiness returned
   `200`, unauthenticated batch ingestion returned `401`, and aggregate-only verification confirmed
   zero organizations, usage events, and invoices plus 23 Cron audits. No route, secret, seeded
+  billing data, or disabled external flag changed.
+- 2026-08-14: Added the retained future-start subset for subscriptions. A normalized future UTC
+  `subscription_at` now creates a replay-safe pending subscription with no invoice; the original
+  five-minute activation slot atomically starts due subscriptions, creates their initial invoice,
+  and records `subscription.started` plus the invoice event. New backdated requests fail explicitly,
+  while immediate checkout behavior and frozen `store-new` fixtures remain unchanged. All 80
+  Workers-runtime tests pass across 22 files; all 27 migrations replay from empty D1 state,
+  formatting, lint, generated bindings, TypeScript, and the cross-repository inventory are green,
+  and the dry-run bundle is 474.90 KiB (86.26 KiB gzip).
+- 2026-08-14: Applied only `0027_pending_subscription_activation.sql` to the isolated development
+  D1 and deployed Worker version `3ae66da8-ca93-4f54-b521-a8fc95159831`. Follow-up migration
+  inventory was empty; remote health/readiness returned `200`, unauthenticated future subscription
+  creation returned `401`, and aggregate-only verification confirmed zero organizations,
+  subscriptions, pending subscriptions, and invoices plus 27 Cron audits. No route, secret, seeded
   billing data, or disabled external flag changed.

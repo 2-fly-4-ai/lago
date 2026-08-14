@@ -39,6 +39,10 @@ this document does not silently redefine that behavior.
 - Calculate billing periods using UTC calendar arithmetic. The five-minute Worker Cron is UTC and
   dispatches deterministic legacy schedule slots from its supplied scheduled time, not wall-clock
   invocation time.
+- The retained future-start subset accepts an explicit instant, persists its normalized UTC value
+  as `subscription_at`, creates no invoice while pending, and uses the supplied Workflow trigger
+  instant for both activation and the initial billing-period anchor. Backdated starts and
+  tenant-local civil-date interpretation remain unsupported.
 - Tenant-local time zones, daylight-saving behavior, and Rails time-zone parity are not implemented
   unless a feature's executable evidence says otherwise. A port that depends on local civil time
   must add the time-zone field, transition tests, and migration notes before it can be called parity.
