@@ -171,16 +171,20 @@ Lago's hourly `:50` and `:55` schedule slots.
 Wallet create/update accepts `applies_to.fee_types` and tenant-local
 `applies_to.billable_metric_codes`. Invoice allocation groups tax-inclusive fee caps, drains only
 matching positive wallets in application priority order, and treats a wallet with no limitations as
-unrestricted. The five-minute owner uses the same matcher for current-period calculator output and
-persisted draft lines, but assigns each fee wholly to its first match without capping by settled
-balance. Ongoing balance may therefore be negative; only a non-depleted to depleted transition
-emits `wallet.depleted_ongoing_balance`. A fixed threshold rule compares that projection plus
+unrestricted. Charges can opt into `accepts_target_wallet`; those charges group and rate events by
+`properties.target_wallet_code`, while untargeted events remain a separate group. Explicit targets
+override normal wallet limitations, and a missing active wallet records one replay-safe
+`event.error` without rejecting the usage event. Opt-out charges ignore the property. The
+five-minute owner uses the same matcher for current-period calculator output and persisted draft
+lines, but assigns each fee wholly to its first match without capping by settled balance. Ongoing
+balance may therefore be negative; only a non-depleted to depleted transition emits
+`wallet.depleted_ongoing_balance`. A fixed threshold rule compares that projection plus
 pending credits, then atomically settles the granted lot with a rule/projection-version idempotency
 key. Per-customer batches use wallet-version guards and roll back every projection, grant, and event
 together. Rule-level custom sections remain resource-only and metadata/name are copied to generated
 transactions. Paid credits, target recurring rules, payment methods, successful-payment
-requirements, event `target_wallet_code` ingestion, progressive billing, and
-dedicated-organization cadence remain explicitly unsupported.
+requirements, progressive billing, and dedicated-organization cadence remain explicitly
+unsupported.
 
 ## Safety defaults
 

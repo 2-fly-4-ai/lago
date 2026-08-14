@@ -318,8 +318,10 @@ Acceptance:
       assigns each current-period or persisted-draft fee wholly to the first metric, fee-type, or
       unrestricted match, permits a negative ongoing balance, tracks depleted transitions, and
       atomically creates a threshold grant only when projected plus pending credits do not clear
-      the border. Paid/target recurring rules, provider funding, event `target_wallet_code`
-      routing, and dedicated-organization cadence remain pending.
+      the border. Charges may opt into event `target_wallet_code` grouping; targeted and untargeted
+      usage rate independently, explicit targets override normal limitations, and missing wallets
+      emit replay-safe `event.error` evidence. Paid/target recurring rules, provider funding, and
+      dedicated-organization cadence remain pending.
       Organization-default manual percentage taxes now support create/list/show/update/terminate,
       coupon-adjusted fee taxable bases, exact rounding, and immutable invoice/fee snapshots;
       customer/plan/charge targeting, external providers, exemptions, tax identifiers, and
@@ -1573,3 +1575,28 @@ resource and mutation described.
   aggregate-only verification remained empty for every tenant/billing/wallet/target/outbox entity.
   All three external-action flags remain `0`; no production route, domain, secret, provider action,
   customer data, or billing row was added.
+- 2026-08-15: Ported event-directed wallet targeting for supported in-arrears usage charges.
+  Migration `0041_event_targeted_wallets.sql` adds the checked `accepts_target_wallet` charge flag
+  and its active lookup index. Embedded and standalone charge creation, replay, list/show, and plan
+  serialization retain the opt-in. Accepted events group targeted and untargeted usage separately;
+  each group is rated independently and receives deterministic invoice-line and persistence IDs,
+  while immutable metadata preserves the real charge/metric IDs and Lago invoice serialization.
+  Explicit targets override fee/metric limitations in both ongoing projection and finalized wallet
+  consumption. Opt-out charges ignore the property and retain their previous line identity and
+  metadata. A missing active customer wallet does not reject usage; it adds one transactional,
+  replay-safe `event.error` outbox event with `target_wallet_code_not_found`. Evidence covers
+  grouped units and fees, exact ongoing balances, exact wallet lots, real charge serialization,
+  missing-target replay, opt-out aggregation, malformed-code rejection, catalog replay, and all
+  pre-existing billing snapshots. All 154 tests across 31 files pass in bounded Workers-runtime
+  batches. All 41 migrations replay from empty local D1 with no foreign-key violations. Formatting,
+  strict lint, generated inventory/types, TypeScript, and a 759.99 KiB (133.53 KiB gzip) dry-run
+  bundle are green. Feature checkpoint: `a455fbc`.
+- 2026-08-15: Remote preflight on the explicit SERP account showed only
+  `0041_event_targeted_wallets.sql` pending and zero organizations, customers, invoices, usage
+  events, wallets, targets, transactions, and outbox rows. Applied only that migration, then
+  verified 41 migrations, zero foreign-key violations, and the new charge column/index. Deployed
+  isolated Worker version `d08b6572-2af6-4b44-818e-a522d62b9864` with a 6 ms startup;
+  health/readiness returned `200`/`200`, and unauthenticated event/wallet access returned
+  `401`/`401`. Post-deploy aggregate-only verification remained empty apart from 140 schedule
+  audits. All three external-action flags remain `0`; no production route, domain, secret, provider
+  action, customer data, or billing row was added.

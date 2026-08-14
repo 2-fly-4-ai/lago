@@ -239,10 +239,12 @@ Required evidence for a new aggregate or a boundary change:
   wallet with neither is unrestricted. Invoice settlement evaluates largest fee buckets while
   draining positive wallets in application order. Projection instead assigns each whole fee to
   the first applicable wallet and may persist a negative ongoing balance; a threshold grant is
-  atomic with that projection and is suppressed when pending credits clear the threshold. Explicit
-  event `target_wallet_code` takes precedence in the shared matcher but is not yet admitted by
-  charge/event APIs. Paid, target-recurring, payment-method, event-targeted, progressive-billing,
-  and dedicated-organization behavior remains guarded. Multi-billing-entity routing,
-  system-generated sections, and a broader operator UI remain pending.
+  atomic with that projection and is suppressed when pending credits clear the threshold. A charge
+  that opts into event `target_wallet_code` groups and rates targeted/untargeted usage separately;
+  the explicit target takes precedence in the shared matcher. Missing targets preserve the event
+  and write one `event.error`; opt-out charges retain ordinary aggregation and allocation. Paid,
+  target-recurring, payment-method, progressive-billing, and dedicated-organization behavior
+  remains guarded. Multi-billing-entity routing, system-generated sections, and a broader operator
+  UI remain pending.
 - Advanced tax providers, multi-provider payment behavior, refunds, and several document families
   remain explicitly unsupported or incomplete in the generated feature inventory.
