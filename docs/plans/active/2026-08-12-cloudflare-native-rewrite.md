@@ -1262,3 +1262,12 @@ resource and mutation described.
   TypeScript, and the dry-run bundle are green at 567.01 KiB (100.26 KiB gzip). At this
   pre-deployment checkpoint, the isolated remote stack remains on migration `0031` and Worker
   version `fb10cb7a-a2e1-4dca-a097-3ce9f58de222`.
+- 2026-08-14: Remote preflight showed exactly `0032_calendar_trial_billing.sql` and zero
+  organizations, customers, plans, subscriptions, invoices, credit notes, and outbox events plus
+  77 Cron audits. Applied only that migration in 10.88 ms, confirmed the follow-up inventory was
+  empty, and verified both timezone columns plus all five subscription billing/trial columns before
+  deploying isolated Worker version `074a28d2-6d22-48e0-aad7-6c27a04e5b8c`. Remote
+  health/readiness returned `200`/`200`, unauthenticated subscription access returned `401`, and
+  the aggregate inventory remained empty. The deployed version retained the three disabled
+  external-action flags and only the existing isolated bindings/triggers. No route, secret, or
+  billing data changed.
