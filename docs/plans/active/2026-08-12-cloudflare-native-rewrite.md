@@ -1004,3 +1004,18 @@ resource and mutation described.
   health/readiness returned `200`, unauthenticated invoice access returned `401`, and aggregate-only
   verification confirmed zero organizations, subscriptions, invoices, and invoice lines plus 31
   Cron audits. No route, secret, seeded billing data, or disabled external flag changed.
+- 2026-08-14: Completed immediate activation event parity. Both in-arrears and pay-in-advance
+  same-day starts now record `subscription.started` transactionally alongside
+  `subscription.created` and, when applicable, the initial invoice event; future activation already
+  used the same event identity. The frozen Store fixture now proves all three immediate checkout
+  events without changing its request. All 82 Workers-runtime tests pass across 22 files;
+  formatting, lint, generated bindings, TypeScript, inventory, and the dry-run bundle are green at
+  486.31 KiB (87.44 KiB gzip). No migration is required.
+- 2026-08-14: Deployed immediate activation events as isolated Worker version
+  `9e9dbdd0-23fd-4901-ae49-060db143ddff`. The first read-only migration inventory request returned
+  transient Cloudflare authorization error `7403`; no migration command ran, although the shell
+  continued to the code-only deploy. The immediate retry confirmed no pending migration. Remote
+  health/readiness returned `200`, unauthenticated subscription creation returned `401`, and
+  aggregate-only verification confirmed zero organizations, subscriptions, invoices, and outbox
+  events plus 32 Cron audits. No route, secret, seeded billing data, or disabled external flag
+  changed.

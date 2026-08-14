@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `bd36a099-39a5-445b-b07a-3fd60fed1e9e`
+- Latest verified version: `9e9dbdd0-23fd-4901-ae49-060db143ddff`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -137,6 +137,14 @@ Applied D1 migrations: `0001_foundation.sql` through `0027_pending_subscription_
   `200`/`200`, unauthenticated invoice access returned `401`, and no migration was pending.
   Aggregate-only verification found zero organizations, subscriptions, invoices, and invoice lines
   plus 31 Cron audits. All external-action flags remain disabled, with no route, secret, or billing
+  data added.
+- The code-only immediate-start-event deployment added transactional `subscription.started`
+  evidence for same-day activation. The first D1 inventory request returned transient Cloudflare
+  authorization error `7403`; no migration command ran, but the shell continued to the code-only
+  Worker deploy. An immediate inventory retry then reported no pending migrations. Remote
+  health/readiness returned `200`/`200`, unauthenticated subscription creation returned `401`, and
+  aggregate-only verification found zero organizations, subscriptions, invoices, and outbox events
+  plus 32 Cron audits. All external-action flags remain disabled, with no route, secret, or billing
   data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
