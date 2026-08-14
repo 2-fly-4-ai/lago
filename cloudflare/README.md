@@ -118,7 +118,11 @@ remaining Lago feature inventory is dispositioned and ported.
   functions without `eval`, Wasm, a Rust extension, or a subprocess; the derived property is part
   of replay hashing, D1 state, and R2 evidence. Optional metric `round`, `ceil`, or `floor`
   configuration is applied to the aggregate before current-usage and recurring-invoice rating,
-  including zero-default and negative precision.
+  including zero-default and negative precision. Weighted-sum metrics integrate cumulative deltas
+  over the full civil-day charge period at exact 20-place Lago ceiling precision. Recurring
+  weighted state is reconstructed from retained events across subscription generations and is
+  recorded separately from billed weighted units. Weighted target-wallet grouping fails explicitly
+  until per-group historical baselines are ported.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,

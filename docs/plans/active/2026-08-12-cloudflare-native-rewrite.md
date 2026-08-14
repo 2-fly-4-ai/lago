@@ -292,9 +292,9 @@ Acceptance:
       percentage charge-model interfaces; dynamic/custom, filters, and advanced percentage
       adjustments remain pending.
       Billable-metric create/list/show and Rails-safe scalar update now emit transactional,
-      versioned outbox events; attached metrics allow only name/description mutation. Recurring,
-      rounding, weighted, expression, filters, and deletion inputs fail explicitly until their
-      aggregation and cleanup workflows are ported.
+      versioned outbox events; attached metrics allow only name/description mutation. Expression,
+      rounding, recurring weighted-sum, and deletion workflows are now ported. Generic recurring,
+      custom aggregation, filters, and grouped weighted baselines remain explicit gaps.
       Standalone plan charge create/list/show now supports idempotent, transactional creation and
       `charge.created` events for the exact in-arrears rating models. Pay-in-advance, proration,
       filters, targeted taxes, pricing units, wallet targeting, update, deletion, and cascades fail
@@ -492,11 +492,14 @@ Acceptance:
       reads, Queue/outbox emission, and immutable R2 archives. Batch ingestion validates all
       events before writing, caps requests at 100, rejects duplicate/existing transaction IDs,
       stores deterministic archives, and commits all event/outbox rows atomically.
-- [x] Port count, sum, maximum, latest, and add/remove unique-count aggregations plus six core
-      charge models; weighted/custom aggregation, filters, and advanced adjustments remain
-      pending. Optional round/ceil/floor metric configuration now applies to aggregate units before
-      current-usage and recurring-invoice rating, including negative precision.
-- [ ] Replace the Ruby subprocess and Go/Rust native library with a restricted TypeScript parser or
+- [x] Port count, sum, maximum, latest, add/remove unique-count, and seconds-based weighted-sum
+      aggregations plus six core charge models. Weighted sums use cumulative deltas, full civil-day
+      charge-period normalization, exact 20-place Lago ceiling precision, and recurring baselines
+      reconstructed across subscription generations. Weighted target-wallet grouping, custom
+      aggregation, filters, and advanced adjustments remain pending. Optional round/ceil/floor
+      metric configuration applies to aggregate units before current-usage and recurring-invoice
+      rating, including negative precision.
+- [x] Replace the Ruby subprocess and Go/Rust native library with a restricted TypeScript parser or
       a supported precompiled Wasm module. The pinned `lago-expression` Rust extension is now
       replaced by a bounded TypeScript parser/evaluator with no dynamic evaluation; the separately
       configurable Ruby custom-aggregation program remains explicitly unsupported.
@@ -1790,6 +1793,28 @@ resource and mutation described.
   isolated Worker as version `fad8d3ba-963a-4281-ba4c-aa146590a591` with a 5 ms startup.
   Health/readiness returned `200`/`200`, unauthenticated metric creation returned `401`, and
   post-deploy aggregate-only verification remained empty apart from 171 schedule audits.
+  `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`;
+  no migration, resource provisioning, production route/domain, secret, provider action, customer
+  data, or billing row changed.
+- 2026-08-15: Ported seconds-based weighted-sum aggregation for current usage and recurring,
+  termination, and periodic invoice calculation. The exact-decimal reducer groups equal timestamps,
+  integrates cumulative deltas over elapsed milliseconds, normalizes by the full civil-day charge
+  period, and applies Lago's final 20-place ceiling without an intermediate floating-point value.
+  Recurring baselines are reconstructed from immutable retained events by tenant, external
+  subscription ID, and metric, preserving state across subscription generations without a mutable
+  cache table or migration. Billed weighted units and end-of-period cumulative units remain
+  separate. Metric create/replay/update validates `weighted_interval=seconds`; attached mutation
+  remains guarded, and weighted target-wallet charges fail explicitly until per-group historical
+  baselines are ported. Evidence covers legacy deltas, same-timestamp events, negative fractions,
+  recurring carry-forward, cross-generation history, full-calendar normalization for a mid-month
+  start, current usage, and persisted invoice lines. Formatting, strict lint, inventory, generated
+  types, and TypeScript are green; bounded Worker groups pass all 175 tests as 46 + 66 + 63. The
+  dry-run bundle is 851.07 KiB (148.58 KiB gzip). Feature checkpoint: `d8f23f1`.
+- 2026-08-15: Remote preflight on the explicit SERP account found no pending migration and zero
+  organizations, customers, plans, subscriptions, invoices, and usage events. Deployed only the
+  isolated Worker as version `2e548908-e330-47c2-a252-a9e0bf295e55` with a 6 ms startup.
+  Health/readiness returned `200`/`200`, unauthenticated billable-metric access returned `401`, and
+  post-deploy aggregate-only verification remained empty apart from 175 schedule audits.
   `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`;
   no migration, resource provisioning, production route/domain, secret, provider action, customer
   data, or billing row changed.
