@@ -577,6 +577,25 @@ describe("invoice custom sections", () => {
 
   it("rejects cross-tenant relationship injection at the D1 boundary", async () => {
     const section = await createSection("tenant-guard", "Tenant guard", "Guard", null);
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO wallets
+         (id, organization_id, customer_id, code, currency, currency_exponent, rate_amount,
+          priority, balance_minor, consumed_minor, status, version, request_sha256, created_at,
+          updated_at)
+         VALUES ('wallet-sections-other', 'org-sections-other', 'customer-sections-other',
+                 'wallet-sections-other', 'USD', 2, '1', 50, 100, 0, 'active', 1, 'hash', ?, ?)`,
+      ).bind("2026-08-13T00:00:00.000Z", "2026-08-13T00:00:00.000Z"),
+      env.BILLING_DB.prepare(
+        `INSERT INTO wallet_transactions
+         (id, organization_id, wallet_id, transaction_type, transaction_status, status, source,
+          amount_minor, credit_amount, remaining_minor, priority, wallet_version, request_sha256,
+          created_at, updated_at)
+         VALUES ('wallet-transaction-sections-other', 'org-sections-other',
+                 'wallet-sections-other', 'inbound', 'granted', 'settled', 'manual', 100, '1',
+                 100, 50, 1, 'hash', ?, ?)`,
+      ).bind("2026-08-13T00:00:00.000Z", "2026-08-13T00:00:00.000Z"),
+    ]);
     await expect(
       env.BILLING_DB.prepare(
         `INSERT INTO subscriptions_invoice_custom_sections
@@ -604,6 +623,24 @@ describe("invoice custom sections", () => {
         .bind(section.lago_id, "2026-08-13T00:00:00.000Z")
         .run(),
     ).rejects.toThrow("invalid_organization_invoice_custom_section_tenant");
+    await expect(
+      env.BILLING_DB.prepare(
+        `INSERT INTO wallets_invoice_custom_sections
+         (wallet_id, invoice_custom_section_id, organization_id, created_at)
+         VALUES ('wallet-sections-other', ?, 'org-sections-other', ?)`,
+      )
+        .bind(section.lago_id, "2026-08-13T00:00:00.000Z")
+        .run(),
+    ).rejects.toThrow("invalid_wallet_invoice_custom_section_tenant");
+    await expect(
+      env.BILLING_DB.prepare(
+        `INSERT INTO wallet_transactions_invoice_custom_sections
+         (wallet_transaction_id, invoice_custom_section_id, organization_id, created_at)
+         VALUES ('wallet-transaction-sections-other', ?, 'org-sections-other', ?)`,
+      )
+        .bind(section.lago_id, "2026-08-13T00:00:00.000Z")
+        .run(),
+    ).rejects.toThrow("invalid_wallet_transaction_invoice_custom_section_tenant");
     await expect(
       env.BILLING_DB.prepare(
         "SELECT COUNT(*) AS count FROM subscriptions_invoice_custom_sections WHERE subscription_id = 'subscription-sections-other'",

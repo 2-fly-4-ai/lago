@@ -396,8 +396,11 @@ Acceptance:
       implemented. The retained single-billing-entity subset now maps organization defaults and
       customer replace/skip behavior into one tenant-safe invoice precedence projection shared by
       recurring and one-off snapshots. Multi-billing-entity routing, provider-created
-      system-generated sections, provider-specific method IDs, backdated one-time plans, and
-      threshold inputs remain explicit gaps.
+      system-generated sections, recurring top-up-rule section targets, provider-specific method
+      IDs, backdated one-time plans, and threshold inputs remain explicit gaps. Wallet and granted
+      wallet-transaction resource selections are persisted and serialized for API compatibility;
+      they deliberately do not enter invoice precedence because Lago's paid-credit invoice service
+      does not pass those resources to section application.
       Calendar billing and trial dates use a snapshotted customer IANA
       timezone; the retained termination subset remains UTC-specific.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
@@ -1442,3 +1445,19 @@ resource and mutation described.
   aggregate-only verification remained empty. The deployed version retains all three
   external-action flags at `0` and only the existing isolated bindings/triggers. No production
   route, domain, secret, provider action, or billing/catalog/default record changed.
+- 2026-08-15: Ported wallet and granted wallet-transaction invoice custom-section selections as
+  resource API compatibility, without adding them to invoice precedence. Legacy evidence shows
+  that wallet create/update and transaction create use the shared attach/skip service, while the
+  paid-credit invoice service applies customer configuration without passing either wallet
+  resource. Migration `0037_wallet_invoice_custom_sections.sql` adds both skip fields, two
+  tenant-checked relationship tables, and four tenant/immutability triggers. Wallet create/update,
+  list/show, granted transaction create/replay/show/list, catalog termination cleanup, and bulk
+  selection serialization are implemented. Recurring top-up-rule selections remain coupled to the
+  unported recurring wallet engine. Evidence covers unknown-code normalization, create replay and
+  divergence, implicit/explicit skip, restore, transaction idempotency conflict, catalog cleanup,
+  cross-tenant rejection, and injected outbox rollback. All 132 tests across 28 files pass in
+  bounded Workers-runtime batches; all 37 migrations replay from an empty local D1 with no
+  foreign-key violations, two wallet-section tables, four related triggers, and both skip columns.
+  Formatting, strict lint, generated inventory/types, TypeScript, and a 681.49 KiB (118.38 KiB
+  gzip) dry-run bundle are green. This is a local pre-deployment checkpoint; isolated remote D1
+  remains on migration `0036` and Worker version `fe2fb69c-b113-438f-884f-b6b5f367b87c`.

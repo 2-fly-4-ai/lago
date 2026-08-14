@@ -192,6 +192,201 @@ describe("granted wallet ledger", () => {
     ).resolves.toEqual({ total: 2 });
   });
 
+  it("persists replay-safe wallet and wallet-transaction custom-section selections", async () => {
+    await createSection("wallet-terms", "Wallet terms");
+    await createSection("top-up-terms", "Top-up terms");
+    const walletPayload = {
+      wallet: {
+        external_customer_id: "customer-wallet-external",
+        name: "Section Wallet",
+        code: "section-wallet",
+        currency: "USD",
+        rate_amount: "1",
+        invoice_custom_section: {
+          skip_invoice_custom_sections: false,
+          invoice_custom_section_codes: ["unknown-is-ignored", "wallet-terms"],
+        },
+      },
+    };
+    const created = await request("/api/v1/wallets", "POST", walletPayload);
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{
+      wallet: {
+        lago_id: string;
+        applied_invoice_custom_sections: Array<{
+          invoice_custom_section: { code: string };
+        }>;
+      };
+    }>();
+    const walletId = createdBody.wallet.lago_id;
+    expect(createdBody.wallet.applied_invoice_custom_sections).toEqual([
+      expect.objectContaining({
+        invoice_custom_section: expect.objectContaining({ code: "wallet-terms" }),
+      }),
+    ]);
+    const replay = await request("/api/v1/wallets", "POST", {
+      wallet: {
+        ...walletPayload.wallet,
+        invoice_custom_section: {
+          skip_invoice_custom_sections: false,
+          invoice_custom_section_codes: ["wallet-terms"],
+        },
+      },
+    });
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({ wallet: { lago_id: walletId } });
+    await expect(
+      request(`/api/v1/wallets/${walletId}`).then((response) => response.json()),
+    ).resolves.toMatchObject({
+      wallet: {
+        applied_invoice_custom_sections: [{ invoice_custom_section: { code: "wallet-terms" } }],
+      },
+    });
+
+    const skipped = await request(`/api/v1/wallets/${walletId}`, "PUT", {
+      wallet: { invoice_custom_section: { skip_invoice_custom_sections: true } },
+    });
+    expect(skipped.status).toBe(200);
+    await expect(skipped.json()).resolves.toMatchObject({
+      wallet: { applied_invoice_custom_sections: [] },
+    });
+    const implicitWhileSkipped = await request(`/api/v1/wallets/${walletId}`, "PUT", {
+      wallet: {
+        invoice_custom_section: { invoice_custom_section_codes: ["wallet-terms"] },
+      },
+    });
+    await expect(implicitWhileSkipped.json()).resolves.toMatchObject({
+      wallet: { applied_invoice_custom_sections: [] },
+    });
+    const restored = await request(`/api/v1/wallets/${walletId}`, "PUT", {
+      wallet: {
+        invoice_custom_section: {
+          skip_invoice_custom_sections: false,
+          invoice_custom_section_codes: ["wallet-terms"],
+        },
+      },
+    });
+    await expect(restored.json()).resolves.toMatchObject({
+      wallet: {
+        applied_invoice_custom_sections: [{ invoice_custom_section: { code: "wallet-terms" } }],
+      },
+    });
+
+    const transactionPayload = {
+      wallet_transaction: {
+        wallet_id: walletId,
+        granted_credits: "3",
+        invoice_custom_section: {
+          invoice_custom_section_codes: ["top-up-terms", "unknown-is-ignored"],
+        },
+      },
+    };
+    const transaction = await request("/api/v1/wallet_transactions", "POST", transactionPayload, {
+      "Idempotency-Key": "section-top-up",
+    });
+    expect(transaction.status).toBe(200);
+    const transactionBody = await transaction.json<{
+      wallet_transactions: Array<{
+        lago_id: string;
+        applied_invoice_custom_sections: Array<{
+          invoice_custom_section: { code: string };
+        }>;
+      }>;
+    }>();
+    const transactionId = transactionBody.wallet_transactions[0]!.lago_id;
+    expect(transactionBody.wallet_transactions[0]!.applied_invoice_custom_sections).toEqual([
+      expect.objectContaining({
+        invoice_custom_section: expect.objectContaining({ code: "top-up-terms" }),
+      }),
+    ]);
+    expect(
+      (
+        await request("/api/v1/wallet_transactions", "POST", transactionPayload, {
+          "Idempotency-Key": "section-top-up",
+        })
+      ).status,
+    ).toBe(200);
+    const divergent = await request(
+      "/api/v1/wallet_transactions",
+      "POST",
+      {
+        wallet_transaction: {
+          wallet_id: walletId,
+          granted_credits: "3",
+          invoice_custom_section: { skip_invoice_custom_sections: true },
+        },
+      },
+      { "Idempotency-Key": "section-top-up" },
+    );
+    expect(divergent.status).toBe(409);
+    await expect(divergent.json()).resolves.toMatchObject({ code: "idempotency_conflict" });
+    await expect(
+      request(`/api/v1/wallet_transactions/${transactionId}`).then((response) => response.json()),
+    ).resolves.toMatchObject({
+      wallet_transaction: {
+        applied_invoice_custom_sections: [{ invoice_custom_section: { code: "top-up-terms" } }],
+      },
+    });
+
+    expect((await request("/api/v1/invoice_custom_sections/top-up-terms", "DELETE")).status).toBe(
+      200,
+    );
+    await expect(
+      request(`/api/v1/wallet_transactions/${transactionId}`).then((response) => response.json()),
+    ).resolves.toMatchObject({
+      wallet_transaction: { applied_invoice_custom_sections: [] },
+    });
+  });
+
+  it("rolls wallet selection updates back when their outbox write fails", async () => {
+    await createSection("wallet-rollback", "Wallet rollback");
+    const created = await request("/api/v1/wallets", "POST", {
+      wallet: {
+        external_customer_id: "customer-wallet-external",
+        code: "wallet-rollback",
+        currency: "USD",
+        rate_amount: "1",
+        invoice_custom_section: {
+          invoice_custom_section_codes: ["wallet-rollback"],
+        },
+      },
+    });
+    const walletId = (await created.json<{ wallet: { lago_id: string } }>()).wallet.lago_id;
+    await env.BILLING_DB.prepare(
+      `CREATE TRIGGER fail_wallet_selection_outbox
+       BEFORE INSERT ON outbox_events
+       WHEN NEW.event_type = 'wallet.updated'
+       BEGIN
+         SELECT RAISE(ABORT, 'injected_wallet_selection_outbox_failure');
+       END`,
+    ).run();
+    try {
+      const failed = await request(`/api/v1/wallets/${walletId}`, "PUT", {
+        wallet: { invoice_custom_section: { skip_invoice_custom_sections: true } },
+      });
+      expect(failed.status).toBe(500);
+    } finally {
+      await env.BILLING_DB.prepare("DROP TRIGGER fail_wallet_selection_outbox").run();
+    }
+    await expect(
+      request(`/api/v1/wallets/${walletId}`).then((response) => response.json()),
+    ).resolves.toMatchObject({
+      wallet: {
+        applied_invoice_custom_sections: [{ invoice_custom_section: { code: "wallet-rollback" } }],
+      },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT version, skip_invoice_custom_sections,
+                (SELECT COUNT(*) FROM outbox_events
+                 WHERE aggregate_id = wallets.id AND event_type = 'wallet.updated') AS updates
+         FROM wallets WHERE id = ?`,
+      )
+        .bind(walletId)
+        .first(),
+    ).resolves.toEqual({ version: 1, skip_invoice_custom_sections: 0, updates: 0 });
+  });
+
   it("rejects paid and targeted wallet features explicitly", async () => {
     const response = await request("/api/v1/wallets", "POST", {
       wallet: {
@@ -206,6 +401,13 @@ describe("granted wallet ledger", () => {
     await expect(response.json()).resolves.toMatchObject({ code: "unsupported_wallet_feature" });
   });
 });
+
+async function createSection(code: string, name: string) {
+  const response = await request("/api/v1/invoice_custom_sections", "POST", {
+    invoice_custom_section: { code, name, details: `${name} details` },
+  });
+  expect(response.status).toBe(200);
+}
 
 function request(
   path: string,

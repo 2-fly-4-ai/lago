@@ -15,7 +15,8 @@ remaining Lago feature inventory is dispositioned and ported.
   state, dependency-invalidation triggers and mutation guards, immutable issuing/finalization dates,
   tenant-scoped invoice custom-section catalog records, subscription selections, and immutable
   invoice section snapshots, organization-level default selections for the retained single billing
-  entity, customer overrides/skip state, and one canonical invoice precedence projection,
+  entity, customer overrides/skip state, wallet and wallet-transaction selections, and one canonical
+  invoice precedence projection,
   customer time zones, subscription billing mode/timezone snapshots, immutable trial boundaries,
   overdue state, payment attempts, outbox state, and webhook receipt metadata;
   plan-level minimum commitments are reconciled as auditable period true-up lines after recurring
@@ -152,6 +153,13 @@ default selections use `GET` and `PUT` on
 then subscription skip, then customer skip, then a manual customer selection, then the organization
 default. The same projection drives recurring drafts, finalized snapshots, and one-off invoices.
 Multi-billing-entity routing and provider-created system sections remain explicitly unported.
+
+Wallet create/update and granted wallet-transaction create accept the same
+`invoice_custom_section` attach/skip wrapper. Wallet list/show and wallet-transaction reads expose
+the persisted `applied_invoice_custom_sections` without per-row queries. These are resource API
+selections only: Lago's current paid-credit invoice service does not pass wallet resources into
+invoice section application, so this port deliberately does not add them to invoice precedence.
+Recurring top-up-rule selections remain guarded with the unported recurring wallet engine.
 
 ## Safety defaults
 

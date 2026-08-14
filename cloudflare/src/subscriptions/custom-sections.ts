@@ -167,6 +167,47 @@ export function guardedCustomSectionLinkStatements(
   return statements;
 }
 
+type CustomSectionResourceLink =
+  | {
+      table: "wallets_invoice_custom_sections";
+      ownerColumn: "wallet_id";
+    }
+  | {
+      table: "wallet_transactions_invoice_custom_sections";
+      ownerColumn: "wallet_transaction_id";
+    };
+
+export function resourceCustomSectionLinkStatements(
+  database: D1Database,
+  link: CustomSectionResourceLink,
+  organizationId: string,
+  resourceId: string,
+  sectionIds: string[] | undefined,
+  createdAt: string,
+  replace: boolean,
+): D1PreparedStatement[] {
+  if (sectionIds === undefined) return [];
+  const statements: D1PreparedStatement[] = [];
+  if (replace)
+    statements.push(
+      database
+        .prepare(`DELETE FROM ${link.table} WHERE ${link.ownerColumn} = ? AND organization_id = ?`)
+        .bind(resourceId, organizationId),
+    );
+  for (const sectionId of sectionIds) {
+    statements.push(
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO ${link.table}
+           (${link.ownerColumn}, invoice_custom_section_id, organization_id, created_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .bind(resourceId, sectionId, organizationId, createdAt),
+    );
+  }
+  return statements;
+}
+
 export type SerializedAppliedCustomSection = {
   lago_id: string;
   invoice_custom_section_id: string;
@@ -234,6 +275,58 @@ export async function serializeAppliedCustomSectionsForSubscriptions(
       },
     });
     grouped.set(row.subscription_id, sections);
+  }
+  return grouped;
+}
+
+export async function serializeAppliedCustomSectionsForResources(
+  database: D1Database,
+  link: CustomSectionResourceLink,
+  resourceIds: string[],
+): Promise<Map<string, SerializedAppliedCustomSection[]>> {
+  const grouped = new Map<string, SerializedAppliedCustomSection[]>();
+  if (resourceIds.length === 0) return grouped;
+  const placeholders = resourceIds.map(() => "?").join(", ");
+  const rows = await database
+    .prepare(
+      `SELECT link.${link.ownerColumn} AS resource_id, link.invoice_custom_section_id,
+              link.created_at, cs.id, cs.organization_id, cs.code, cs.name, cs.description,
+              cs.details, cs.display_name
+       FROM ${link.table} link
+       JOIN invoice_custom_sections cs ON cs.id = link.invoice_custom_section_id
+       WHERE link.${link.ownerColumn} IN (${placeholders}) AND cs.status = 'active'
+       ORDER BY link.${link.ownerColumn}, cs.name, cs.code`,
+    )
+    .bind(...resourceIds)
+    .all<{
+      resource_id: string;
+      invoice_custom_section_id: string;
+      created_at: string;
+      id: string;
+      organization_id: string;
+      code: string;
+      name: string;
+      description: string | null;
+      details: string | null;
+      display_name: string | null;
+    }>();
+  for (const row of rows.results) {
+    const sections = grouped.get(row.resource_id) ?? [];
+    sections.push({
+      lago_id: `${row.resource_id}:${row.invoice_custom_section_id}`,
+      invoice_custom_section_id: row.invoice_custom_section_id,
+      created_at: row.created_at,
+      invoice_custom_section: {
+        lago_id: row.id,
+        organization_id: row.organization_id,
+        code: row.code,
+        name: row.name,
+        description: row.description,
+        details: row.details,
+        display_name: row.display_name,
+      },
+    });
+    grouped.set(row.resource_id, sections);
   }
   return grouped;
 }
