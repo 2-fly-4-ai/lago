@@ -10,6 +10,7 @@ import { terminatePayInAdvanceWithCredit } from "../billing/pay-in-advance-termi
 import type { BillingTime } from "../billing/periods";
 import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../http";
 import { stableJson } from "../json";
+import { cancelPendingSubscriptionGeneration } from "../billing/cancel-pending-subscription";
 import { normalizeSubscriptionPaymentMethod } from "./subscription-payment-method";
 import {
   guardedCustomSectionLinkStatements,
@@ -543,73 +544,20 @@ async function cancelPendingSubscription(
   requestId: string,
 ): Promise<Response> {
   const canceledAt = new Date().toISOString();
-  const event: DomainEvent = {
-    id: `subscription-terminated:${subscription.id}:v${subscription.version + 1}`,
-    type: "subscription.terminated",
-    version: 1,
-    aggregateType: "subscription",
-    aggregateId: subscription.id,
-    aggregateVersion: subscription.version + 1,
-    occurredAt: canceledAt,
-    causationId: requestId,
-    correlationId: requestId,
-    payload: {
-      organizationId: auth.organizationId,
-      subscriptionId: subscription.id,
-      externalSubscriptionId: subscription.external_id,
-      canceledAt,
-      terminatedAt: null,
-      finalInvoiceGenerated: false,
-      creditNoteGenerated: false,
-    },
-  };
-  const results = await env.BILLING_DB.batch([
-    env.BILLING_DB.prepare(
-      `UPDATE subscriptions
-       SET status = 'canceled', canceled_at = ?, version = version + 1, updated_at = ?
-       WHERE id = ? AND organization_id = ? AND version = ? AND status = 'pending'`,
-    ).bind(canceledAt, canceledAt, subscription.id, auth.organizationId, subscription.version),
-    env.BILLING_DB.prepare(
-      `INSERT INTO outbox_events
-       (event_id, organization_id, event_type, event_version, aggregate_type,
-        aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
-        occurred_at, published_at)
-       SELECT ?, ?, ?, 1, 'subscription', ?, ?, ?, ?, ?, ?, NULL
-       FROM subscriptions
-       WHERE id = ? AND organization_id = ? AND version = ?
-         AND status = 'canceled' AND canceled_at = ?
-       ON CONFLICT(event_id) DO NOTHING`,
-    ).bind(
-      event.id,
-      auth.organizationId,
-      event.type,
+  try {
+    await cancelPendingSubscriptionGeneration(
+      env,
       subscription.id,
-      event.aggregateVersion,
-      requestId,
-      requestId,
-      stableJson(event.payload),
+      subscription.version,
       canceledAt,
-      subscription.id,
-      auth.organizationId,
-      subscription.version + 1,
-      canceledAt,
-    ),
-  ]);
-  if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1) {
-    const current = await findAnySubscription(
-      env.BILLING_DB,
-      auth.organizationId,
-      subscription.external_id,
+      requestId,
     );
-    if (current?.status === "canceled") {
-      return json(
-        { subscription: await serializeSubscription(env.BILLING_DB, current) },
-        { requestId },
-      );
+  } catch (error) {
+    if (error instanceof Error && error.message === "subscription_version_conflict") {
+      throw new ApiError(409, error.message, "Subscription changed concurrently");
     }
-    throw new ApiError(409, "subscription_version_conflict", "Subscription changed concurrently");
+    throw error;
   }
-  await env.DOMAIN_EVENTS.send(event);
   const canceled = await findAnySubscription(
     env.BILLING_DB,
     auth.organizationId,

@@ -80,6 +80,11 @@
       "binding": "DOCUMENT_WORKFLOW",
       "class_name": "DocumentWorkflow",
     },
+    {
+      "name": "serp-dev-lago-plan-deletion",
+      "binding": "PLAN_DELETION_WORKFLOW",
+      "class_name": "PlanDeletionWorkflow",
+    },
   ],
   "triggers": {
     "crons": ["*/5 * * * *"],

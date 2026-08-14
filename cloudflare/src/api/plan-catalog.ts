@@ -7,6 +7,11 @@ import { stableJson } from "../json";
 import { rateCharge } from "../rating/charge-models";
 import { Decimal } from "../rating/decimal";
 import { parseChargeModel } from "../usage/charge-properties";
+import {
+  ensurePlanDeletionWorkflow,
+  findPlanDeletionTask,
+  preparePlanDeletion,
+} from "../billing/plan-deletion";
 
 type PlanRow = {
   id: string;
@@ -465,6 +470,7 @@ async function createFixedCharge(
   const database = env.BILLING_DB;
   const plan = await findPlan(database, auth.organizationId, planCode);
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  assertPlanMutationAvailable(plan);
   const input = objectAt(await parseJsonObject(request), "fixed_charge");
   const normalized = (
     await normalizeFixedCharges([input], database, auth.organizationId, plan.id, plan.currency)
@@ -546,6 +552,7 @@ async function updateFixedCharge(
   const database = env.BILLING_DB;
   const plan = await findPlan(database, auth.organizationId, planCode);
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  assertPlanMutationAvailable(plan);
   const fixedCharge = await findFixedCharge(database, plan.id, fixedChargeCode);
   if (!fixedCharge) throw new ApiError(404, "fixed_charge_not_found", "Fixed charge was not found");
   const input = objectAt(await parseJsonObject(request), "fixed_charge");
@@ -650,6 +657,7 @@ async function deleteFixedCharge(
   const database = env.BILLING_DB;
   const plan = await findPlan(database, auth.organizationId, planCode);
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  assertPlanMutationAvailable(plan);
   const fixedCharge = await findFixedCharge(database, plan.id, fixedChargeCode);
   if (!fixedCharge) throw new ApiError(404, "fixed_charge_not_found", "Fixed charge was not found");
   if (request.body !== null) {
@@ -745,6 +753,7 @@ async function updatePlan(
 ): Promise<Response> {
   const plan = await findPlan(env.BILLING_DB, auth.organizationId, code);
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  assertPlanMutationAvailable(plan);
   const input = objectAt(await parseJsonObject(request), "plan");
   rejectUpdateGraph(input);
   if (input.bill_charges_monthly === true || input.bill_fixed_charges_monthly === true)
@@ -905,18 +914,58 @@ async function deletePlan(
   const database = env.BILLING_DB;
   const plan = await findPlan(database, auth.organizationId, code);
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  const serialized = await serializePlan(database, plan);
+  const existingTask = await findPlanDeletionTask(database, plan.id);
+  if (plan.pending_deletion === 1 || existingTask) {
+    if (!existingTask) {
+      throw new ApiError(
+        500,
+        "plan_deletion_task_missing",
+        "Plan deletion state is missing its durable task",
+      );
+    }
+    try {
+      await ensurePlanDeletionWorkflow(env, existingTask, true);
+    } catch {
+      // The durable task is also dispatched by the five-minute reconciliation workflow.
+    }
+    return json({ plan: { ...serialized, pending_deletion: true } }, { requestId });
+  }
+
   const subscription = await database
     .prepare("SELECT id FROM subscriptions WHERE organization_id = ? AND plan_id = ? LIMIT 1")
     .bind(auth.organizationId, plan.id)
     .first();
-  if (subscription)
-    throw new ApiError(
-      422,
-      "plan_in_use",
-      "Plan deletion with subscriptions requires asynchronous termination and draft finalization",
-    );
+  if (subscription) {
+    const now = new Date().toISOString();
+    let task;
+    try {
+      task = await preparePlanDeletion(
+        { BILLING_DB: database },
+        {
+          id: plan.id,
+          organizationId: auth.organizationId,
+          code: plan.code,
+          version: plan.version,
+          pendingDeletion: false,
+        },
+        requestId,
+        now,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message === "plan_version_conflict") {
+        throw new ApiError(409, error.message, "Plan changed concurrently");
+      }
+      throw error;
+    }
+    try {
+      await ensurePlanDeletionWorkflow(env, task);
+    } catch {
+      // The durable task is also dispatched by the five-minute reconciliation workflow.
+    }
+    return json({ plan: { ...serialized, pending_deletion: true } }, { requestId });
+  }
 
-  const serialized = await serializePlan(database, plan);
   const now = new Date().toISOString();
   const event = planEvent(
     "plan.deleted",
@@ -931,7 +980,17 @@ async function deletePlan(
     SELECT 1 FROM plan_mutation_guards WHERE request_id = ? AND plan_id = ?
   )`;
   const results = await database.batch([
-    planMutationGuardStatement(database, requestId, auth.organizationId, plan, 0, now),
+    database
+      .prepare(
+        `INSERT INTO plan_mutation_guards
+         (request_id, organization_id, plan_id, source_version, target_version,
+          target_active, created_at)
+         SELECT ?, organization_id, id, version, version + 1, 0, ? FROM plans
+         WHERE id = ? AND organization_id = ? AND active = 1 AND pending_deletion = 0
+           AND version = ?
+           AND NOT EXISTS (SELECT 1 FROM subscriptions WHERE plan_id = plans.id)`,
+      )
+      .bind(requestId, now, plan.id, auth.organizationId, plan.version),
     database
       .prepare(
         `UPDATE charges SET active = 0, version = version + 1, updated_at = ?
@@ -987,6 +1046,16 @@ async function findPlan(database: D1Database, organizationId: string, code: stri
               ORDER BY version DESC LIMIT 1`)
     .bind(organizationId, code)
     .first<PlanRow>();
+}
+
+function assertPlanMutationAvailable(plan: PlanRow): void {
+  if (plan.pending_deletion === 1) {
+    throw new ApiError(
+      409,
+      "plan_deletion_in_progress",
+      "Plan cannot change while asynchronous deletion is in progress",
+    );
+  }
 }
 
 async function nextPlanIdentity(

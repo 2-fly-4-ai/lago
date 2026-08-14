@@ -559,7 +559,7 @@ async function createCharge(
   const plan = await database
     .prepare(
       `SELECT id FROM plans
-       WHERE organization_id = ? AND code = ? AND active = 1
+       WHERE organization_id = ? AND code = ? AND active = 1 AND pending_deletion = 0
        ORDER BY version DESC LIMIT 1`,
     )
     .bind(auth.organizationId, planCode)
@@ -652,6 +652,7 @@ async function updateCharge(
   const database = env.BILLING_DB;
   const plan = await findPlanId(database, auth.organizationId, planCode);
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  assertCatalogPlanMutationAvailable(plan);
   const charge = await findCatalogCharge(database, plan.id, chargeCode);
   if (!charge) throw new ApiError(404, "charge_not_found", "Charge was not found");
 
@@ -801,6 +802,7 @@ async function deleteCharge(
   const database = env.BILLING_DB;
   const plan = await findPlanId(database, auth.organizationId, planCode);
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
+  assertCatalogPlanMutationAvailable(plan);
   const charge = await findCatalogCharge(database, plan.id, chargeCode);
   if (!charge) throw new ApiError(404, "charge_not_found", "Charge was not found");
   if (request.body !== null) {
@@ -893,11 +895,22 @@ async function showCharge(
 function findPlanId(database: D1Database, organizationId: string, code: string) {
   return database
     .prepare(
-      `SELECT id FROM plans WHERE organization_id = ? AND code = ? AND active = 1
+      `SELECT id, pending_deletion FROM plans
+       WHERE organization_id = ? AND code = ? AND active = 1
        ORDER BY version DESC LIMIT 1`,
     )
     .bind(organizationId, code)
-    .first<{ id: string }>();
+    .first<{ id: string; pending_deletion: number }>();
+}
+
+function assertCatalogPlanMutationAvailable(plan: { pending_deletion: number }): void {
+  if (plan.pending_deletion === 1) {
+    throw new ApiError(
+      409,
+      "plan_deletion_in_progress",
+      "Plan cannot change while asynchronous deletion is in progress",
+    );
+  }
 }
 
 function chargeSelect(): string {

@@ -709,7 +709,7 @@ async function createSubscription(
     .prepare(
       `SELECT id, code, name, interval, amount_minor, currency, pay_in_advance, trial_period
        FROM plans
-       WHERE organization_id = ? AND code = ? AND active = 1
+       WHERE organization_id = ? AND code = ? AND active = 1 AND pending_deletion = 0
        ORDER BY version DESC LIMIT 1`,
     )
     .bind(auth.organizationId, planCode)

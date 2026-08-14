@@ -22,6 +22,7 @@ import {
   topUpDueRecurringWallets,
 } from "../schedules/recurring-wallets";
 import { refreshWalletOngoingBalances } from "../schedules/wallet-balances";
+import { dispatchPendingPlanDeletions } from "../billing/plan-deletion";
 
 type ReconciliationParams = {
   schedule?: {
@@ -220,6 +221,12 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         async () => cleanupDeletedMetricEvents(this.env),
       );
 
+      const dispatchedPlanDeletions = await step.do(
+        "dispatch pending plan deletions",
+        { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+        async () => dispatchPendingPlanDeletions(this.env),
+      );
+
       const retentionCutoff = webhookRetentionCutoff(triggeredAtIso);
       const deletedOutboundWebhooks = executors.has("cleanup_outbound_webhooks")
         ? await step.do(
@@ -266,6 +273,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         refreshedDraftInvoices,
         walletBalanceProjection,
         deletedMetricUsage,
+        dispatchedPlanDeletions,
         deletedOutboundWebhooks,
         deletedInboundWebhooks,
         publishedEvents,

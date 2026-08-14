@@ -1,6 +1,7 @@
-import { env, SELF } from "cloudflare:test";
+import { env, introspectWorkflow, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
+import { preparePlanDeletion } from "../src/billing/plan-deletion";
 
 const apiKey = "plan-catalog-test-key";
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
@@ -240,9 +241,9 @@ describe("Lago-compatible plan catalog", () => {
       env.BILLING_DB.prepare(
         `INSERT INTO subscriptions
          (id, organization_id, customer_id, plan_id, external_id, status, version,
-          created_at, updated_at)
+          created_at, updated_at, on_termination_invoice)
          SELECT 'subscription-attached-plan', organization_id, 'customer-attached-plan', id,
-                'subscription-attached-plan', 'active', 1, ?, ?
+                'subscription-attached-plan', 'active', 1, ?, ?, 'skip'
          FROM plans WHERE organization_id = 'org-plan-catalog' AND code = 'attached' AND active = 1`,
       ).bind(now, now),
     ]);
@@ -258,9 +259,233 @@ describe("Lago-compatible plan catalog", () => {
     });
     expect(unsafe.status).toBe(422);
     await expect(unsafe.json()).resolves.toMatchObject({ code: "plan_in_use" });
-    const deleted = await api("/api/v1/plans/attached", "DELETE");
-    expect(deleted.status).toBe(422);
-    await expect(deleted.json()).resolves.toMatchObject({ code: "plan_in_use" });
+  });
+
+  it("asynchronously terminates plan generations, finalizes drafts, and retires history once", async () => {
+    const created = await api("/api/v1/plans", "POST", {
+      plan: {
+        name: "Async retirement",
+        code: "async-retirement",
+        interval: "monthly",
+        amount_cents: 900,
+        amount_currency: "USD",
+      },
+    });
+    expect(created.status).toBe(200);
+    const planId = (await created.json<{ plan: { lago_id: string } }>()).plan.lago_id;
+    const now = new Date().toISOString();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, currency, invoice_grace_period,
+          metadata_json, created_at, updated_at)
+         VALUES ('customer-async-plan', 'org-plan-catalog', 'customer-async-plan', 'USD', 2,
+                 '{}', ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, version, created_at, updated_at,
+          subscription_at, generation, transition_kind)
+         VALUES ('subscription-async-active', 'org-plan-catalog', 'customer-async-plan', ?,
+                 'subscription-async', 'active', '2026-08-01T00:00:00.000Z',
+                 '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 1, ?, ?,
+                 '2026-08-01T00:00:00.000Z', 1, 'initial')`,
+      ).bind(planId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, version,
+          created_at, updated_at, subscription_at, previous_subscription_id,
+          generation, transition_kind, transition_at)
+         VALUES ('subscription-async-pending', 'org-plan-catalog', 'customer-async-plan', ?,
+                 'subscription-async', 'pending', 1, ?, ?, '2026-08-01T00:00:00.000Z',
+                 'subscription-async-active', 2, 'downgrade', '2026-09-01T00:00:00.000Z')`,
+      ).bind(planId, now, now),
+    ]);
+
+    const workflow = await introspectWorkflow(env.PLAN_DELETION_WORKFLOW);
+    try {
+      await workflow.modifyAll(async (modifier) => {
+        await modifier.disableRetryDelays();
+        await modifier.mockStepError(
+          { name: "process subscription batch 1" },
+          new Error("synthetic_transient_plan_deletion_failure"),
+          1,
+        );
+      });
+      const first = await api("/api/v1/plans/async-retirement", "DELETE");
+      expect(first.status).toBe(200);
+      await expect(first.json()).resolves.toMatchObject({
+        plan: { lago_id: planId, pending_deletion: true },
+      });
+      const replay = await api("/api/v1/plans/async-retirement", "DELETE");
+      expect(replay.status).toBe(200);
+      await expect(replay.json()).resolves.toMatchObject({
+        plan: { lago_id: planId, pending_deletion: true },
+      });
+
+      const instances = await workflow.get();
+      expect(instances).toHaveLength(1);
+      await instances[0]!.waitForStatus("complete");
+      await expect(instances[0]!.getOutput()).resolves.toMatchObject({
+        status: "completed",
+        retired: true,
+      });
+    } finally {
+      await workflow.dispose();
+    }
+
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT active, pending_deletion, version,
+                (SELECT status FROM plan_deletion_tasks WHERE plan_id = plans.id) AS task_status,
+                (SELECT COUNT(*) FROM outbox_events
+                 WHERE aggregate_id = plans.id AND event_type = 'plan.deleted') AS delete_events
+         FROM plans WHERE id = ?`,
+      )
+        .bind(planId)
+        .first(),
+    ).resolves.toEqual({
+      active: 0,
+      delete_events: 1,
+      pending_deletion: 0,
+      task_status: "completed",
+      version: 2,
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT id, status, version FROM subscriptions
+         WHERE plan_id = ? ORDER BY generation`,
+      )
+        .bind(planId)
+        .all(),
+    ).resolves.toMatchObject({
+      results: [
+        { id: "subscription-async-active", status: "terminated", version: 2 },
+        { id: "subscription-async-pending", status: "canceled", version: 2 },
+      ],
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT status, COUNT(*) AS total FROM invoices
+         WHERE subscription_id = 'subscription-async-active' GROUP BY status`,
+      ).first(),
+    ).resolves.toEqual({ status: "finalized", total: 1 });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT status, COUNT(*) AS total FROM plan_deletion_subscription_tasks
+         WHERE plan_deletion_task_id =
+           (SELECT id FROM plan_deletion_tasks WHERE plan_id = ?)
+         GROUP BY status`,
+      )
+        .bind(planId)
+        .first(),
+    ).resolves.toEqual({ status: "completed", total: 2 });
+    expect((await api("/api/v1/plans/async-retirement")).status).toBe(404);
+    await expect(
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, version,
+          created_at, updated_at)
+         VALUES ('subscription-after-delete', 'org-plan-catalog', 'customer-async-plan', ?,
+                 'subscription-after-delete', 'pending', 1, ?, ?)`,
+      )
+        .bind(planId, now, now)
+        .run(),
+    ).rejects.toThrow(/plan_not_subscribable/);
+  });
+
+  it("closes the plan snapshot before asynchronous deletion can race new catalog work", async () => {
+    const created = await api("/api/v1/plans", "POST", {
+      plan: {
+        name: "Frozen deletion",
+        code: "frozen-deletion",
+        interval: "monthly",
+        amount_cents: 400,
+        amount_currency: "USD",
+        charges: [
+          {
+            billable_metric_id: "metric-plan-catalog",
+            code: "frozen-charge",
+            charge_model: "standard",
+            properties: { amount: "1" },
+          },
+        ],
+      },
+    });
+    const planId = (await created.json<{ plan: { lago_id: string } }>()).plan.lago_id;
+    const plan = await env.BILLING_DB.prepare("SELECT version FROM plans WHERE id = ? LIMIT 1")
+      .bind(planId)
+      .first<{ version: number }>();
+    expect(plan).not.toBeNull();
+    const now = new Date().toISOString();
+    await preparePlanDeletion(
+      { BILLING_DB: env.BILLING_DB },
+      {
+        id: planId,
+        organizationId: "org-plan-catalog",
+        code: "frozen-deletion",
+        version: plan!.version,
+        pendingDeletion: false,
+      },
+      "freeze-plan-request",
+      now,
+    );
+
+    await expect(apiJson("/api/v1/plans/frozen-deletion")).resolves.toMatchObject({
+      plan: { pending_deletion: true },
+    });
+    const planUpdate = await api("/api/v1/plans/frozen-deletion", "PUT", {
+      plan: { name: "Too late" },
+    });
+    expect(planUpdate.status).toBe(409);
+    await expect(planUpdate.json()).resolves.toMatchObject({
+      code: "plan_deletion_in_progress",
+    });
+    const chargeUpdate = await api("/api/v1/plans/frozen-deletion/charges/frozen-charge", "PUT", {
+      charge: { invoice_display_name: "Too late" },
+    });
+    expect(chargeUpdate.status).toBe(409);
+    await expect(chargeUpdate.json()).resolves.toMatchObject({
+      code: "plan_deletion_in_progress",
+    });
+
+    await env.BILLING_DB.prepare(
+      `INSERT INTO customers
+       (id, organization_id, external_id, currency, metadata_json, created_at, updated_at)
+       VALUES ('customer-frozen-plan', 'org-plan-catalog', 'customer-frozen-plan', 'USD', '{}', ?, ?)`,
+    )
+      .bind(now, now)
+      .run();
+    await expect(
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, version,
+          created_at, updated_at)
+         VALUES ('subscription-frozen-plan', 'org-plan-catalog', 'customer-frozen-plan', ?,
+                 'subscription-frozen-plan', 'pending', 1, ?, ?)`,
+      )
+        .bind(planId, now, now)
+        .run(),
+    ).rejects.toThrow(/plan_not_subscribable/);
+    await expect(
+      env.BILLING_DB.prepare(
+        `UPDATE charges SET invoice_display_name = 'Too late'
+         WHERE plan_id = ? AND code = 'frozen-charge'`,
+      )
+        .bind(planId)
+        .run(),
+    ).rejects.toThrow(/plan_deletion_in_progress/);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT status, COUNT(*) AS total FROM plan_deletion_subscription_tasks
+         WHERE plan_deletion_task_id =
+           (SELECT id FROM plan_deletion_tasks WHERE plan_id = ?)
+         GROUP BY status`,
+      )
+        .bind(planId)
+        .first(),
+    ).resolves.toBeNull();
   });
 
   it("retires an unused plan graph while preserving its relational catalog history", async () => {

@@ -12,6 +12,7 @@ export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
 export { ReconciliationWorkflow } from "./workflows/reconciliation";
 export { DocumentWorkflow } from "./workflows/documents";
+export { PlanDeletionWorkflow } from "./workflows/plan-deletion";
 
 function jsonError(status: number, code: string, requestId: string): Response {
   return Response.json(
