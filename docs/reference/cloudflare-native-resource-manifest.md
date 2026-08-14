@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `3ae66da8-ca93-4f54-b521-a8fc95159831`
+- Latest verified version: `10c3a8f0-efb9-42b1-b015-960827a3bf9a`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -121,6 +121,11 @@ Applied D1 migrations: `0001_foundation.sql` through `0027_pending_subscription_
   `401`, and no migration remained pending. Aggregate-only verification found zero organizations,
   subscriptions, pending subscriptions, and invoices plus 27 Cron audits. All external-action
   flags remain disabled, with no route, secret, or billing data added.
+- The code-only pending-management deployment added future rescheduling and invoice-free pending
+  cancellation without changing schema or resources. Remote health/readiness returned `200`/`200`,
+  unauthenticated pending update returned `401`, and no migration was pending. Aggregate-only
+  verification found zero organizations, subscriptions, and invoices plus 28 Cron audits. All
+  external-action flags remain disabled, with no route, secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

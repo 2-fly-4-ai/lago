@@ -356,10 +356,12 @@ Acceptance:
       invoice event with the monetary ledger. A normalized future UTC `subscription_at` instead
       persists a replay-safe pending subscription without an invoice; the five-minute activation
       owner atomically starts it, seeds its billing period, creates the same zero-grace or
-      grace-period initial invoice, and emits `subscription.started`. Name-only subscription update
-      emits a versioned `subscription.updated`; backdating, tenant-local calendar interpretation,
-      calendar billing, ending rules, overrides, payment-method, custom-section, and threshold
-      inputs fail explicitly.
+      grace-period initial invoice, and emits `subscription.started`. Pending subscriptions can be
+      renamed and rescheduled to another future instant with the same optimistic version/outbox
+      guards, or canceled idempotently without creating an invoice; canceled rows cannot later be
+      activated. Active/past-due name updates emit the same versioned `subscription.updated`.
+      Backdating, tenant-local calendar interpretation, calendar billing, ending rules, overrides,
+      payment-method, custom-section, and threshold inputs fail explicitly.
 - [ ] Add golden fixtures derived from existing tests, not customer data.
 - [ ] Add deterministic replay and total reconciliation.
 
@@ -960,3 +962,16 @@ resource and mutation described.
   creation returned `401`, and aggregate-only verification confirmed zero organizations,
   subscriptions, pending subscriptions, and invoices plus 27 Cron audits. No route, secret, seeded
   billing data, or disabled external flag changed.
+- 2026-08-14: Extended the future-start state machine with optimistic pending rescheduling and
+  idempotent pending cancellation. Rescheduling changes the activation owner’s due instant and
+  rejects backdating; cancellation records `canceled_at` plus the legacy-compatible
+  `subscription.terminated` event, creates no invoice, and makes later activation a no-op. Active
+  termination still requires explicit skip/skip until final proration and termination-credit
+  ownership is ported. All 81 Workers-runtime tests pass across 22 files; formatting, lint,
+  generated bindings, TypeScript, inventory, and the dry-run bundle are green at 478.59 KiB
+  (86.71 KiB gzip). No migration is required beyond `0027`.
+- 2026-08-14: Confirmed no remote migration was pending and deployed pending management as isolated
+  Worker version `10c3a8f0-efb9-42b1-b015-960827a3bf9a`. Remote health/readiness returned `200`,
+  unauthenticated pending update returned `401`, and aggregate-only verification confirmed zero
+  organizations, subscriptions, and invoices plus 28 Cron audits. No route, secret, seeded billing
+  data, or disabled external flag changed.
