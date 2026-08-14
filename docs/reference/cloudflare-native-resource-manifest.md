@@ -398,6 +398,19 @@ Applied D1 migrations: `0001_foundation.sql` through `0044_standalone_plan_lifec
   charges, usage events, wallets, outbox events, and plan guards plus 154 schedule audits. All three
   external-action flags remain disabled, with no route, secret, provider action, customer data, or
   billing data added.
+- The code-only pay-in-advance commitment-termination deployment required no D1 migration. The
+  prorated termination target now subtracts gross eligible plan, usage, and fixed-charge fees
+  already invoiced in the same subscription period plus current termination fees; credit-note
+  balances do not reduce that history, and exclusion of the current invoice keeps draft refresh
+  stable. Direct termination evidence covers draft refresh/finalization, while the plan-deletion
+  Workflow test terminates and retires a pay-in-advance committed plan. Isolated Worker version
+  `927f7fb4-86f4-4803-8350-88f308d8fe8c` retained only the existing workers.dev URL, `*/5` Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The deployed bundle was
+  824.06 KiB (143.24 KiB gzip) with a 5 ms startup. Health/readiness returned `200`/`200`, and
+  unauthenticated subscription deletion returned `401`. Remote verification found no pending
+  migrations and zero organizations, customers, plans, subscriptions, invoices, and plan-deletion
+  tasks plus 163 schedule audits. All three external-action flags remain disabled, with no route,
+  secret, provider action, customer data, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

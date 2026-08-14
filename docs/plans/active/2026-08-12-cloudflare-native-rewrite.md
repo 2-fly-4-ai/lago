@@ -1729,3 +1729,24 @@ resource and mutation described.
   verification remained empty apart from 160 schedule audits. `PAYMENT_MUTATIONS_ENABLED`,
   `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`; no production route,
   domain, secret, provider action, customer data, or billing record changed.
+- 2026-08-15: Ported pay-in-advance minimum-commitment termination. The inclusive UTC-prorated
+  target now reconciles against gross eligible plan, usage, and fixed-charge lines already billed
+  for the same subscription period plus current termination fees. The query excludes the current
+  invoice so positive-grace refresh/finalization cannot count its draft twice; credit-note balances
+  intentionally do not reduce gross fee history. The explicit API guard and stale error mapping are
+  removed. Evidence terminates a prepaid committed subscription into a draft, proves its line and
+  metadata remain identical through refresh/finalization, and runs asynchronous plan deletion
+  against a pay-in-advance committed plan to prove the Workflow no longer stalls. All 160 tests
+  across 31 Worker-runtime files pass. Formatting, strict lint, generated inventory/types,
+  TypeScript, and an 824.06 KiB (143.24 KiB gzip) dry-run bundle are green. Feature checkpoint:
+  `6da8f8a`.
+- 2026-08-15: The first read-only remote migration-list preflight returned transient Cloudflare
+  error `7500`; the empty aggregate query still succeeded, and the retry confirmed no migrations
+  pending before deployment. Deployed only the isolated Worker as version
+  `927f7fb4-86f4-4803-8350-88f308d8fe8c` with a 5 ms startup. Health/readiness returned `200`/`200`
+  and unauthenticated subscription deletion returned `401`. A first post-deploy aggregate query
+  used the nonexistent `schedule_audits` table name and failed read-only; the corrected
+  `schedule_runs` query verified zero organizations, customers, plans, subscriptions, invoices,
+  and plan-deletion tasks plus 163 schedule audits. No migration, resource provisioning, route,
+  domain, secret, provider action, customer data, or billing row changed.
+  `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`.
