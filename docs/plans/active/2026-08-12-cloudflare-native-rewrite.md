@@ -1343,3 +1343,11 @@ resource and mutation described.
   types, TypeScript, and a 619.97 KiB (109.20 KiB gzip) dry-run bundle are green. This is a code-only
   local checkpoint; isolated remote D1 remains on migration `0033` and Worker version
   `52f2f3e2-d402-4c9c-bb04-be095fe5b7f8`.
+- 2026-08-14: Code-only remote preflight found no pending migrations and zero organizations,
+  customers, plans, subscriptions, invoices, credit notes, and outbox events plus 96 Cron audits.
+  Deployed backdated recurring activation as isolated Worker version
+  `f88803aa-0b4c-4a9c-a707-fb153280d706` with the existing bindings and all external-action flags
+  still `0`. Remote health/readiness returned `200`/`200`, unauthenticated subscription access
+  returned `401`, and post-deploy aggregate-only verification remained empty for every billing
+  entity. No production route, domain, secret, provider action, migration, or billing record
+  changed.

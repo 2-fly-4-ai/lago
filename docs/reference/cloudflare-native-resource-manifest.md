@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `52f2f3e2-d402-4c9c-bb04-be095fe5b7f8`
+- Latest verified version: `f88803aa-0b4c-4a9c-a707-fb153280d706`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -260,6 +260,14 @@ Applied D1 migrations: `0001_foundation.sql` through
   access returned `401`; aggregate-only verification found zero organizations, customers, plans,
   subscriptions, invoices, credit notes, and outbox events plus 93 Cron audits. All three
   external-action flags remain disabled, with no route, secret, or billing data added.
+- The code-only backdated-start deployment added historical recurring activation and period
+  catch-up without a D1 migration. Worker version `f88803aa-0b4c-4a9c-a707-fb153280d706`
+  retained only the existing workers.dev URL, `*/5` Cron, D1, R2, Queue/DLQ, Durable Object,
+  Browser, and three Workflow bindings. Remote migration inventory remained empty;
+  health/readiness returned `200`/`200`; unauthenticated subscription access returned `401`;
+  aggregate-only verification found zero organizations, customers, plans, subscriptions, invoices,
+  credit notes, and outbox events plus 96 Cron audits. All three external-action flags remain
+  disabled, with no route, secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
