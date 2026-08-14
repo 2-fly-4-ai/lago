@@ -44,7 +44,7 @@ beforeEach(async () => {
 });
 
 describe("filtered charge billing", () => {
-  it("persists one invoice line per filter partition plus the unmatched base partition", async () => {
+  it("persists filter/base partitions and one charge-wide minimum true-up line", async () => {
     const metric = await api("/api/v1/billable_metrics", {
       billable_metric: {
         name: "Filtered events",
@@ -62,6 +62,7 @@ describe("filtered charge billing", () => {
         code: "invoice-filter-charge",
         charge_model: "standard",
         properties: { amount: "5" },
+        min_amount_cents: 100,
         filters: [
           {
             invoice_display_name: "Europe",
@@ -104,15 +105,15 @@ describe("filtered charge billing", () => {
       "2026-09-01T00:00:00.000Z",
       "charge-filter-close",
     );
-    expect(closed).toMatchObject({ lineCount: 4, totalDueMinor: 35 });
+    expect(closed).toMatchObject({ lineCount: 5, totalDueMinor: 100 });
     const lines = await env.BILLING_DB.prepare(
       `SELECT amount_minor, source_id, metadata_json FROM invoice_lines
        WHERE invoice_id = ? AND line_type = 'usage' ORDER BY amount_minor`,
     )
       .bind(closed.invoiceId)
       .all<{ amount_minor: number; source_id: string; metadata_json: string }>();
-    expect(lines.results.map(({ amount_minor }) => amount_minor)).toEqual([5, 10, 20]);
-    expect(new Set(lines.results.map(({ source_id }) => source_id)).size).toBe(3);
+    expect(lines.results.map(({ amount_minor }) => amount_minor)).toEqual([5, 10, 20, 65]);
+    expect(new Set(lines.results.map(({ source_id }) => source_id)).size).toBe(4);
     expect(lines.results.map(({ metadata_json }) => JSON.parse(metadata_json))).toEqual([
       expect.objectContaining({ chargeCode: "invoice-filter-charge" }),
       expect.objectContaining({
@@ -123,9 +124,15 @@ describe("filtered charge billing", () => {
         chargeFilterValues: { cloud: ["aws"], region: ["eu"] },
         chargeId: charge.charge.lago_id,
       }),
+      expect.objectContaining({
+        chargeId: charge.charge.lago_id,
+        eventCount: 0,
+        trueUp: true,
+        trueUpParentSourceId: charge.charge.lago_id,
+      }),
     ]);
     expect(new Set(charge.charge.filters.map(({ lago_id }) => lago_id))).toEqual(
-      new Set(lines.results.slice(1).map(({ source_id }) => source_id)),
+      new Set(lines.results.slice(1, 3).map(({ source_id }) => source_id)),
     );
   });
 });

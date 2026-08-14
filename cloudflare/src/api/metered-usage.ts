@@ -783,7 +783,6 @@ async function createCharge(
     assertChargeFilterCompatibility(
       metric.aggregation_type,
       normalized.acceptsTargetWallet,
-      normalized.minAmountMinor,
       filters,
     );
     if (sameCatalogCharge(existing, metric.id, chargeModel, properties, filters, normalized))
@@ -799,12 +798,7 @@ async function createCharge(
     chargeModel,
     id,
   );
-  assertChargeFilterCompatibility(
-    metric.aggregation_type,
-    normalized.acceptsTargetWallet,
-    normalized.minAmountMinor,
-    filters,
-  );
+  assertChargeFilterCompatibility(metric.aggregation_type, normalized.acceptsTargetWallet, filters);
   const event = catalogEvent(
     "charge.created",
     "charge",
@@ -961,12 +955,7 @@ async function updateCharge(
           nextChargeModel,
           charge.id,
         );
-  assertChargeFilterCompatibility(
-    metric.aggregation_type,
-    next.acceptsTargetWallet,
-    next.minAmountMinor,
-    nextFilters,
-  );
+  assertChargeFilterCompatibility(metric.aggregation_type, next.acceptsTargetWallet, nextFilters);
   if (next.code !== charge.code) {
     const duplicate = await findCatalogCharge(database, plan.id, next.code);
     if (duplicate) throw new ApiError(422, "value_already_exist", "Charge code already exists");
@@ -1201,12 +1190,10 @@ async function createChargeFilter(
   if (filters.some((filter) => stableJson(filter.values) === stableJson(created.values))) {
     throw new ApiError(422, "value_already_exist", "Charge filter values already exist");
   }
-  assertChargeFilterCompatibility(
-    charge.aggregation_type,
-    charge.accepts_target_wallet,
-    charge.min_amount_minor,
-    [...filters, created],
-  );
+  assertChargeFilterCompatibility(charge.aggregation_type, charge.accepts_target_wallet, [
+    ...filters,
+    created,
+  ]);
   await persistChargeFilters(charge, [...filters, created], planCode, env, auth, requestId);
   return json({ filter: serializeChargeFilter(created, charge.code) }, { requestId });
 }
@@ -2029,12 +2016,7 @@ async function currentUsage(
       charge.charge_model,
       charge.id,
     );
-    assertChargeFilterCompatibility(
-      aggregationType,
-      charge.accepts_target_wallet,
-      charge.min_amount_minor,
-      filters,
-    );
+    assertChargeFilterCompatibility(aggregationType, charge.accepts_target_wallet, filters);
     const periodStartMs = Date.parse(subscription.current_period_start);
     const periodEndMs = Date.parse(subscription.current_period_end);
     const initialValue =
@@ -2092,9 +2074,7 @@ async function currentUsage(
       (sum, filter) => sum.add(filter.aggregation.totalAggregatedUnits),
       base.aggregation.totalAggregatedUnits,
     );
-    let amount = ratedFilters.reduce((sum, filter) => sum.add(filter.amount), base.amount);
-    const minimum = Decimal.parse(charge.min_amount_minor);
-    if (amount.compare(minimum) < 0) amount = minimum;
+    const amount = ratedFilters.reduce((sum, filter) => sum.add(filter.amount), base.amount);
     total = total.add(amount);
     chargeUsage.push({
       units: units.toString(),
@@ -2734,7 +2714,6 @@ function rejectUnsupportedChargeInput(input: Record<string, unknown>): void {
 function assertChargeFilterCompatibility(
   aggregationType: string,
   acceptsTargetWallet: number,
-  minAmountMinor: number,
   filters: ChargeFilter[],
 ): void {
   assertWeightedTargetWalletCompatibility(aggregationType, acceptsTargetWallet);
@@ -2751,13 +2730,6 @@ function assertChargeFilterCompatibility(
       422,
       "unsupported_charge_feature",
       "Charge filters cannot be combined with target-wallet grouping",
-    );
-  }
-  if (minAmountMinor > 0) {
-    throw new ApiError(
-      422,
-      "unsupported_charge_feature",
-      "Filtered charge minimums require charge-wide true-up allocation",
     );
   }
 }

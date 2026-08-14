@@ -528,6 +528,7 @@ export async function calculateSubscriptionInvoice(
             filter: null,
             properties: parseObject(charge.properties_json),
           }));
+    const chargeLineStart = lines.length;
     for (const group of groups) {
       const aggregation = aggregateUsageResult(aggregationType, charge.field_name, group.events, {
         periodStartMs,
@@ -549,13 +550,11 @@ export async function calculateSubscriptionInvoice(
         charge.rounding_function,
         charge.rounding_precision,
       );
-      let precise = Decimal.parse(
+      const precise = Decimal.parse(
         rateCharge(units.toString(), parseChargeModel(charge.charge_model, group.properties), {
           eventsCount: group.events.length,
         }).amountCents,
       );
-      const minimum = Decimal.parse(charge.min_amount_minor);
-      if (precise.compare(minimum) < 0) precise = minimum;
       const rounded = safeMinorInteger(precise);
       subtotalMinor = safeAdd(subtotalMinor, rounded);
       const groupKey = group.targetWalletCode ?? "untargeted";
@@ -614,6 +613,48 @@ export async function calculateSubscriptionInvoice(
                   : {},
               }
             : {}),
+          ...(options.context === "termination" ? { contextType: "termination" } : {}),
+        }),
+      });
+    }
+    const chargeLines = lines.slice(chargeLineStart);
+    const minimum = proratedChargeMinimum(charge.min_amount_minor, options);
+    const usedRounded = chargeLines.reduce((sum, line) => safeAdd(sum, line.rounded), 0);
+    if (Decimal.parse(usedRounded).compare(minimum) < 0) {
+      const usedPrecise = chargeLines.reduce(
+        (sum, line) => sum.add(Decimal.parse(line.precise)),
+        Decimal.zero(),
+      );
+      const precise = minimum.subtract(usedPrecise);
+      const rounded = safeMinorInteger(minimum.subtract(Decimal.parse(usedRounded)));
+      subtotalMinor = safeAdd(subtotalMinor, rounded);
+      lines.push({
+        id: await deterministicUuid(
+          "billing-cycle-charge-true-up-line",
+          `${cycleKey}:${charge.id}`,
+        ),
+        description: charge.invoice_display_name ?? charge.metric_name,
+        units: "1",
+        precise: precise.toString(),
+        rounded,
+        sourceId: charge.id,
+        persistenceSourceId: await deterministicUuid("charge-true-up-source", charge.id),
+        lineType: "usage",
+        sourceType: "charge",
+        billableMetricId: charge.metric_id,
+        targetWalletCode: null,
+        metadataJson: stableJson({
+          billingCycleId: options.context === "renewal" ? billingCycleId : undefined,
+          billableMetricCode: charge.metric_code,
+          billableMetricId: charge.metric_id,
+          chargeCode: charge.code,
+          chargeId: charge.id,
+          chargeModel: charge.charge_model,
+          eventCount: 0,
+          periodStart,
+          periodEnd: calculationPeriodEnd,
+          trueUp: true,
+          trueUpParentSourceId: charge.id,
           ...(options.context === "termination" ? { contextType: "termination" } : {}),
         }),
       });
@@ -1058,9 +1099,14 @@ function assertChargeFilterCompatibility(charge: ChargeRow, filters: ChargeFilte
   if (charge.accepts_target_wallet === 1) {
     throw new Error("target_wallet_charge_filters_unsupported");
   }
-  if (charge.min_amount_minor > 0) {
-    throw new Error("minimum_charge_filters_unsupported");
-  }
+}
+
+function proratedChargeMinimum(minimumMinor: number, options: SubscriptionInvoiceOptions): Decimal {
+  const minimum = Decimal.parse(minimumMinor);
+  if (options.context === "renewal") return minimum;
+  return minimum
+    .multiply(Decimal.parse(options.window.billableDays))
+    .divideByInteger(BigInt(options.window.fullPeriodDays));
 }
 
 function parseObject(value: string): Record<string, unknown> {

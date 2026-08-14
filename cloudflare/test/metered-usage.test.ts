@@ -409,7 +409,7 @@ describe("Lago-compatible metered usage", () => {
       }),
     ]);
 
-    const unsupportedMinimum = await api("/api/v1/plans/metered-plan/charges", {
+    const filteredMinimum = await api("/api/v1/plans/metered-plan/charges", {
       method: "POST",
       body: {
         charge: {
@@ -417,15 +417,28 @@ describe("Lago-compatible metered usage", () => {
           code: "filtered-minimum",
           charge_model: "standard",
           properties: { amount: "5" },
-          min_amount_cents: 10,
+          min_amount_cents: 100,
           filters: [{ properties: { amount: "10" }, values: { region: ["eu"] } }],
         },
       },
     });
-    expect(unsupportedMinimum.status).toBe(422);
-    await expect(unsupportedMinimum.json()).resolves.toMatchObject({
-      code: "unsupported_charge_feature",
-    });
+    expect(filteredMinimum.status).toBe(200);
+    const usageWithMinimum = await api(
+      "/api/v1/customers/customer-external/current_usage?external_subscription_id=subscription-external",
+    ).then((response) =>
+      response.json<{
+        customer_usage: {
+          charges_usage: Array<{ amount_cents: number; charge: { lago_id: string } }>;
+        };
+      }>(),
+    );
+    const minimumChargeId = (await filteredMinimum.json<{ charge: { lago_id: string } }>()).charge
+      .lago_id;
+    expect(
+      usageWithMinimum.customer_usage.charges_usage.find(
+        (entry) => entry.charge.lago_id === minimumChargeId,
+      ),
+    ).toMatchObject({ amount_cents: 30 });
   });
 
   it("rejects unknown subscriptions, metrics, and malformed aggregation properties", async () => {
