@@ -113,17 +113,6 @@ async function updateSubscription(
       assertEndingAtAfterStart(subscription.ending_at, subscriptionAt);
     }
   }
-  let endingAt = subscription.ending_at;
-  if (input.ending_at !== undefined) {
-    endingAt = normalizeEndingAt(input.ending_at);
-    if (endingAt) {
-      assertSupportedScheduledTermination(subscription);
-      assertFutureEndingAt(endingAt, nowDate);
-      const startsAt = subscriptionAt ?? subscription.started_at;
-      if (!startsAt) throw new ApiError(422, "validation_error", "Subscription start is missing");
-      assertEndingAtAfterStart(endingAt, startsAt);
-    }
-  }
   const onTerminationCreditNote = terminationCreditAction(
     input.on_termination_credit_note,
     subscription,
@@ -132,6 +121,17 @@ async function updateSubscription(
     input.on_termination_invoice,
     subscription.on_termination_invoice,
   );
+  let endingAt = subscription.ending_at;
+  if (input.ending_at !== undefined) {
+    endingAt = normalizeEndingAt(input.ending_at);
+    if (endingAt) {
+      assertFutureEndingAt(endingAt, nowDate);
+      const startsAt = subscriptionAt ?? subscription.started_at;
+      if (!startsAt) throw new ApiError(422, "validation_error", "Subscription start is missing");
+      assertEndingAtAfterStart(endingAt, startsAt);
+    }
+  }
+  if (endingAt) assertSupportedScheduledTermination(subscription, onTerminationCreditNote);
   const event: DomainEvent = {
     id: `subscription-updated:${subscription.id}:v${subscription.version + 1}`,
     type: "subscription.updated",
@@ -586,12 +586,18 @@ function serializeSubscription(subscription: SubscriptionRow): Record<string, un
   };
 }
 
-function assertSupportedScheduledTermination(subscription: SubscriptionRow): void {
-  if (subscription.plan_pay_in_advance === 1 || subscription.plan_interval === "one_time") {
+function assertSupportedScheduledTermination(
+  subscription: SubscriptionRow,
+  creditAction: string | null,
+): void {
+  if (
+    subscription.plan_interval === "one_time" ||
+    (subscription.plan_pay_in_advance === 1 && creditAction !== "skip")
+  ) {
     throw new ApiError(
       422,
       "unsupported_scheduled_termination",
-      "ending_at is not implemented for pay-in-advance or one-time plans",
+      "Pay-in-advance ending_at requires on_termination_credit_note=skip; one-time plans remain unsupported",
     );
   }
 }

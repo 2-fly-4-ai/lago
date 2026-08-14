@@ -600,7 +600,11 @@ async function createSubscription(
   if (!plan) throw new ApiError(404, "plan_not_found", "Plan was not found");
   assertSupportedTerminationActions(plan.pay_in_advance, onTerminationCreditNote);
   if (endingAt) {
-    assertScheduledTerminationPlanSupported(plan.pay_in_advance, plan.interval);
+    assertScheduledTerminationPlanSupported(
+      plan.pay_in_advance,
+      plan.interval,
+      onTerminationCreditNote,
+    );
   }
 
   const netPaymentTerm = customer.net_payment_term ?? organizationBilling?.net_payment_term ?? 0;
@@ -1209,12 +1213,16 @@ function rejectUnsupportedSubscriptionCreate(
     );
 }
 
-function assertScheduledTerminationPlanSupported(payInAdvance: number, interval: string): void {
-  if (payInAdvance === 1 || interval === "one_time") {
+function assertScheduledTerminationPlanSupported(
+  payInAdvance: number,
+  interval: string,
+  creditAction: string | null,
+): void {
+  if (interval === "one_time" || (payInAdvance === 1 && creditAction !== "skip")) {
     throw new ApiError(
       422,
       "unsupported_scheduled_termination",
-      "ending_at is not implemented for pay-in-advance or one-time plans",
+      "Pay-in-advance ending_at requires on_termination_credit_note=skip; one-time plans remain unsupported",
     );
   }
 }

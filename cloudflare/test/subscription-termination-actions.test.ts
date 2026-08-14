@@ -222,6 +222,123 @@ describe("persisted subscription termination actions", () => {
     await expect(arrearsCredit.json()).resolves.toMatchObject({ code: "validation_error" });
   });
 
+  it("schedules pay-in-advance termination only with a persisted skip-credit action", async () => {
+    const tenant = await seedTenant("advance-scheduled");
+    const skipEndingAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    const skipped = await api(tenant.apiKey, "/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: tenant.externalCustomerId,
+        external_id: "subscription-advance-scheduled-skip",
+        plan_code: tenant.advancePlanCode,
+        ending_at: skipEndingAt,
+        on_termination_credit_note: "skip",
+        on_termination_invoice: "skip",
+      },
+    });
+    expect(skipped.status).toBe(200);
+    const skippedBody = await skipped.json<{ subscription: { lago_id: string } }>();
+    const skippedReplay = await api(tenant.apiKey, "/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: tenant.externalCustomerId,
+        external_id: "subscription-advance-scheduled-skip",
+        plan_code: tenant.advancePlanCode,
+        ending_at: skipEndingAt,
+        on_termination_credit_note: "skip",
+        on_termination_invoice: "skip",
+      },
+    });
+    expect(skippedReplay.status).toBe(200);
+
+    const generatedEndingAt = new Date(Date.parse(skipEndingAt) + 86_400_000).toISOString();
+    const generated = await api(tenant.apiKey, "/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: tenant.externalCustomerId,
+        external_id: "subscription-advance-scheduled-generate",
+        plan_code: tenant.advancePlanCode,
+        ending_at: generatedEndingAt,
+        on_termination_credit_note: "skip",
+        on_termination_invoice: "generate",
+      },
+    });
+    expect(generated.status).toBe(200);
+    const generatedBody = await generated.json<{ subscription: { lago_id: string } }>();
+
+    const guarded = await api(tenant.apiKey, "/api/v1/subscriptions", "POST", {
+      subscription: {
+        external_customer_id: tenant.externalCustomerId,
+        external_id: "subscription-advance-scheduled-credit",
+        plan_code: tenant.advancePlanCode,
+        ending_at: generatedEndingAt,
+        on_termination_credit_note: "credit",
+      },
+    });
+    expect(guarded.status).toBe(422);
+    await expect(guarded.json()).resolves.toMatchObject({
+      code: "unsupported_scheduled_termination",
+    });
+
+    await expect(
+      terminateEndedSubscriptions(env, skipEndingAt, "advance-scheduled-skip"),
+    ).resolves.toBe(1);
+    await expect(
+      terminateEndedSubscriptions(env, skipEndingAt, "advance-scheduled-skip-replay"),
+    ).resolves.toBe(0);
+    await expect(subscriptionState(skippedBody.subscription.lago_id)).resolves.toEqual({
+      status: "terminated",
+      version: 2,
+      invoices: 1,
+      credit_notes: 0,
+      termination_events: 1,
+    });
+    await expect(
+      terminateEndedSubscriptions(env, generatedEndingAt, "advance-scheduled-generate"),
+    ).resolves.toBe(1);
+    await expect(subscriptionState(generatedBody.subscription.lago_id)).resolves.toEqual({
+      status: "terminated",
+      version: 2,
+      invoices: 2,
+      credit_notes: 0,
+      termination_events: 1,
+    });
+
+    const updatedId = await createSubscription(
+      tenant,
+      "subscription-advance-scheduled-update",
+      tenant.advancePlanCode,
+    );
+    const updatePath = "/api/v1/subscriptions/subscription-advance-scheduled-update";
+    const missingSkip = await api(tenant.apiKey, updatePath, "PUT", {
+      subscription: { ending_at: generatedEndingAt },
+    });
+    expect(missingSkip.status).toBe(422);
+    const supported = await api(tenant.apiKey, updatePath, "PUT", {
+      subscription: {
+        ending_at: generatedEndingAt,
+        on_termination_credit_note: "skip",
+        on_termination_invoice: "skip",
+      },
+    });
+    expect(supported.status).toBe(200);
+    const incompatibleUpdate = await api(tenant.apiKey, updatePath, "PUT", {
+      subscription: { on_termination_credit_note: "credit" },
+    });
+    expect(incompatibleUpdate.status).toBe(422);
+    await expect(incompatibleUpdate.json()).resolves.toMatchObject({
+      code: "unsupported_scheduled_termination",
+    });
+    const cleared = await api(tenant.apiKey, updatePath, "PUT", {
+      subscription: { ending_at: null, on_termination_credit_note: "credit" },
+    });
+    expect(cleared.status).toBe(200);
+    await expect(cleared.json()).resolves.toMatchObject({
+      subscription: {
+        lago_id: updatedId,
+        ending_at: null,
+        on_termination_credit_note: "credit",
+      },
+    });
+  });
+
   it("rolls back a failed no-invoice batch and never leaves an orphan conflict event", async () => {
     const tenant = await seedTenant("atomic-skip");
     const subscriptionId = await createSubscription(
