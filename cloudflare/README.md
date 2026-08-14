@@ -15,8 +15,9 @@ remaining Lago feature inventory is dispositioned and ported.
   state, dependency-invalidation triggers and mutation guards, immutable issuing/finalization dates,
   tenant-scoped invoice custom-section catalog records, subscription selections, and immutable
   invoice section snapshots, organization-level default selections for the retained single billing
-  entity, customer overrides/skip state, wallet and wallet-transaction selections, and one canonical
-  invoice precedence projection,
+  entity, customer overrides/skip state, wallet and wallet-transaction selections, one canonical
+  invoice precedence projection, wallet ongoing-balance/depletion projections, and fixed granted
+  threshold-rule state,
   customer time zones, subscription billing mode/timezone snapshots, immutable trial boundaries,
   overdue state, payment attempts, outbox state, and webhook receipt metadata;
   plan-level minimum commitments are reconciled as auditable period true-up lines after recurring
@@ -95,7 +96,8 @@ remaining Lago feature inventory is dispositioned and ported.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,
-  coupon-expiration, and wallet-expiration paths on their original slots, performs 90-day
+  coupon-expiration, wallet-expiration, ongoing wallet projection/threshold-grant, and interval
+  wallet top-up paths on their original slots, performs 90-day
   inbound/outbound webhook retention, records each run in D1, publishes the outbox, and reports due
   schedules whose behavior is not yet ported. Inbound retention records R2 deletion tasks
   transactionally before removing receipt rows, so storage outages remain retryable.
@@ -160,14 +162,21 @@ the persisted `applied_invoice_custom_sections` without per-row queries. These a
 selections only: Lago's current paid-credit invoice service does not pass wallet resources into
 invoice section application, so this port deliberately does not add them to invoice precedence.
 
-Wallet create/update also supports one active fixed, interval-triggered recurring granted-credit
-rule. Weekly, monthly, quarterly, semiannual, and yearly anniversaries use the customer's timezone,
-clip month-end/leap-day anchors like Lago, skip the wallet's creation day, and create at most one
-top-up per wallet/local date. Rule expiration and interval top-up retain Lago's hourly `:50` and
-`:55` schedule slots. Rule-level custom-section selections are persisted and serialized but do not
-enter invoice precedence. Paid credits, target/threshold rules, payment methods, and
-successful-payment requirements fail explicitly and remain behind the disabled payment/provider
-boundary.
+Wallet create/update also supports one active fixed recurring granted-credit rule with either an
+interval or threshold trigger. Weekly, monthly, quarterly, semiannual, and yearly anniversaries use
+the customer's timezone, clip month-end/leap-day anchors like Lago, skip the wallet's creation day,
+and create at most one top-up per wallet/local date. Rule expiration and interval top-up retain
+Lago's hourly `:50` and `:55` schedule slots.
+
+The five-minute wallet owner projects current-period calculator output plus persisted draft
+liability onto the first active unrestricted wallet in application priority order. Ongoing usage
+may exceed settled balance, so API `ongoing_balance_cents` and `credits_ongoing_balance` can be
+negative. A fixed threshold rule compares that projection plus pending credits, then atomically
+settles the granted lot with a rule/projection-version idempotency key. Per-customer batches use
+wallet-version guards and roll back every projection, grant, and event together. Rule-level custom
+sections remain resource-only and metadata/name are copied to generated transactions. Paid credits,
+target rules, payment methods, successful-payment requirements, targeted wallets, progressive
+billing, and dedicated-organization cadence remain explicitly unsupported.
 
 ## Safety defaults
 

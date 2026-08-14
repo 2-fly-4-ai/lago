@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `129d703b-e9c3-4eb1-8172-d33d97c97614`
+- Latest verified version: `ad896271-925f-4723-9114-fd7917d9616c`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -34,7 +34,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0038_recurring_granted_wallet_rules.sql`.
+`0039_wallet_ongoing_balances.sql`.
 
 ## Verified behavior
 
@@ -310,6 +310,17 @@ Applied D1 migrations: `0001_foundation.sql` through
   catalog sections, wallets, wallet transactions, recurring rules, rule-section links, and outbox
   events plus 124 schedule audits. All three external-action flags remain disabled, with no route,
   secret, provider action, customer data, or billing/catalog/wallet data added.
+- The ongoing wallet-balance deployment applied only `0039_wallet_ongoing_balances.sql`; remote
+  schema verification found 39 migrations, zero foreign-key violations, five projection columns,
+  the fixed granted threshold-rule table, and all three queried tenant/origin/version guards.
+  Isolated Worker version `ad896271-925f-4723-9114-fd7917d9616c` retained only the existing
+  workers.dev URL, `*/5` Cron, D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow
+  bindings. The deployed bundle was 738.13 KiB (128.80 KiB gzip) with a 6 ms startup.
+  Health/readiness returned `200`/`200`; unauthenticated plan/wallet access returned `401`/`401`;
+  aggregate-only verification found zero organizations, customers, invoices, wallets, wallet
+  transactions, interval rules, threshold rules, and outbox events plus 130 schedule audits. All
+  three external-action flags remain disabled, with no route, secret, provider action, customer
+  data, or billing/wallet data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

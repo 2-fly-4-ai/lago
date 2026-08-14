@@ -308,11 +308,16 @@ Acceptance:
       later invoices, and auditable unpaid-void recredit; provider refunds, invoice offsets,
       tax-adjusted notes, documents, email, and external reporting remain pending. Granted-credit wallets now support
       create/list/show/terminate, idempotent top-up, priority/lot-ordered initial and renewal
-      invoice consumption, and auditable unpaid-void recredit. One fixed interval-triggered
-      recurring granted-credit rule per wallet now supports tenant-safe create/update/replace/
-      termination, customer-local clipped anniversaries, deterministic daily replay, metadata,
-      resource custom-section selection, and legacy `:50` expiration/`:55` top-up ownership;
-      paid/target/threshold rules and targeted allocation remain pending.
+      invoice consumption, and auditable unpaid-void recredit. One fixed interval- or
+      threshold-triggered recurring granted-credit rule per wallet now supports tenant-safe
+      create/update/replace/termination, metadata, and resource custom-section selection. Interval
+      rules retain customer-local clipped anniversaries, deterministic daily replay, and legacy
+      `:50` expiration/`:55` top-up ownership. The five-minute wallet owner now projects
+      current-period and draft liability onto the highest-priority unrestricted active wallet,
+      permits a negative ongoing balance, tracks depleted transitions, and atomically creates a
+      threshold grant only when projected plus pending credits do not clear the border. Paid/target
+      rules, provider funding, wallet fee/metric targets, and dedicated-organization cadence remain
+      pending.
       Organization-default manual percentage taxes now support create/list/show/update/terminate,
       coupon-adjusted fee taxable bases, exact rounding, and immutable invoice/fee snapshots;
       customer/plan/charge targeting, external providers, exemptions, tax identifiers, and
@@ -400,7 +405,7 @@ Acceptance:
       customer replace/skip behavior into one tenant-safe invoice precedence projection shared by
       recurring and one-off snapshots. Multi-billing-entity routing, provider-created
       system-generated sections, provider-specific method IDs, backdated one-time plans, and
-      threshold inputs remain explicit gaps. Wallet and granted
+      target/provider-funded recurring inputs remain explicit gaps. Wallet and granted
       wallet-transaction resource selections are persisted and serialized for API compatibility;
       they deliberately do not enter invoice precedence because Lago's paid-credit invoice service
       does not pass those resources to section application.
@@ -439,8 +444,9 @@ Acceptance:
       five-minute Cron dispatches a versioned Workflow instance and records due/unimplemented
       schedules in D1. The retained pending-subscription activation, recurring billing, draft
       refresh, Authorize.Net receipt retry, coupon expiry, wallet expiry, recurring-rule expiry,
-      provider-free recurring granted-credit top-up, and invoice-overdue paths run on their legacy
-      slots; the other entries remain explicitly `not_started` until their underlying feature
+      ongoing wallet-balance/threshold projection, provider-free interval granted-credit top-up,
+      and invoice-overdue paths run on their legacy slots; the other entries remain explicitly
+      `not_started` until their underlying feature
       families are ported. The two daily webhook-retention schedules now enforce Lago's 90-day
       boundary; inbound receipt deletion uses a transactional D1 cleanup queue so R2 failures remain
       replayable without orphaning payloads.
@@ -1509,3 +1515,32 @@ resource and mutation described.
   schedule audits. The deployed version retains all three external-action flags at `0`, uses only
   the existing isolated bindings and workers.dev URL, and adds no production route, domain,
   secret, provider action, customer data, or billing record.
+- 2026-08-15: Ported ongoing wallet-balance projection and the provider-free fixed granted-credit
+  threshold rule. The five-minute owner reuses the shared subscription invoice calculator, adds
+  persisted draft liabilities, and assigns each fee to the first active unrestricted wallet in
+  Lago application order; projected usage may exceed settled balance so the serialized ongoing
+  balance can be negative. Per-customer D1 batches guard every wallet version, update all
+  projections together, record the one-way depleted transition event, clear compatibility refresh
+  state, and roll back completely on any stale or failed wallet. Threshold grants compare exact
+  minor-unit projected and pending balances, settle one originating-rule-linked granted lot in the
+  same batch, preserve metadata/name, and use a deterministic rule/projection-version key. Paid,
+  target, successful-payment, provider-method, targeted-wallet, progressive-billing, and dedicated
+  organization behavior remains guarded or unported. Evidence covers current calculator reuse,
+  draft liability, negative balance, priority assignment, pending suppression, repeat projection,
+  trigger-changing rule replacement, expiration, tenant/origin guards, and injected late-batch
+  rollback. All 145 tests across 29 files pass in bounded Workers-runtime batches. All 39
+  migrations replay from an empty local D1 with no foreign-key violations, five wallet projection
+  columns, the threshold-rule table, and three core projection/threshold guards. Formatting,
+  strict lint, generated inventory/types, TypeScript, and a 738.13 KiB (128.80 KiB gzip) dry-run
+  bundle are green. Feature checkpoint: `7dd0b10`.
+- 2026-08-15: Remote preflight on the explicit SERP account showed only
+  `0039_wallet_ongoing_balances.sql` pending and zero organizations, customers, invoices, wallets,
+  wallet transactions, recurring rules, and outbox events. Applied only that migration, then
+  verified 39 migrations, zero foreign-key violations, all five projection columns, the threshold
+  table, and all three queried tenant/origin/version guards. Deployed isolated Worker version
+  `ad896271-925f-4723-9114-fd7917d9616c` with a 6 ms startup; health/readiness returned
+  `200`/`200`, and unauthenticated plan/wallet access returned `401`/`401`. Post-deploy
+  aggregate-only verification found zero tenants, invoices, wallets, transactions, interval or
+  threshold rules, and outbox rows plus 130 schedule audits. All three external-action flags remain
+  `0`; no production route, domain, secret, provider action, customer data, or billing row was
+  added.
