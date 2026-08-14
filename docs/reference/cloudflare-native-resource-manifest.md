@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `f83c6e7a-0d6b-4e2b-a9b5-d987096cfab4`
+- Latest verified version: `fb10cb7a-a2e1-4dca-a097-3ce9f58de222`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -223,6 +223,15 @@ Applied D1 migrations: `0001_foundation.sql` through
   aggregate-only verification found both new columns, zero organizations, subscriptions, stored
   subscription actions, invoices, credit notes, and outbox events plus 68 Cron audits. All three
   external-action flags remain disabled, with no route, secret, or billing data added.
+- The code-only safe scheduled-advance deployment admits pay-in-advance `ending_at` only with a
+  persisted skip-credit action, then reuses the stored generate/skip invoice behavior in the hourly
+  owner. Default or credit-mode schedules remain guarded. Worker version
+  `fb10cb7a-a2e1-4dca-a097-3ce9f58de222` required no D1 migration and retained only the existing
+  isolated bindings, workers.dev URL, and `*/5` Cron. Remote health/readiness returned `200`/`200`,
+  unauthenticated termination returned `401`, migration inventory remained empty, and
+  aggregate-only verification found zero organizations, subscriptions, invoices, credit notes, and
+  outbox events plus 70 Cron audits. All external-action flags remain disabled, with no route,
+  secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

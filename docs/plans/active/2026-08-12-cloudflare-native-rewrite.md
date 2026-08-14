@@ -1232,5 +1232,12 @@ resource and mutation described.
   skip-invoice and generate-invoice outcomes, update/clear invariants, and retained credit guards.
   All 95 tests pass across 24 files; formatting, strict lint, generated inventory/types, TypeScript,
   and the dry-run bundle are green at 538.58 KiB (95.76 KiB gzip). This slice is code-only; the
-  remote stack remains on migration `0031` and Worker version
-  `f83c6e7a-0d6b-4e2b-a9b5-d987096cfab4` until deployment.
+  remote stack remained on migration `0031` and Worker version
+  `f83c6e7a-0d6b-4e2b-a9b5-d987096cfab4` at the pre-deployment checkpoint.
+- 2026-08-14: Confirmed remote migration inventory was empty and the isolated database remained
+  unseeded before deploying the code-only scheduled-advance slice as Worker version
+  `fb10cb7a-a2e1-4dca-a097-3ce9f58de222`. Remote health/readiness returned `200`, unauthenticated
+  termination returned `401`, and aggregate-only verification found zero organizations,
+  subscriptions, invoices, credit notes, and outbox events plus 70 Cron audits. The deployed version
+  retained the three disabled external-action flags and only the existing isolated
+  bindings/triggers. No route, secret, migration, or billing data changed.
