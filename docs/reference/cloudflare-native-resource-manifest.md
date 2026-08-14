@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `ab6d42d7-e2c7-4f25-87b5-ecb25c4851c4`
+- Latest verified version: `c43221c5-a5ad-45e8-ad30-b068f493ddee`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -33,7 +33,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron | `*/5 * * * *` | Worker scheduled handler | Deterministic legacy-schedule dispatch |
 | Browser Rendering | account binding | `BROWSER` | Invoice HTML-to-PDF rendering |
 
-Applied D1 migrations: `0001_foundation.sql` through `0020_payment_terms.sql`.
+Applied D1 migrations: `0001_foundation.sql` through `0021_webhook_retention.sql`.
 
 ## Verified behavior
 
@@ -77,6 +77,10 @@ Applied D1 migrations: `0001_foundation.sql` through `0020_payment_terms.sql`.
   snapshots, replay-safe overdue state, and successful-payment clearing. Remote health/readiness
   returned `200`/`200`, unauthenticated invoice access returned `401`, and no migration remained
   pending. The remote database still contains zero organizations and zero invoices.
+- The webhook-retention deployment registered both legacy daily 90-day cleanup jobs and a durable
+  D1 queue for retrying archived-payload deletion after R2 failures. Remote health/readiness
+  returned `200`/`200`, unauthenticated endpoint access returned `401`, and no migration remained
+  pending. Aggregate-only verification found zero receipts, deliveries, and cleanup tasks.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

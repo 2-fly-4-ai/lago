@@ -822,3 +822,9 @@ resource and mutation described.
   retries object deletion after synthetic storage failure. All 72 Workers-runtime tests pass across
   21 files; all 21 migrations replay from empty D1 state, generated bindings and the
   cross-repository inventory are current, and the dry-run bundle is 423.91 KiB.
+- 2026-08-14: Applied only migration `0021_webhook_retention.sql` to isolated development D1 and
+  deployed Worker version `c43221c5-a5ad-45e8-ad30-b068f493ddee`. Follow-up migration inventory was
+  empty; remote health/readiness returned `200`, unauthenticated webhook-endpoint access returned
+  `401`, and direct aggregate-only counts confirmed zero organizations, receipts, deliveries, and
+  cleanup tasks. The stack remains unseeded with no route, provider secret, or enabled mutation,
+  provider-read, or outbound-delivery flag.
