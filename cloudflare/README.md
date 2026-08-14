@@ -121,8 +121,9 @@ remaining Lago feature inventory is dispositioned and ported.
   including zero-default and negative precision. Weighted-sum metrics integrate cumulative deltas
   over the full civil-day charge period at exact 20-place Lago ceiling precision. Recurring
   weighted state is reconstructed from retained events across subscription generations and is
-  recorded separately from billed weighted units. Weighted target-wallet grouping fails explicitly
-  until per-group historical baselines are ported.
+  recorded separately from billed weighted units. Target-wallet-enabled weighted charges
+  reconstruct and retain that state independently for each normalized wallet-code group, including
+  groups with a carried balance but no current-period events.
   Billable metrics and charges also support bounded nested filters. Metric filter catalogs and
   charge-specific price overrides are validated and stored atomically in D1; each event is assigned
   to the first most-specific matching filter or the unmatched base charge, with wildcard values
@@ -133,8 +134,8 @@ remaining Lago feature inventory is dispositioned and ported.
   partition each filter/base fee again by wallet code, preserving deterministic line identities,
   combined filter/wallet metadata, exact current-usage totals, and exact wallet allocations.
   Recurring weighted-sum filters reconstruct an independent historical cumulative baseline for
-  every filter/base partition across subscription generations. Weighted sums combined with target
-  wallets remain explicitly guarded until per-wallet recurring baselines are ported.
+  every filter/base partition across subscription generations. The same baseline map composes with
+  target-wallet grouping, so weighted filter × wallet cells rate and allocate independently.
 - Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,
