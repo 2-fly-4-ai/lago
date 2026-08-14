@@ -936,3 +936,8 @@ resource and mutation described.
   covered by executable evidence. All 78 Workers-runtime tests pass across 22 files; all 26
   migrations replay from empty D1 state, formatting, lint, generated bindings, TypeScript, and the
   cross-repository inventory are green, and the dry-run bundle is 461.65 KiB (84.09 KiB gzip).
+- 2026-08-14: Confirmed no remote migration was pending and deployed the event-batch code as
+  isolated Worker version `96a7f31c-ae48-4e6b-9e44-980095c15080`. Remote health/readiness returned
+  `200`, unauthenticated batch ingestion returned `401`, and aggregate-only verification confirmed
+  zero organizations, usage events, and invoices plus 23 Cron audits. No route, secret, seeded
+  billing data, or disabled external flag changed.

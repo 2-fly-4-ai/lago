@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `8b98d25b-d945-44cb-8eab-70626a71c056`
+- Latest verified version: `96a7f31c-ae48-4e6b-9e44-980095c15080`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -109,6 +109,12 @@ Applied D1 migrations: `0001_foundation.sql` through `0026_terminated_draft_refr
   `401`, and no migration remained pending. Aggregate-only verification found all 22 invalidation
   triggers, zero organizations/invoices/initial contexts/mutation guards, and 21 Cron audits. All
   external-action flags remain disabled, with no route, secret, or billing data added.
+- The code-only event-batch deployment added all-before-write validation, atomic D1 event/outbox
+  insertion, deterministic R2 evidence, and indexed batch errors without changing schema or
+  resources. Remote health/readiness returned `200`/`200`, unauthenticated batch ingestion returned
+  `401`, and no migration was pending. Aggregate-only verification found zero organizations, usage
+  events, and invoices plus 23 Cron audits. All external-action flags remain disabled, with no
+  route, secret, or billing data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
