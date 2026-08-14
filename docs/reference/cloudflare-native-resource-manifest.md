@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `a0c0ab74-b4bc-4493-94af-b8128d0535f9`
+- Latest verified version: `129d703b-e9c3-4eb1-8172-d33d97c97614`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -34,7 +34,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0037_wallet_invoice_custom_sections.sql`.
+`0038_recurring_granted_wallet_rules.sql`.
 
 ## Verified behavior
 
@@ -298,6 +298,17 @@ Applied D1 migrations: `0001_foundation.sql` through
   returned `401`; aggregate-only verification found zero organizations, customers, invoices,
   catalog sections, wallets, wallet transactions, either wallet-section relationship, and outbox
   events plus 118 schedule audits. All three external-action flags remain disabled, with no route,
+  secret, provider action, customer data, or billing/catalog/wallet data added.
+- The recurring granted-credit wallet deployment applied only
+  `0038_recurring_granted_wallet_rules.sql` in 7.93 ms; follow-up inventory reported no pending
+  migrations. Schema verification found 38 migrations, both recurring-rule tables, all six related
+  guards, wallet-transaction metadata and originating-rule columns, and no foreign-key violations.
+  Isolated Worker version `129d703b-e9c3-4eb1-8172-d33d97c97614` retained only the existing
+  workers.dev URL, `*/5` Cron, D1, R2, Queue/DLQ, Durable Object, Browser, and three Workflow
+  bindings. Health/readiness returned `200`/`200`; unauthenticated section-catalog and wallet access
+  both returned `401`; aggregate-only verification found zero organizations, customers, invoices,
+  catalog sections, wallets, wallet transactions, recurring rules, rule-section links, and outbox
+  events plus 124 schedule audits. All three external-action flags remain disabled, with no route,
   secret, provider action, customer data, or billing/catalog/wallet data added.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.

@@ -1496,3 +1496,16 @@ resource and mutation described.
   inventory/types, TypeScript, and a 715.63 KiB (125.34 KiB gzip) dry-run bundle are green. This is
   a local pre-deployment checkpoint; isolated remote D1 remains on migration `0037` and Worker
   version `a0c0ab74-b4bc-4493-94af-b8128d0535f9`.
+- 2026-08-15: Remote preflight on the explicit SERP account showed exactly
+  `0038_recurring_granted_wallet_rules.sql` pending, no foreign-key violations, and zero
+  organizations, customers, plans, subscriptions, invoices, catalog sections, wallets, wallet
+  transactions, and outbox events plus 124 schedule audits. Applied only that migration in 7.93
+  ms, confirmed the follow-up inventory was empty, and verified 38 migrations, both recurring-rule
+  tables, all six related guards, transaction metadata and originating-rule columns, and no
+  foreign-key violations. Deployed isolated Worker version
+  `129d703b-e9c3-4eb1-8172-d33d97c97614`; health/readiness returned `200`/`200`, and
+  unauthenticated catalog/wallet access returned `401`/`401`. Post-deploy aggregate-only
+  verification found zero tenants, billing/catalog/wallet/rule/link/outbox rows and the same 124
+  schedule audits. The deployed version retains all three external-action flags at `0`, uses only
+  the existing isolated bindings and workers.dev URL, and adds no production route, domain,
+  secret, provider action, customer data, or billing record.
