@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `b201ce1f-43dd-4097-bfbf-491e448b8fb3`
+- Latest verified version: `07654b79-8774-4de2-988b-b7323f86ebba`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -35,7 +35,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0052_pay_in_advance_usage_charges.sql`.
+`0059_invoice_payment_processing_state.sql`.
 
 ## Verified behavior
 

@@ -578,9 +578,9 @@ Acceptance:
 - [ ] Run full contract, invariant, integration, migration, replay, and document suites.
 - [ ] Run the repository harness and secret scan.
 - [x] Run Wrangler type generation, config validation, and deployment dry run.
-- [ ] Produce a resource manifest with development/staging names, bindings, retention, and deletion
+- [x] Produce a resource manifest with development/staging names, bindings, retention, and deletion
       procedures.
-- [ ] Produce a staging test plan that uses synthetic customers and provider sandboxes only.
+- [x] Produce a staging test plan that uses synthetic customers and provider sandboxes only.
 
 Acceptance:
 

@@ -35981,14 +35981,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
         "evidence": [
-          "every(lifetime_usage_refresh_interval.to_i.seconds, \"schedule:refresh_lifetime_usages\") do"
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/scheduled-maintenance.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "line": 57,
@@ -36067,14 +36067,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
         "evidence": [
-          "every(1.hour, \"schedule:api_keys_track_usage\", at: \"*:15\") do"
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/scheduled-maintenance.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "line": 89,
@@ -36187,14 +36187,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
         "evidence": [
-          "every(1.hour, \"schedule:termination_alert\", at: \"*:50\") do"
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/scheduled-maintenance.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "line": 131,
@@ -36238,14 +36238,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
         "evidence": [
-          "every(1.day, \"schedule:clean_webhooks\", at: \"01:00\") do"
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/scheduled-maintenance.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "line": 149,
@@ -36255,14 +36255,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
         "evidence": [
-          "every(1.day, \"schedule:clean_inbound_webhooks\", at: \"01:10\") do"
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/scheduled-maintenance.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "line": 156,
@@ -36272,14 +36272,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
         "evidence": [
-          "every(1.hour, \"schedule:post_validate_events\", at: \"*:05\") do"
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/scheduled-maintenance.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "line": 165,
@@ -36289,14 +36289,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
         "evidence": [
-          "every(1.hour, \"schedule:compute_daily_usage\", at: \"*:15\") do"
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/scheduled-maintenance.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "line": 171,
@@ -36306,14 +36306,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
         "evidence": [
-          "every(1.hour, \"schedule:process_dunning_campaigns\", at: \"*:45\") do"
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/scheduled-maintenance.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "line": 177,
@@ -36340,14 +36340,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
         "evidence": [
-          "every(15.minutes, \"schedule:retry_inbound_webhooks\") do"
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/scheduled-maintenance.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "line": 191,

@@ -421,6 +421,11 @@ const portRules = [
     target: "cloudflare/src/api/lago-compatibility.ts",
     evidence: ["cloudflare/fixtures/store-new/invoice-list-query.json"],
   },
+  {
+    pattern: /^every\(/i,
+    target: "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
+    evidence: ["cloudflare/test/scheduled-maintenance.test.ts"],
+  },
 ];
 
 function disposition(source) {
