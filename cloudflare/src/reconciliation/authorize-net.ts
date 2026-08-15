@@ -192,10 +192,12 @@ export async function reconcileAuthorizeNetReceipt(
           `UPDATE invoices
            SET payment_status = ?,
                payment_overdue = CASE WHEN ? = 'succeeded' THEN 0 ELSE payment_overdue END,
+               ready_for_payment_processing = CASE WHEN ? = 'succeeded' THEN 0 ELSE 1 END,
                version = version + 1, updated_at = ?
            WHERE id = ? AND organization_id = ? AND version = ?
              AND payment_status <> 'succeeded' AND payment_status <> ?`,
         ).bind(
+          nextInvoiceStatus,
           nextInvoiceStatus,
           nextInvoiceStatus,
           timestamp,

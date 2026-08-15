@@ -71,8 +71,8 @@ beforeEach(async () => {
       `DELETE FROM payment_attempts WHERE organization_id = 'org-payment-request'`,
     ),
     env.BILLING_DB.prepare(
-      `UPDATE invoices SET payment_status = 'pending', payment_overdue = 1, version = 1,
-                           updated_at = ?
+      `UPDATE invoices SET payment_status = 'pending', payment_overdue = 1,
+                           ready_for_payment_processing = 1, version = 1, updated_at = ?
        WHERE organization_id = 'org-payment-request'`,
     ).bind(now),
   ]);
@@ -170,7 +170,15 @@ describe("payment requests", () => {
     const current = await createRequest(["invoice-payment-request-one"]);
     await expect(current.json()).resolves.toMatchObject({ code: "invoices_not_overdue" });
     await env.BILLING_DB.prepare(
-      `UPDATE invoices SET payment_overdue = 1, currency = 'EUR'
+      `UPDATE invoices SET payment_overdue = 1, ready_for_payment_processing = 0
+       WHERE id = 'invoice-payment-request-one'`,
+    ).run();
+    const paused = await createRequest(["invoice-payment-request-one"]);
+    await expect(paused.json()).resolves.toMatchObject({
+      code: "invoices_not_ready_for_payment_processing",
+    });
+    await env.BILLING_DB.prepare(
+      `UPDATE invoices SET ready_for_payment_processing = 1, currency = 'EUR'
        WHERE id = 'invoice-payment-request-one'`,
     ).run();
     const mixed = await createRequest([

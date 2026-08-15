@@ -2427,8 +2427,8 @@ resource and mutation described.
   organization defaults, customer overrides/exclusions and attempt state, plus guarded dunning
   request provenance. Authenticated REST CRUD replaces the retained operator campaign mutations;
   customer upserts accept campaign overrides and exclusions and reset attempt state when assignment
-  changes. The hourly `:45` Workflow executor selects overdue outstanding balances, respects
-  threshold currency, elapsed days, maximum attempts and exclusions, and atomically writes one
+  changes. The hourly `:45` Workflow executor selects ready overdue invoices, respects threshold
+  currency, elapsed days, maximum attempts and exclusions, and atomically writes one
   deterministic payment request, version-pinned invoice links, the customer attempt advance, and
   outbox evidence. The terminal attempt emits `dunning_campaign.finished`. Provider submission and
   fallback email remain deliberately unported and externally gated, so the schedule is recorded as
@@ -2451,6 +2451,20 @@ resource and mutation described.
   scheduled, and queue handlers and all three external-action flags remain `0`; no production
   route/domain, secret, customer message, provider action, customer data, payment action, or
   billing row changed.
+- 2026-08-15: Exact upstream review after the first dunning deployment identified two retained
+  invoice semantics that needed an additive correction: campaign eligibility compares the full
+  total of ready overdue invoices, while the resulting payment request charges only their remaining
+  balance; invoices paused for payment processing are excluded. Added forward-only migration
+  `0059_invoice_payment_processing_state.sql` rather than editing applied migration 0058. It adds
+  invoice readiness state, an eligible-invoice index, and replaces the invoice-link/dunning guards
+  with readiness-aware predicates and the exact full-total threshold. Manual and Authorize.Net
+  reconciliation now close readiness on full success and reopen it for nonterminal provider
+  outcomes. Evidence includes a 1,000-cent invoice with a 600-cent successful partial payment that
+  remains threshold-eligible and produces a 400-cent request. All 59 migrations replay
+  independently with the readiness column/index, both replacement guards, and zero foreign-key
+  violations. Strict format/lint/inventory/bindings/TypeScript pass; all 241 tests across 46 files
+  pass serially in 150.54 seconds. The dry-run bundle is 1187.41 KiB (206.51 KiB gzip). This is a
+  local pre-deployment checkpoint; no remote resource or data was changed by this entry.
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.

@@ -241,9 +241,11 @@ remaining Lago feature inventory is dispositioned and ported.
 - Dunning campaigns: authenticated tenant-scoped create/list/show/update/delete routes own campaign
   thresholds, organization defaults, customer overrides, and exclusions in D1. The hourly `:45`
   Workflow executor creates at most one deterministic payment request per eligible customer and
-  attempt, observes currency thresholds, elapsed-day spacing, exclusions, and maximum attempts,
-  and emits `dunning_campaign.finished` at the terminal attempt. Each request, version-pinned
-  invoice link, customer attempt advance, and outbox event commits in one guarded D1 batch.
+  attempt, observes full overdue-invoice totals for campaign thresholds, uses remaining balances
+  for request amounts, and respects currency, payment-processing readiness, elapsed-day spacing,
+  exclusions, and maximum attempts. It emits `dunning_campaign.finished` at the terminal attempt.
+  Each request, version-pinned invoice link, customer attempt advance, and outbox event commits in
+  one guarded D1 batch.
   Provider payment handoff and fallback email remain intentionally absent, so schedule parity stays
   partial and all external-action gates remain authoritative.
 

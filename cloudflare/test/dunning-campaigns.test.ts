@@ -198,7 +198,7 @@ describe("dunning campaigns", () => {
     expect(body.dunning_campaign.lago_id).toBeTruthy();
   });
 
-  it("uses the outstanding balance and rolls back a stale guarded attempt", async () => {
+  it("uses full totals for eligibility, outstanding request amounts, and stale-attempt rollback", async () => {
     const created = await createCampaign({ applied_to_organization: true });
     const campaign = await created.json<{ dunning_campaign: { lago_id: string } }>();
     const now = "2026-08-15T01:00:00.000Z";
@@ -214,7 +214,15 @@ describe("dunning campaigns", () => {
       .run();
     await expect(
       processDunningCampaigns(env, "2026-08-15T01:45:00.000Z", "dunning-partial"),
-    ).resolves.toEqual({ candidates: 0, requestsCreated: 0, campaignsFinished: 0 });
+    ).resolves.toEqual({ candidates: 1, requestsCreated: 1, campaignsFinished: 0 });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT amount_minor FROM payment_requests
+         WHERE organization_id = ? AND source = 'dunning'`,
+      )
+        .bind(organizationId)
+        .first(),
+    ).resolves.toEqual({ amount_minor: 400 });
 
     const threshold = await env.BILLING_DB.prepare(
       `SELECT id FROM dunning_campaign_thresholds WHERE dunning_campaign_id = ?`,

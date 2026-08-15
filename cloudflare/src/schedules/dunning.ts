@@ -88,11 +88,7 @@ async function dueDunningCandidates(
                     printf('+%d days', campaign.days_between_attempts)) <= datetime(?)
          )
          AND threshold.amount_minor <= COALESCE((
-           SELECT SUM(invoice.total_due_minor - COALESCE((
-             SELECT SUM(payment.amount_minor)
-             FROM payment_attempts payment
-             WHERE payment.invoice_id = invoice.id AND payment.status = 'succeeded'
-           ), 0))
+           SELECT SUM(invoice.total_due_minor)
            FROM invoices invoice
            WHERE invoice.customer_id = customer.id
              AND invoice.organization_id = customer.organization_id
@@ -100,6 +96,7 @@ async function dueDunningCandidates(
              AND invoice.status = 'finalized'
              AND invoice.payment_status <> 'succeeded'
              AND invoice.payment_overdue = 1
+             AND invoice.ready_for_payment_processing = 1
          ), 0)
        ORDER BY customer.id LIMIT 100`,
     )
@@ -125,6 +122,7 @@ async function createDunningPaymentRequest(
        WHERE invoice.customer_id = ? AND invoice.organization_id = ? AND invoice.currency = ?
          AND invoice.status = 'finalized' AND invoice.payment_status <> 'succeeded'
          AND invoice.payment_overdue = 1
+         AND invoice.ready_for_payment_processing = 1
        ORDER BY invoice.created_at, invoice.id`,
     )
     .bind(candidate.customer_id, candidate.organization_id, candidate.currency)

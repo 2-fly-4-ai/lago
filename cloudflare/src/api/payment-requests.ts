@@ -104,6 +104,7 @@ async function createPaymentRequest(
       (invoice) =>
         invoice.status !== "finalized" ||
         invoice.payment_status === "succeeded" ||
+        invoice.ready_for_payment_processing !== 1 ||
         outstandingMinor(invoice) <= 0,
     )
   ) {

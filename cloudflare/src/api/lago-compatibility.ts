@@ -154,6 +154,7 @@ export type InvoiceRow = {
   net_payment_term: number;
   payment_due_date: string | null;
   payment_overdue: number;
+  ready_for_payment_processing: number;
   issuing_date: string | null;
   expected_finalization_date: string | null;
   invoice_type: "subscription" | "one_off";
@@ -1691,6 +1692,7 @@ async function listInvoices(
               COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
                         WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
               i.net_payment_term, i.payment_due_date, i.payment_overdue,
+              i.ready_for_payment_processing,
               i.issuing_date, i.expected_finalization_date,
               i.version, i.finalized_at,
               i.voided_at, i.created_at, i.updated_at
@@ -2347,6 +2349,7 @@ export async function findInvoice(
               COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
                         WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
               i.net_payment_term, i.payment_due_date, i.payment_overdue,
+              i.ready_for_payment_processing,
               i.issuing_date, i.expected_finalization_date, i.version,
               i.finalized_at, i.voided_at, i.created_at, i.updated_at
        FROM invoices i JOIN customers c ON c.id = i.customer_id
@@ -2610,6 +2613,7 @@ async function generateInvoicePaymentUrl(
             COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
                       WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
             i.net_payment_term, i.payment_due_date, i.payment_overdue,
+            i.ready_for_payment_processing,
             i.issuing_date, i.expected_finalization_date,
             i.version, i.finalized_at,
             i.voided_at, i.created_at, i.updated_at
@@ -3088,6 +3092,7 @@ export async function serializeInvoice(
     expected_finalization_date: invoice.expected_finalization_date,
     payment_due_date: invoice.payment_due_date,
     payment_overdue: invoice.payment_overdue === 1,
+    ready_for_payment_processing: invoice.ready_for_payment_processing === 1,
     net_payment_term: invoice.net_payment_term,
     invoice_type: progressive ? "progressive_billing" : invoice.invoice_type,
     status: invoice.status,
