@@ -2381,3 +2381,10 @@ resource and mutation described.
   and Workflow replay is conflict-safe. Outbound delivery remains behind its disabled safety gate.
   Strict format/lint/inventory/bindings/TypeScript pass, all 231 tests across 44 files pass serially
   in 144.43 seconds, and the dry-run bundle is 1133.38 KiB (196.95 KiB gzip).
+- 2026-08-15: Code-only remote preflight found no pending migration and zero organizations,
+  subscriptions, invoices, and outbox rows, with zero foreign-key violations. Deployed only
+  `serp-dev-lago-native` as version `37eda23e-2150-44be-874c-aca20ddee58e` with a 6 ms startup and
+  unchanged resources/one-minute Cron. A fresh post-deploy audit found the same empty business
+  state plus 396 schedule runs. Health/readiness returned `200`/`200`, unauthenticated plan access
+  returned `401`, and all three external-action flags remain `0`; no customer message, production
+  route/domain, secret, provider action, customer data, payment action, or billing row changed.

@@ -501,6 +501,14 @@ Applied D1 migrations: `0001_foundation.sql` through
   API keys, customers, subscriptions, invoices, usage thresholds, and outbox rows plus 385 schedule
   runs. All three external-action flags remain `0`; no production route/domain, secret, provider
   action, customer data, payment action, or billing ledger row changed.
+- The termination-alert deployment was code-only with no pending migration. Worker version
+  `37eda23e-2150-44be-874c-aca20ddee58e` retained the existing workers.dev URL, one-minute Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The deployed bundle was
+  1133.38 KiB (196.95 KiB gzip) with a 6 ms startup. Health/readiness returned `200`/`200`, and
+  unauthenticated plan access returned `401`. Aggregate-only verification found zero organizations,
+  subscriptions, invoices, and outbox rows plus 396 schedule runs, with zero foreign-key
+  violations. All three external-action flags remain `0`; no customer message, production
+  route/domain, secret, provider action, customer data, payment action, or billing row changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
