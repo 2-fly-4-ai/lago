@@ -263,6 +263,14 @@ function extractOperatorSurface(frontRoot) {
 
 const portRules = [
   {
+    pattern: /refresh_(dedicated_org_)?wallets_ongoing_balance/i,
+    target: "cloudflare/src/schedules/registry.ts and cloudflare/src/schedules/wallet-balances.ts",
+    evidence: [
+      "cloudflare/test/wallet-ongoing-balances.test.ts",
+      "cloudflare/test/scheduled-maintenance.test.ts",
+    ],
+  },
+  {
     pattern: /retry_generating_subscription_invoices/i,
     target:
       "cloudflare/src/schedules/registry.ts, cloudflare/src/workflows/reconciliation.ts, and cloudflare/src/billing/close-period.ts",

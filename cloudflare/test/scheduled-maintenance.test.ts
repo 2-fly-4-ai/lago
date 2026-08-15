@@ -160,6 +160,21 @@ describe("legacy schedule ownership", () => {
     });
   });
 
+  it("consolidates dedicated-organization wallet refresh into the global projection", () => {
+    expect(
+      LEGACY_SCHEDULES.find(
+        (schedule) => schedule.key === "schedule:refresh_dedicated_org_wallets",
+      ),
+    ).toMatchObject({
+      cadence: {
+        kind: "dynamic",
+        source: "Utils::DedicatedWorkerConfig.refresh_interval",
+      },
+      parity: "implemented",
+      owner: "consolidated global wallet projection",
+    });
+  });
+
   it("owns the retained daily revenue projection in the hourly :15 workflow slot", () => {
     const due = dueLegacySchedules(Date.parse("2026-08-14T01:15:00.000Z"));
     expect(due.find((schedule) => schedule.key === "schedule:compute_daily_usage")).toMatchObject({

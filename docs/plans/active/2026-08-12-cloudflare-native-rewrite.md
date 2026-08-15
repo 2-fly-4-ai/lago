@@ -2388,6 +2388,13 @@ resource and mutation described.
   state plus 396 schedule runs. Health/readiness returned `200`/`200`, unauthenticated plan access
   returned `401`, and all three external-action flags remain `0`; no customer message, production
   route/domain, secret, provider action, customer data, payment action, or billing row changed.
+- 2026-08-15: Consolidated the legacy dedicated-organization wallet refresher into the global D1
+  wallet-projection owner. Lago's two jobs invoke the same per-customer refresh service and differ
+  only by Sidekiq tenant partition/cadence; the Worker already scans every active-wallet customer,
+  while Workers supplies horizontal isolation without a tenant-ID environment list. The dynamic
+  legacy cadence remains documented for source traceability but no longer requires its own process.
+  Focused schedule and wallet-projection evidence passes all 22 tests, with strict formatting,
+  lint, generated-inventory freshness, Wrangler binding types, and TypeScript also green.
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.

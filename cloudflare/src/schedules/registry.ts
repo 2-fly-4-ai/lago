@@ -98,8 +98,8 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     key: "schedule:refresh_dedicated_org_wallets",
     legacyJob: "Clock::RefreshDedicatedOrgWalletsOngoingBalanceJob",
     cadence: dynamic("Utils::DedicatedWorkerConfig.refresh_interval"),
-    owner: "wallet projection workflow",
-    parity: "not_started",
+    owner: "consolidated global wallet projection",
+    parity: "implemented",
   },
   {
     key: "schedule:terminate_ended_subscriptions",

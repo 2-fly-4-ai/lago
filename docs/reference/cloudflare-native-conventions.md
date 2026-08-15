@@ -51,7 +51,7 @@ this document does not silently redefine that behavior.
   resolve local weekly/monthly/quarterly/yearly boundaries through `Intl.DateTimeFormat`, then
   persist those boundaries as half-open UTC instants. Local civil-day coefficients, not elapsed
   24-hour blocks, drive trial proration across daylight-saving changes.
-- The five-minute Worker Cron is UTC and dispatches deterministic legacy schedule slots from its
+- The one-minute Worker Cron is UTC and dispatches deterministic legacy schedule slots from its
   supplied scheduled time, not wall-clock invocation time. The customer timezone is snapshotted on
   subscription creation (organization timezone, then UTC, is the fallback); changing the customer
   later does not reinterpret an existing subscription's persisted boundaries.
@@ -298,7 +298,9 @@ Required evidence for a new aggregate or a boundary change:
   that opts into event `target_wallet_code` groups and rates targeted/untargeted usage separately;
   the explicit target takes precedence in the shared matcher. Missing targets preserve the event
   and write one `event.error`; opt-out charges retain ordinary aggregation and allocation. Paid,
-  target-recurring, payment-method, and dedicated-organization behavior remains guarded.
+  target-recurring and payment-method behavior remains guarded. The global projection includes
+  every tenant, so the legacy dedicated-organization wallet queue/configuration is retired without
+  changing wallet calculations; other dedicated-organization product behavior remains guarded.
   Multi-billing-entity routing, system-generated sections, dedicated usage-monitoring alerts, and a
   broader operator UI remain pending.
 - Advanced tax providers, multi-provider payment behavior, refunds, and several document families

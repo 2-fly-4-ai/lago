@@ -19475,11 +19475,12 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/wallet-ledger.ts",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/schedules/wallet-balances.ts",
         "evidence": [
-          "cloudflare/test/wallet-ledger.test.ts"
+          "cloudflare/test/wallet-ongoing-balances.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": "cloudflare/test/wallet-ledger.test.ts",
+        "testFixture": "cloudflare/test/wallet-ongoing-balances.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -19523,11 +19524,12 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/wallet-ledger.ts",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/schedules/wallet-balances.ts",
         "evidence": [
-          "cloudflare/test/wallet-ledger.test.ts"
+          "cloudflare/test/wallet-ongoing-balances.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": "cloudflare/test/wallet-ledger.test.ts",
+        "testFixture": "cloudflare/test/wallet-ongoing-balances.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -35975,11 +35977,12 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/wallet-ledger.ts",
+        "target": "cloudflare/src/schedules/registry.ts and cloudflare/src/schedules/wallet-balances.ts",
         "evidence": [
-          "cloudflare/test/wallet-ledger.test.ts"
+          "cloudflare/test/wallet-ongoing-balances.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": "cloudflare/test/wallet-ledger.test.ts",
+        "testFixture": "cloudflare/test/wallet-ongoing-balances.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."

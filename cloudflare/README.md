@@ -212,6 +212,9 @@ remaining Lago feature inventory is dispositioned and ported.
   Successful bearer authentication also advances the API key's D1 last-use timestamp under the
   active-key predicate; the legacy Rails-cache write and hourly flush no longer need a runtime
   owner.
+  The dedicated-organization wallet refresher is also retired as a separate runtime owner. The
+  global D1 wallet-projection scan includes every tenant, while Workers supplies horizontal
+  isolation without a dedicated Sidekiq process or tenant-ID environment list.
 - R2: immutable provider webhook, usage-event, and invoice-document archives.
 - Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
