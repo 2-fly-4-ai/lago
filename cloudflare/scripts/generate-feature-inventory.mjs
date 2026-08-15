@@ -263,6 +263,21 @@ function extractOperatorSurface(frontRoot) {
 
 const portRules = [
   {
+    pattern: /api\/app\/services\/utils\/pdf_attachment_service\.rb/i,
+    disposition: "not-used",
+    target:
+      "Explicit e-invoicing-disabled boundaries in cloudflare/src/api/billing-entities.ts and document APIs",
+    evidence: [
+      "cloudflare/test/billing-entities.test.ts",
+      "cloudflare/test/payment-receipt-document.test.ts",
+      "cloudflare/test/credit-note-document.test.ts",
+    ],
+    migrationNotes:
+      "pdfcpu only embeds generated Factur-X XML. The retained single billing entity rejects e-invoicing configuration, so this subprocess has no reachable Cloudflare runtime contract.",
+    rollbackNotes:
+      "Keep Factur-X XML and PDF/A-3 embedding disabled unless a separately approved e-invoicing product slice selects and verifies a Workers-native implementation.",
+  },
+  {
     pattern:
       /api\/app\/(controllers\/api\/v1\/payment_receipts_controller|jobs\/payment_receipts\/generate_(?:documents|pdf)_job|models\/payment_receipt|queries\/payment_receipts_query|serializers\/v1\/payment_receipt_serializer|services\/payment_receipts\/(?:create|generate_pdf)_service)\.rb/i,
     target:
@@ -498,13 +513,17 @@ function disposition(source) {
         source,
         owner,
         consumers,
-        disposition: "port",
+        disposition: match.disposition ?? "port",
         target: match.target,
         evidence: match.evidence,
         testFixture: match.evidence[0] ?? null,
         parityStatus: "partial",
-        migrationNotes: "Port incrementally behind isolated Cloudflare development resources.",
-        rollbackNotes: "Keep the legacy Lago path authoritative until parity and cutover approval.",
+        migrationNotes:
+          match.migrationNotes ??
+          "Port incrementally behind isolated Cloudflare development resources.",
+        rollbackNotes:
+          match.rollbackNotes ??
+          "Keep the legacy Lago path authoritative until parity and cutover approval.",
       }
     : {
         source,

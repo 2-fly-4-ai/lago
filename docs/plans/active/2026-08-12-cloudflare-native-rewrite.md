@@ -504,8 +504,13 @@ Acceptance:
       download contract, so there is no authoritative quote document surface to port.
 - [x] Generate invoice, receipt, and credit-note PDFs using Browser Rendering through a retryable,
       ownership-checked Document Workflow.
-- [ ] Replace `pdfcpu` attachment behavior with a Workers-compatible JavaScript or precompiled Wasm
-      implementation.
+- [x] Remove `pdfcpu` from the retained runtime contract. Pinned-source verification shows it is
+      used only to embed generated Factur-X XML in PDF/A-3 documents after e-invoicing is enabled for
+      an eligible billing-entity country; it is not a page merger or general attachment dependency.
+      The retained single billing entity rejects e-invoicing configuration, every document API keeps
+      XML explicitly disabled, and no Cloudflare path invokes a subprocess. Factur-X generation and
+      Workers-native XML embedding remain a separately approved future product slice rather than an
+      unreachable compatibility shim.
 - [x] Store immutable, version-addressed invoice, receipt, credit-note, and data-export artifacts in
       R2 with integrity metadata, byte length, and generation metadata.
 - [ ] Add visual and structural golden-file verification.
@@ -2897,3 +2902,16 @@ resource and mutation described.
   audits, and no foreign-key violations. Version inspection confirmed only fetch/scheduled/queue
   handlers with all external-action flags at `0`. No production route/domain, provider action,
   customer message, payment action, secret, or customer data changed.
+- 2026-08-15: Closed the remaining `pdfcpu` container dependency by verifying its actual pinned
+  call graph rather than porting the executable. `Utils::PdfAttachmentService` only runs from the
+  invoice, credit-note, and payment-receipt Factur-X branches after e-invoicing is enabled for an
+  eligible country; it embeds generated XML into PDF/A-3 and is neither a PDF page merger nor part
+  of ordinary document generation. The retained single-billing-entity API rejects e-invoicing
+  configuration, all three Cloudflare document surfaces keep XML explicitly disabled, and Browser
+  Rendering/R2 PDF generation never reaches this path. The feature inventory now marks only this
+  exact service `not-used`, with executable billing-entity and document-boundary evidence, while
+  leaving the broader Factur-X/e-invoicing family unported for a separately approved product slice.
+  This removes the subprocess requirement without adding an unreachable JavaScript/Wasm shim or
+  falsely claiming e-invoicing parity. Formatting, lint, and generated-inventory checks pass. No
+  runtime code, migration, Worker version, remote resource, artifact, provider action, customer
+  message, payment action, secret, or customer data changed.

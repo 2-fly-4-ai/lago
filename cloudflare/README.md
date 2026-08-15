@@ -45,6 +45,10 @@ remaining Lago feature inventory is dispositioned and ported.
   temporary files, export-part rows, local unlink/combine work, and Active Storage. CSV formula-like
   user strings are neutralized, downloads are private and expire after seven days, and completion
   email remains explicitly disabled.
+- PDF attachment boundary: the pinned `pdfcpu` subprocess only embeds generated Factur-X XML into
+  e-invoicing PDFs. It is not used for ordinary PDF generation or page merging. Because the retained
+  billing-entity subset rejects e-invoicing and every document API keeps XML disabled, `pdfcpu` is
+  deliberately absent rather than replaced by an unreachable Wasm or JavaScript shim.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
