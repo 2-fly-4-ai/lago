@@ -544,6 +544,19 @@ Applied D1 migrations: `0001_foundation.sql` through
   inspection confirmed only the expected fetch, scheduled, and queue handlers and all three
   external-action flags at `0`; no production route/domain, secret, customer message, provider
   action, customer data, payment action, or billing row changed.
+- The dunning-eligibility correction applied only forward migration
+  `0059_invoice_payment_processing_state.sql`. Remote verification found 59 migrations, the invoice
+  readiness column and eligible-invoice index, both replacement late-write guards, zero foreign-key
+  violations, and no remaining migration. Worker version
+  `6fa02bbf-9342-4908-8268-6b8c02a7a9d7` retained the existing workers.dev URL, one-minute Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The deployed bundle was
+  1187.41 KiB (206.51 KiB gzip) with a 5 ms startup. Health/readiness returned `200`/`200`,
+  unauthenticated dunning access returned `401`, and aggregate-only verification found zero
+  organizations, customers, invoices, payment attempts, payment requests, dunning campaigns/
+  guards, and outbox rows plus 484 schedule audits. Version inspection confirmed only the expected
+  fetch, scheduled, and queue handlers and all three external-action flags at `0`; no production
+  route/domain, secret, customer message, provider action, customer data, payment action, or
+  billing row changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
