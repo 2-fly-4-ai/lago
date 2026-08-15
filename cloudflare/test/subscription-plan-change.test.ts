@@ -84,6 +84,69 @@ describe("subscription plan generations", () => {
     await expect(generationState("subscription-pending-plan-change")).resolves.toHaveLength(1);
   });
 
+  it("persists explicitly supplied thresholds on pending, upgrade, and downgrade generations", async () => {
+    const futureStart = new Date(Date.now() + 3_600_000).toISOString();
+    const pending = await SELF.fetch("https://lago.test/api/v1/subscriptions", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        subscription: {
+          external_customer_id: "customer-plan-change",
+          external_id: "subscription-threshold-pending-change",
+          plan_code: "plan-change-base",
+          subscription_at: futureStart,
+          usage_thresholds: [{ amount_cents: 100 }],
+        },
+      }),
+    });
+    expect(pending.status).toBe(200);
+    const pendingChanged = await createSubscription(
+      "subscription-threshold-pending-change",
+      "plan-change-upgrade",
+      [{ amount_cents: 200, recurring: true }],
+    );
+    expect(pendingChanged.status).toBe(200);
+    await expect(pendingChanged.json()).resolves.toMatchObject({
+      subscription: {
+        usage_thresholds: [{ amount_cents: 200, recurring: true }],
+      },
+    });
+
+    const active = await createSubscription("subscription-threshold-upgrade", "plan-change-base");
+    expect(active.status).toBe(200);
+    const upgraded = await createSubscription(
+      "subscription-threshold-upgrade",
+      "plan-change-upgrade",
+      [{ amount_cents: 300 }],
+    );
+    expect(upgraded.status).toBe(200);
+    await expect(upgraded.json()).resolves.toMatchObject({
+      subscription: { usage_thresholds: [{ amount_cents: 300, recurring: false }] },
+    });
+
+    const downgrade = await createSubscription(
+      "subscription-threshold-downgrade",
+      "plan-change-base",
+    );
+    expect(downgrade.status).toBe(200);
+    const queued = await createSubscription(
+      "subscription-threshold-downgrade",
+      "plan-change-downgrade",
+      [{ amount_cents: 400 }],
+    );
+    expect(queued.status).toBe(200);
+    const generations = await generationState("subscription-threshold-downgrade");
+    const pendingGeneration = generations.find((generation) => generation.status === "pending");
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT amount_minor, recurring FROM usage_thresholds
+         WHERE subscription_id = ? AND deleted_at IS NULL`,
+      )
+        .bind(pendingGeneration?.id)
+        .first(),
+    ).resolves.toEqual({ amount_minor: 400, recurring: 0 });
+  });
+
   it("atomically upgrades to a new active generation and replays by external id", async () => {
     const created = await createSubscription("subscription-upgrade", "plan-change-base");
     expect(created.status).toBe(200);
@@ -717,7 +780,11 @@ describe("subscription plan generations", () => {
   });
 });
 
-function createSubscription(externalId: string, planCode: string): Promise<Response> {
+function createSubscription(
+  externalId: string,
+  planCode: string,
+  usageThresholds?: Array<{ amount_cents: number; recurring?: boolean }>,
+): Promise<Response> {
   return SELF.fetch("https://lago.test/api/v1/subscriptions", {
     method: "POST",
     headers,
@@ -726,6 +793,7 @@ function createSubscription(externalId: string, planCode: string): Promise<Respo
         external_customer_id: "customer-plan-change",
         external_id: externalId,
         plan_code: planCode,
+        ...(usageThresholds === undefined ? {} : { usage_thresholds: usageThresholds }),
       },
     }),
   });

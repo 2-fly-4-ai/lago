@@ -21,6 +21,13 @@ import {
 } from "../billing/plan-deletion";
 import { createPayInAdvanceFixedChargeDeltaInvoice } from "../billing/pay-in-advance-fixed-charges";
 import { validatePayInAdvanceUsageConfiguration } from "../usage/pay-in-advance-validation";
+import {
+  normalizeUsageThresholdInputs,
+  prepareUsageThresholds,
+  serializeUsageThreshold,
+  usageThresholdInsertStatements,
+  type UsageThresholdRow,
+} from "../usage/thresholds";
 
 type PlanRow = {
   id: string;
@@ -301,13 +308,13 @@ async function createPlan(
       "Monthly split billing for usage charges is not implemented",
     );
   const metadata = optionalObject(input.metadata, "metadata");
+  const usageThresholdInputs = normalizeUsageThresholdInputs(input.usage_thresholds);
   if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
     throw new ApiError(
       422,
       "unsupported_tax_target",
       "Plan tax targeting is not implemented; use organization-default taxes",
     );
-  rejectNonEmpty(input, ["usage_thresholds"]);
   const minimumCommitment = await normalizeMinimumCommitment(
     input.minimum_commitment,
     auth.organizationId,
@@ -342,6 +349,7 @@ async function createPlan(
     name,
     payInAdvance: booleanInteger(input.pay_in_advance, false),
     trialPeriod: optionalNonNegativeNumber(input.trial_period, "trial_period"),
+    usageThresholds: usageThresholdInputs,
   };
   const requestHash = await sha256Hex(stableJson(normalizedRequest));
   const existing = await findPlan(database, auth.organizationId, code);
@@ -367,6 +375,13 @@ async function createPlan(
     auth.organizationId,
     planId,
     currency,
+  );
+  const usageThresholds = await prepareUsageThresholds(
+    "plan",
+    auth.organizationId,
+    planId,
+    identity.version,
+    usageThresholdInputs,
   );
   const now = new Date().toISOString();
   const event = planEvent(
@@ -463,6 +478,13 @@ async function createPlan(
             now,
             now,
           ),
+      ),
+      ...usageThresholdInsertStatements(
+        database,
+        auth.organizationId,
+        { planId },
+        usageThresholds,
+        now,
       ),
       ...(minimumCommitment
         ? [
@@ -1284,6 +1306,10 @@ async function updatePlan(
   assertPlanMutationAvailable(plan);
   const input = objectAt(await parseJsonObject(request), "plan");
   rejectUpdateGraph(input);
+  const usageThresholdInputs =
+    input.usage_thresholds === undefined
+      ? null
+      : normalizeUsageThresholdInputs(input.usage_thresholds);
   const cascade = cascadeRequested(input);
   if (input.bill_charges_monthly === true || input.bill_fixed_charges_monthly === true)
     throw new ApiError(422, "unsupported_plan_feature", "Monthly split billing is not implemented");
@@ -1365,6 +1391,16 @@ async function updatePlan(
         : optionalObject(input.metadata, "metadata"),
   };
   const now = new Date().toISOString();
+  const replacementUsageThresholds =
+    usageThresholdInputs === null
+      ? null
+      : await prepareUsageThresholds(
+          "plan",
+          auth.organizationId,
+          plan.id,
+          plan.version + 1,
+          usageThresholdInputs,
+        );
   const cascadeChildren =
     cascade && next.amountMinor !== plan.amount_minor
       ? await preparePlanAmountCascade(env.BILLING_DB, plan.id, plan.amount_minor)
@@ -1387,6 +1423,56 @@ async function updatePlan(
       cascadedFromPlanId: plan.id,
     }),
   );
+  const usageThresholdStatements =
+    replacementUsageThresholds === null
+      ? []
+      : [
+          env.BILLING_DB.prepare(
+            `UPDATE usage_thresholds
+             SET deleted_at = ?, version = version + 1, updated_at = ?
+             WHERE organization_id = ? AND plan_id = ? AND deleted_at IS NULL
+               AND EXISTS (
+                 SELECT 1 FROM plans
+                 WHERE id = ? AND organization_id = ? AND active = 1
+                   AND version = ? AND updated_at = ?
+               )`,
+          ).bind(
+            now,
+            now,
+            auth.organizationId,
+            plan.id,
+            plan.id,
+            auth.organizationId,
+            plan.version + 1,
+            now,
+          ),
+          ...replacementUsageThresholds.map((threshold) =>
+            env.BILLING_DB.prepare(
+              `INSERT INTO usage_thresholds
+               (id, organization_id, plan_id, subscription_id, amount_minor, recurring,
+                threshold_display_name, version, deleted_at, created_at, updated_at)
+               SELECT ?, ?, ?, NULL, ?, ?, ?, 1, NULL, ?, ?
+               WHERE EXISTS (
+                 SELECT 1 FROM plans
+                 WHERE id = ? AND organization_id = ? AND active = 1
+                   AND version = ? AND updated_at = ?
+               )`,
+            ).bind(
+              threshold.id,
+              auth.organizationId,
+              plan.id,
+              threshold.amountMinor,
+              threshold.recurring,
+              threshold.displayName,
+              now,
+              now,
+              plan.id,
+              auth.organizationId,
+              plan.version + 1,
+              now,
+            ),
+          ),
+        ];
   try {
     const results = await env.BILLING_DB.batch([
       planMutationGuardStatement(env.BILLING_DB, requestId, auth.organizationId, plan, 1, now),
@@ -1489,14 +1575,20 @@ async function updatePlan(
         now,
       ),
       clearPlanMutationGuardStatement(env.BILLING_DB, requestId, plan.id),
+      ...usageThresholdStatements,
     ]);
+    const insertedThresholdResults =
+      replacementUsageThresholds === null
+        ? []
+        : results.slice(7, 7 + replacementUsageThresholds.length);
     if (
       results[0]?.meta.changes !== 1 ||
       (results[1]?.meta.changes ?? 0) < 1 ||
       (results[2]?.meta.changes ?? 0) < cascadeCount ||
       results[3]?.meta.changes !== 1 ||
       (results[4]?.meta.changes ?? 0) !== cascadeCount ||
-      results[5]?.meta.changes !== 1
+      results[5]?.meta.changes !== 1 ||
+      insertedThresholdResults.some((result) => result.meta.changes !== 1)
     )
       throw new ApiError(409, "plan_version_conflict", "Plan changed concurrently");
   } catch (error) {
@@ -1739,6 +1831,14 @@ async function serializePlan(
               ORDER BY fc.created_at, fc.id`)
     .bind(plan.id)
     .all<FixedChargeRow>();
+  const usageThresholds = await database
+    .prepare(
+      `SELECT id, amount_minor, recurring, threshold_display_name, created_at, updated_at
+       FROM usage_thresholds WHERE plan_id = ? AND deleted_at IS NULL
+       ORDER BY recurring, amount_minor, id`,
+    )
+    .bind(plan.id)
+    .all<UsageThresholdRow>();
   return {
     lago_id: plan.id,
     name: plan.name,
@@ -1763,8 +1863,8 @@ async function serializePlan(
     charges: charges.results.map(serializeCharge),
     fixed_charges: fixedCharges.results.map(serializeFixedCharge),
     entitlements: [],
-    usage_thresholds: [],
-    applicable_usage_thresholds: [],
+    usage_thresholds: usageThresholds.results.map(serializeUsageThreshold),
+    applicable_usage_thresholds: usageThresholds.results.map(serializeUsageThreshold),
     taxes: [],
     metadata: parseObject(plan.metadata_json),
     minimum_commitment: commitment
@@ -2505,29 +2605,8 @@ function nonNegativeDecimal(value: unknown, field: string): string {
   }
 }
 
-function rejectNonEmpty(input: Record<string, unknown>, fields: string[]): void {
-  for (const field of fields) {
-    const value = input[field];
-    if (value === undefined || value === null) continue;
-    if (Array.isArray(value) && value.length === 0) continue;
-    if (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0)
-      continue;
-    throw new ApiError(
-      422,
-      "unsupported_plan_feature",
-      `${field} is not implemented by the Cloudflare plan catalog`,
-    );
-  }
-}
-
 function rejectUpdateGraph(input: Record<string, unknown>): void {
-  for (const field of [
-    "charges",
-    "fixed_charges",
-    "minimum_commitment",
-    "tax_codes",
-    "usage_thresholds",
-  ]) {
+  for (const field of ["charges", "fixed_charges", "minimum_commitment", "tax_codes"]) {
     if (input[field] === undefined) continue;
     throw new ApiError(
       422,

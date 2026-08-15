@@ -10,6 +10,7 @@ import {
   type PreparedPayInAdvanceTerminationCredit,
 } from "./pay-in-advance-termination-credit";
 import { paymentDueDate } from "./payment-terms";
+import { prepareProgressiveCreditNote } from "./progressive-credit";
 import {
   addTrialDays,
   firstPeriodEnd,
@@ -32,6 +33,11 @@ import {
   customSectionLinkStatements,
   guardedCustomSectionLinkStatements,
 } from "../subscriptions/custom-sections";
+import {
+  prepareUsageThresholds,
+  type NormalizedUsageThresholdInput,
+  type PreparedUsageThreshold,
+} from "../usage/thresholds";
 
 type CurrentGeneration = {
   id: string;
@@ -87,6 +93,7 @@ export type ChangeSubscriptionPlanInput = {
   paymentMethodId?: string | null;
   customSectionIds?: string[];
   skipInvoiceCustomSections?: boolean;
+  usageThresholds?: NormalizedUsageThresholdInput[];
 };
 
 export type ChangeSubscriptionPlanResult = {
@@ -222,7 +229,23 @@ async function updateInitialPending(
     current.version + 1,
     "pending",
   );
-  const results = await env.BILLING_DB.batch([
+  const replacementUsageThresholds =
+    input.usageThresholds === undefined
+      ? null
+      : await prepareUsageThresholds(
+          "subscription",
+          current.organization_id,
+          current.id,
+          current.version + 1,
+          input.usageThresholds,
+        );
+  const thresholdStatements = guardedPendingUsageThresholdStatements(
+    env.BILLING_DB,
+    current,
+    replacementUsageThresholds,
+    changedAt,
+  );
+  const statements = [
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
        SET plan_id = ?, name = ?, ending_at = ?, request_sha256 = ?,
@@ -248,6 +271,7 @@ async function updateInitialPending(
       current.version,
     ),
     ...sectionStatements,
+    ...thresholdStatements,
     guardedOutboxStatement(
       env.BILLING_DB,
       current.organization_id,
@@ -257,10 +281,19 @@ async function updateInitialPending(
       "pending",
       changedAt,
     ),
-  ]);
+  ];
+  const results = await env.BILLING_DB.batch(statements);
+  const outboxIndex = statements.length - 1;
   if (
     (results[0]?.meta.changes ?? 0) < 1 ||
-    results[1 + sectionStatements.length]?.meta.changes !== 1
+    results[outboxIndex]?.meta.changes !== 1 ||
+    (replacementUsageThresholds !== null &&
+      results
+        .slice(
+          2 + sectionStatements.length,
+          2 + sectionStatements.length + replacementUsageThresholds.length,
+        )
+        .some((result) => result.meta.changes !== 1))
   ) {
     throw new Error("subscription_version_conflict");
   }
@@ -278,6 +311,114 @@ function pendingCustomSectionUpdate(
   }
   if (current.skip_invoice_custom_sections === 1) return { skip: 1, sectionIds: undefined };
   return { skip: 0, sectionIds: input.customSectionIds };
+}
+
+function guardedPendingUsageThresholdStatements(
+  database: D1Database,
+  current: CurrentGeneration,
+  thresholds: PreparedUsageThreshold[] | null,
+  changedAt: string,
+): D1PreparedStatement[] {
+  if (thresholds === null) return [];
+  const guard = `EXISTS (
+    SELECT 1 FROM subscriptions
+    WHERE id = ? AND organization_id = ? AND version = ? AND status = 'pending'
+      AND previous_subscription_id IS NULL AND updated_at = ?
+  )`;
+  return [
+    database
+      .prepare(
+        `UPDATE usage_thresholds
+         SET deleted_at = ?, version = version + 1, updated_at = ?
+         WHERE organization_id = ? AND subscription_id = ? AND deleted_at IS NULL
+           AND ${guard}`,
+      )
+      .bind(
+        changedAt,
+        changedAt,
+        current.organization_id,
+        current.id,
+        current.id,
+        current.organization_id,
+        current.version + 1,
+        changedAt,
+      ),
+    ...thresholds.map((threshold) =>
+      database
+        .prepare(
+          `INSERT INTO usage_thresholds
+           (id, organization_id, plan_id, subscription_id, amount_minor, recurring,
+            threshold_display_name, version, deleted_at, created_at, updated_at)
+           SELECT ?, ?, NULL, ?, ?, ?, ?, 1, NULL, ?, ?
+           WHERE ${guard}`,
+        )
+        .bind(
+          threshold.id,
+          current.organization_id,
+          current.id,
+          threshold.amountMinor,
+          threshold.recurring,
+          threshold.displayName,
+          changedAt,
+          changedAt,
+          current.id,
+          current.organization_id,
+          current.version + 1,
+          changedAt,
+        ),
+    ),
+  ];
+}
+
+async function prepareNextGenerationUsageThresholds(
+  current: CurrentGeneration,
+  nextId: string,
+  inputs: NormalizedUsageThresholdInput[] | undefined,
+): Promise<PreparedUsageThreshold[]> {
+  if (inputs === undefined) return [];
+  return prepareUsageThresholds("subscription", current.organization_id, nextId, 1, inputs);
+}
+
+function newGenerationUsageThresholdStatements(
+  database: D1Database,
+  organizationId: string,
+  nextId: string,
+  previousId: string,
+  previousVersion: number,
+  thresholds: PreparedUsageThreshold[],
+  changedAt: string,
+): D1PreparedStatement[] {
+  return thresholds.map((threshold) =>
+    database
+      .prepare(
+        `INSERT INTO usage_thresholds
+         (id, organization_id, plan_id, subscription_id, amount_minor, recurring,
+          threshold_display_name, version, deleted_at, created_at, updated_at)
+         SELECT ?, ?, NULL, ?, ?, ?, ?, 1, NULL, ?, ?
+         WHERE EXISTS (
+           SELECT 1 FROM subscriptions next
+           JOIN subscriptions previous ON previous.id = next.previous_subscription_id
+           WHERE next.id = ? AND next.organization_id = ? AND next.previous_subscription_id = ?
+             AND previous.organization_id = ? AND previous.version IN (?, ?)
+         )`,
+      )
+      .bind(
+        threshold.id,
+        organizationId,
+        nextId,
+        threshold.amountMinor,
+        threshold.recurring,
+        threshold.displayName,
+        changedAt,
+        changedAt,
+        nextId,
+        organizationId,
+        previousId,
+        organizationId,
+        previousVersion,
+        previousVersion + 1,
+      ),
+  );
 }
 
 async function scheduleDowngrade(
@@ -306,6 +447,11 @@ async function scheduleDowngrade(
   const initialStartedAt = await initialStartedAtFor(env.BILLING_DB, current);
   const trialEndAt = trialEnd(target, initialStartedAt, current.billing_timezone);
   const nextSkipInvoiceCustomSections = input.skipInvoiceCustomSections === true ? 1 : 0;
+  const nextUsageThresholds = await prepareNextGenerationUsageThresholds(
+    current,
+    nextId,
+    input.usageThresholds,
+  );
   const event = subscriptionEvent(
     "subscription.updated",
     current.id,
@@ -398,6 +544,15 @@ async function scheduleDowngrade(
       changedAt,
       false,
     ),
+    ...newGenerationUsageThresholdStatements(
+      env.BILLING_DB,
+      current.organization_id,
+      nextId,
+      current.id,
+      current.version,
+      nextUsageThresholds,
+      changedAt,
+    ),
     env.BILLING_DB.prepare(
       `UPDATE subscriptions SET version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?
@@ -421,7 +576,7 @@ async function scheduleDowngrade(
   }
   const insertIndex = existing ? 1 : 0;
   const linkCount = input.customSectionIds?.length ?? 0;
-  const updateIndex = insertIndex + 1 + linkCount;
+  const updateIndex = insertIndex + 1 + linkCount + nextUsageThresholds.length;
   if (
     results[insertIndex]?.meta.changes !== 1 ||
     (results[updateIndex]?.meta.changes ?? 0) < 1 ||
@@ -464,6 +619,11 @@ async function upgradeActiveGeneration(
   const targetTrialActive =
     targetTrialEndAt !== null && Date.parse(targetTrialEndAt) > Date.parse(changedAt);
   const nextSkipInvoiceCustomSections = input.skipInvoiceCustomSections === true ? 1 : 0;
+  const nextUsageThresholds = await prepareNextGenerationUsageThresholds(
+    current,
+    nextId,
+    input.usageThresholds,
+  );
   const nextSubscription: BillableSubscription = {
     id: nextId,
     organization_id: current.organization_id,
@@ -532,6 +692,7 @@ async function upgradeActiveGeneration(
     changedAt,
     input.requestId,
   );
+  const draft = current.invoice_grace_period > 0;
   const allocations = await calculateInvoiceAllocations(
     env.BILLING_DB,
     nextSubscription,
@@ -540,8 +701,21 @@ async function upgradeActiveGeneration(
     unusedCredit?.creditNoteId && unusedCredit.allocationState === "finalized"
       ? { creditNoteId: unusedCredit.creditNoteId, amountMinor: unusedCredit.creditAmountMinor }
       : undefined,
+    previousCalculation.progressiveBillingCreditMinor,
   );
-  const draft = current.invoice_grace_period > 0;
+  const correctionCreditNote =
+    !draft &&
+    previousCalculation.progressiveBillingCreditInvoiceId &&
+    previousCalculation.progressiveBillingCreditExcessMinor > 0
+      ? await prepareProgressiveCreditNote(env.BILLING_DB, {
+          organizationId: current.organization_id,
+          sourceInvoiceId: previousCalculation.progressiveBillingCreditInvoiceId,
+          amountMinor: previousCalculation.progressiveBillingCreditExcessMinor,
+          correctionInvoiceId: invoiceId,
+          createdAt: changedAt,
+          correlationId: input.requestId,
+        })
+      : null;
   const issuingDate = shiftCalendarDate(
     localDateString(new Date(changedAt), current.billing_timezone),
     current.invoice_grace_period,
@@ -599,6 +773,10 @@ async function upgradeActiveGeneration(
     ...(unusedCredit?.creditNoteEvent
       ? [outboxStatement(env.BILLING_DB, current.organization_id, unusedCredit.creditNoteEvent)]
       : []),
+    ...(correctionCreditNote?.statements ?? []),
+    ...(correctionCreditNote
+      ? [outboxStatement(env.BILLING_DB, current.organization_id, correctionCreditNote.event)]
+      : []),
     env.BILLING_DB.prepare(
       `INSERT INTO invoices
        (id, organization_id, customer_id, subscription_id, number, status, payment_status,
@@ -606,9 +784,9 @@ async function upgradeActiveGeneration(
         finalized_at, issuing_date, created_at, updated_at, coupons_minor, prepaid_credit_minor,
         credit_notes_minor, net_payment_term, payment_due_date, payment_overdue,
         expected_finalization_date, applied_grace_period, ready_to_be_refreshed,
-        last_refreshed_at)
+        last_refreshed_at, progressive_billing_credit_minor)
        SELECT ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0,
-              ?, ?, 0, ?
+              ?, ?, 0, ?, ?
        FROM subscriptions WHERE id = ? AND version = ? AND status IN ('active', 'past_due')`,
     ).bind(
       invoiceId,
@@ -634,6 +812,7 @@ async function upgradeActiveGeneration(
       issuingDate,
       current.invoice_grace_period,
       draft ? changedAt : null,
+      previousCalculation.progressiveBillingCreditMinor,
       current.id,
       current.version,
     ),
@@ -736,6 +915,15 @@ async function upgradeActiveGeneration(
       changedAt,
       false,
     ),
+    ...newGenerationUsageThresholdStatements(
+      env.BILLING_DB,
+      current.organization_id,
+      nextId,
+      current.id,
+      current.version,
+      nextUsageThresholds,
+      changedAt,
+    ),
     env.BILLING_DB.prepare(
       `INSERT INTO invoice_subscriptions
        (invoice_id, subscription_id, organization_id, invoicing_reason, period_start,
@@ -773,6 +961,23 @@ async function upgradeActiveGeneration(
       nextPeriodEnd,
       changedAt,
     ),
+    ...(previousCalculation.progressiveBillingCreditInvoiceId &&
+    previousCalculation.progressiveBillingCreditMinor > 0
+      ? [
+          env.BILLING_DB.prepare(
+            `INSERT INTO progressive_billing_credits
+             (invoice_id, progressive_invoice_id, organization_id, subscription_id,
+              amount_minor, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+          ).bind(
+            invoiceId,
+            previousCalculation.progressiveBillingCreditInvoiceId,
+            current.organization_id,
+            current.id,
+            previousCalculation.progressiveBillingCreditMinor,
+            changedAt,
+          ),
+        ]
+      : []),
     outboxStatement(env.BILLING_DB, current.organization_id, terminatedEvent),
     outboxStatement(env.BILLING_DB, current.organization_id, startedEvent),
     outboxStatement(env.BILLING_DB, current.organization_id, invoiceEvent),
@@ -805,6 +1010,7 @@ async function upgradeActiveGeneration(
     ...(unusedCredit?.creditNoteEvent
       ? [env.DOMAIN_EVENTS.send(unusedCredit.creditNoteEvent)]
       : []),
+    ...(correctionCreditNote ? [env.DOMAIN_EVENTS.send(correctionCreditNote.event)] : []),
     env.DOMAIN_EVENTS.send(terminatedEvent),
     env.DOMAIN_EVENTS.send(startedEvent),
     env.DOMAIN_EVENTS.send(invoiceEvent),

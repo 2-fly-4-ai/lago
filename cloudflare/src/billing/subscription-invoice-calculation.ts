@@ -29,6 +29,7 @@ import {
 } from "./periods";
 import { calculateWalletAllocations, type WalletAllocation } from "./wallet-credits";
 import type { WalletFeeBucket, WalletFeeType } from "./wallet-limitations";
+import { progressiveCreditForLines } from "./progressive-credit";
 
 export type BillableSubscription = {
   id: string;
@@ -106,6 +107,9 @@ export type SubscriptionInvoiceLine = {
 export type SubscriptionInvoiceCalculation = {
   lines: SubscriptionInvoiceLine[];
   subtotalMinor: number;
+  progressiveBillingCreditMinor: number;
+  progressiveBillingCreditInvoiceId: string | null;
+  progressiveBillingCreditExcessMinor: number;
   couponCredits: CouponCredit[];
   couponsMinor: number;
   invoiceTaxes: InvoiceTax[];
@@ -126,7 +130,10 @@ export type InvoiceAllocationOwner = Pick<
 
 export type InvoiceAllocationCalculation = Omit<
   SubscriptionInvoiceCalculation,
-  "lines" | "nextPeriodEnd"
+  | "lines"
+  | "nextPeriodEnd"
+  | "progressiveBillingCreditInvoiceId"
+  | "progressiveBillingCreditExcessMinor"
 >;
 
 export type SubscriptionInvoiceReason =
@@ -171,6 +178,7 @@ export type TerminationBillingWindow = {
 
 type SubscriptionInvoiceOptions =
   | { context: "renewal" }
+  | { context: "progressive"; calculatedThrough: string }
   | {
       context: "termination";
       terminatedAt: string;
@@ -279,7 +287,13 @@ export async function calculateInitialSubscriptionInvoice(
     );
   }
   const allocations = await calculateInvoiceAllocations(database, subscription, invoiceId, lines);
-  return { lines, ...allocations, nextPeriodEnd: periodEnd };
+  return {
+    lines,
+    ...allocations,
+    progressiveBillingCreditInvoiceId: null,
+    progressiveBillingCreditExcessMinor: 0,
+    nextPeriodEnd: periodEnd,
+  };
 }
 
 export async function calculateInitialPayInAdvanceFixedChargeLines(
@@ -344,15 +358,24 @@ export async function calculateInvoiceAllocations(
   invoiceId: string,
   lines: SubscriptionInvoiceLine[],
   additionalCreditNote?: { creditNoteId: string; amountMinor: number },
+  progressiveBillingCreditMinor = 0,
 ): Promise<InvoiceAllocationCalculation> {
   const subtotalMinor = lines.reduce((total, line) => safeAdd(total, line.rounded), 0);
+  if (
+    !Number.isSafeInteger(progressiveBillingCreditMinor) ||
+    progressiveBillingCreditMinor < 0 ||
+    progressiveBillingCreditMinor > subtotalMinor
+  ) {
+    throw new Error("invalid_progressive_billing_credit");
+  }
+  const subtotalAfterProgressiveCredit = subtotalMinor - progressiveBillingCreditMinor;
   const couponCredits = await calculateCouponCredits(
     database,
     owner.organization_id,
     owner.customer_id,
     invoiceId,
     owner.currency,
-    subtotalMinor,
+    subtotalAfterProgressiveCredit,
   );
   const couponsMinor = couponCredits.reduce(
     (total, credit) => safeAdd(total, credit.amountMinor),
@@ -363,7 +386,7 @@ export async function calculateInvoiceAllocations(
     owner.organization_id,
     invoiceId,
     lines.map((candidate) => ({ id: candidate.id, amountMinor: candidate.rounded })),
-    couponsMinor,
+    safeAdd(couponsMinor, progressiveBillingCreditMinor),
   );
   const taxMinor = totalManualTaxMinor(invoiceTaxes);
   const creditNoteAllocations = await calculateCreditNoteAllocations(
@@ -372,14 +395,15 @@ export async function calculateInvoiceAllocations(
     owner.customer_id,
     invoiceId,
     owner.currency,
-    subtotalMinor + taxMinor - couponsMinor,
+    subtotalAfterProgressiveCredit + taxMinor - couponsMinor,
   );
   let creditNotesMinor = creditNoteAllocations.reduce(
     (total, allocation) => safeAdd(total, allocation.amountMinor),
     0,
   );
   if (additionalCreditNote) {
-    const remainingDue = subtotalMinor + taxMinor - couponsMinor - creditNotesMinor;
+    const remainingDue =
+      subtotalAfterProgressiveCredit + taxMinor - couponsMinor - creditNotesMinor;
     const amountMinor = Math.min(additionalCreditNote.amountMinor, remainingDue);
     if (amountMinor > 0) {
       creditNoteAllocations.push({
@@ -401,16 +425,20 @@ export async function calculateInvoiceAllocations(
     owner.customer_id,
     invoiceId,
     owner.currency,
-    subtotalMinor + taxMinor - couponsMinor - creditNotesMinor,
+    subtotalAfterProgressiveCredit + taxMinor - couponsMinor - creditNotesMinor,
     walletFeeBuckets(lines, invoiceTaxes),
   );
   const prepaidCreditMinor = walletAllocations.reduce(
     (total, allocation) => safeAdd(total, allocation.amountMinor),
     0,
   );
-  const creditsMinor = safeAdd(safeAdd(couponsMinor, creditNotesMinor), prepaidCreditMinor);
+  const creditsMinor = safeAdd(
+    progressiveBillingCreditMinor,
+    safeAdd(safeAdd(couponsMinor, creditNotesMinor), prepaidCreditMinor),
+  );
   return {
     subtotalMinor,
+    progressiveBillingCreditMinor,
     couponCredits,
     couponsMinor,
     invoiceTaxes,
@@ -443,7 +471,11 @@ export async function calculateSubscriptionInvoice(
     throw new Error("invalid_billing_period");
   }
   const calculationPeriodEnd =
-    options.context === "termination" ? options.window.usagePeriodEnd : periodEnd;
+    options.context === "termination"
+      ? options.window.usagePeriodEnd
+      : options.context === "progressive"
+        ? options.calculatedThrough
+        : periodEnd;
   const calculationPeriodEndMs = Date.parse(calculationPeriodEnd);
   if (!Number.isFinite(calculationPeriodEndMs) || calculationPeriodEndMs <= periodStartMs) {
     throw new Error("invalid_calculation_period");
@@ -451,7 +483,7 @@ export async function calculateSubscriptionInvoice(
   const cycleKey =
     options.context === "renewal"
       ? `${subscription.id}:${periodStart}:${periodEnd}`
-      : `${subscription.id}:${periodStart}:${calculationPeriodEnd}:termination`;
+      : `${subscription.id}:${periodStart}:${calculationPeriodEnd}:${options.context}`;
   const nextEnd = followingPeriodEnd(
     new Date(periodEnd),
     subscription.interval,
@@ -469,9 +501,9 @@ export async function calculateSubscriptionInvoice(
         ? nextEnd
         : periodEnd;
   const lines: SubscriptionInvoiceLine[] = [];
-  let includePlanLine = !(
-    options.context === "termination" && subscription.plan_pay_in_advance === 1
-  );
+  let includePlanLine =
+    options.context !== "progressive" &&
+    !(options.context === "termination" && subscription.plan_pay_in_advance === 1);
   let renewalProration: { billableDays: number; fullPeriodDays: number } | null = null;
   if (options.context === "renewal" && subscription.trial_end_at) {
     const trialEndMs = Date.parse(subscription.trial_end_at);
@@ -710,9 +742,12 @@ export async function calculateSubscriptionInvoice(
       });
     }
     const chargeLines = lines.slice(chargeLineStart);
-    const minimum = proratedChargeMinimum(charge.min_amount_minor, options);
+    const minimum =
+      options.context === "progressive"
+        ? Decimal.zero()
+        : proratedChargeMinimum(charge.min_amount_minor, options);
     const usedRounded = chargeLines.reduce((sum, line) => safeAdd(sum, line.rounded), 0);
-    if (Decimal.parse(usedRounded).compare(minimum) < 0) {
+    if (options.context !== "progressive" && Decimal.parse(usedRounded).compare(minimum) < 0) {
       const usedPrecise = chargeLines.reduce(
         (sum, line) => sum.add(Decimal.parse(line.precise)),
         Decimal.zero(),
@@ -751,6 +786,27 @@ export async function calculateSubscriptionInvoice(
         }),
       });
     }
+  }
+
+  if (options.context === "progressive") {
+    return {
+      lines,
+      subtotalMinor,
+      progressiveBillingCreditMinor: 0,
+      progressiveBillingCreditInvoiceId: null,
+      progressiveBillingCreditExcessMinor: 0,
+      couponCredits: [],
+      couponsMinor: 0,
+      invoiceTaxes: [],
+      taxMinor: 0,
+      creditNoteAllocations: [],
+      creditNotesMinor: 0,
+      walletAllocations: [],
+      prepaidCreditMinor: 0,
+      creditsMinor: 0,
+      totalDueMinor: subtotalMinor,
+      nextPeriodEnd: calculationPeriodEnd,
+    };
   }
 
   const fixedChargePeriods = [
@@ -884,16 +940,26 @@ export async function calculateSubscriptionInvoice(
     });
   }
 
+  const progressiveCredit = await progressiveCreditForLines(
+    database,
+    subscription.id,
+    periodStart,
+    periodEnd,
+    lines,
+  );
   const allocations = await calculateInvoiceAllocations(
     database,
     subscription,
     invoiceId,
     lines,
     options.context === "termination" ? options.additionalCreditNote : undefined,
+    progressiveCredit?.appliedCreditMinor ?? 0,
   );
   return {
     lines,
     ...allocations,
+    progressiveBillingCreditInvoiceId: progressiveCredit?.invoiceId ?? null,
+    progressiveBillingCreditExcessMinor: progressiveCredit?.excessCreditMinor ?? 0,
     nextPeriodEnd: options.context === "renewal" ? nextEnd : calculationPeriodEnd,
   };
 }
@@ -1347,7 +1413,7 @@ function targetWalletEventGroups(
 
 function proratedChargeMinimum(minimumMinor: number, options: SubscriptionInvoiceOptions): Decimal {
   const minimum = Decimal.parse(minimumMinor);
-  if (options.context === "renewal") return minimum;
+  if (options.context !== "termination") return minimum;
   return minimum
     .multiply(Decimal.parse(options.window.billableDays))
     .divideByInteger(BigInt(options.window.fullPeriodDays));

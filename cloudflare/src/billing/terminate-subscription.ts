@@ -5,6 +5,7 @@ import { couponCreditStatements } from "./coupon-credits";
 import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
 import { paymentDueDate } from "./payment-terms";
+import { prepareProgressiveCreditNote } from "./progressive-credit";
 import {
   preparePayInAdvanceTerminationCredit,
   terminatePayInAdvanceWithCredit,
@@ -78,6 +79,19 @@ export async function terminateSubscriptionWithInvoice(
       : undefined,
   );
   const now = terminatedAt;
+  const correctionCreditNote =
+    !draft &&
+    calculation.progressiveBillingCreditInvoiceId &&
+    calculation.progressiveBillingCreditExcessMinor > 0
+      ? await prepareProgressiveCreditNote(env.BILLING_DB, {
+          organizationId: subscription.organization_id,
+          sourceInvoiceId: calculation.progressiveBillingCreditInvoiceId,
+          amountMinor: calculation.progressiveBillingCreditExcessMinor,
+          correctionInvoiceId: invoiceId,
+          createdAt: now,
+          correlationId,
+        })
+      : null;
   const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
   const terminationDate = terminatedAt.slice(0, 10);
   const issuingDate = shiftCalendarDate(terminationDate, subscription.invoice_grace_period);
@@ -181,6 +195,10 @@ export async function terminateSubscriptionWithInvoice(
           ),
         ]
       : []),
+    ...(correctionCreditNote?.statements ?? []),
+    ...(correctionCreditNote
+      ? [outboxStatement(env.BILLING_DB, subscription.organization_id, correctionCreditNote.event)]
+      : []),
   ];
   const statements: D1PreparedStatement[] = [
     ...creditCreationStatements,
@@ -191,9 +209,9 @@ export async function terminateSubscriptionWithInvoice(
         finalized_at, issuing_date, created_at, updated_at, coupons_minor, prepaid_credit_minor,
        credit_notes_minor, net_payment_term, payment_due_date, payment_overdue,
         expected_finalization_date, applied_grace_period, ready_to_be_refreshed,
-        last_refreshed_at)
+        last_refreshed_at, progressive_billing_credit_minor)
        SELECT ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-              0, ?, ?, 0, ?
+              0, ?, ?, 0, ?, ?
        FROM subscriptions
        WHERE id = ? AND organization_id = ? AND version = ?
          AND status IN ('active', 'past_due')`,
@@ -221,6 +239,7 @@ export async function terminateSubscriptionWithInvoice(
       issuingDate,
       subscription.invoice_grace_period,
       draft ? now : null,
+      calculation.progressiveBillingCreditMinor,
       subscription.id,
       subscription.organization_id,
       expectedVersion,
@@ -265,6 +284,23 @@ export async function terminateSubscriptionWithInvoice(
       terminatedAt,
       now,
     ),
+    ...(calculation.progressiveBillingCreditInvoiceId &&
+    calculation.progressiveBillingCreditMinor > 0
+      ? [
+          env.BILLING_DB.prepare(
+            `INSERT INTO progressive_billing_credits
+             (invoice_id, progressive_invoice_id, organization_id, subscription_id,
+              amount_minor, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+          ).bind(
+            invoiceId,
+            calculation.progressiveBillingCreditInvoiceId,
+            subscription.organization_id,
+            subscription.id,
+            calculation.progressiveBillingCreditMinor,
+            now,
+          ),
+        ]
+      : []),
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
        SET status = 'canceled', canceled_at = ?, version = version + 1, updated_at = ?
@@ -335,6 +371,7 @@ export async function terminateSubscriptionWithInvoice(
   }
   if (publishImmediately) {
     if (unusedCredit?.creditNoteEvent) await env.DOMAIN_EVENTS.send(unusedCredit.creditNoteEvent);
+    if (correctionCreditNote) await env.DOMAIN_EVENTS.send(correctionCreditNote.event);
     await env.DOMAIN_EVENTS.send(invoiceEvent);
     await env.DOMAIN_EVENTS.send(subscriptionEvent);
   }

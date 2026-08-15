@@ -8,6 +8,7 @@ import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
 import { paymentDueDate } from "./payment-terms";
 import { firstPeriodEnd, localDateString } from "./periods";
+import { prepareProgressiveCreditNote } from "./progressive-credit";
 import {
   calculateInitialSubscriptionInvoice,
   calculateInvoiceAllocations,
@@ -171,10 +172,14 @@ export async function closeBillingPeriod(
         pendingDowngrade,
         invoiceId,
         lines,
+        undefined,
+        calculation.progressiveBillingCreditMinor,
       );
       calculation = {
         lines,
         ...allocations,
+        progressiveBillingCreditInvoiceId: calculation.progressiveBillingCreditInvoiceId,
+        progressiveBillingCreditExcessMinor: calculation.progressiveBillingCreditExcessMinor,
         nextPeriodEnd: pendingDowngrade.current_period_end,
       };
     }
@@ -190,10 +195,24 @@ export async function closeBillingPeriod(
       walletAllocations,
       prepaidCreditMinor,
       creditsMinor,
+      progressiveBillingCreditMinor,
+      progressiveBillingCreditInvoiceId,
+      progressiveBillingCreditExcessMinor,
       totalDueMinor: totalDue,
       nextPeriodEnd: nextEnd,
     } = calculation;
     const draft = subscription.invoice_grace_period > 0;
+    const correctionCreditNote =
+      !draft && progressiveBillingCreditInvoiceId && progressiveBillingCreditExcessMinor > 0
+        ? await prepareProgressiveCreditNote(env.BILLING_DB, {
+            organizationId: subscription.organization_id,
+            sourceInvoiceId: progressiveBillingCreditInvoiceId,
+            amountMinor: progressiveBillingCreditExcessMinor,
+            correctionInvoiceId: invoiceId,
+            createdAt: now,
+            correlationId,
+          })
+        : null;
     const invoiceNumber = invoiceId.replaceAll("-", "").slice(0, 20).toUpperCase();
     const billingDate = localDateString(new Date(periodEnd), subscription.billing_timezone);
     const issuingDate = shiftCalendarDate(billingDate, -1);
@@ -308,6 +327,16 @@ export async function closeBillingPeriod(
           ),
         );
     const statements: D1PreparedStatement[] = [
+      ...(correctionCreditNote?.statements ?? []),
+      ...(correctionCreditNote
+        ? [
+            outboxStatement(
+              env.BILLING_DB,
+              subscription.organization_id,
+              correctionCreditNote.event,
+            ),
+          ]
+        : []),
       env.BILLING_DB.prepare(
         `INSERT INTO invoices
          (id, organization_id, customer_id, subscription_id, number, status, payment_status,
@@ -315,9 +344,9 @@ export async function closeBillingPeriod(
           finalized_at, issuing_date, created_at, updated_at, coupons_minor, prepaid_credit_minor,
           credit_notes_minor, net_payment_term, payment_due_date, payment_overdue,
           expected_finalization_date, applied_grace_period, ready_to_be_refreshed,
-          last_refreshed_at)
+          last_refreshed_at, progressive_billing_credit_minor)
          VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0,
-                 ?, ?, 0, ?)`,
+                 ?, ?, 0, ?, ?)`,
       ).bind(
         invoiceId,
         subscription.organization_id,
@@ -342,6 +371,7 @@ export async function closeBillingPeriod(
         expectedFinalizationDate,
         subscription.invoice_grace_period,
         draft ? now : null,
+        progressiveBillingCreditMinor,
       ),
       ...subscriptionInvoiceLineStatements(env.BILLING_DB, invoiceId, cycleId, lines, now),
       ...couponStatements,
@@ -460,6 +490,22 @@ export async function closeBillingPeriod(
               now,
             ),
           ]),
+      ...(progressiveBillingCreditInvoiceId && progressiveBillingCreditMinor > 0
+        ? [
+            env.BILLING_DB.prepare(
+              `INSERT INTO progressive_billing_credits
+               (invoice_id, progressive_invoice_id, organization_id, subscription_id,
+                amount_minor, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+            ).bind(
+              invoiceId,
+              progressiveBillingCreditInvoiceId,
+              subscription.organization_id,
+              subscription.id,
+              progressiveBillingCreditMinor,
+              now,
+            ),
+          ]
+        : []),
       env.BILLING_DB.prepare(
         `UPDATE billing_cycles
          SET status = 'closed', invoice_id = ?, lease_expires_at = NULL, closed_at = ?, updated_at = ?
@@ -484,7 +530,9 @@ export async function closeBillingPeriod(
     ];
     const results = await env.BILLING_DB.batch(statements);
     if (!draft) {
-      const firstCouponUpdate = 2 + lines.length;
+      const correctionPrefixCount =
+        (correctionCreditNote?.statements.length ?? 0) + (correctionCreditNote ? 1 : 0);
+      const firstCouponUpdate = correctionPrefixCount + 2 + lines.length;
       for (let offset = 0; offset < couponCredits.length; offset += 1) {
         const update = results[firstCouponUpdate + offset * 3];
         if (!update || update.meta.changes < 1) throw new Error("coupon_version_conflict");
@@ -499,7 +547,13 @@ export async function closeBillingPeriod(
           .bind(subscription.id, pendingDowngrade.id)
           .first<{ previous_status: string; next_status: string }>()
       : null;
-    const subscriptionUpdate = pendingDowngrade ? null : results[results.length - 4];
+    const subscriptionUpdate = pendingDowngrade
+      ? null
+      : results[
+          results.length -
+            4 -
+            (progressiveBillingCreditInvoiceId && progressiveBillingCreditMinor > 0 ? 1 : 0)
+        ];
     if (
       pendingDowngrade
         ? state?.previous_status !== "terminated" || state.next_status !== "active"
@@ -508,6 +562,7 @@ export async function closeBillingPeriod(
       throw new Error("billing_period_changed");
     }
     await Promise.all([
+      ...(correctionCreditNote ? [env.DOMAIN_EVENTS.send(correctionCreditNote.event)] : []),
       env.DOMAIN_EVENTS.send(domainEvent),
       ...(terminatedEvent ? [env.DOMAIN_EVENTS.send(terminatedEvent)] : []),
       ...(startedEvent ? [env.DOMAIN_EVENTS.send(startedEvent)] : []),

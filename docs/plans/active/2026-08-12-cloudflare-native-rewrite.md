@@ -2328,3 +2328,20 @@ resource and mutation described.
   post-deploy aggregate-only audit remained empty apart from 308 schedule runs. All three external-
   action flags remain `0`; no production route/domain, secret, provider action, customer data,
   payment action, or billing row changed.
+- 2026-08-15: Ported Lago's plan/subscription usage-threshold and progressive-billing path to the
+  existing Worker stack. Migration `0055_progressive_usage_thresholds.sql` adds strict D1 ownership,
+  applied-threshold evidence, cumulative progressive-invoice markers, and explicit credit links.
+  Plan and subscription create/update APIs validate fixed/recurring threshold sets, preserve
+  omit-versus-clear behavior, expose subscription override/plan fallback, and carry supplied
+  thresholds atomically through pending updates, upgrades, and queued downgrades. The existing
+  lifetime projection drives exact legacy fixed/recurring crossing math in deterministic
+  per-subscription Workflow steps. Progressive invoices contain cumulative usage only and skip
+  charge minimums; each later progressive, periodic, termination, plan-change, or refreshed draft
+  invoice credits the latest cumulative amount before coupon/tax allocation. A source or downward
+  correction creates a deterministic finalized credit note against the latest progressive invoice
+  in the same D1 batch, with item and outbox evidence. Independent SQLite replay found 72 tables,
+  11 threshold columns, 10 progressive-marker columns, seven applied-threshold columns, 16 relevant
+  indexes, and zero foreign-key violations. Strict format/lint, generated-inventory freshness,
+  Wrangler bindings, TypeScript, and the dry build pass; all 228 tests across 42 files pass serially
+  in 138.36 seconds. The dry-run bundle is 1130.41 KiB (196.38 KiB gzip). Dedicated
+  usage-monitoring alerts and the operator progressive-billing UI remain later contracts.

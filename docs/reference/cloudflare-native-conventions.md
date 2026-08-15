@@ -255,6 +255,16 @@ Required evidence for a new aggregate or a boundary change:
   trial owner plus local-day proration described above. Ordinary `store-new` checkout retains its
   verified full initial base amount even though its omitted billing-time field now resolves to
   Lago's `calendar` default.
+- Progressive billing thresholds are tenant-scoped D1 rows owned by exactly one plan or
+  subscription. Any active subscription thresholds override its plan thresholds; omission on an
+  in-place update preserves the current set, while an explicit empty array clears it. Fixed
+  thresholds cross once and the single recurring threshold crosses by exact lifetime-usage
+  remainder. The Workflow creates cumulative usage-only invoices without charge-minimum,
+  commitment, fixed, or base-plan lines. A later progressive, periodic, termination, or plan-change
+  invoice credits the latest cumulative amount before coupons and tax. If the newly eligible amount
+  is smaller, the same D1 transaction issues a deterministic finalized credit note against the
+  latest progressive invoice and preserves its available balance for ordinary allocation. Marker,
+  applied-threshold, credit-link, invoice, and outbox rows are one atomic replay boundary.
 - Provider reads, payment mutations, and outbound webhook delivery are implemented only behind
   disabled safety gates in the isolated stack.
 - Manual invoice custom sections have a tenant-scoped REST catalog equivalent for the retained
@@ -277,8 +287,8 @@ Required evidence for a new aggregate or a boundary change:
   that opts into event `target_wallet_code` groups and rates targeted/untargeted usage separately;
   the explicit target takes precedence in the shared matcher. Missing targets preserve the event
   and write one `event.error`; opt-out charges retain ordinary aggregation and allocation. Paid,
-  target-recurring, payment-method, progressive-billing, and dedicated-organization behavior
-  remains guarded. Multi-billing-entity routing, system-generated sections, and a broader operator
-  UI remain pending.
+  target-recurring, payment-method, and dedicated-organization behavior remains guarded.
+  Multi-billing-entity routing, system-generated sections, dedicated usage-monitoring alerts, and a
+  broader operator UI remain pending.
 - Advanced tax providers, multi-provider payment behavior, refunds, and several document families
   remain explicitly unsupported or incomplete in the generated feature inventory.

@@ -263,6 +263,16 @@ function extractOperatorSurface(frontRoot) {
 
 const portRules = [
   {
+    pattern: /usage_threshold|progressive_billing|lifetime_usages\/check_thresholds/i,
+    target:
+      "cloudflare/src/usage/thresholds.ts, cloudflare/src/billing/progressive-billing.ts, and cloudflare/src/billing/progressive-credit.ts",
+    evidence: [
+      "cloudflare/test/usage-thresholds.test.ts",
+      "cloudflare/test/progressive-billing.test.ts",
+      "cloudflare/test/subscription-plan-change.test.ts",
+    ],
+  },
+  {
     pattern:
       /app\/(?:models\/(?:applied_invoice_custom_section|invoice_custom_section|(?:billing_entity|customer|subscription)\/applied_invoice_custom_section)\.rb|services\/(?:customers\/manage_invoice_custom_sections_service|invoice_custom_sections\/(?:attach_to_resource|create|deselect_all|destroy|update)_service|invoices\/apply_invoice_custom_sections_service)\.rb|serializers\/v1\/(?:applied_invoice_custom_section_serializer|invoice_custom_section_serializer|invoices\/applied_invoice_custom_section_serializer)\.rb|graphql\/.*invoice_custom_section)/i,
     target:

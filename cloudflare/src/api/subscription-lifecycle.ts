@@ -27,9 +27,19 @@ import {
   normalizeEndingAt,
   normalizeSubscriptionAt,
 } from "../subscriptions/time";
+import {
+  applicableUsageThresholds,
+  normalizeUsageThresholdInputs,
+  ownedUsageThresholds,
+  prepareUsageThresholds,
+  serializeUsageThreshold,
+  type PreparedUsageThreshold,
+} from "../usage/thresholds";
 
 type SubscriptionRow = {
   id: string;
+  organization_id: string;
+  plan_id: string;
   external_id: string;
   customer_id: string;
   customer_external_id: string;
@@ -114,6 +124,7 @@ async function updateSubscription(
           "on_termination_invoice",
           "payment_method",
           "invoice_custom_section",
+          "usage_thresholds",
         ]
       : [
           "name",
@@ -122,6 +133,7 @@ async function updateSubscription(
           "on_termination_invoice",
           "payment_method",
           "invoice_custom_section",
+          "usage_thresholds",
         ];
   const unsupported = Object.keys(input).find((key) => !allowed.includes(key));
   if (unsupported)
@@ -130,6 +142,10 @@ async function updateSubscription(
       "unsupported_subscription_feature",
       `${unsupported} update is not implemented by the Cloudflare subscription lifecycle`,
     );
+  const usageThresholdInputs =
+    input.usage_thresholds === undefined
+      ? null
+      : normalizeUsageThresholdInputs(input.usage_thresholds);
   const name = input.name === undefined ? subscription.name : optionalString(input, "name");
   const paymentMethod = normalizeSubscriptionPaymentMethod(input.payment_method);
   const paymentMethodType =
@@ -151,6 +167,16 @@ async function updateSubscription(
   );
   const nowDate = new Date();
   const now = nowDate.toISOString();
+  const replacementUsageThresholds =
+    usageThresholdInputs === null
+      ? null
+      : await prepareUsageThresholds(
+          "subscription",
+          auth.organizationId,
+          subscription.id,
+          subscription.version + 1,
+          usageThresholdInputs,
+        );
   let subscriptionAt = subscription.subscription_at;
   if (input.subscription_at !== undefined) {
     subscriptionAt = normalizeSubscriptionAt(input.subscription_at);
@@ -214,6 +240,13 @@ async function updateSubscription(
     subscription.version + 1,
     subscription.status,
   );
+  const usageThresholdStatements = guardedSubscriptionUsageThresholdStatements(
+    env.BILLING_DB,
+    auth.organizationId,
+    subscription,
+    replacementUsageThresholds,
+    now,
+  );
   const results = await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
@@ -239,6 +272,7 @@ async function updateSubscription(
       subscription.status,
     ),
     ...sectionStatements,
+    ...usageThresholdStatements,
     env.BILLING_DB.prepare(
       `INSERT INTO outbox_events
        (event_id, organization_id, event_type, event_version, aggregate_type,
@@ -264,7 +298,14 @@ async function updateSubscription(
   ]);
   if (
     (results[0]?.meta.changes ?? 0) < 1 ||
-    results[1 + sectionStatements.length]?.meta.changes !== 1
+    results[1 + sectionStatements.length + usageThresholdStatements.length]?.meta.changes !== 1 ||
+    (replacementUsageThresholds !== null &&
+      results
+        .slice(
+          2 + sectionStatements.length,
+          2 + sectionStatements.length + replacementUsageThresholds.length,
+        )
+        .some((result) => result.meta.changes !== 1))
   )
     throw new ApiError(409, "subscription_version_conflict", "Subscription changed concurrently");
   await env.DOMAIN_EVENTS.send(event);
@@ -274,6 +315,65 @@ async function updateSubscription(
     { subscription: await serializeSubscription(env.BILLING_DB, updated) },
     { requestId },
   );
+}
+
+function guardedSubscriptionUsageThresholdStatements(
+  database: D1Database,
+  organizationId: string,
+  subscription: SubscriptionRow,
+  thresholds: PreparedUsageThreshold[] | null,
+  now: string,
+): D1PreparedStatement[] {
+  if (thresholds === null) return [];
+  const guard = `EXISTS (
+    SELECT 1 FROM subscriptions
+    WHERE id = ? AND organization_id = ? AND version = ? AND status = ? AND updated_at = ?
+  )`;
+  return [
+    database
+      .prepare(
+        `UPDATE usage_thresholds
+         SET deleted_at = ?, version = version + 1, updated_at = ?
+         WHERE organization_id = ? AND subscription_id = ? AND deleted_at IS NULL
+           AND ${guard}`,
+      )
+      .bind(
+        now,
+        now,
+        organizationId,
+        subscription.id,
+        subscription.id,
+        organizationId,
+        subscription.version + 1,
+        subscription.status,
+        now,
+      ),
+    ...thresholds.map((threshold) =>
+      database
+        .prepare(
+          `INSERT INTO usage_thresholds
+           (id, organization_id, plan_id, subscription_id, amount_minor, recurring,
+            threshold_display_name, version, deleted_at, created_at, updated_at)
+           SELECT ?, ?, NULL, ?, ?, ?, ?, 1, NULL, ?, ?
+           WHERE ${guard}`,
+        )
+        .bind(
+          threshold.id,
+          organizationId,
+          subscription.id,
+          threshold.amountMinor,
+          threshold.recurring,
+          threshold.displayName,
+          now,
+          now,
+          subscription.id,
+          organizationId,
+          subscription.version + 1,
+          subscription.status,
+          now,
+        ),
+    ),
+  ];
 }
 
 function subscriptionCustomSectionUpdate(
@@ -558,7 +658,8 @@ async function cancelPendingSubscription(
 }
 
 function subscriptionSelect(): string {
-  return `SELECT s.id, s.external_id, s.customer_id, c.external_id AS customer_external_id,
+  return `SELECT s.id, s.organization_id, s.plan_id, s.external_id, s.customer_id,
+                 c.external_id AS customer_external_id,
                  p.code AS plan_code, p.amount_minor AS plan_amount_minor, p.interval AS plan_interval,
                  p.currency AS plan_currency, p.pay_in_advance AS plan_pay_in_advance,
                  COALESCE(c.invoice_grace_period, o.invoice_grace_period) AS invoice_grace_period,
@@ -618,6 +719,17 @@ async function serializeSubscription(
   subscription: SubscriptionRow,
   appliedSections?: SerializedAppliedCustomSection[],
 ): Promise<Record<string, unknown>> {
+  const [usageThresholds, applicableThresholds] = await Promise.all([
+    ownedUsageThresholds(database, subscription.organization_id, {
+      subscriptionId: subscription.id,
+    }),
+    applicableUsageThresholds(
+      database,
+      subscription.organization_id,
+      subscription.id,
+      subscription.plan_id,
+    ),
+  ]);
   return {
     lago_id: subscription.id,
     external_id: subscription.external_id,
@@ -652,6 +764,8 @@ async function serializeSubscription(
     skip_invoice_custom_sections: subscription.skip_invoice_custom_sections === 1,
     applied_invoice_custom_sections:
       appliedSections ?? (await serializeAppliedCustomSections(database, subscription.id)),
+    usage_thresholds: usageThresholds.map(serializeUsageThreshold),
+    applicable_usage_thresholds: applicableThresholds.map(serializeUsageThreshold),
   };
 }
 

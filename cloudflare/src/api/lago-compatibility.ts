@@ -62,6 +62,14 @@ import {
   normalizeEndingAt,
   normalizeSubscriptionAt,
 } from "../subscriptions/time";
+import {
+  applicableUsageThresholds,
+  normalizeUsageThresholdInputs,
+  ownedUsageThresholds,
+  prepareUsageThresholds,
+  serializeUsageThreshold,
+  usageThresholdInsertStatements,
+} from "../usage/thresholds";
 
 type CustomerRow = {
   id: string;
@@ -83,6 +91,7 @@ type CustomerRow = {
 
 type SubscriptionRow = {
   id: string;
+  organization_id: string;
   external_id: string;
   customer_id: string;
   customer_external_id: string;
@@ -678,6 +687,7 @@ async function createSubscription(
   const body = await parseJsonObject(request);
   const input = objectAt(body, "subscription");
   rejectUnsupportedSubscriptionCreate(input, body);
+  const usageThresholdInputs = normalizeUsageThresholdInputs(input.usage_thresholds);
   const externalCustomerId = requiredString(input, "external_customer_id");
   const externalId = requiredString(input, "external_id");
   const planCode = requiredString(input, "plan_code");
@@ -701,6 +711,7 @@ async function createSubscription(
   if (onTerminationInvoice) requestIdentity.onTerminationInvoice = onTerminationInvoice;
   if (paymentMethod !== undefined) requestIdentity.paymentMethod = paymentMethod;
   if (customSections !== undefined) requestIdentity.invoiceCustomSection = customSections;
+  if (input.usage_thresholds !== undefined) requestIdentity.usageThresholds = usageThresholdInputs;
   const requestHash = await sha256Hex(JSON.stringify(requestIdentity));
 
   const existing = await findSubscription(database, auth.organizationId, externalId);
@@ -786,6 +797,7 @@ async function createSubscription(
         paymentMethodType: paymentMethod?.paymentMethodType,
         customSectionIds,
         skipInvoiceCustomSections: customSections?.skip,
+        usageThresholds: input.usage_thresholds === undefined ? undefined : usageThresholdInputs,
       });
       const responseSubscription = await findSubscriptionById(
         database,
@@ -832,6 +844,20 @@ async function createSubscription(
   const netPaymentTerm = customer.net_payment_term ?? organizationBilling?.net_payment_term ?? 0;
   const commandKey = `${auth.organizationId}:${externalId}`;
   const subscriptionId = await deterministicUuid("subscription", commandKey);
+  const usageThresholds = await prepareUsageThresholds(
+    "subscription",
+    auth.organizationId,
+    subscriptionId,
+    1,
+    usageThresholdInputs,
+  );
+  const usageThresholdStatements = usageThresholdInsertStatements(
+    database,
+    auth.organizationId,
+    { subscriptionId },
+    usageThresholds,
+    timestamp,
+  );
   const effectiveStart = subscriptionAt ?? timestamp;
   const futureActivation = subscriptionAt !== null && Date.parse(subscriptionAt) > now.getTime();
   const backdated =
@@ -913,6 +939,7 @@ async function createSubscription(
             paymentMethod?.paymentMethodId ?? null,
             customSections?.skip === true ? 1 : 0,
           ),
+        ...usageThresholdStatements,
         ...customSectionLinkStatements(
           database,
           auth.organizationId,
@@ -1065,6 +1092,7 @@ async function createSubscription(
             paymentMethod?.paymentMethodId ?? null,
             customSections?.skip === true ? 1 : 0,
           ),
+        ...usageThresholdStatements,
         ...customSectionLinkStatements(
           database,
           auth.organizationId,
@@ -1264,6 +1292,7 @@ async function createSubscription(
           paymentMethod?.paymentMethodId ?? null,
           customSections?.skip === true ? 1 : 0,
         ),
+      ...usageThresholdStatements,
       database
         .prepare(
           `INSERT INTO invoices
@@ -1405,7 +1434,7 @@ async function createSubscription(
     }
     const results = await database.batch(statements);
     if (!draft) {
-      const firstCouponUpdate = 3 + calculation.lines.length;
+      const firstCouponUpdate = 3 + calculation.lines.length + usageThresholdStatements.length;
       for (let offset = 0; offset < calculation.couponCredits.length; offset += 1) {
         const update = results[firstCouponUpdate + offset * 3];
         if (!update || update.meta.changes < 1) throw new Error("coupon_version_conflict");
@@ -1487,7 +1516,6 @@ function rejectUnsupportedSubscriptionCreate(
     "billing_entity_id",
     "progressive_billing_disabled",
     "activation_rules",
-    "usage_thresholds",
     "plan_overrides",
   ]) {
     if (input[field] === undefined || input[field] === null) continue;
@@ -2721,7 +2749,7 @@ async function findSubscription(
 ): Promise<SubscriptionRow | null> {
   return database
     .prepare(
-      `SELECT s.id, s.external_id, s.customer_id, s.plan_id,
+      `SELECT s.id, s.organization_id, s.external_id, s.customer_id, s.plan_id,
               c.external_id AS customer_external_id,
               p.code AS plan_code, p.amount_minor AS plan_amount_minor,
               p.currency AS plan_currency, p.interval AS plan_interval,
@@ -2763,7 +2791,7 @@ async function findSubscriptionById(
 ): Promise<SubscriptionRow | null> {
   return database
     .prepare(
-      `SELECT s.id, s.external_id, s.customer_id, s.plan_id,
+      `SELECT s.id, s.organization_id, s.external_id, s.customer_id, s.plan_id,
               c.external_id AS customer_external_id,
               p.code AS plan_code, p.amount_minor AS plan_amount_minor,
               p.currency AS plan_currency, p.interval AS plan_interval,
@@ -2921,6 +2949,17 @@ async function serializeSubscription(
   database: D1Database,
   subscription: SubscriptionRow,
 ): Promise<Record<string, unknown>> {
+  const [usageThresholds, applicableThresholds] = await Promise.all([
+    ownedUsageThresholds(database, subscription.organization_id, {
+      subscriptionId: subscription.id,
+    }),
+    applicableUsageThresholds(
+      database,
+      subscription.organization_id,
+      subscription.id,
+      subscription.plan_id,
+    ),
+  ]);
   return {
     lago_id: subscription.id,
     external_id: subscription.external_id,
@@ -2957,6 +2996,8 @@ async function serializeSubscription(
       database,
       subscription.id,
     ),
+    usage_thresholds: usageThresholds.map(serializeUsageThreshold),
+    applicable_usage_thresholds: applicableThresholds.map(serializeUsageThreshold),
   };
 }
 
@@ -2965,6 +3006,37 @@ async function serializeInvoice(
   invoice: InvoiceRow,
   appliedSections?: SerializedInvoiceCustomSection[],
 ): Promise<Record<string, unknown>> {
+  const progressive = await database
+    .prepare(
+      `SELECT marker.invoice_id, invoice.progressive_billing_credit_minor
+       FROM progressive_billing_invoices marker
+       JOIN invoices invoice ON invoice.id = marker.invoice_id
+       WHERE marker.invoice_id = ? LIMIT 1`,
+    )
+    .bind(invoice.id)
+    .first<{ invoice_id: string; progressive_billing_credit_minor: number }>();
+  const appliedThresholds = await database
+    .prepare(
+      `SELECT applied.lifetime_usage_amount_minor, applied.created_at,
+              threshold.id, threshold.amount_minor, threshold.recurring,
+              threshold.threshold_display_name, threshold.created_at AS threshold_created_at,
+              threshold.updated_at AS threshold_updated_at
+       FROM applied_usage_thresholds applied
+       JOIN usage_thresholds threshold ON threshold.id = applied.usage_threshold_id
+       WHERE applied.invoice_id = ?
+       ORDER BY threshold.recurring, threshold.amount_minor, threshold.id`,
+    )
+    .bind(invoice.id)
+    .all<{
+      lifetime_usage_amount_minor: number;
+      created_at: string;
+      id: string;
+      amount_minor: number;
+      recurring: number;
+      threshold_display_name: string | null;
+      threshold_created_at: string;
+      threshold_updated_at: string;
+    }>();
   return {
     lago_id: invoice.id,
     number: invoice.number,
@@ -2973,7 +3045,7 @@ async function serializeInvoice(
     payment_due_date: invoice.payment_due_date,
     payment_overdue: invoice.payment_overdue === 1,
     net_payment_term: invoice.net_payment_term,
-    invoice_type: invoice.invoice_type,
+    invoice_type: progressive ? "progressive_billing" : invoice.invoice_type,
     status: invoice.status,
     payment_status: invoice.payment_status,
     currency: invoice.currency,
@@ -2981,6 +3053,19 @@ async function serializeInvoice(
     taxes_amount_cents: invoice.tax_minor,
     coupons_amount_cents: invoice.coupons_minor,
     credit_notes_amount_cents: invoice.credit_notes_minor,
+    progressive_billing_credit_amount_cents: progressive?.progressive_billing_credit_minor ?? 0,
+    applied_usage_thresholds: appliedThresholds.results.map((applied) => ({
+      lifetime_usage_amount_cents: applied.lifetime_usage_amount_minor,
+      created_at: applied.created_at,
+      usage_threshold: {
+        lago_id: applied.id,
+        amount_cents: applied.amount_minor,
+        recurring: applied.recurring === 1,
+        threshold_display_name: applied.threshold_display_name,
+        created_at: applied.threshold_created_at,
+        updated_at: applied.threshold_updated_at,
+      },
+    })),
     prepaid_credit_amount_cents: invoice.prepaid_credit_minor,
     prepaid_granted_credit_amount_cents: invoice.prepaid_credit_minor,
     prepaid_purchased_credit_amount_cents: 0,

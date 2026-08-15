@@ -37,6 +37,10 @@ import {
   projectScheduledDailyUsage,
   scheduledDailyUsageCandidates,
 } from "../usage/daily-usage";
+import {
+  createProgressiveBillingInvoice,
+  progressiveBillingCandidates,
+} from "../billing/progressive-billing";
 
 type ReconciliationParams = {
   schedule?: {
@@ -151,6 +155,34 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           if (refreshed) refreshedLifetimeUsages += 1;
         } catch {
           failedLifetimeUsageRefreshes += 1;
+        }
+      }
+
+      const progressiveCandidates = await step.do(
+        "load progressive billing candidates",
+        async () =>
+          executors.has("process_subscription_activity") || executors.has("refresh_lifetime_usages")
+            ? progressiveBillingCandidates(this.env.BILLING_DB)
+            : [],
+      );
+      let progressiveInvoices = 0;
+      let failedProgressiveBillings = 0;
+      for (const candidate of progressiveCandidates) {
+        try {
+          const invoice = await step.do(
+            `bill progressive usage ${candidate.subscriptionId}`,
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () =>
+              createProgressiveBillingInvoice(
+                this.env,
+                candidate,
+                triggeredAtIso,
+                `schedule:${triggeredAt}`,
+              ),
+          );
+          if (invoice && !invoice.replayed) progressiveInvoices += 1;
+        } catch {
+          failedProgressiveBillings += 1;
         }
       }
 
@@ -389,6 +421,9 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         lifetimeUsageRefreshCandidates: lifetimeUsageCandidates.length,
         refreshedLifetimeUsages,
         failedLifetimeUsageRefreshes,
+        progressiveBillingCandidates: progressiveCandidates.length,
+        progressiveInvoices,
+        failedProgressiveBillings,
         scheduledDailyUsageCandidates: scheduledUsageCandidates.length,
         projectedScheduledDailyUsages,
         failedScheduledDailyUsages,

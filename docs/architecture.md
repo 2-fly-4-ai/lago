@@ -323,7 +323,7 @@ Lago uses Clockwork to schedule recurring jobs. The clock process runs independe
 | Activate Subscriptions | Every 5 minutes | Activates pending subscriptions | - |
 | Refresh Draft Invoices | Every 5 minutes | Updates draft invoice data | - |
 | Process Subscription Activity | Configurable (default: 1 minute) | Processes subscription activities | `LAGO_SUBSCRIPTION_ACTIVITY_PROCESSING_INTERVAL_SECONDS` |
-| Refresh Lifetime Usages | Configurable (default: 5 minutes) | Refreshes lifetime usage data | `LAGO_LIFETIME_USAGE_REFRESH_INTERVAL_SECONDS`, disable with `LAGO_DISABLE_LIFETIME_USAGE_REFRESH=true` |
+| Refresh Lifetime Usages | Configurable (default: 5 minutes) | Refreshes lifetime usage and evaluates progressive billing thresholds | D1 projection + deterministic per-subscription Workflow step |
 | Refresh Wallets Ongoing Balance | Every 5 minutes | Updates wallet balances | Requires cache configuration (`LAGO_MEMCACHE_SERVERS` or `LAGO_REDIS_CACHE_URL`), disable with `LAGO_DISABLE_WALLET_REFRESH=true` |
 | Refresh Flagged Subscriptions | Every 1 minute | Refreshes flagged subscriptions | Requires `LAGO_REDIS_STORE_URL` |
 

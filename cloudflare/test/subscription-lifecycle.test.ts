@@ -61,6 +61,99 @@ beforeEach(async () => {
 });
 
 describe("subscription lifecycle", () => {
+  it("creates and replaces subscription thresholds with plan fallback semantics", async () => {
+    const now = "2026-08-15T00:00:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, currency, metadata_json, created_at, updated_at)
+         VALUES ('customer-thresholds', 'org-lifecycle', 'customer-thresholds',
+                 'USD', '{}', ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO usage_thresholds
+         (id, organization_id, plan_id, subscription_id, amount_minor, recurring,
+          threshold_display_name, version, deleted_at, created_at, updated_at)
+         VALUES ('plan-lifecycle-threshold', 'org-lifecycle', 'plan-lifecycle', NULL,
+                 1000, 0, 'Plan threshold', 1, NULL, ?, ?)`,
+      ).bind(now, now),
+    ]);
+    await expect(apiJson("/api/v1/subscriptions/subscription-external")).resolves.toMatchObject({
+      subscription: {
+        usage_thresholds: [],
+        applicable_usage_thresholds: [
+          { lago_id: "plan-lifecycle-threshold", amount_cents: 1000, recurring: false },
+        ],
+      },
+    });
+
+    const payload = {
+      subscription: {
+        external_customer_id: "customer-thresholds",
+        external_id: "subscription-thresholds",
+        plan_code: "monthly",
+        usage_thresholds: [
+          { amount_cents: 200, recurring: false, threshold_display_name: "Override" },
+          { amount_cents: 50, recurring: true },
+        ],
+      },
+    };
+    const created = await api("/api/v1/subscriptions", "POST", payload);
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{
+      subscription: {
+        lago_id: string;
+        usage_thresholds: Array<{ lago_id: string }>;
+      };
+    }>();
+    expect(createdBody.subscription.usage_thresholds).toMatchObject([
+      { amount_cents: 200, recurring: false, threshold_display_name: "Override" },
+      { amount_cents: 50, recurring: true },
+    ]);
+    await expect(apiJson("/api/v1/subscriptions/subscription-thresholds")).resolves.toMatchObject({
+      subscription: {
+        usage_thresholds: createdBody.subscription.usage_thresholds,
+        applicable_usage_thresholds: createdBody.subscription.usage_thresholds,
+      },
+    });
+    const replay = await api("/api/v1/subscriptions", "POST", payload);
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({
+      subscription: {
+        lago_id: createdBody.subscription.lago_id,
+        usage_thresholds: createdBody.subscription.usage_thresholds,
+      },
+    });
+
+    const scalarOnly = await api("/api/v1/subscriptions/subscription-thresholds", "PUT", {
+      subscription: { name: "Threshold subscriber" },
+    });
+    expect(scalarOnly.status).toBe(200);
+    await expect(scalarOnly.json()).resolves.toMatchObject({
+      subscription: { usage_thresholds: createdBody.subscription.usage_thresholds },
+    });
+
+    const cleared = await api("/api/v1/subscriptions/subscription-thresholds", "PUT", {
+      subscription: { usage_thresholds: [] },
+    });
+    expect(cleared.status).toBe(200);
+    await expect(cleared.json()).resolves.toMatchObject({
+      subscription: {
+        usage_thresholds: [],
+        applicable_usage_thresholds: [{ lago_id: "plan-lifecycle-threshold", amount_cents: 1000 }],
+      },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active
+         FROM usage_thresholds WHERE subscription_id = ?`,
+      )
+        .bind(createdBody.subscription.lago_id)
+        .first(),
+    ).resolves.toEqual({ active: 0, total: 2 });
+  });
+
   it("updates only the safe name field with an optimistic outbox event", async () => {
     const updated = await api("/api/v1/subscriptions/subscription-external", "PUT", {
       subscription: { name: "Renamed subscription" },

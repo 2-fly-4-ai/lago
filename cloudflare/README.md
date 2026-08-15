@@ -167,8 +167,13 @@ remaining Lago feature inventory is dispositioned and ported.
   `GET` and `PUT /api/v1/subscriptions/:external_id/lifetime_usage` expose the Lago-compatible
   projection and external historical amount. The Cron Workflow drains missed activity every minute
   and rotates through retained lifetime projections every five minutes, replacing the legacy
-  Clockwork and Sidekiq fanout without Redis or a dedicated queue process. Progressive-billing
-  thresholds and usage-alert delivery remain outside this retained slice.
+  Clockwork and Sidekiq fanout without Redis or a dedicated queue process. Plan and subscription
+  APIs now own fixed and recurring usage thresholds in D1, including subscription override/fallback
+  semantics and threshold replacement across plan changes. The reconciliation Workflow checks
+  refreshed lifetime usage and creates cumulative usage-only progressive invoices with exact
+  threshold-crossing evidence. Each later progressive or final invoice credits the latest
+  cumulative invoice; a downward/source correction atomically creates a deterministic credit note
+  for the excess. Dedicated usage-monitoring alerts remain a separate, unported contract.
   The retained hourly `:15` revenue-analytics owner now writes customer-local daily snapshots to
   D1. It preserves Lago's cumulative usage and `usage_diff` JSON while also materializing exact
   per-charge cumulative and delta units, event counts, and amounts for indexed rollups. Scheduled

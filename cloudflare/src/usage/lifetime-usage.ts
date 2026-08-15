@@ -106,7 +106,7 @@ export async function refreshLifetimeUsage(
   }
 
   const existing = await findLifetimeUsage(database, organizationId, externalSubscriptionId);
-  const currentUsageMinor = await currentUsageAmountMinor(database, subscription);
+  const currentUsageMinor = await currentUsageAmountMinor(database, subscription, refreshedAt);
   const invoicedUsageMinor = await invoicedUsageAmountMinor(
     database,
     organizationId,
@@ -278,6 +278,7 @@ async function findLifetimeSubscription(
 async function currentUsageAmountMinor(
   database: D1Database,
   subscription: LifetimeSubscription,
+  calculatedThrough: string,
 ): Promise<number> {
   if (
     !["active", "past_due"].includes(subscription.status) ||
@@ -286,7 +287,9 @@ async function currentUsageAmountMinor(
   ) {
     return 0;
   }
-  const projection = await calculateCurrentUsageProjection(database, subscription);
+  const projection = await calculateCurrentUsageProjection(database, subscription, {
+    calculatedThrough,
+  });
   const amount = projection.total.round();
   const numeric = Number(amount);
   if (!Number.isSafeInteger(numeric) || numeric < 0)
@@ -307,6 +310,10 @@ async function invoicedUsageAmountMinor(
        WHERE invoice.organization_id = ?
          AND invoice.status IN ('draft', 'finalized')
          AND line.line_type = 'usage'
+         AND NOT EXISTS (
+           SELECT 1 FROM progressive_billing_invoices progressive
+           WHERE progressive.invoice_id = invoice.id
+         )
          AND EXISTS (
            SELECT 1 FROM invoice_subscriptions owned
            JOIN subscriptions lineage ON lineage.id = owned.subscription_id

@@ -6,6 +6,7 @@ import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
 import { prepareDraftTerminationCreditChanges } from "./pay-in-advance-termination-credit";
 import { paymentDueDate } from "./payment-terms";
+import { prepareProgressiveCreditNote } from "./progressive-credit";
 import {
   calculateInitialSubscriptionInvoice,
   calculateInvoiceAllocations,
@@ -130,6 +131,20 @@ export async function refreshSubscriptionDraft(
                 invoice.period_end,
               );
     const nextVersion = invoice.version + 1;
+    const correctionCreditNote =
+      finalize &&
+      calculation.progressiveBillingCreditInvoiceId &&
+      calculation.progressiveBillingCreditExcessMinor > 0
+        ? await prepareProgressiveCreditNote(env.BILLING_DB, {
+            organizationId: invoice.organization_id,
+            sourceInvoiceId: calculation.progressiveBillingCreditInvoiceId,
+            amountMinor: calculation.progressiveBillingCreditExcessMinor,
+            correctionInvoiceId: invoice.id,
+            createdAt: refreshedAt,
+            correlationId,
+            targetInvoiceGuard: { version: nextVersion, status: "finalized" },
+          })
+        : null;
     const draftTerminationCredits = await prepareDraftTerminationCreditChanges(
       env.BILLING_DB,
       invoice.id,
@@ -206,7 +221,8 @@ export async function refreshSubscriptionDraft(
       `UPDATE invoices
        SET status = ?, subtotal_minor = ?, tax_minor = ?, credits_minor = ?,
            total_due_minor = ?, coupons_minor = ?, credit_notes_minor = ?,
-           prepaid_credit_minor = ?, payment_due_date = ?, finalized_at = ?,
+           prepaid_credit_minor = ?, progressive_billing_credit_minor = ?,
+           payment_due_date = ?, finalized_at = ?,
            ready_to_be_refreshed = 0, last_refreshed_at = ?, version = version + 1,
            updated_at = ?
        WHERE id = ? AND organization_id = ? AND status = 'draft' AND version = ?`,
@@ -219,6 +235,7 @@ export async function refreshSubscriptionDraft(
       calculation.couponsMinor,
       calculation.creditNotesMinor,
       calculation.prepaidCreditMinor,
+      calculation.progressiveBillingCreditMinor,
       paymentDue,
       finalize ? refreshedAt : null,
       refreshedAt,
@@ -227,6 +244,51 @@ export async function refreshSubscriptionDraft(
       invoice.organization_id,
       invoice.version,
     );
+    const correctionStatements: D1PreparedStatement[] = [
+      ...(correctionCreditNote?.statements ?? []),
+      ...(correctionCreditNote
+        ? [
+            eventOutboxStatement(
+              env.BILLING_DB,
+              invoice.organization_id,
+              correctionCreditNote.event,
+            ),
+          ]
+        : []),
+    ];
+    const resultingStatus = finalize ? "finalized" : "draft";
+    const progressiveLinkStatements: D1PreparedStatement[] = [
+      env.BILLING_DB.prepare(
+        `DELETE FROM progressive_billing_credits
+         WHERE invoice_id = ? AND EXISTS (
+           SELECT 1 FROM invoices
+           WHERE id = ? AND organization_id = ? AND version = ? AND status = ?
+         )`,
+      ).bind(invoice.id, invoice.id, invoice.organization_id, nextVersion, resultingStatus),
+      ...(calculation.progressiveBillingCreditInvoiceId &&
+      calculation.progressiveBillingCreditMinor > 0
+        ? [
+            env.BILLING_DB.prepare(
+              `INSERT INTO progressive_billing_credits
+               (invoice_id, progressive_invoice_id, organization_id, subscription_id,
+                amount_minor, created_at)
+               SELECT ?, ?, ?, ?, ?, ? FROM invoices
+               WHERE id = ? AND organization_id = ? AND version = ? AND status = ?`,
+            ).bind(
+              invoice.id,
+              calculation.progressiveBillingCreditInvoiceId,
+              invoice.organization_id,
+              invoice.subscription_id,
+              calculation.progressiveBillingCreditMinor,
+              refreshedAt,
+              invoice.id,
+              invoice.organization_id,
+              nextVersion,
+              resultingStatus,
+            ),
+          ]
+        : []),
+    ];
     const statements: D1PreparedStatement[] = [
       env.BILLING_DB.prepare(
         `INSERT INTO invoice_mutation_guards
@@ -243,6 +305,8 @@ export async function refreshSubscriptionDraft(
         refreshedAt,
       ),
       update,
+      ...correctionStatements,
+      ...progressiveLinkStatements,
       env.BILLING_DB.prepare("DELETE FROM invoice_line_taxes WHERE invoice_id = ?").bind(
         invoice.id,
       ),
@@ -303,7 +367,11 @@ export async function refreshSubscriptionDraft(
     if (outbox?.meta.changes !== 1) throw new Error("invoice_outbox_conflict");
     if (finalize) {
       const firstCouponUpdate =
-        6 + draftTerminationCredits.beforeLineReplacement.length + calculation.lines.length;
+        6 +
+        correctionStatements.length +
+        progressiveLinkStatements.length +
+        draftTerminationCredits.beforeLineReplacement.length +
+        calculation.lines.length;
       for (let offset = 0; offset < calculation.couponCredits.length; offset += 1) {
         const couponUpdate = results[firstCouponUpdate + offset * 3];
         if (!couponUpdate || couponUpdate.meta.changes < 1) {
@@ -312,6 +380,7 @@ export async function refreshSubscriptionDraft(
       }
     }
     await env.DOMAIN_EVENTS.send(event);
+    if (correctionCreditNote) await env.DOMAIN_EVENTS.send(correctionCreditNote.event);
     for (const creditNoteEvent of draftTerminationCredits.events) {
       await env.DOMAIN_EVENTS.send(creditNoteEvent);
     }
@@ -449,13 +518,54 @@ async function calculatePlanChangeDraft(database: D1Database, invoice: DraftInvo
         ).lines
       : [];
   const lines = [...previousLines, ...startingLines];
-  const allocations = await calculateInvoiceAllocations(database, next, invoice.id, lines);
-  return { lines, ...allocations, nextPeriodEnd: invoice.next_period_end };
+  const allocations = await calculateInvoiceAllocations(
+    database,
+    next,
+    invoice.id,
+    lines,
+    undefined,
+    previousCalculation.progressiveBillingCreditMinor,
+  );
+  return {
+    lines,
+    ...allocations,
+    progressiveBillingCreditInvoiceId: previousCalculation.progressiveBillingCreditInvoiceId,
+    progressiveBillingCreditExcessMinor: previousCalculation.progressiveBillingCreditExcessMinor,
+    nextPeriodEnd: invoice.next_period_end,
+  };
 }
 
 function requireBillingCycleId(value: string | null): string {
   if (!value) throw new Error("draft_billing_cycle_not_found");
   return value;
+}
+
+function eventOutboxStatement(
+  database: D1Database,
+  organizationId: string,
+  event: DomainEvent,
+): D1PreparedStatement {
+  return database
+    .prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type,
+        aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+        occurred_at, published_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    )
+    .bind(
+      event.id,
+      organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+    );
 }
 
 function requireTerminatedAt(value: string | null): string {

@@ -2,6 +2,7 @@ import { env, introspectWorkflow, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
 import { preparePlanDeletion } from "../src/billing/plan-deletion";
+import { deterministicUuid } from "../src/identifiers";
 
 const apiKey = "plan-catalog-test-key";
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
@@ -139,6 +140,250 @@ describe("Lago-compatible plan catalog", () => {
         ],
       },
     });
+  });
+
+  it("atomically creates, serializes, and replays plan usage thresholds", async () => {
+    const payload = {
+      plan: {
+        name: "Progressive",
+        code: "progressive",
+        interval: "monthly",
+        amount_cents: 0,
+        amount_currency: "USD",
+        usage_thresholds: [
+          {
+            amount_cents: 1000,
+            recurring: false,
+            threshold_display_name: "First thousand",
+          },
+          { amount_cents: 500, recurring: true },
+        ],
+      },
+    };
+    const first = await api("/api/v1/plans", "POST", payload);
+    expect(first.status).toBe(200);
+    const firstBody = await first.json<{
+      plan: {
+        lago_id: string;
+        usage_thresholds: Array<{ lago_id: string; amount_cents: number }>;
+      };
+    }>();
+    expect(firstBody.plan.usage_thresholds).toMatchObject([
+      {
+        amount_cents: 1000,
+        recurring: false,
+        threshold_display_name: "First thousand",
+      },
+      { amount_cents: 500, recurring: true, threshold_display_name: null },
+    ]);
+    await expect(apiJson("/api/v1/plans/progressive")).resolves.toMatchObject({
+      plan: {
+        lago_id: firstBody.plan.lago_id,
+        usage_thresholds: firstBody.plan.usage_thresholds,
+        applicable_usage_thresholds: firstBody.plan.usage_thresholds,
+      },
+    });
+
+    const replay = await api("/api/v1/plans", "POST", payload);
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({
+      plan: {
+        lago_id: firstBody.plan.lago_id,
+        usage_thresholds: firstBody.plan.usage_thresholds,
+      },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total FROM usage_thresholds WHERE plan_id = ? AND deleted_at IS NULL`,
+      )
+        .bind(firstBody.plan.lago_id)
+        .first(),
+    ).resolves.toEqual({ total: 2 });
+  });
+
+  it("preserves omitted plan thresholds and atomically replaces or clears supplied sets", async () => {
+    const created = await api("/api/v1/plans", "POST", {
+      plan: {
+        name: "Mutable thresholds",
+        code: "mutable-thresholds",
+        interval: "monthly",
+        amount_cents: 0,
+        amount_currency: "USD",
+        usage_thresholds: [
+          { amount_cents: 100, recurring: false, threshold_display_name: "Original" },
+        ],
+      },
+    });
+    expect(created.status).toBe(200);
+    const original = await created.json<{
+      plan: { lago_id: string; usage_thresholds: Array<{ lago_id: string }> };
+    }>();
+    const originalThresholdId = original.plan.usage_thresholds[0]!.lago_id;
+
+    const scalarOnly = await api("/api/v1/plans/mutable-thresholds", "PUT", {
+      plan: { name: "Scalar update" },
+    });
+    expect(scalarOnly.status).toBe(200);
+    await expect(scalarOnly.json()).resolves.toMatchObject({
+      plan: { usage_thresholds: [{ lago_id: originalThresholdId, amount_cents: 100 }] },
+    });
+
+    const replaced = await api("/api/v1/plans/mutable-thresholds", "PUT", {
+      plan: {
+        name: "Replacement update",
+        usage_thresholds: [
+          { amount_cents: 250, recurring: false, threshold_display_name: "Replacement" },
+          { amount_cents: 50, recurring: true },
+        ],
+      },
+    });
+    expect(replaced.status).toBe(200);
+    const replacedBody = await replaced.json<{
+      plan: { usage_thresholds: Array<{ lago_id: string }> };
+    }>();
+    expect(replacedBody.plan.usage_thresholds).toMatchObject([
+      { amount_cents: 250, recurring: false, threshold_display_name: "Replacement" },
+      { amount_cents: 50, recurring: true },
+    ]);
+    expect(replacedBody.plan.usage_thresholds.map((threshold) => threshold.lago_id)).not.toContain(
+      originalThresholdId,
+    );
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active
+         FROM usage_thresholds WHERE plan_id = ?`,
+      )
+        .bind(original.plan.lago_id)
+        .first(),
+    ).resolves.toEqual({ active: 2, total: 3 });
+
+    const invalid = await api("/api/v1/plans/mutable-thresholds", "PUT", {
+      plan: {
+        name: "Must not persist",
+        usage_thresholds: [
+          { amount_cents: 50, recurring: true },
+          { amount_cents: 75, recurring: true },
+        ],
+      },
+    });
+    expect(invalid.status).toBe(422);
+    await expect(invalid.json()).resolves.toMatchObject({
+      code: "multiple_recurring_thresholds",
+    });
+    await expect(apiJson("/api/v1/plans/mutable-thresholds")).resolves.toMatchObject({
+      plan: { name: "Replacement update", usage_thresholds: replacedBody.plan.usage_thresholds },
+    });
+
+    const cleared = await api("/api/v1/plans/mutable-thresholds", "PUT", {
+      plan: { usage_thresholds: [] },
+    });
+    expect(cleared.status).toBe(200);
+    await expect(cleared.json()).resolves.toMatchObject({
+      plan: { usage_thresholds: [], applicable_usage_thresholds: [] },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total FROM usage_thresholds
+         WHERE plan_id = ? AND deleted_at IS NULL`,
+      )
+        .bind(original.plan.lago_id)
+        .first(),
+    ).resolves.toEqual({ total: 0 });
+  });
+
+  it("rejects invalid usage-threshold sets before persisting a plan", async () => {
+    const base = {
+      name: "Invalid thresholds",
+      interval: "monthly",
+      amount_cents: 0,
+      amount_currency: "USD",
+    };
+    const cases = [
+      {
+        code: "zero-threshold",
+        usage_thresholds: [{ amount_cents: 0, recurring: false }],
+        error: "validation_error",
+      },
+      {
+        code: "duplicate-threshold",
+        usage_thresholds: [
+          { amount_cents: 100, recurring: false },
+          { amount_cents: 100, recurring: false },
+        ],
+        error: "duplicated_values",
+      },
+      {
+        code: "multiple-recurring-thresholds",
+        usage_thresholds: [
+          { amount_cents: 100, recurring: true },
+          { amount_cents: 200, recurring: true },
+        ],
+        error: "multiple_recurring_thresholds",
+      },
+    ];
+    for (const invalid of cases) {
+      const response = await api("/api/v1/plans", "POST", {
+        plan: { ...base, code: invalid.code, usage_thresholds: invalid.usage_thresholds },
+      });
+      expect(response.status).toBe(422);
+      await expect(response.json()).resolves.toMatchObject({ code: invalid.error });
+    }
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total FROM plans
+         WHERE organization_id = 'org-plan-catalog'
+           AND code IN ('zero-threshold', 'duplicate-threshold', 'multiple-recurring-thresholds')`,
+      ).first(),
+    ).resolves.toEqual({ total: 0 });
+  });
+
+  it("rolls back the whole plan graph when an embedded threshold insert conflicts", async () => {
+    const targetPlanId = await deterministicUuid("plan", "org-plan-catalog:threshold-atomicity");
+    const collidingThresholdId = await deterministicUuid(
+      "usage-threshold",
+      `plan:org-plan-catalog:${targetPlanId}:1:0:100`,
+    );
+    const now = "2026-08-15T00:00:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO plans
+         (id, organization_id, code, name, interval, amount_minor, currency, version,
+          active, created_at, updated_at, metadata_json, pending_deletion)
+         VALUES ('plan-threshold-collision-owner', 'org-plan-catalog',
+                 'threshold-collision-owner', 'Collision owner', 'monthly', 0, 'USD', 1,
+                 1, ?, ?, '{}', 0)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO usage_thresholds
+         (id, organization_id, plan_id, subscription_id, amount_minor, recurring,
+          version, deleted_at, created_at, updated_at)
+         VALUES (?, 'org-plan-catalog', 'plan-threshold-collision-owner', NULL,
+                 999, 0, 1, NULL, ?, ?)`,
+      ).bind(collidingThresholdId, now, now),
+    ]);
+
+    const response = await api("/api/v1/plans", "POST", {
+      plan: {
+        name: "Atomic thresholds",
+        code: "threshold-atomicity",
+        interval: "monthly",
+        amount_cents: 0,
+        amount_currency: "USD",
+        usage_thresholds: [{ amount_cents: 100, recurring: false }],
+      },
+    });
+    expect(response.status).toBe(500);
+    await expect(
+      env.BILLING_DB.prepare("SELECT COUNT(*) AS total FROM plans WHERE id = ?")
+        .bind(targetPlanId)
+        .first(),
+    ).resolves.toEqual({ total: 0 });
+    await expect(
+      env.BILLING_DB.prepare("SELECT COUNT(*) AS total FROM outbox_events WHERE aggregate_id = ?")
+        .bind(targetPlanId)
+        .first(),
+    ).resolves.toEqual({ total: 0 });
   });
 
   it("fails explicitly for catalog behavior not yet implemented", async () => {
