@@ -509,6 +509,15 @@ Applied D1 migrations: `0001_foundation.sql` through
   subscriptions, invoices, and outbox rows plus 396 schedule runs, with zero foreign-key
   violations. All three external-action flags remain `0`; no customer message, production
   route/domain, secret, provider action, customer data, payment action, or billing row changed.
+- The stuck-generating-invoice recovery consolidation was code-only with no pending migration.
+  Worker version `6ef7eaf2-897a-4e7c-a5b5-ababc064d0a7` retained the existing workers.dev URL,
+  one-minute Cron, D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The dry-
+  run bundle was 1133.43 KiB (196.96 KiB gzip). Version inspection found the expected fetch,
+  scheduled, and queue handlers, and confirmed all three external-action flags remain `0`.
+  Health/readiness returned `200`/`200`, unauthenticated plan access returned `401`, and aggregate-
+  only verification found zero organizations, subscriptions, invoices, billing cycles, and outbox
+  rows plus 405 schedule runs, with zero foreign-key violations. No production route/domain,
+  secret, provider action, customer data, payment action, or billing row changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

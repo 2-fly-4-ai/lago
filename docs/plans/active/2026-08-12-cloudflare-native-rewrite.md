@@ -2394,3 +2394,11 @@ resource and mutation described.
   The retained `:30` slot now provides an additional real recovery pass without Sidekiq. Strict
   format/lint/inventory/bindings/TypeScript pass, all 232 tests across 44 files pass serially in
   144.19 seconds, and the dry-run bundle is 1133.43 KiB (196.96 KiB gzip).
+- 2026-08-15: Code-only remote preflight found no pending migration and zero organizations,
+  subscriptions, invoices, billing cycles, and outbox rows, with zero foreign-key violations.
+  Deployed only `serp-dev-lago-native` as version `6ef7eaf2-897a-4e7c-a5b5-ababc064d0a7` with the
+  unchanged one-minute Cron and resource bindings. Health/readiness returned `200`/`200`,
+  unauthenticated plan access returned `401`, and the post-deploy aggregate-only audit remained
+  empty apart from 405 schedule runs. The deployed version exposes only the expected fetch,
+  scheduled, and queue handlers, and all three external-action flags remain `0`; no production
+  route/domain, secret, provider action, customer data, payment action, or billing row changed.
