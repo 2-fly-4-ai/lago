@@ -2776,3 +2776,17 @@ resource and mutation described.
   persistence cache returned `SQLITE_BUSY` twice with no owning process; this did not affect the
   isolated fresh-D1 Workers test replay. This is a local pre-deployment checkpoint; no remote schema,
   artifact, provider, message, payment, route, secret, or customer data changed.
+- 2026-08-15: Payment-receipt-document remote preflight found exactly
+  `0066_payment_receipt_documents.sql` pending, zero receipts/payments/receipt events, zero active or
+  malformed key hashes, and no foreign-key violations. Applied only migration 0066, then verified
+  the 12-column artifact ledger, both tenant/version and immutable-identity triggers, no pending
+  migration, zero artifacts, and unchanged billing state. Deployed only the isolated Worker as
+  version `f5e9777d-c4b7-4ece-9667-0fc61dfe1d10` with a 6 ms startup and unchanged resources/flags.
+  A disposable hashed key exercised the empty receipt list, missing show/download/resend,
+  authentication, and health/readiness, then was revoked. No synthetic payment was created because
+  a remote payment mutation remained outside the approved smoke boundary; PDF rendering, R2
+  archival, checksums, private download, failure/retry, and workflow replay are covered locally.
+  Final audit found zero active/malformed keys, receipts, artifacts, receipt events, or payments,
+  718 schedule audits, and no foreign-key violations. Version inspection confirmed only fetch/
+  scheduled/queue handlers with all external-action flags at `0`. No production route/domain,
+  provider action, customer message, payment action, secret, or customer data changed.

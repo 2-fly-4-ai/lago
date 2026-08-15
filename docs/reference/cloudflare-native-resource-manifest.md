@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `04561b02-dbe9-4a8b-a71b-aa2a127a87f5`
+- Latest verified version: `f5e9777d-c4b7-4ece-9667-0fc61dfe1d10`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -36,10 +36,22 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0065_payment_receipts.sql`.
+`0066_payment_receipt_documents.sql`.
 
 ## Verified behavior
 
+- Version `f5e9777d-c4b7-4ece-9667-0fc61dfe1d10` deployed the payment-receipt PDF pipeline after
+  applying only migration `0066`. Remote verification found the 12-column artifact ledger, both
+  tenant/version and immutable-identity triggers, no pending migration, zero artifacts/receipts/
+  payments/receipt events, and no foreign-key violations. A disposable hashed key exercised the
+  empty receipt list, not-found show/download/resend, health/readiness, and authentication paths,
+  then was revoked. No remote payment was manufactured, so Browser Rendering and R2 generation
+  remain proven by the full local Workers suite rather than a remote billing mutation. The final
+  audit found zero active or malformed key hashes, zero payment/receipt/artifact state, and 718
+  schedule audits. The deployed bundle was 1300.73 KiB (226.38 KiB gzip) with a 6 ms startup;
+  version inspection confirmed only fetch/scheduled/queue handlers and all external-action flags at
+  `0`. No production route/domain, provider action, customer message, payment action, secret, or
+  customer data changed.
 - Version `04561b02-dbe9-4a8b-a71b-aa2a127a87f5` deployed the tenant-scoped payment-receipt
   list/show/filter API and atomic settlement ledger after applying only migration `0065`. Remote
   verification found 65 migrations, 12 receipt columns, the customer counter, nine state/tenant/
