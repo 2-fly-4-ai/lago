@@ -86,37 +86,34 @@ new tracked branch artifact.
 ## Target Architecture
 
 ```text
-browser / SERP services
-          |
-          v
-Cloudflare Worker API + static operator assets
-          |
-          +--> BillingAccount Durable Object
-          |      serialized monetary commands
-          |      idempotency and sequence allocation
-          |
-          +--> D1 domain databases
-          |      relational records and reporting projections
-          |
-          +--> Workflows
-          |      checkout, invoice, payment, document, retry, migration
-          |
-          +--> Queues + DLQs
-          |      events, webhooks, documents, projections, reconciliation
-          |
-          +--> R2
-          |      invoices, receipts, exports, immutable event archives
-          |
-          +--> Browser Rendering
-          |      invoice and receipt PDFs
-          |
-          +--> third-party providers
-                 Authorize.Net and other explicitly enabled integrations
+SERP services -----------------------> Cloudflare API Worker ----------------+
+browser --> Cloudflare Access ------> Cloudflare operator Worker + assets ---+
+                                                                              |
+                                                                              v
+                                                               shared billing domain bindings
+                                                                              |
+                                                                              +--> BillingAccount Durable Object
+                                                                              |      serialized monetary commands
+                                                                              |      idempotency and sequence allocation
+                                                                              |
+                                                                              +--> D1 domain databases
+                                                                              |      relational records and reporting projections
+                                                                              |
+                                                                              +--> Workflows / Queues / DLQs
+                                                                              |      retryable commands, events, projections
+                                                                              |
+                                                                              +--> R2 + Browser Rendering
+                                                                              |      invoices, receipts, exports, archives
+                                                                              |
+                                                                              +--> third-party providers
+                                                                                     explicitly enabled integrations only
 ```
 
 ### Compute ownership
 
-- Request/response APIs run in TypeScript Workers.
+- Service request/response APIs run in the TypeScript API Worker. Human browser traffic runs in a
+  separate Access-protected operator Worker so identity policy cannot intercept provider webhooks
+  or service API clients.
 - Long-running, retryable, or multi-stage work runs in Workflows.
 - High-volume, independently retryable work runs through Queues.
 - Aggregate-level serialization and strongly consistent coordination run in SQLite-backed Durable
@@ -195,7 +192,8 @@ must follow the existing `serp-dev-*` convention and remain isolated from produc
 
 Required resource classes:
 
-- one Worker deployment with separate development/staging and production environments;
+- one service API Worker and one separately Access-protected operator Worker, each with separate
+  development/staging and production environments;
 - one or more D1 databases, divided only when size, throughput, lifecycle, or ownership evidence
   justifies it;
 - a SQLite-backed Durable Object namespace for billing-account coordination;
@@ -623,6 +621,11 @@ Acceptance:
       credit-note export mutations now use an authenticated REST create/status/download lifecycle;
       completion email is retained as an explicit disabled boundary. The remaining operator
       operations and screens are still inventoried/ported individually.
+      A separate operator Worker foundation now validates Access RS256 issuer/audience/signature/
+      expiry claims, resolves only a hashed Access subject through one immutable D1 tenant/role
+      membership, and defines same-origin/CSRF mutation checks. Its configuration and readiness
+      remain disabled without an approved Access application and allow policy; it has not been
+      remotely provisioned or deployed.
 - [ ] Serve the operator application with Workers Static Assets. The direct-delivery foundation is
       complete: Wrangler serves a script-free migration shell, stylesheet, SPA fallback, and
       `_headers` policy from Static Assets while `/api/*`, health/readiness, hosted-payment, and
@@ -3112,8 +3115,10 @@ resource and mutation described.
   message, payment action, secret access, or customer-data access occurred.
 - 2026-08-16: Defined the M8 operator screen-admission and route-family policy before exposing any
   interactive asset. Current Cloudflare documentation confirms a self-hosted Access application
-  can protect a Worker directly by name and that the Worker must still validate the injected JWT.
-  The selected design keeps service API keys out of browsers, maps a validated Access subject to an
+  can protect a Worker directly by name, covers every route on that Worker, and requires the Worker
+  to still validate the injected JWT. The selected design therefore uses a separate
+  `serp-dev-lago-operator` Worker so human login does not intercept service APIs or provider
+  webhooks. It keeps service API keys out of browsers, maps a validated Access subject to an
   explicit D1 tenant/role membership, enforces same-origin/CSRF mutation checks, and fails closed
   while issuer, audience, membership, or policy configuration is absent. Provisioning remains
   pending an approved identity/group allow policy and Access configuration. The policy assigns
@@ -3123,3 +3128,25 @@ resource and mutation described.
   literal route inventory from 161 to 159 while leaving all 503 GraphQL operations unchanged. No
   runtime, migration, resource, deployment, repository outside Lago, provider action, payment
   action, customer message, secret access, customer-data access, or production operation changed.
+- 2026-08-16: Implemented the local, fail-closed M8 operator authentication foundation without
+  provisioning an identity or exposing an interactive screen. A separate
+  `serp-dev-lago-operator` dry-run config prevents human Access policy from intercepting the API
+  Worker, service clients, or provider webhooks; preview URLs are disabled and
+  `OPERATOR_ACCESS_ENABLED=0`. The operator Worker validates Access RS256 issuer, audience,
+  signature, expiry, and subject with `jose` 6.2.9, then resolves only an issuer-scoped subject hash
+  through one active D1 tenant/role membership. Migration `0070_operator_access.sql` enforces one
+  organization per identity, viewer/admin roles, revocation consistency, and immutable tenant/
+  identity fields. Mutation admission requires exact same-origin, valid fetch provenance when
+  present, an operator CSRF header, and JSON for body-bearing methods. Six focused tests cover
+  disabled/misconfigured state, claims/signature/expiry, membership/tenant isolation, schema
+  uniqueness/immutability, and CSRF/origin behavior; the package dependency audit reports no known
+  production vulnerabilities. A fresh ephemeral D1 replayed all 70 migrations with zero
+  memberships and foreign-key violations. Local Wrangler served the shell/assets and health while
+  readiness/session both returned `503 operator_access_disabled`. Strict formatting, lint,
+  inventory, both generated binding checks, and TypeScript pass; the authoritative serial suite
+  passes all 308 tests across 60 files in 197.52 seconds. The API dry bundle remains 1406.76 KiB
+  (245.92 KiB gzip); the separate operator dry bundle is 46.03 KiB (11.67 KiB gzip) with only D1,
+  environment, and disabled Access bindings. Migration 0070 was not applied remotely, the operator
+  Worker/Access application/policy were not provisioned or deployed, and no provider action,
+  payment action, customer message, secret access, customer-data access, or production operation
+  occurred.

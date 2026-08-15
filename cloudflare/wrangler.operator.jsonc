@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "serp-dev-lago-operator",
+  "account_id": "cec5f04e1d18bcc65f2be0aefb04f059",
+  "main": "src/operator/index.ts",
+  "compatibility_date": "2026-08-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+  "assets": {
+    "directory": "operator-ui",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/health", "/ready"],
+  },
+  "vars": {
+    "APP_ENV": "development",
+    "OPERATOR_ACCESS_ENABLED": "0",
+  },
+  "d1_databases": [
+    {
+      "binding": "BILLING_DB",
+      "database_name": "serp-dev-lago-native-d1",
+      "database_id": "2f32f159-c269-46c-a4dd-9e38477f5d25",
+      "migrations_dir": "migrations",
+    },
+  ],
+}

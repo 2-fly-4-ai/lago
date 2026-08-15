@@ -4,13 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "wrangler deploy --dry-run --outdir dist",
+    "build": "wrangler deploy --dry-run --outdir dist/api && wrangler deploy --config wrangler.operator.jsonc --dry-run --outdir dist/operator",
+    "build:api": "wrangler deploy --dry-run --outdir dist/api",
+    "build:operator": "wrangler deploy --config wrangler.operator.jsonc --dry-run --outdir dist/operator",
     "check": "pnpm run format:check && pnpm run lint && pnpm run inventory:check && pnpm run types:check && pnpm run typecheck && pnpm run test && pnpm run build",
     "dev": "wrangler dev --local",
+    "dev:operator": "wrangler dev --config wrangler.operator.jsonc --local",
     "documents:golden": "node scripts/render-document-goldens.mjs --check",
     "documents:golden:update": "node scripts/render-document-goldens.mjs --update",
-    "format": "oxfmt --write src test scripts operator-ui README.md vitest.config.ts wrangler.jsonc package.json pnpm-workspace.yaml",
-    "format:check": "oxfmt --check src test scripts operator-ui README.md vitest.config.ts wrangler.jsonc package.json pnpm-workspace.yaml",
+    "format": "oxfmt --write src test scripts operator-ui README.md vitest.config.ts wrangler.jsonc wrangler.operator.jsonc package.json pnpm-workspace.yaml",
+    "format:check": "oxfmt --check src test scripts operator-ui README.md vitest.config.ts wrangler.jsonc wrangler.operator.jsonc package.json pnpm-workspace.yaml",
     "inventory": "node scripts/generate-feature-inventory.mjs",
     "inventory:check": "node scripts/generate-feature-inventory.mjs --check",
     "lint": "oxlint --deny-warnings --deny typescript/no-floating-promises src test vitest.config.ts",
@@ -18,8 +21,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "types": "wrangler types worker-configuration.d.ts",
-    "types:check": "wrangler types --check worker-configuration.d.ts"
+    "types": "wrangler types worker-configuration.d.ts && wrangler types --config wrangler.operator.jsonc --env-interface OperatorBindings --include-runtime false worker-configuration.operator.d.ts",
+    "types:check": "wrangler types --check worker-configuration.d.ts && wrangler types --config wrangler.operator.jsonc --env-interface OperatorBindings --include-runtime false --check worker-configuration.operator.d.ts"
+  },
+  "dependencies": {
+    "jose": "6.2.9"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.21.2",

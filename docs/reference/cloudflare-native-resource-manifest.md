@@ -39,6 +39,17 @@ It is not a production inventory and contains no secrets or customer data.
 Applied D1 migrations: `0001_foundation.sql` through
 `0069_data_exports.sql`.
 
+## Planned but not provisioned
+
+- `serp-dev-lago-operator` exists only as the checked-in `wrangler.operator.jsonc` dry-run target.
+  It has not been created or deployed remotely. Its Access flag is `0`, issuer/audience are absent,
+  preview URLs are disabled, and no Access application or allow policy exists.
+- `0070_operator_access.sql` is locally replayed and tested but remains unapplied remotely. The
+  isolated D1 therefore has no operator-membership table or membership data yet.
+- Provisioning requires an approved Access identity/group allow policy, session duration, team
+  issuer, and application audience. The API Worker must remain outside that human Access policy so
+  existing service clients and provider webhooks are not intercepted.
+
 ## Verified behavior
 
 - Version `75370a2a-ca89-4244-ad51-f514e1dece1d` added the M8 Static Assets foundation without a

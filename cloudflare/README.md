@@ -287,6 +287,13 @@ remaining Lago feature inventory is dispositioned and ported.
   `../docs/reference/cloudflare-operator-surface-policy.md` defines screen admission, route-family
   disposition, and the fail-closed Cloudflare Access/JWT plus D1 membership design required before
   interactive assets replace the shell. Service API keys are never browser login credentials.
+- Operator authentication: a separately configured `serp-dev-lago-operator` Worker keeps human
+  Cloudflare Access policy away from service API clients and provider webhooks. It validates the
+  Access RS256 JWT issuer, audience, signature, expiry, and subject; looks up only an issuer-scoped
+  subject hash in the one-tenant D1 membership table; enforces viewer/admin roles plus same-origin/
+  CSRF mutation prerequisites; and reports readiness/session `503` while Access is disabled. The
+  Worker config contains no invented issuer, audience, identity, or membership and is not deployed
+  before an approved Access allow policy exists.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

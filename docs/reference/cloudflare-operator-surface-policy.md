@@ -45,8 +45,10 @@ remain service-to-service credentials.
 
 The selected browser architecture is:
 
-1. A Cloudflare Access self-hosted application protects `serp-dev-lago-native` directly by Worker
-   name. No custom domain or DNS change is required.
+1. A dedicated `serp-dev-lago-operator` Worker serves browser assets and its operator BFF. A
+   Cloudflare Access self-hosted application protects that Worker directly by name. No custom
+   domain or DNS change is required. `serp-dev-lago-native` remains separate so service API clients
+   and provider webhooks are not intercepted by the human login policy.
 2. The Worker independently validates `Cf-Access-Jwt-Assertion` against the configured Access team
    issuer, application audience, signature, and expiry.
 3. A D1 operator-membership record maps a stable Access subject to one organization and an explicit
@@ -94,8 +96,9 @@ operator bundle omits the route and code until a verified SERP consumer changes 
 
 1. Implement and test Access JWT validation, operator membership, role checks, origin/CSRF checks,
    and value-free audit evidence with configuration absent by default.
-2. Obtain explicit approval for the isolated Access allow policy, then provision the Worker-name
-   application and record its non-secret issuer/audience configuration.
+2. Obtain explicit approval for the isolated Access allow policy, then provision the dedicated
+   operator Worker and Worker-name application and record its non-secret issuer/audience
+   configuration. Do not deploy the operator Worker publicly before Access protects it.
 3. Ship a read-only organization/status shell and prove tenant isolation remotely with synthetic
    membership only.
 4. Add API-key metadata management, keeping one-time create/rotate values ephemeral and never
