@@ -1689,8 +1689,15 @@ async function listInvoices(
               i.payment_status, i.invoice_type, i.currency, i.subtotal_minor, i.tax_minor,
               i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
               i.total_due_minor,
-              COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
-                        WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
+              COALESCE((
+                SELECT SUM(amount_minor) FROM (
+                  SELECT p.amount_minor FROM payment_attempts p
+                  WHERE p.invoice_id = i.id AND p.status = 'succeeded'
+                  UNION ALL
+                  SELECT allocation.amount_minor FROM payment_request_payment_allocations allocation
+                  WHERE allocation.invoice_id = i.id
+                )
+              ), 0) AS total_paid_minor,
               i.net_payment_term, i.payment_due_date, i.payment_overdue,
               i.ready_for_payment_processing,
               i.issuing_date, i.expected_finalization_date,
@@ -2346,8 +2353,15 @@ export async function findInvoice(
               i.number, i.status, i.payment_status, i.invoice_type, i.currency, i.subtotal_minor,
               i.tax_minor, i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
               i.total_due_minor,
-              COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
-                        WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
+              COALESCE((
+                SELECT SUM(amount_minor) FROM (
+                  SELECT p.amount_minor FROM payment_attempts p
+                  WHERE p.invoice_id = i.id AND p.status = 'succeeded'
+                  UNION ALL
+                  SELECT allocation.amount_minor FROM payment_request_payment_allocations allocation
+                  WHERE allocation.invoice_id = i.id
+                )
+              ), 0) AS total_paid_minor,
               i.net_payment_term, i.payment_due_date, i.payment_overdue,
               i.ready_for_payment_processing,
               i.issuing_date, i.expected_finalization_date, i.version,
@@ -2610,8 +2624,15 @@ async function generateInvoicePaymentUrl(
             i.payment_status, i.invoice_type, i.currency, i.subtotal_minor, i.tax_minor,
             i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
             i.total_due_minor,
-            COALESCE((SELECT SUM(p.amount_minor) FROM payment_attempts p
-                      WHERE p.invoice_id = i.id AND p.status = 'succeeded'), 0) AS total_paid_minor,
+            COALESCE((
+              SELECT SUM(amount_minor) FROM (
+                SELECT p.amount_minor FROM payment_attempts p
+                WHERE p.invoice_id = i.id AND p.status = 'succeeded'
+                UNION ALL
+                SELECT allocation.amount_minor FROM payment_request_payment_allocations allocation
+                WHERE allocation.invoice_id = i.id
+              )
+            ), 0) AS total_paid_minor,
             i.net_payment_term, i.payment_due_date, i.payment_overdue,
             i.ready_for_payment_processing,
             i.issuing_date, i.expected_finalization_date,

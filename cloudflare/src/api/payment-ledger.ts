@@ -7,8 +7,11 @@ import { stableJson } from "../json";
 
 type PaymentRow = {
   id: string;
-  invoice_id: string;
-  invoice_number: string | null;
+  organization_id: string;
+  payable_id: string;
+  payable_type: "Invoice" | "PaymentRequest";
+  invoice_ids_json: string;
+  invoice_numbers_json: string;
   customer_id: string;
   external_customer_id: string;
   provider: string;
@@ -78,29 +81,25 @@ async function listPayments(
   const externalCustomerId =
     pathCustomerId ?? url.searchParams.get("external_customer_id")?.trim() ?? null;
   const invoiceId = url.searchParams.get("invoice_id")?.trim() || null;
-  const conditions = ["p.organization_id = ?"];
+  const conditions = ["ledger.organization_id = ?"];
   const bindings: unknown[] = [auth.organizationId];
   if (externalCustomerId) {
-    conditions.push("c.external_id = ?");
+    conditions.push("ledger.external_customer_id = ?");
     bindings.push(externalCustomerId);
   }
   if (invoiceId) {
-    conditions.push("p.invoice_id = ?");
+    conditions.push("EXISTS (SELECT 1 FROM json_each(ledger.invoice_ids_json) WHERE value = ?)");
     bindings.push(invoiceId);
   }
   const where = conditions.join(" AND ");
   const count = await database
-    .prepare(
-      `SELECT COUNT(*) AS total FROM payment_attempts p
-       JOIN invoices i ON i.id = p.invoice_id
-       JOIN customers c ON c.id = i.customer_id
-       WHERE ${where}`,
-    )
+    .prepare(`SELECT COUNT(*) AS total FROM (${paymentRows()}) ledger WHERE ${where}`)
     .bind(...bindings)
     .first<{ total: number }>();
   const rows = await database
     .prepare(
-      `${paymentSelect()} WHERE ${where} ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?`,
+      `SELECT * FROM (${paymentRows()}) ledger
+       WHERE ${where} ORDER BY ledger.created_at DESC, ledger.id DESC LIMIT ? OFFSET ?`,
     )
     .bind(...bindings, perPage, offset)
     .all<PaymentRow>();
@@ -302,14 +301,47 @@ async function recordManualPayment(
   return json({ payment: serializePayment(payment) }, { requestId });
 }
 
-function paymentSelect(): string {
-  return `SELECT p.id, p.invoice_id, i.number AS invoice_number, i.customer_id,
-                 c.external_id AS external_customer_id, p.provider, p.provider_account_code,
-                 p.provider_transaction_id, p.amount_minor, p.currency, p.status,
-                 p.payment_type, p.reference, p.version, p.created_at
-          FROM payment_attempts p
-          JOIN invoices i ON i.id = p.invoice_id
-          JOIN customers c ON c.id = i.customer_id`;
+function paymentRows(): string {
+  return `SELECT payment.id, payment.organization_id, payment.invoice_id AS payable_id,
+                 'Invoice' AS payable_type, json_array(payment.invoice_id) AS invoice_ids_json,
+                 CASE WHEN invoice.number IS NULL THEN '[]' ELSE json_array(invoice.number) END
+                   AS invoice_numbers_json,
+                 invoice.customer_id, customer.external_id AS external_customer_id,
+                 payment.provider, payment.provider_account_code,
+                 payment.provider_transaction_id, payment.amount_minor, payment.currency,
+                 payment.status, payment.payment_type, payment.reference, payment.version,
+                 payment.created_at
+          FROM payment_attempts payment
+          JOIN invoices invoice ON invoice.id = payment.invoice_id
+          JOIN customers customer ON customer.id = invoice.customer_id
+          UNION ALL
+          SELECT payment.id, payment.organization_id, payment.payment_request_id AS payable_id,
+                 'PaymentRequest' AS payable_type,
+                 COALESCE((
+                   SELECT json_group_array(invoice_id) FROM (
+                     SELECT link.invoice_id
+                     FROM invoices_payment_requests link
+                     WHERE link.payment_request_id = request.id
+                     ORDER BY link.created_at, link.invoice_id
+                   )
+                 ), '[]') AS invoice_ids_json,
+                 COALESCE((
+                   SELECT json_group_array(number) FROM (
+                     SELECT invoice.number
+                     FROM invoices_payment_requests link
+                     JOIN invoices invoice ON invoice.id = link.invoice_id
+                     WHERE link.payment_request_id = request.id AND invoice.number IS NOT NULL
+                     ORDER BY link.created_at, invoice.id
+                   )
+                 ), '[]') AS invoice_numbers_json,
+                 request.customer_id, customer.external_id AS external_customer_id,
+                 payment.provider, payment.provider_account_code,
+                 payment.provider_transaction_id, payment.amount_minor, payment.currency,
+                 payment.status, 'provider' AS payment_type, NULL AS reference, payment.version,
+                 payment.created_at
+          FROM payment_request_payments payment
+          JOIN payment_requests request ON request.id = payment.payment_request_id
+          JOIN customers customer ON customer.id = request.customer_id`;
 }
 
 async function findPayment(
@@ -318,7 +350,10 @@ async function findPayment(
   paymentId: string,
 ): Promise<PaymentRow | null> {
   return database
-    .prepare(`${paymentSelect()} WHERE p.organization_id = ? AND p.id = ? LIMIT 1`)
+    .prepare(
+      `SELECT * FROM (${paymentRows()}) ledger
+       WHERE ledger.organization_id = ? AND ledger.id = ? LIMIT 1`,
+    )
     .bind(organizationId, paymentId)
     .first<PaymentRow>();
 }
@@ -342,23 +377,30 @@ async function findInvoice(
 async function successfulPaymentTotal(database: D1Database, invoiceId: string): Promise<number> {
   const value = await database
     .prepare(
-      "SELECT COALESCE(SUM(amount_minor), 0) AS total FROM payment_attempts WHERE invoice_id = ? AND status = 'succeeded'",
+      `SELECT COALESCE(SUM(amount_minor), 0) AS total FROM (
+         SELECT amount_minor FROM payment_attempts
+         WHERE invoice_id = ? AND status = 'succeeded'
+         UNION ALL
+         SELECT amount_minor FROM payment_request_payment_allocations WHERE invoice_id = ?
+       )`,
     )
-    .bind(invoiceId)
+    .bind(invoiceId, invoiceId)
     .first<{ total: number }>();
   return value?.total ?? 0;
 }
 
 function serializePayment(payment: PaymentRow): Record<string, unknown> {
   const provider = payment.payment_type === "provider";
+  const invoiceIds = jsonStringArray(payment.invoice_ids_json);
+  const invoiceNumbers = jsonStringArray(payment.invoice_numbers_json);
   return {
     lago_id: payment.id,
     lago_customer_id: payment.customer_id,
     external_customer_id: payment.external_customer_id,
-    invoice_ids: [payment.invoice_id],
-    invoice_numbers: payment.invoice_number ? [payment.invoice_number] : [],
-    lago_payable_id: payment.invoice_id,
-    payable_type: "Invoice",
+    invoice_ids: invoiceIds,
+    invoice_numbers: invoiceNumbers,
+    lago_payable_id: payment.payable_id,
+    payable_type: payment.payable_type,
     amount_cents: payment.amount_minor,
     amount_currency: payment.currency,
     status: payment.status,
@@ -373,6 +415,17 @@ function serializePayment(payment: PaymentRow): Record<string, unknown> {
     next_action: {},
     created_at: payment.created_at,
   };
+}
+
+function jsonStringArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 function payableStatus(status: string): "pending" | "processing" | "succeeded" | "failed" {

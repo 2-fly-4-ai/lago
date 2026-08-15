@@ -239,8 +239,14 @@ remaining Lago feature inventory is dispositioned and ported.
 - Payment requests: authenticated create/list/show and customer-nested list routes persist one
   tenant-scoped request plus its overdue finalized invoices and `payment_request.created` outbox
   event in a guarded D1 batch. The amount is the exact remaining balance across one currency.
-  Creating this internal ledger does not call a provider or send email; later dunning/payment
-  execution remains subject to the existing external-action gates.
+  Signed Authorize.Net callbacks carrying `PaymentRequest` metadata reconcile to one request-level
+  provider payment and immutable per-invoice allocations. Settlement requires the provider amount,
+  request amount, and current linked-invoice balances to agree; version guards, status monotonicity,
+  dunning-counter reset, invoice/request status changes, and outbox evidence share one atomic D1
+  batch. Those payments are visible through the retained `/api/v1/payments` list/show contract,
+  including invoice filters and multi-invoice payable metadata. Creating this internal ledger does
+  not call a provider or send email; hosted-link handoff remains subject to the existing external-
+  action gates.
 - Dunning campaigns: authenticated tenant-scoped create/list/show/update/delete routes own campaign
   thresholds, organization defaults, customer overrides, and exclusions in D1. The hourly `:45`
   Workflow executor creates at most one deterministic payment request per eligible customer and

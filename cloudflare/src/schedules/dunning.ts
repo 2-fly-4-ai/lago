@@ -115,8 +115,13 @@ async function createDunningPaymentRequest(
     .prepare(
       `SELECT invoice.id, invoice.version,
               invoice.total_due_minor - COALESCE((
-                SELECT SUM(payment.amount_minor) FROM payment_attempts payment
-                WHERE payment.invoice_id = invoice.id AND payment.status = 'succeeded'
+                SELECT SUM(amount_minor) FROM (
+                  SELECT payment.amount_minor FROM payment_attempts payment
+                  WHERE payment.invoice_id = invoice.id AND payment.status = 'succeeded'
+                  UNION ALL
+                  SELECT allocation.amount_minor FROM payment_request_payment_allocations allocation
+                  WHERE allocation.invoice_id = invoice.id
+                )
               ), 0) AS outstanding_minor
        FROM invoices invoice
        WHERE invoice.customer_id = ? AND invoice.organization_id = ? AND invoice.currency = ?

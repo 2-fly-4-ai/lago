@@ -2504,6 +2504,20 @@ resource and mutation described.
   phase. The direct package harness remains green, and a filename-only secret-pattern scan found no
   private-key, live Stripe, AWS access-key, GitHub token, or Slack token signatures across 212
   tracked `cloudflare/` and `docs/` files.
+- 2026-08-15: Added the Authorize.Net payment-request reconciliation foundation required to settle
+  multi-invoice dunning requests without a container runtime. Migration
+  `0060_payment_request_payments.sql` owns one provider transaction per payment request, immutable
+  per-invoice allocations, request/invoice reconciliation guards, and webhook payable linkage.
+  `PaymentRequest` metadata now routes signed provider callbacks to this ledger; amount/currency
+  mismatch or changed invoice balances fail explicitly, while success atomically advances the
+  request and every linked invoice, resets dunning counters, emits payment/request/invoice outbox
+  evidence, and remains monotonic across duplicate or later-regressing callbacks. Invoice balances,
+  dunning selection, manual-payment limits, and the retained `/api/v1/payments` list/show contract
+  include these allocations and expose the multi-invoice payable. No provider call or email was
+  added, and all external-action gates remain authoritative. All 60 migrations replay independently.
+  Strict format/lint/inventory/bindings/TypeScript pass; all 244 tests across 46 files pass serially
+  in 150.44 seconds. The dry-run bundle is 1206.42 KiB (209.38 KiB gzip). This is a local pre-
+  deployment checkpoint; no remote resource or data was changed by this entry.
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.
