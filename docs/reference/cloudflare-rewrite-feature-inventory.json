@@ -40,7 +40,7 @@
     "frontGraphqlQueries": 267,
     "frontGraphqlMutations": 235,
     "frontGraphqlSubscriptions": 1,
-    "frontLiteralRouteConstants": 161
+    "frontLiteralRouteConstants": 159
   },
   "domains": {
     "services": {
@@ -65454,7 +65454,7 @@
       "generatedOperations": 496,
       "sourceOnlyOperations": 7,
       "missingGeneratedOperations": 0,
-      "literalRouteConstants": 161
+      "literalRouteConstants": 159
     },
     "operationDomains": {
       "components/addOns": 1,
@@ -75884,30 +75884,6 @@
         "value": "${INTEGRATIONS_ROUTE}/moneyhash",
         "sources": [
           "front/src/core/router/SettingRoutes.tsx"
-        ],
-        "owner": "lago-operator-ui",
-        "disposition": "port",
-        "target": "Cloudflare Workers Static Assets",
-        "parityStatus": "not-started",
-        "mappingStatus": "unmapped"
-      },
-      {
-        "name": "MUI_BUTTON_BASE_ROOT_CLASSNAME",
-        "value": "MuiButtonBase-root",
-        "sources": [
-          "front/src/core/constants/form.ts"
-        ],
-        "owner": "lago-operator-ui",
-        "disposition": "port",
-        "target": "Cloudflare Workers Static Assets",
-        "parityStatus": "not-started",
-        "mappingStatus": "unmapped"
-      },
-      {
-        "name": "MUI_INPUT_BASE_ROOT_CLASSNAME",
-        "value": "MuiInputBase-root",
-        "sources": [
-          "front/src/core/constants/form.ts"
         ],
         "owner": "lago-operator-ui",
         "disposition": "port",

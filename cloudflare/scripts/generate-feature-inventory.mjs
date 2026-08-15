@@ -185,6 +185,7 @@ function extractOperatorSurface(frontRoot) {
       /export\s+const\s+([A-Z][A-Z0-9_]*(?:ROUTE|BASE)[A-Z0-9_]*)\s*=\s*(["'`])([^"'`]+)\2/g,
     )) {
       const [, name, , value] = match;
+      if (!value.startsWith("/") && !value.startsWith("${")) continue;
       const key = `${name}:${value}`;
       const route = routes.get(key) ?? { name, value, sources: [] };
       if (!route.sources.includes(source)) route.sources.push(source);

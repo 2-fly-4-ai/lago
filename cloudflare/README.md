@@ -284,6 +284,9 @@ remaining Lago feature inventory is dispositioned and ported.
   provider-webhook routes stay Worker-first. The pinned React/Apollo console is intentionally not
   deployed while its operations remain unmapped; interactive operator access is a later,
   authenticated screen-by-screen migration rather than a pretend-compatible legacy UI.
+  `../docs/reference/cloudflare-operator-surface-policy.md` defines screen admission, route-family
+  disposition, and the fail-closed Cloudflare Access/JWT plus D1 membership design required before
+  interactive assets replace the shell. Service API keys are never browser login credentials.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

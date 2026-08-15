@@ -600,12 +600,14 @@ Acceptance:
 
 - [x] Inventory the Vite UI's GraphQL operations and screen-level feature dependencies. The
       generated inventory now records 503 source operations (267 queries, 235 mutations, and one
-      subscription), their owning screens/domains, 161 literal route constants, and mapping status.
+      subscription), their owning screens/domains, 159 literal route constants, and mapping status.
       Of those operations, 496 have generated Apollo types; seven source-only operations belong to
       the pinned Authorize.Net integration UI and expose a code-generation drift that must be
       resolved before that screen can be retained. The generator refuses API or frontend sources
       whose revisions differ from this branch's submodule gitlinks. Every operation and route
-      remains explicitly unmapped rather than making an unsupported screen appear functional.
+      remains explicitly unmapped rather than making an unsupported screen appear functional. Two
+      Material UI class-name constants previously counted as routes are now excluded because their
+      values are neither URL paths nor composed route templates.
 - [ ] Implement the GraphQL compatibility surface or replace individual screens with a documented
       Worker API equivalent. Manual invoice custom-section catalog CRUD now uses the documented
       tenant-scoped REST equivalent, and API-key create/list/show/name-update/rotate/revoke now uses
@@ -627,7 +629,10 @@ Acceptance:
       provider-webhook routes remain Worker-first. The milestone stays open until authenticated,
       retained screens replace the shell without exposing any unmapped operation.
 - [ ] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained.
-- [ ] Mark retired screens explicitly with approved product rationale.
+- [ ] Mark retired screens explicitly with approved product rationale. The proposed retain,
+      blocked, external-owner, not-used, and retirement policy plus screen admission/rollback rules
+      is documented in `docs/reference/cloudflare-operator-surface-policy.md`; final legacy-screen
+      retirement remains pending explicit product approval.
 
 Acceptance:
 
@@ -3105,3 +3110,16 @@ resource and mutation described.
   audited state, and clean foreign keys; version inspection confirmed only fetch/scheduled/queue
   handlers. No active key, billing mutation, production route/domain, provider action, customer
   message, payment action, secret access, or customer-data access occurred.
+- 2026-08-16: Defined the M8 operator screen-admission and route-family policy before exposing any
+  interactive asset. Current Cloudflare documentation confirms a self-hosted Access application
+  can protect a Worker directly by name and that the Worker must still validate the injected JWT.
+  The selected design keeps service API keys out of browsers, maps a validated Access subject to an
+  explicit D1 tenant/role membership, enforces same-origin/CSRF mutation checks, and fails closed
+  while issuer, audience, membership, or policy configuration is absent. Provisioning remains
+  pending an approved identity/group allow policy and Access configuration. The policy assigns
+  retained, later, blocked, external-owner, not-used, and proposed-retirement route families, with
+  the migration shell as asset-level rollback. The generator now excludes two Material UI CSS
+  class constants whose values were neither URL paths nor composed route templates, correcting the
+  literal route inventory from 161 to 159 while leaving all 503 GraphQL operations unchanged. No
+  runtime, migration, resource, deployment, repository outside Lago, provider action, payment
+  action, customer message, secret access, customer-data access, or production operation changed.
