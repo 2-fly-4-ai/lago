@@ -174,7 +174,11 @@ remaining Lago feature inventory is dispositioned and ported.
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,
   coupon-expiration, wallet-expiration, ongoing wallet projection/threshold-grant, and interval
   wallet top-up paths on their original slots, drains subscription activity every minute, refreshes
-  lifetime usage every five minutes, performs 90-day
+  lifetime usage every five minutes, and records the legacy hourly post-validation owner as a
+  synchronous-precommit boundary. The latter no longer scans a materialized view: invalid metric
+  codes, missing/non-numeric aggregation fields, and invalid filter values are rejected before the
+  event, R2 archive, or outbox entry commits. The old Redis/ClickHouse refreshed-subscription loop
+  is likewise consolidated into the D1 activity and wallet projection owners. Cron also performs 90-day
   inbound/outbound webhook retention, records each run in D1, publishes the outbox, and reports due
   schedules whose behavior is not yet ported. Each run also drains retired billable-metric events
   in bounded D1/R2 batches, repairs pending pay-in-advance fixed and usage invoices, and repairs

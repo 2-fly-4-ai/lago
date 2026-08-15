@@ -101,7 +101,9 @@ describe("legacy schedule ownership", () => {
       "schedule:top_up_wallet_interval_credits",
       "schedule:clean_webhooks",
       "schedule:clean_inbound_webhooks",
+      "schedule:post_validate_events",
       "schedule:retry_inbound_webhooks",
+      "schedule:refresh_flagged_subscriptions",
     ]);
   });
 
@@ -119,9 +121,19 @@ describe("legacy schedule ownership", () => {
       "schedule:terminate_coupons",
       "schedule:retry_failed_invoices",
       "schedule:retry_inbound_webhooks",
+      "schedule:refresh_flagged_subscriptions",
     ]);
     expect(scheduleInstanceId(triggeredAt)).toBe("maintenance-202608140130");
     expect(scheduleInstanceId(triggeredAt + 30_000)).toBe("maintenance-202608140130");
+  });
+
+  it("records post-validation as a synchronous precommit boundary", () => {
+    const due = dueLegacySchedules(Date.parse("2026-08-14T01:05:00.000Z"));
+    expect(due.find((schedule) => schedule.key === "schedule:post_validate_events")).toMatchObject({
+      parity: "implemented",
+      executor: "audit_synchronous_event_validation",
+      owner: "synchronous usage ingestion validation",
+    });
   });
 });
 

@@ -1,5 +1,6 @@
 export type ScheduleExecutor =
   | "activate_subscriptions"
+  | "audit_synchronous_event_validation"
   | "bill_ended_trials"
   | "cleanup_inbound_webhooks"
   | "cleanup_outbound_webhooks"
@@ -210,8 +211,9 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     key: "schedule:post_validate_events",
     legacyJob: "Clock::EventsValidationJob",
     cadence: hourly(5),
-    owner: "usage validation queue",
-    parity: "not_started",
+    owner: "synchronous usage ingestion validation",
+    parity: "implemented",
+    executor: "audit_synchronous_event_validation",
   },
   {
     key: "schedule:compute_daily_usage",
@@ -245,9 +247,10 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
   {
     key: "schedule:refresh_flagged_subscriptions",
     legacyJob: "Clock::ConsumeSubscriptionRefreshedQueueJob",
-    cadence: dynamic("conditional Redis and ClickHouse loop, every 10 seconds"),
-    owner: "usage projection queue",
-    parity: "not_started",
+    cadence: everyMinutes(1),
+    owner: "consolidated D1 usage and wallet projection",
+    parity: "implemented",
+    executor: "process_subscription_activity",
   },
 ];
 

@@ -339,6 +339,9 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         lifetimeUsageRefreshCandidates: lifetimeUsageCandidates.length,
         refreshedLifetimeUsages,
         failedLifetimeUsageRefreshes,
+        eventValidationMode: executors.has("audit_synchronous_event_validation")
+          ? "synchronous_precommit"
+          : null,
         terminatedSubscriptions,
         endedTrialSubscriptions,
         pendingReceipts: pendingReceiptIds.length,

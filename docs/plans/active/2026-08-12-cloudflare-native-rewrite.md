@@ -469,7 +469,10 @@ Acceptance:
       refresh, Authorize.Net receipt retry, coupon expiry, wallet expiry, recurring-rule expiry,
       ongoing wallet-balance/threshold projection, provider-free interval granted-credit top-up,
       invoice-overdue, subscription-activity, and lifetime-usage refresh paths run on their legacy
-      slots; the other entries remain explicitly
+      slots. The post-validation entry is retained as an audited synchronous-precommit boundary
+      because invalid code/property/filter events cannot commit, and the deprecated Redis/ClickHouse
+      refreshed-subscription loop is consolidated into D1 activity plus wallet projection. The other
+      entries remain explicitly
       `not_started` until their underlying feature
       families are ported. The two daily webhook-retention schedules now enforce Lago's 90-day
       boundary; inbound receipt deletion uses a transactional D1 cleanup queue so R2 failures remain
