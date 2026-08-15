@@ -140,16 +140,21 @@ export async function handleOrganizationsApi(
   const url = new URL(request.url);
   if (url.pathname !== "/api/v1/organizations") return null;
   if (request.method === "GET") {
-    const organization = await requiredOrganization(env.BILLING_DB, auth.organizationId);
-    return json(
-      { organization: await serializeOrganization(env.BILLING_DB, organization) },
-      { requestId },
-    );
+    return showOrganization(env.BILLING_DB, auth.organizationId, requestId);
   }
   if (request.method === "PUT") {
     return updateOrganization(request, env.BILLING_DB, auth, requestId);
   }
   return null;
+}
+
+export async function showOrganization(
+  database: D1Database,
+  organizationId: string,
+  requestId: string,
+): Promise<Response> {
+  const organization = await requiredOrganization(database, organizationId);
+  return json({ organization: await serializeOrganization(database, organization) }, { requestId });
 }
 
 async function updateOrganization(

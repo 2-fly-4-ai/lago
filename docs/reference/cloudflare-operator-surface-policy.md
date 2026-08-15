@@ -100,7 +100,8 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    operator Worker and Worker-name application and record its non-secret issuer/audience
    configuration. Do not deploy the operator Worker publicly before Access protects it.
 3. Ship a read-only organization/status shell and prove tenant isolation remotely with synthetic
-   membership only.
+   membership only. The membership-scoped organization BFF read contract is implemented locally;
+   interactive assets and remote Access/membership proof remain pending.
 4. Add API-key metadata management, keeping one-time create/rotate values ephemeral and never
    offering existing-key reveal.
 5. Add the retained catalog and billing screens in bounded families, each with complete operation

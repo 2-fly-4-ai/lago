@@ -8,7 +8,7 @@ import {
   authenticateOperatorAccess,
   type OperatorEnv,
 } from "../src/operator/access";
-import operatorWorker from "../src/operator/index";
+import { handleOperatorRequest } from "../src/operator/index";
 
 const issuer = "https://serp-test.cloudflareaccess.com";
 const audience = "synthetic-operator-audience";
@@ -231,7 +231,7 @@ describe("operator Worker disabled boundary", () => {
       ACCESS_TEAM_DOMAIN: undefined,
       ACCESS_AUD: undefined,
     });
-    const health = await operatorWorker.fetch(
+    const health = await handleOperatorRequest(
       new Request("https://operator.test/health"),
       disabled,
     );
@@ -241,15 +241,51 @@ describe("operator Worker disabled boundary", () => {
       access_enabled: false,
     });
 
-    const ready = await operatorWorker.fetch(new Request("https://operator.test/ready"), disabled);
+    const ready = await handleOperatorRequest(new Request("https://operator.test/ready"), disabled);
     expect(ready.status).toBe(503);
     await expect(ready.json()).resolves.toMatchObject({ code: "operator_access_disabled" });
 
-    const session = await operatorWorker.fetch(
+    const session = await handleOperatorRequest(
       new Request("https://operator.test/api/operator/v1/session"),
       disabled,
     );
     expect(session.status).toBe(503);
     await expect(session.json()).resolves.toMatchObject({ code: "operator_access_disabled" });
+  });
+
+  it("projects the membership-scoped organization through the existing REST serializer", async () => {
+    const response = await handleOperatorRequest(
+      accessRequest(await accessToken()).clone(),
+      operatorEnv(),
+      keySet,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      operator: {
+        membership_id: "membership-operator-access",
+        organization_id: "org-operator-access",
+        organization_external_id: "operator-access",
+        role: "viewer",
+      },
+    });
+
+    const organizationResponse = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/organization", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    expect(organizationResponse.status).toBe(200);
+    await expect(organizationResponse.json()).resolves.toMatchObject({
+      organization: {
+        lago_id: "org-operator-access",
+        name: "Operator Access",
+        slug: "operator-access",
+        default_currency: "USD",
+        timezone: "UTC",
+        version: 1,
+      },
+    });
   });
 });

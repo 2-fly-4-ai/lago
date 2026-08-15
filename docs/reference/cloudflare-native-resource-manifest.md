@@ -43,7 +43,9 @@ Applied D1 migrations: `0001_foundation.sql` through
 
 - `serp-dev-lago-operator` exists only as the checked-in `wrangler.operator.jsonc` dry-run target.
   It has not been created or deployed remotely. Its Access flag is `0`, issuer/audience are absent,
-  preview URLs are disabled, and no Access application or allow policy exists.
+  preview URLs are disabled, and no Access application or allow policy exists. Its local BFF
+  currently exposes only session metadata and the membership-scoped canonical organization read
+  projection; the static bundle remains the non-interactive migration shell.
 - `0070_operator_access.sql` is locally replayed and tested but remains unapplied remotely. The
   isolated D1 therefore has no operator-membership table or membership data yet.
 - Provisioning requires an approved Access identity/group allow policy, session duration, team

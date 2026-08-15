@@ -625,7 +625,9 @@ Acceptance:
       expiry claims, resolves only a hashed Access subject through one immutable D1 tenant/role
       membership, and defines same-origin/CSRF mutation checks. Its configuration and readiness
       remain disabled without an approved Access application and allow policy; it has not been
-      remotely provisioned or deployed.
+      remotely provisioned or deployed. `GET /api/operator/v1/organization` is the first bounded
+      BFF read contract: it authorizes through the membership tenant and reuses the canonical
+      organization REST serializer, with no browser-specific duplicate projection.
 - [ ] Serve the operator application with Workers Static Assets. The direct-delivery foundation is
       complete: Wrangler serves a script-free migration shell, stylesheet, SPA fallback, and
       `_headers` policy from Static Assets while `/api/*`, health/readiness, hosted-payment, and
@@ -3150,3 +3152,15 @@ resource and mutation described.
   Worker/Access application/policy were not provisioned or deployed, and no provider action,
   payment action, customer message, secret access, customer-data access, or production operation
   occurred.
+- 2026-08-16: Added the first bounded operator BFF read contract behind the disabled Access gate.
+  `GET /api/operator/v1/organization` authenticates the Access JWT, derives the tenant only from
+  its active membership, and reuses the canonical organization REST serializer for configuration,
+  default-tax, and webhook projections rather than creating a browser-specific shape. The shared
+  serializer extraction leaves `/api/v1/organizations` behavior unchanged. The operator/session
+  and organization focused suites pass 12/12; strict formatting, lint, inventory, both binding
+  checks, and TypeScript pass. The authoritative serial suite passes all 309 tests across 60 files
+  in 220.26 seconds. The API dry bundle is 1406.92 KiB (245.95 KiB gzip), and the disabled operator
+  dry bundle is 51.87 KiB (13.99 KiB gzip) with only D1 and non-secret environment bindings. The
+  static migration shell remains non-interactive; migration 0070, the operator Worker, and Access
+  application/policy remain unapplied or unprovisioned remotely. No provider action, payment
+  action, customer message, secret access, customer-data access, or production operation occurred.
