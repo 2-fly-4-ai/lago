@@ -3093,3 +3093,15 @@ resource and mutation described.
   (245.92 KiB gzip) with all external-action flags at `0`. No migration, remote deployment,
   provider action, payment action, customer message, secret access, customer-data access, or
   production operation occurred in this local checkpoint.
+- 2026-08-16: Static-asset remote preflight found no pending migration, zero active or malformed
+  key hashes, zero payment/request/receipt/credit-note/export/document state, and no foreign-key
+  violations. Deployed only the isolated Worker as version
+  `75370a2a-ca89-4244-ad51-f514e1dece1d`; Cloudflare uploaded only `index.html` and the stylesheet,
+  parsed both `_headers` rules, retained the existing Worker bundle size, and started in 5 ms with
+  unchanged bindings and all external-action flags at `0`. Remote root, stylesheet, navigation
+  fallback, health, and readiness returned `200`; protected invoice access returned `401`,
+  incomplete hosted payment `400`, and the unknown provider webhook `404`. CSP, framing, referrer,
+  MIME, and no-index headers were present. Final audit again found no pending migration, zero
+  audited state, and clean foreign keys; version inspection confirmed only fetch/scheduled/queue
+  handlers. No active key, billing mutation, production route/domain, provider action, customer
+  message, payment action, secret access, or customer-data access occurred.

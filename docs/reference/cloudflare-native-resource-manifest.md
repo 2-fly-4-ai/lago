@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `a2ed2b7b-93e3-4b3e-9337-01e5bad159e0`
+- Latest verified version: `75370a2a-ca89-4244-ad51-f514e1dece1d`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -34,12 +34,25 @@ It is not a production inventory and contains no secrets or customer data.
 | Workflow          | `serp-dev-lago-plan-deletion`                                      | `PLAN_DELETION_WORKFLOW`  | Durable subscription-bearing plan retirement                       |
 | Cron              | `* * * * *`                                                        | Worker scheduled handler  | Deterministic legacy-schedule dispatch and activity fanout         |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
+| Static Assets     | `operator-ui`                                                      | direct asset delivery     | Script-free operator migration shell and security headers          |
 
 Applied D1 migrations: `0001_foundation.sql` through
 `0069_data_exports.sql`.
 
 ## Verified behavior
 
+- Version `75370a2a-ca89-4244-ad51-f514e1dece1d` added the M8 Static Assets foundation without a
+  migration or resource change. Cloudflare directly serves the script-free migration shell,
+  stylesheet, navigation fallback, and restrictive headers, while API, health/readiness,
+  hosted-payment, and provider-webhook paths remain Worker-first. Remote smoke returned `200` for
+  root, stylesheet, navigation fallback, health, and readiness; protected invoice access returned
+  `401`, incomplete hosted payment `400`, and the unknown provider webhook `404`. Preflight and
+  final audits found no pending migration, zero active or malformed key hashes, zero payment/
+  request/receipt/credit-note/export/document state, and no foreign-key violations. The deployed
+  bundle remained 1406.76 KiB (245.92 KiB gzip) with a 5 ms startup; version inspection confirmed
+  only fetch/scheduled/queue handlers and all external-action flags at `0`. No active key, billing
+  mutation, production route/domain, provider action, customer message, payment action, secret, or
+  customer data changed.
 - Version `a2ed2b7b-93e3-4b3e-9337-01e5bad159e0` deployed the M6 document-golden runtime
   hardening without a migration or resource change. Invoice, payment-receipt, and credit-note HTML
   now selects a portable Arial/CID TrueType print path instead of macOS variable `system-ui` Type 3
