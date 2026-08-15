@@ -2365,3 +2365,13 @@ resource and mutation described.
   independently with seven API-key columns, the usage index, and zero foreign-key violations.
   Strict formatting, lint, inventory, bindings, TypeScript, and dry build pass; all 230 tests across
   43 files pass serially in 140.21 seconds. The dry-run bundle is 1131.03 KiB (196.54 KiB gzip).
+- 2026-08-15: Remote preflight found only `0056_api_key_usage_tracking.sql` pending and zero
+  organizations, API keys, customers, subscriptions, invoices, usage thresholds, and outbox rows,
+  with zero foreign-key violations. Applied only migration 0056 and verified 56 migrations, seven
+  API-key columns, the last-use index, zero API-key rows, zero foreign-key violations, and no
+  remaining migration. Deployed only `serp-dev-lago-native` as version
+  `693a3713-3878-488a-ae1e-da5865c02f10` with a 5 ms startup and unchanged resources/one-minute
+  Cron. Health/readiness returned `200`/`200`, unauthenticated plan access returned `401`, and the
+  aggregate-only audit remained empty apart from 385 schedule runs. All three external-action flags
+  remain `0`; no production route/domain, secret, provider action, customer data, payment action,
+  or billing ledger row changed.

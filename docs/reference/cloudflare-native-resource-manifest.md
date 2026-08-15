@@ -491,6 +491,16 @@ Applied D1 migrations: `0001_foundation.sql` through
   usage thresholds, progressive invoices/credits, applied thresholds, credit notes, and outbox rows
   plus 374 schedule runs. All three external-action flags remain `0`; no production route/domain,
   secret, provider action, customer data, payment action, or billing ledger row changed.
+- The API-key usage deployment applied only `0056_api_key_usage_tracking.sql`. Remote schema
+  verification found 56 migrations, seven API-key columns, the last-use index, zero foreign-key
+  violations, and no remaining migration. Worker version
+  `693a3713-3878-488a-ae1e-da5865c02f10` retained the existing workers.dev URL, one-minute Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The deployed bundle was
+  1131.03 KiB (196.54 KiB gzip) with a 5 ms startup. Health/readiness returned `200`/`200`, and
+  unauthenticated plan access returned `401`. Aggregate-only verification found zero organizations,
+  API keys, customers, subscriptions, invoices, usage thresholds, and outbox rows plus 385 schedule
+  runs. All three external-action flags remain `0`; no production route/domain, secret, provider
+  action, customer data, payment action, or billing ledger row changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
