@@ -2586,3 +2586,12 @@ resource and mutation described.
   generated bindings, and TypeScript checks pass; all 248 tests across 47 files pass serially in
   153.32 seconds, and the dry-run bundle remains 1221.38 KiB (211.80 KiB gzip). This is a local
   checkpoint only: no remote provider, secret, message, route, customer, or payment action occurred.
+- 2026-08-15: Code-only remote preflight found no pending migration, no foreign-key violations,
+  and zero organizations, customers, subscriptions, invoices, payment requests, checkout intents,
+  and outbox rows. Deployed only the isolated Worker as version
+  `80fee6c9-5be3-481e-898e-26013daa14ea` with a 5 ms startup, the existing one-minute Cron/resources,
+  and the non-secret workers.dev `PUBLIC_BASE_URL`. Health/readiness returned `200`/`200` and an
+  unauthenticated payment-URL request returned `401`. Version inspection confirmed only fetch,
+  scheduled, and queue handlers and all three external-action flags at `0`. The post-deploy audit
+  remained empty apart from 576 schedule runs, with no foreign-key violations; no production
+  route/domain, secret, provider action, customer/message data, or payment action occurred.

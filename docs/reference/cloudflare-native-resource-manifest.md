@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `2961998a-0351-4620-ab58-d2d8ffa786d1`
+- Latest verified version: `80fee6c9-5be3-481e-898e-26013daa14ea`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -40,6 +40,10 @@ Applied D1 migrations: `0001_foundation.sql` through
 
 ## Verified behavior
 
+- Version `80fee6c9-5be3-481e-898e-26013daa14ea` binds the non-secret
+  `PUBLIC_BASE_URL` to the isolated workers.dev hostname. Health/readiness returned `200`/`200`,
+  unauthenticated hosted-payment access returned `401`, all three external-action flags remained
+  `0`, and the post-deploy aggregate audit found no business/payment rows or foreign-key violations.
 - `GET /health` returned `200` with environment `development`.
 - `GET /ready` returned `200` after querying the remote D1 database.
 - `GET /api/v1/invoices` without a bearer key returned the expected `401` envelope.
