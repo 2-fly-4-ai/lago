@@ -278,6 +278,12 @@ remaining Lago feature inventory is dispositioned and ported.
   and Pipelines/R2 Data Catalog are deferred derived-analytics options rather than billing
   authorities. The measured limits and sharding/fanout gates are recorded in
   `../docs/reference/cloudflare-usage-storage-decision.md`.
+- Operator Static Assets: Wrangler directly serves a script-free migration shell and stylesheet,
+  applies restrictive CSP/framing/no-index headers, and uses SPA navigation fallback without
+  invoking Worker compute for matched assets. `/api/*`, health/readiness, hosted-payment, and
+  provider-webhook routes stay Worker-first. The pinned React/Apollo console is intentionally not
+  deployed while its operations remain unmapped; interactive operator access is a later,
+  authenticated screen-by-screen migration rather than a pretend-compatible legacy UI.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

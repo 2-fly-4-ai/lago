@@ -621,7 +621,11 @@ Acceptance:
       credit-note export mutations now use an authenticated REST create/status/download lifecycle;
       completion email is retained as an explicit disabled boundary. The remaining operator
       operations and screens are still inventoried/ported individually.
-- [ ] Serve the operator application with Workers Static Assets.
+- [ ] Serve the operator application with Workers Static Assets. The direct-delivery foundation is
+      complete: Wrangler serves a script-free migration shell, stylesheet, SPA fallback, and
+      `_headers` policy from Static Assets while `/api/*`, health/readiness, hosted-payment, and
+      provider-webhook routes remain Worker-first. The milestone stays open until authenticated,
+      retained screens replace the shell without exposing any unmapped operation.
 - [ ] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained.
 - [ ] Mark retired screens explicitly with approved product rationale.
 
@@ -3074,3 +3078,18 @@ resource and mutation described.
   analytics gates, and an outbox/R2 backfill reconciliation protocol before sharding or analytical
   fanout. No runtime, migration, resource, deployment, provider action, payment action, customer
   message, secret access, customer-data access, or production operation changed.
+- 2026-08-16: Added the M8 Workers Static Assets foundation without exposing the pinned legacy
+  React/Apollo application or its 503 unmapped operations. Wrangler now directly serves a
+  non-interactive, script-free migration shell, responsive stylesheet, navigation fallback, and
+  restrictive security/no-index headers; dynamic `/api/*`, health/readiness, hosted-payment, and
+  provider-webhook boundaries always execute the Worker first. Focused tests verify the shell and
+  route configuration. A fresh, ephemeral local Wrangler state proved root/CSS/navigation
+  `200` asset delivery, health `200` JSON, protected invoice `401`, incomplete hosted-payment `400`,
+  and unknown provider-webhook `404`, with the expected CSP, framing, referrer, MIME, and robot
+  headers. The interactive operator milestone remains open until retained screens have mapped,
+  end-to-end-tested REST contracts and approved authentication. Strict formatting, lint, generated
+  inventory/bindings, and TypeScript checks pass; the authoritative serial suite passes all 302
+  tests across 59 files in 196.44 seconds, and the Wrangler 4.122.0 dry bundle remains 1406.76 KiB
+  (245.92 KiB gzip) with all external-action flags at `0`. No migration, remote deployment,
+  provider action, payment action, customer message, secret access, customer-data access, or
+  production operation occurred in this local checkpoint.
