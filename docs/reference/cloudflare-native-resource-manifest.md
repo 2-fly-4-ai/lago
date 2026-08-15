@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `be0a0056-2a14-4f33-8633-172fea750fd5`
+- Latest verified version: `d161a781-a856-44c7-8438-94b5a832ca44`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -36,10 +36,23 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0067_credit_note_documents.sql`.
+`0068_quote_versioning.sql`.
 
 ## Verified behavior
 
+- Version `d161a781-a856-44c7-8438-94b5a832ca44` deployed the quote lifecycle REST replacement
+  after applying only migration `0068`. Remote verification found the 12-column quote ledger,
+  14-column version ledger, owner and active-membership projections, all seven tenant/identity/
+  outbox guards, no pending migration, empty quote state, an unchanged zero organization counter,
+  and no foreign-key violations. A disposable hashed key exercised empty list, not-found quote and
+  version actions, health/readiness, and authentication, then was revoked. No remote quote was
+  created, so numbering, owner synchronization, and version lifecycle mutations remain proven by
+  the full local Workers suite rather than a remote billing-state mutation. The final audit found
+  zero active or malformed key hashes, quote/payment/receipt/credit-note state, and 769 schedule
+  audits. The deployed bundle was 1353.17 KiB (235.19 KiB gzip) with a 5 ms startup; version
+  inspection confirmed only fetch/scheduled/queue handlers and all external-action flags at `0`.
+  No production route/domain, provider action, customer message, payment action, secret, or customer
+  data changed.
 - Version `be0a0056-2a14-4f33-8633-172fea750fd5` deployed finalized/voided credit-note PDFs after
   applying only migration `0067`. Remote verification found the 12-column artifact ledger, all
   three tenant/version/identity/generated-event guards, no pending migration, zero credit notes/

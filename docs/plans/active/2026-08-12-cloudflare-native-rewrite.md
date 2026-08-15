@@ -2843,3 +2843,18 @@ resource and mutation described.
   parallel-load timeout, and all 285 tests across 55 files pass serially in 181.66 seconds. The
   dry-run bundle is 1353.17 KiB (235.19 KiB gzip). This is a local pre-deployment checkpoint; no
   remote schema, quote, provider, message, payment, route, secret, or customer data changed.
+- 2026-08-15: Quote-lifecycle remote preflight found exactly `0068_quote_versioning.sql` pending,
+  the retained one-organization/customer/subscription/invoice graph, zero active or malformed key
+  hashes, zero payment/receipt/credit-note state, and no foreign-key violations. Applied only
+  migration 0068, then verified the 12-column quote ledger, 14-column version ledger, owner and
+  active-membership projections, all seven tenant/identity/outbox guards, no pending migration,
+  empty quote state, and an unchanged zero organization counter. Deployed only the isolated Worker
+  as version `d161a781-a856-44c7-8438-94b5a832ca44` with a 5 ms startup and unchanged resources/
+  flags. A disposable hashed key exercised the empty quote list, missing quote and version-action
+  paths, authentication, and health/readiness, then was revoked. No synthetic remote quote was
+  created because a billing-state mutation was unnecessary for smoke; numbering, owner changes,
+  draft editing, approval, voiding, cloning, concurrency, and replay remain proven locally. Final
+  audit found zero active/malformed keys, quotes, quote versions/owners/memberships, payment state,
+  receipts, or credit notes, 769 schedule audits, and no foreign-key violations. Version inspection
+  confirmed only fetch/scheduled/queue handlers with all external-action flags at `0`. No production
+  route/domain, provider action, customer message, payment action, secret, or customer data changed.
