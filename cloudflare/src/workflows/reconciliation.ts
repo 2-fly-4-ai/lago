@@ -433,6 +433,9 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         eventValidationMode: executors.has("audit_synchronous_event_validation")
           ? "synchronous_precommit"
           : null,
+        apiKeyUsageTrackingMode: executors.has("audit_synchronous_api_key_usage")
+          ? "synchronous_authentication_write"
+          : null,
         terminatedSubscriptions,
         endedTrialSubscriptions,
         pendingReceipts: pendingReceiptIds.length,

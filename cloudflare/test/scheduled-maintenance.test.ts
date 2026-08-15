@@ -92,6 +92,7 @@ describe("legacy schedule ownership", () => {
       "schedule:refresh_wallets_ongoing_balance",
       "schedule:terminate_ended_subscriptions",
       "schedule:bill_customers",
+      "schedule:api_keys_track_usage",
       "schedule:finalize_invoices",
       "schedule:mark_invoices_as_payment_overdue",
       "schedule:terminate_coupons",
@@ -134,6 +135,15 @@ describe("legacy schedule ownership", () => {
       parity: "implemented",
       executor: "audit_synchronous_event_validation",
       owner: "synchronous usage ingestion validation",
+    });
+  });
+
+  it("records API-key usage as a synchronous authentication boundary", () => {
+    const due = dueLegacySchedules(Date.parse("2026-08-14T01:15:00.000Z"));
+    expect(due.find((schedule) => schedule.key === "schedule:api_keys_track_usage")).toMatchObject({
+      parity: "implemented",
+      executor: "audit_synchronous_api_key_usage",
+      owner: "synchronous D1 authentication tracking",
     });
   });
 

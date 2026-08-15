@@ -34,6 +34,18 @@ export async function authenticateApiKey(
     }>();
 
   if (!row) throw new ApiError(401, "unauthorized", "The API key is invalid or revoked");
+  const usedAt = new Date().toISOString();
+  const tracked = await database
+    .prepare(
+      `UPDATE api_keys
+       SET last_used_at = CASE WHEN last_used_at IS NULL OR last_used_at < ? THEN ? ELSE last_used_at END
+       WHERE id = ? AND revoked_at IS NULL`,
+    )
+    .bind(usedAt, usedAt, row.api_key_id)
+    .run();
+  if (tracked.meta.changes !== 1) {
+    throw new ApiError(401, "unauthorized", "The API key is invalid or revoked");
+  }
   return {
     organizationId: row.organization_id,
     organizationExternalId: row.organization_external_id,

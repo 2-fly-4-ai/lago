@@ -2356,3 +2356,12 @@ resource and mutation described.
   `401`, and the aggregate-only audit remained empty apart from 374 schedule runs. All three
   external-action flags remain `0`; no production route/domain, secret, provider action, customer
   data, payment action, or billing ledger row changed.
+- 2026-08-15: Consolidated Lago's cached API-key-use write and hourly
+  `ApiKeys::TrackUsageService` flush into successful Worker authentication. Migration
+  `0056_api_key_usage_tracking.sql` adds nullable D1 `last_used_at` plus its audit index; the
+  authentication write shares the active-key predicate, advances monotonically, and rejects a key
+  revoked between lookup and persistence. The retained hourly `:15` schedule is now an audited
+  synchronous-authentication boundary rather than a Redis/cache consumer. All 56 migrations replay
+  independently with seven API-key columns, the usage index, and zero foreign-key violations.
+  Strict formatting, lint, inventory, bindings, TypeScript, and dry build pass; all 230 tests across
+  43 files pass serially in 140.21 seconds. The dry-run bundle is 1131.03 KiB (196.54 KiB gzip).

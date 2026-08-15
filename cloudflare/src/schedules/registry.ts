@@ -1,5 +1,6 @@
 export type ScheduleExecutor =
   | "activate_subscriptions"
+  | "audit_synchronous_api_key_usage"
   | "audit_synchronous_event_validation"
   | "bill_ended_trials"
   | "cleanup_inbound_webhooks"
@@ -119,8 +120,9 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     key: "schedule:api_keys_track_usage",
     legacyJob: "Clock::ApiKeys::TrackUsageJob",
     cadence: hourly(15),
-    owner: "analytics engine projection",
-    parity: "not_started",
+    owner: "synchronous D1 authentication tracking",
+    parity: "implemented",
+    executor: "audit_synchronous_api_key_usage",
   },
   {
     key: "schedule:retry_generating_subscription_invoices",

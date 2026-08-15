@@ -202,6 +202,9 @@ remaining Lago feature inventory is dispositioned and ported.
   draft batches, and deterministic continuation handoff. Inbound and usage-event retention records
   R2 deletion tasks transactionally before removing or tombstoning source rows, so storage outages
   remain retryable.
+  Successful bearer authentication also advances the API key's D1 last-use timestamp under the
+  active-key predicate; the legacy Rails-cache write and hourly flush no longer need a runtime
+  owner.
 - R2: immutable provider webhook, usage-event, and invoice-document archives.
 - Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

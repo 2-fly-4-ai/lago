@@ -267,6 +267,9 @@ Required evidence for a new aggregate or a boundary change:
   applied-threshold, credit-link, invoice, and outbox rows are one atomic replay boundary.
 - Provider reads, payment mutations, and outbound webhook delivery are implemented only behind
   disabled safety gates in the isolated stack.
+- Successful bearer authentication advances the API key's D1 `last_used_at` value under the same
+  active-key predicate. A concurrent revocation makes authentication fail; no Rails cache or hourly
+  cache-to-database flush remains in the runtime path.
 - Manual invoice custom sections have a tenant-scoped REST catalog equivalent for the retained
   operator workflow. Explicit subscription selections follow Lago's attach/skip semantics and are
   copied into draft/final invoice snapshots used by the API and PDF renderer. The retained

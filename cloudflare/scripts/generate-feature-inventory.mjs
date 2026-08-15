@@ -263,6 +263,14 @@ function extractOperatorSurface(frontRoot) {
 
 const portRules = [
   {
+    pattern: /api_keys\/track_usage|clock\/api_keys\/track_usage/i,
+    target: "cloudflare/src/auth/api-key.ts",
+    evidence: [
+      "cloudflare/test/api-key-usage.test.ts",
+      "cloudflare/test/scheduled-maintenance.test.ts",
+    ],
+  },
+  {
     pattern: /usage_threshold|progressive_billing|lifetime_usages\/check_thresholds/i,
     target:
       "cloudflare/src/usage/thresholds.ts, cloudflare/src/billing/progressive-billing.ts, and cloudflare/src/billing/progressive-credit.ts",
