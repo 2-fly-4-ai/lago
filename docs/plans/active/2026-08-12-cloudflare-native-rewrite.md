@@ -559,13 +559,14 @@ Acceptance:
       a supported precompiled Wasm module. The pinned `lago-expression` Rust extension is now
       replaced by a bounded TypeScript parser/evaluator with no dynamic evaluation; the separately
       configurable Ruby custom-aggregation program remains explicitly unsupported.
-- [ ] Add usage projections and reconciliation against invoice lines. A synchronous
+- [x] Add usage projections and reconciliation against invoice lines. A synchronous
       Lago-compatible current-usage projection now covers bounded billing windows. The retained
       lifetime-usage slice coalesces event activity transactionally, follows subscription
       generations, reconciles current rated usage with draft/finalized usage lines, exposes
       Lago-compatible GET/PUT routes, and has one-minute Queue/Workflow fanout plus five-minute
-      projection repair. Progressive thresholds, alerts, and broader analytics projections remain
-      pending.
+      projection repair. Voided lines are excluded and projection-version guards prevent older
+      Queue work from clearing newer activity. Progressive thresholds, alerts, and broader analytics
+      projections remain pending as separately inventoried breadth.
 - [ ] Select D1, Durable Object SQL, R2/Pipelines, or Analytics Engine by verified query and volume
       requirements; do not recreate Kafka/ClickHouse by habit.
 
@@ -2957,3 +2958,12 @@ resource and mutation described.
   leaves exactly one cycle, invoice, and finalization event. Formatting, lint, TypeScript, the
   11-test billing-cycle suite, and generated-inventory freshness pass. No runtime implementation,
   migration, deployment, provider action, secret, customer data, or production resource changed.
+- 2026-08-15: Reconciled the M7 usage-projection checkbox with the existing D1/Queue/Workflow
+  implementation. Current usage is bounded to the active billing window; lifetime usage follows
+  subscription generations, sums draft and finalized usage lines while excluding voided lines,
+  coalesces event activity, and uses projection versions so stale Queue work cannot clear newer
+  activity. Lago-compatible GET/PUT routes expose the retained projection and its external
+  historical adjustment. The storage-volume selection remains open pending approved volume
+  evidence rather than inventing a Kafka/ClickHouse replacement. All three focused lifetime-usage
+  tests pass. This plan-only reconciliation adds no runtime code, migration, deployment, provider
+  action, secret, customer data, or production resource change.
