@@ -496,15 +496,17 @@ Acceptance:
 
 ### M6: Documents and object storage
 
-- [ ] Port invoice, receipt, credit-note, quote, and export templates according to inventory. Invoice,
+- [ ] Port invoice, receipt, credit-note, and export templates according to inventory. Invoice,
       receipt, and credit-note templates plus authenticated generation/download boundaries are
-      implemented; quote and export documents remain pending.
+      implemented; export documents remain pending. The pinned Lago revision's quote domain is
+      GraphQL-only and contains no quote template, PDF service/job, or download contract, so there
+      is no authoritative quote document surface to port.
 - [x] Generate invoice, receipt, and credit-note PDFs using Browser Rendering through a retryable,
       ownership-checked Document Workflow.
 - [ ] Replace `pdfcpu` attachment behavior with a Workers-compatible JavaScript or precompiled Wasm
       implementation.
 - [x] Store immutable, version-addressed invoice, receipt, and credit-note artifacts in R2 with
-      checksums, byte length, and generation metadata; quote/export handling remains pending.
+      checksums, byte length, and generation metadata; export handling remains pending.
 - [ ] Add visual and structural golden-file verification.
 
 Acceptance:
@@ -572,8 +574,10 @@ Acceptance:
       update now projects the retained one-default-entity architecture, with creation and non-default
       entities rejected explicitly. Payment-receipt list/show and invoice filtering now use a
       tenant-scoped REST equivalent while document generation and email resend remain explicit
-      boundaries; the remaining operator operations and screens are still inventoried/ported
-      individually.
+      boundaries. The pinned quote create/read/filter/owner and version edit/approve/void/clone
+      lifecycle now uses a tenant-scoped REST equivalent with D1-owned sequencing, active-version
+      uniqueness, optimistic revisions, and idempotent creation/clone commands; the remaining
+      operator operations and screens are still inventoried/ported individually.
 - [ ] Serve the operator application with Workers Static Assets.
 - [ ] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained.
 - [ ] Mark retired screens explicitly with approved product rationale.
@@ -2823,3 +2827,19 @@ resource and mutation described.
   Version inspection confirmed only fetch/scheduled/queue handlers with all external-action flags at
   `0`. No production route/domain, provider action, customer message, payment action, secret, or
   customer data changed.
+- 2026-08-15: Added the pinned Lago quote lifecycle as a documented tenant-scoped REST replacement
+  for its GraphQL-only source contract. Forward migration `0068_quote_versioning.sql` adds
+  organization numbering, a minimal active-membership projection for owner validation, immutable
+  quote identities, versioned draft/approved/voided state, one-active-version and share-token
+  uniqueness, tenant/identity guards, and quote/quote-version outbox revision guards. Create uses a
+  required idempotency key and optimistic organization counter to produce `QT-YYYY-####` numbers;
+  list/show support customer/status/number/date/owner/order filters and pagination; owner changes and
+  draft content use optimistic revisions; approve/void are state-safe; and clone supersedes a source
+  draft or copies a voided version with a replay-safe command record. Outbox payloads contain IDs,
+  state, and changed field names only. The pinned revision contains no quote template, PDF service/
+  job, or download contract, so no speculative document endpoint was added. All 68 migrations replay
+  from empty D1. Strict format/lint/inventory/bindings/TypeScript pass; the focused quote suite passes
+  6 tests, two pre-existing long billing scenarios pass 5/5 in isolated verification after a
+  parallel-load timeout, and all 285 tests across 55 files pass serially in 181.66 seconds. The
+  dry-run bundle is 1353.17 KiB (235.19 KiB gzip). This is a local pre-deployment checkpoint; no
+  remote schema, quote, provider, message, payment, route, secret, or customer data changed.

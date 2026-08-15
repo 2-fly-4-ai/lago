@@ -415,6 +415,12 @@ const portRules = [
     evidence: ["cloudflare/test/tax-ledger.test.ts"],
   },
   {
+    pattern:
+      /api\/app\/(models\/quote(?:_owner|_version)?|queries\/quotes_query|services\/(?:quotes|quote_versions)\/(?:approve|clone|create|update|void)_service|graphql\/(?:mutations|resolvers|types)\/.*quote.*)\.rb/i,
+    target: "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
+    evidence: ["cloudflare/test/quotes.test.ts"],
+  },
+  {
     pattern: /document|generate_pdf|pdf_service|invoice.*file/i,
     target: "cloudflare/src/documents/invoice.ts",
     evidence: ["cloudflare/test/invoice-document.test.ts"],
