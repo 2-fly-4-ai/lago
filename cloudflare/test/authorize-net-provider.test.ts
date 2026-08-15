@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AuthorizeNetEnv } from "../src/providers/authorize-net";
 import {
   createAuthorizeNetPaymentUrl,
+  createAuthorizeNetPaymentRequestUrl,
   getAuthorizeNetTransaction,
   normalizeAuthorizeNetPaymentStatus,
 } from "../src/providers/authorize-net";
@@ -86,6 +87,59 @@ describe("Authorize.Net provider adapter", () => {
         ),
       ),
     ).rejects.toMatchObject({ code: "authorize_net_response_too_large" });
+  });
+
+  it("creates hosted payment-request metadata compatible with Lago webhooks", async () => {
+    const providerFetch = vi.fn<typeof fetch>(async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as {
+        getHostedPaymentPageRequest: {
+          transactionRequest: {
+            amount: string;
+            order: { invoiceNumber: string; description: string };
+            userFields: { userField: Array<{ name: string; value: string }> };
+          };
+        };
+      };
+      const transaction = request.getHostedPaymentPageRequest.transactionRequest;
+      expect(transaction.amount).toBe("17.00");
+      expect(transaction.order).toEqual({
+        invoiceNumber: "payment-request-1234",
+        description: "Lago payment request",
+      });
+      expect(
+        Object.fromEntries(
+          transaction.userFields.userField.map((field) => [field.name, field.value]),
+        ),
+      ).toMatchObject({
+        lago_payment_request_id: "payment-request-123456789",
+        lago_customer_id: "customer-1",
+        lago_organization_id: "org-1",
+        lago_payable_id: "payment-request-123456789",
+        lago_payable_type: "PaymentRequest",
+        payment_type: "one-time",
+        currency: "USD",
+      });
+      return Response.json({ token: "payment-request-token" });
+    });
+
+    await expect(
+      createAuthorizeNetPaymentRequestUrl(
+        providerEnv,
+        {
+          paymentRequestId: "payment-request-123456789",
+          customerId: "customer-1",
+          externalCustomerId: "external-customer-1",
+          organizationId: "org-1",
+          amountMinor: 1700,
+          currency: "USD",
+          customerEmail: "billing@example.com",
+        },
+        providerFetch,
+      ),
+    ).resolves.toMatchObject({
+      paymentUrl: expect.stringContaining("token=payment-request-token"),
+      token: "payment-request-token",
+    });
   });
 
   it("maps provider states without treating unknown outcomes as success", () => {

@@ -43,6 +43,7 @@ import {
   progressiveBillingCandidates,
 } from "../billing/progressive-billing";
 import { processDunningCampaigns } from "../schedules/dunning";
+import { dispatchPendingPaymentRequestCheckouts } from "./checkout";
 
 type ReconciliationParams = {
   schedule?: {
@@ -417,6 +418,12 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           )
         : { candidates: 0, requestsCreated: 0, campaignsFinished: 0 };
 
+      const paymentRequestCheckouts = await step.do(
+        "dispatch payment request checkouts",
+        { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+        async () => dispatchPendingPaymentRequestCheckouts(this.env),
+      );
+
       const publishedEvents = await step.do(
         "publish pending outbox events",
         { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" }, timeout: "1 minute" },
@@ -478,6 +485,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         deletedOutboundWebhooks,
         deletedInboundWebhooks,
         dunning,
+        paymentRequestCheckouts,
         publishedEvents,
       };
       await step.do("complete schedule run", async () => {

@@ -448,7 +448,11 @@ Acceptance:
 - [x] Define a provider adapter contract.
 - [x] Implement Authorize.Net first because it is the verified store dependency.
 - [ ] Port other providers according to the feature inventory.
-- [ ] Implement checkout/payment Workflows with intent, attempt, outcome, and reconciliation records.
+- [x] Implement checkout/payment Workflows with intent, attempt, outcome, and reconciliation records.
+      Invoice hosted checkout retains the synchronous store contract with Durable Object command
+      reservations; payment-request checkout uses a D1 intent/outcome ledger and a retryable
+      Workflow, while provider transaction attempts and webhook reconciliation remain separate,
+      auditable records.
 - [x] Implement signed webhook verification, immutable receipt storage, deduplication, ordering,
       retries, and poison-message handling.
 - [x] Implement `POST /invoices/:id/payment_url` compatibility behavior.
@@ -2531,6 +2535,20 @@ resource and mutation described.
   scheduled, and queue handlers and all three external-action flags at `0`; no production
   route/domain, secret, customer message, provider action, customer data, or payment action
   occurred.
+- 2026-08-15: Replaced the unused validation-only Checkout Workflow with durable Authorize.Net
+  payment-request checkout orchestration. Migration
+  `0061_payment_request_checkout_intents.sql` owns tenant/version/idempotency-guarded intent and
+  outcome state. The minute reconciliation Workflow discovers pending requests only when
+  `PAYMENT_MUTATIONS_ENABLED=1`, dispatches one deterministic checkout instance per request
+  version, and records processing/success/failure transitions. Provider responses are sensitive
+  Workflow outputs; D1 retains only the required hosted URL and token hash, while outbox events
+  contain identifiers and expiry but no token or URL. The adapter emits Lago's exact
+  `PaymentRequest` metadata so migration 0060 can reconcile the resulting webhook. Provider
+  failures retain no URL/token and emit bounded failure evidence. No email or delivery channel was
+  added, and the isolated deployment gate remains `0`. All 61 migrations replay independently.
+  Strict format/lint/inventory/bindings/TypeScript pass; all 248 tests across 47 files pass serially
+  in 152.79 seconds. The dry-run bundle is 1221.38 KiB (211.80 KiB gzip). This is a local pre-
+  deployment checkpoint; no remote resource, provider, message, or data was changed by this entry.
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.

@@ -244,9 +244,10 @@ remaining Lago feature inventory is dispositioned and ported.
   request amount, and current linked-invoice balances to agree; version guards, status monotonicity,
   dunning-counter reset, invoice/request status changes, and outbox evidence share one atomic D1
   batch. Those payments are visible through the retained `/api/v1/payments` list/show contract,
-  including invoice filters and multi-invoice payable metadata. Creating this internal ledger does
-  not call a provider or send email; hosted-link handoff remains subject to the existing external-
-  action gates.
+  including invoice filters and multi-invoice payable metadata. A D1-backed Checkout Workflow can
+  create the matching hosted link once per request version, persist processing/success/failure
+  outcomes, and emit token-free outbox evidence. Its dispatcher and provider call both require
+  `PAYMENT_MUTATIONS_ENABLED=1`; creating the request itself never calls a provider or sends email.
 - Dunning campaigns: authenticated tenant-scoped create/list/show/update/delete routes own campaign
   thresholds, organization defaults, customer overrides, and exclusions in D1. The hourly `:45`
   Workflow executor creates at most one deterministic payment request per eligible customer and
@@ -255,8 +256,9 @@ remaining Lago feature inventory is dispositioned and ported.
   exclusions, and maximum attempts. It emits `dunning_campaign.finished` at the terminal attempt.
   Each request, version-pinned invoice link, customer attempt advance, and outbox event commits in
   one guarded D1 batch.
-  Provider payment handoff and fallback email remain intentionally absent, so schedule parity stays
-  partial and all external-action gates remain authoritative.
+  Provider checkout handoff is implemented behind the disabled mutation gate. Email/link delivery
+  remains intentionally absent, so schedule parity stays partial and all external-action gates
+  remain authoritative.
 
 No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or
 OS command is required by this package.

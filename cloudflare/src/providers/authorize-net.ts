@@ -11,6 +11,25 @@ type HostedPaymentInput = {
   customerEmail?: string | null;
 };
 
+export type HostedPaymentRequestInput = {
+  paymentRequestId: string;
+  customerId: string;
+  externalCustomerId: string;
+  organizationId: string;
+  amountMinor: number;
+  currency: string;
+  customerEmail?: string | null;
+};
+
+type HostedPaymentPageInput = {
+  invoiceNumber: string;
+  description: string;
+  externalCustomerId: string;
+  amountMinor: number;
+  customerEmail?: string | null;
+  metadata: Record<string, string>;
+};
+
 export type AuthorizeNetEnv = Pick<
   Env,
   | "AUTHORIZE_NET_API_LOGIN_ID"
@@ -45,6 +64,60 @@ export async function createAuthorizeNetPaymentUrl(
   input: HostedPaymentInput,
   fetcher: typeof fetch = fetch,
 ): Promise<{ paymentUrl: string; token: string; expiresAt: string | null }> {
+  return createAuthorizeNetHostedPaymentUrl(
+    env,
+    {
+      invoiceNumber: input.invoiceNumber,
+      description: `Lago invoice ${input.invoiceNumber}`,
+      externalCustomerId: input.externalCustomerId,
+      amountMinor: input.amountMinor,
+      customerEmail: input.customerEmail,
+      metadata: {
+        lago_invoice_id: input.invoiceId,
+        lago_customer_id: input.customerId,
+        lago_organization_id: input.organizationId,
+        lago_payable_id: input.invoiceId,
+        lago_payable_type: "Invoice",
+        payment_type: "one-time",
+        currency: input.currency,
+      },
+    },
+    fetcher,
+  );
+}
+
+export async function createAuthorizeNetPaymentRequestUrl(
+  env: AuthorizeNetEnv,
+  input: HostedPaymentRequestInput,
+  fetcher: typeof fetch = fetch,
+): Promise<{ paymentUrl: string; token: string; expiresAt: string | null }> {
+  return createAuthorizeNetHostedPaymentUrl(
+    env,
+    {
+      invoiceNumber: input.paymentRequestId,
+      description: "Lago payment request",
+      externalCustomerId: input.externalCustomerId,
+      amountMinor: input.amountMinor,
+      customerEmail: input.customerEmail,
+      metadata: {
+        lago_payment_request_id: input.paymentRequestId,
+        lago_customer_id: input.customerId,
+        lago_organization_id: input.organizationId,
+        lago_payable_id: input.paymentRequestId,
+        lago_payable_type: "PaymentRequest",
+        payment_type: "one-time",
+        currency: input.currency,
+      },
+    },
+    fetcher,
+  );
+}
+
+async function createAuthorizeNetHostedPaymentUrl(
+  env: AuthorizeNetEnv,
+  input: HostedPaymentPageInput,
+  fetcher: typeof fetch,
+): Promise<{ paymentUrl: string; token: string; expiresAt: string | null }> {
   const apiLoginId = requiredSecret(env.AUTHORIZE_NET_API_LOGIN_ID, "AUTHORIZE_NET_API_LOGIN_ID");
   const transactionKey = requiredSecret(
     env.AUTHORIZE_NET_TRANSACTION_KEY,
@@ -68,22 +141,14 @@ export async function createAuthorizeNetPaymentUrl(
           amount,
           order: {
             invoiceNumber: input.invoiceNumber.slice(0, 20),
-            description: `Lago invoice ${input.invoiceNumber}`.slice(0, 255),
+            description: input.description.slice(0, 255),
           },
           customer: {
             id: input.externalCustomerId.slice(0, 20),
             ...(input.customerEmail ? { email: input.customerEmail } : {}),
           },
           userFields: {
-            userField: Object.entries({
-              lago_invoice_id: input.invoiceId,
-              lago_customer_id: input.customerId,
-              lago_organization_id: input.organizationId,
-              lago_payable_id: input.invoiceId,
-              lago_payable_type: "Invoice",
-              payment_type: "one-time",
-              currency: input.currency,
-            }).map(([name, value]) => ({ name, value })),
+            userField: Object.entries(input.metadata).map(([name, value]) => ({ name, value })),
           },
         },
         hostedPaymentSettings: {
