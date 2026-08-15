@@ -11,6 +11,7 @@ import { processPayInAdvanceUsageEvent } from "./billing/pay-in-advance-usage";
 import { processUsageEventSubscriptionActivity } from "./usage/lifetime-usage";
 import { handlePaymentRequestApi } from "./api/payment-requests";
 import { handleDunningCampaignApi } from "./api/dunning-campaigns";
+import { handleFeesApi } from "./api/fees";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -78,6 +79,8 @@ export default {
         if (dunningCampaignResponse) return dunningCampaignResponse;
         const paymentRequestResponse = await handlePaymentRequestApi(request, env, auth, requestId);
         if (paymentRequestResponse) return paymentRequestResponse;
+        const feeResponse = await handleFeesApi(request, env, auth, requestId);
+        if (feeResponse) return feeResponse;
         const response = await handleLagoCompatibilityRequest(request, env, auth, requestId);
         if (response) return response;
       }

@@ -2606,3 +2606,14 @@ resource and mutation described.
   synthetic graph, five outbox rows, zero payment links, zero active run keys, and no foreign-key
   violations. Records remain for inspection as required by the staging cleanup policy; provider
   sandbox, restart/failure injection, reconciliation, and complete billing-cycle phases remain open.
+- 2026-08-15: Added the retained `/api/v1/fees` read surface over immutable D1 invoice-line
+  evidence. Tenant-scoped list/show supports bounded pagination plus fee type, payment status,
+  customer, subscription, currency, billable-metric, event-transaction, and creation-time filters;
+  responses include Lago-shaped item, money, customer/subscription, and batched applied-tax
+  snapshots. Cross-tenant show returns `fee_not_found`, invalid filters fail explicitly, and
+  update/delete return `unsupported_fee_mutation` rather than mutating finalized billing evidence.
+  The generated inventory now maps the upstream fee controller/model/query/serializer/services to
+  this Worker API and focused evidence. Strict format/lint/inventory/bindings/TypeScript pass; all
+  251 tests across 48 files pass serially in 155.47 seconds. The dry-run bundle is 1231.56 KiB
+  (213.95 KiB gzip). This is a local pre-deployment checkpoint with no migration, provider, secret,
+  message, payment, or remote-data action.

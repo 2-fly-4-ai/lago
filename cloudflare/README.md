@@ -7,6 +7,8 @@ remaining Lago feature inventory is dispositioned and ported.
 ## Architecture
 
 - Worker: authenticated Lago-compatible HTTP API and signed provider webhooks.
+- Fee API: tenant-scoped immutable invoice-fee list/show with pagination, customer/subscription/
+  currency/type/date filters, tax snapshots, and explicit unsupported mutation errors.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
