@@ -630,11 +630,14 @@ Acceptance:
       organization REST serializer, with no browser-specific duplicate projection. The API-key
       BFF now maps sanitized list/show for viewers and create/name-update/rotate/revoke for admins,
       reusing the canonical secret-safe control plane behind operator origin/CSRF checks.
-- [ ] Serve the operator application with Workers Static Assets. The direct-delivery foundation is
-      complete: Wrangler serves a script-free migration shell, stylesheet, SPA fallback, and
-      `_headers` policy from Static Assets while `/api/*`, health/readiness, hosted-payment, and
-      provider-webhook routes remain Worker-first. The milestone stays open until authenticated,
-      retained screens replace the shell without exposing any unmapped operation.
+- [x] Serve the operator application with Workers Static Assets. The deployed API Worker retains
+      its script-free `operator-ui` rollback shell. The separate, undeployed operator Worker now
+      serves `operator-app`: a same-origin native-ES-module organization/API-key workspace with a
+      restrictive `_headers` policy, SPA fallback, and Worker-first `/api/*`, health, and readiness
+      paths. It validates the Access session before exposing controls, gives viewers sanitized
+      metadata and admins create/rename/rotate/revoke actions, holds create/rotate secrets only in
+      memory, and contains no GraphQL, bearer-login, browser credential storage, or auth bypass.
+      Remote deployment remains gated on the approved Access policy and synthetic membership proof.
 - [ ] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained.
 - [ ] Mark retired screens explicitly with approved product rationale. The proposed retain,
       blocked, external-owner, not-used, and retirement policy plus screen admission/rollback rules
@@ -3179,3 +3182,21 @@ resource and mutation described.
   non-interactive; migration 0070, the operator Worker, and its Access application/policy remain
   unapplied or unprovisioned remotely. No provider action, payment action, customer message, secret
   access, customer-data access, or production operation occurred.
+- 2026-08-16: Added the separate operator Static Assets application without altering or deploying
+  the API Worker's live migration shell. `operator-app` uses same-origin native ES modules to load
+  only the membership-scoped organization and API-key BFFs, renders viewers read-only, and exposes
+  create/rename/rotate/revoke controls only to admins. Mutations send JSON plus the operator CSRF
+  header; the bundle contains no GraphQL path, bearer authorization, browser storage/cookie write,
+  or `innerHTML`. Raw create/rotate values exist only in memory in a one-time copy dialog and are
+  cleared on close. Four static-contract tests preserve the two-bundle separation, CSP/header
+  policy, BFF endpoints, CSRF request shape, forbidden browser primitives, fail-closed state, and
+  secret clearing. The focused operator/static suite passes 15/15; the authoritative serial suite
+  passes all 315 tests across 61 files in 275.01 seconds. Formatting, lint, generated inventory,
+  both binding checks, and TypeScript pass. A fresh ephemeral local D1 applied all 70 migrations;
+  desktop and 390-pixel mobile browser QA showed only `Operator Access not configured`, no operator
+  controls or billing data, and no browser warnings/errors. Local smoke returned root/script/
+  health `200` and session `503 operator_access_disabled` with the expected restrictive response
+  headers. The API dry bundle remains 1406.92 KiB (245.95 KiB gzip); the separate disabled operator
+  bundle remains 70.25 KiB (17.92 KiB gzip) and reads five operator assets. No remote migration,
+  resource, Access application/policy, membership, deployment, provider action, payment action,
+  customer message, secret access, customer-data access, or production operation occurred.

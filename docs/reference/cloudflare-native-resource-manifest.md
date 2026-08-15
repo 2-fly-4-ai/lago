@@ -46,7 +46,10 @@ Applied D1 migrations: `0001_foundation.sql` through
   preview URLs are disabled, and no Access application or allow policy exists. Its local BFF
   currently exposes session metadata, the membership-scoped canonical organization read
   projection, and viewer-read/admin-mutation API-key management with one-time create/rotate values;
-  the static bundle remains the non-interactive migration shell.
+  its separate `operator-app` Static Assets bundle implements those organization and API-key
+  screens. The deployed API Worker still serves `operator-ui`, the non-interactive migration shell.
+  Local desktop/mobile browser QA proved the operator bundle renders only the fail-closed state
+  while Access is disabled, with no browser warnings or errors.
 - `0070_operator_access.sql` is locally replayed and tested but remains unapplied remotely. The
   isolated D1 therefore has no operator-membership table or membership data yet.
 - Provisioning requires an approved Access identity/group allow policy, session duration, team

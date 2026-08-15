@@ -278,15 +278,18 @@ remaining Lago feature inventory is dispositioned and ported.
   and Pipelines/R2 Data Catalog are deferred derived-analytics options rather than billing
   authorities. The measured limits and sharding/fanout gates are recorded in
   `../docs/reference/cloudflare-usage-storage-decision.md`.
-- Operator Static Assets: Wrangler directly serves a script-free migration shell and stylesheet,
-  applies restrictive CSP/framing/no-index headers, and uses SPA navigation fallback without
-  invoking Worker compute for matched assets. `/api/*`, health/readiness, hosted-payment, and
-  provider-webhook routes stay Worker-first. The pinned React/Apollo console is intentionally not
-  deployed while its operations remain unmapped; interactive operator access is a later,
-  authenticated screen-by-screen migration rather than a pretend-compatible legacy UI.
+- Operator Static Assets: the API Worker continues to serve a script-free migration shell while the
+  separate, undeployed operator Worker serves `operator-app`, a native-ES-module organization and
+  API-key workspace. Both bundles use direct Static Assets delivery, restrictive CSP/framing/
+  no-index headers, SPA fallback, and Worker-first `/api/*`, health, and readiness paths. The
+  operator app validates its Cloudflare Access session before exposing the dashboard, renders a
+  disabled or unauthorized state fail-closed, gives viewers sanitized key metadata only, and gives
+  admins create/rename/rotate/revoke controls. It does not contain a GraphQL client, bearer-login
+  field, credential storage, or runtime bypass. Create/rotate secrets exist only in memory inside a
+  one-time dialog and are cleared when it closes. The pinned React/Apollo console is intentionally
+  not deployed while its operations remain unmapped.
   `../docs/reference/cloudflare-operator-surface-policy.md` defines screen admission, route-family
-  disposition, and the fail-closed Cloudflare Access/JWT plus D1 membership design required before
-  interactive assets replace the shell. Service API keys are never browser login credentials.
+  disposition, and the Access/JWT plus D1 membership boundary required before remote deployment.
 - Operator authentication: a separately configured `serp-dev-lago-operator` Worker keeps human
   Cloudflare Access policy away from service API clients and provider webhooks. It validates the
   Access RS256 JWT issuer, audience, signature, expiry, and subject; looks up only an issuer-scoped

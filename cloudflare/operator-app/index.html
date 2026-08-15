@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    />
+    <meta name="color-scheme" content="light" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>SERP Billing Operator</title>
+    <link rel="stylesheet" href="/assets/operator-app.css" />
+    <script type="module" src="/assets/operator-app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Billing operator navigation">
+        <a class="brand" href="/" aria-label="SERP billing operator home">
+          <span class="brand-mark" aria-hidden="true">S</span>
+          <span>
+            <strong>SERP</strong>
+            <small>Billing operator</small>
+          </span>
+        </a>
+
+        <nav aria-label="Primary navigation">
+          <p class="nav-label">Workspace</p>
+          <a class="nav-item active" href="#overview" aria-current="page">
+            <span class="nav-icon" aria-hidden="true">⌂</span>
+            Overview
+          </a>
+          <a class="nav-item" href="#api-keys">
+            <span class="nav-icon" aria-hidden="true">⌁</span>
+            API keys
+          </a>
+        </nav>
+
+        <div class="sidebar-note">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>
+            <strong>Cloudflare native</strong>
+            <small>Isolated development</small>
+          </span>
+        </div>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Billing operations</p>
+            <p class="topbar-title" id="workspace-name">Loading workspace…</p>
+          </div>
+          <div class="operator-badge" id="operator-badge" hidden>
+            <span class="avatar" aria-hidden="true">OP</span>
+            <span>
+              <strong>Operator</strong>
+              <small id="operator-role">Checking access…</small>
+            </span>
+          </div>
+        </header>
+
+        <main id="main-content" tabindex="-1">
+          <section class="state-panel" id="loading-state" aria-live="polite">
+            <div class="state-icon loading-icon" aria-hidden="true"></div>
+            <p class="eyebrow">Secure operator session</p>
+            <h1>Checking access</h1>
+            <p>Validating the Cloudflare Access session and tenant membership.</p>
+          </section>
+
+          <section class="state-panel closed" id="closed-state" aria-live="assertive" hidden>
+            <div class="state-icon lock-icon" aria-hidden="true">×</div>
+            <p class="eyebrow">Fail-closed boundary</p>
+            <h1 id="closed-title">Operator Access not configured</h1>
+            <p id="closed-message">
+              This isolated operator Worker will not expose billing controls until Cloudflare Access
+              and an active tenant membership are configured.
+            </p>
+            <div class="state-facts" aria-label="Current safeguards">
+              <span>No API-key login</span>
+              <span>No GraphQL fallback</span>
+              <span>No customer billing data</span>
+            </div>
+          </section>
+
+          <div id="dashboard" hidden>
+            <section class="page-heading" id="overview" aria-labelledby="page-title">
+              <div>
+                <p class="eyebrow">Organization workspace</p>
+                <h1 id="page-title">Access and credentials</h1>
+                <p>
+                  Review organization settings and manage tenant-scoped API credentials through the
+                  Cloudflare-native billing service.
+                </p>
+              </div>
+              <span class="role-pill" id="role-pill">Viewer access</span>
+            </section>
+
+            <div class="notice error" id="page-error" role="alert" hidden>
+              <span aria-hidden="true">!</span>
+              <p id="page-error-message"></p>
+              <button class="text-button" id="dismiss-error" type="button">Dismiss</button>
+            </div>
+
+            <section class="organization-card" aria-labelledby="organization-title">
+              <div class="organization-monogram" id="organization-monogram" aria-hidden="true">
+                —
+              </div>
+              <div class="organization-copy">
+                <p class="eyebrow">Current organization</p>
+                <h2 id="organization-title">Loading organization…</h2>
+                <p id="organization-slug">—</p>
+              </div>
+              <dl class="organization-meta">
+                <div>
+                  <dt>Currency</dt>
+                  <dd id="organization-currency">—</dd>
+                </div>
+                <div>
+                  <dt>Timezone</dt>
+                  <dd id="organization-timezone">—</dd>
+                </div>
+                <div>
+                  <dt>Configuration</dt>
+                  <dd id="organization-version">—</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="keys-section" id="api-keys" aria-labelledby="keys-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Tenant credentials</p>
+                  <h2 id="keys-title">API keys</h2>
+                  <p>Secrets are shown only once when a key is created or rotated.</p>
+                </div>
+                <button class="primary-button" id="open-create-key" type="button" hidden>
+                  <span aria-hidden="true">+</span>
+                  Create API key
+                </button>
+              </div>
+
+              <div class="table-shell">
+                <div class="table-loading" id="keys-loading" aria-live="polite">
+                  Loading API keys…
+                </div>
+                <div class="empty-state" id="keys-empty" hidden>
+                  <span aria-hidden="true">⌁</span>
+                  <h3>No active API keys</h3>
+                  <p id="keys-empty-copy">This organization has no active API credentials.</p>
+                </div>
+                <div class="table-scroll" id="keys-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Name</th>
+                        <th scope="col">Credential</th>
+                        <th scope="col">Created</th>
+                        <th scope="col">Last used</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="keys-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <dialog class="modal" id="key-form-dialog" aria-labelledby="key-form-title">
+      <form method="dialog" id="key-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow" id="key-form-eyebrow">Tenant credential</p>
+            <h2 id="key-form-title">Create API key</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy" id="key-form-copy">
+          Give the credential a name that identifies the service using it.
+        </p>
+        <label for="key-name">Key name</label>
+        <input id="key-name" name="name" maxlength="255" autocomplete="off" required />
+        <p class="field-hint">Use a service or environment name, such as “Store delivery”.</p>
+        <p class="form-error" id="key-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-key-form" value="default" type="submit">
+            Create key
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal danger-modal" id="confirm-dialog" aria-labelledby="confirm-title">
+      <form method="dialog" id="confirm-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Confirm operator action</p>
+            <h2 id="confirm-title">Confirm action</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy" id="confirm-copy"></p>
+        <p class="form-error" id="confirm-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="danger-button" id="confirm-action" value="default" type="submit">
+            Confirm
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal secret-modal" id="secret-dialog" aria-labelledby="secret-title">
+      <div class="modal-heading">
+        <div>
+          <p class="eyebrow">One-time credential</p>
+          <h2 id="secret-title">Copy this API key now</h2>
+        </div>
+        <button class="icon-button" id="close-secret-top" aria-label="Close" type="button">
+          ×
+        </button>
+      </div>
+      <p class="modal-copy">
+        This secret is shown once. Store it in an approved secret manager before closing this
+        window.
+      </p>
+      <div class="secret-value">
+        <code id="secret-value">—</code>
+        <button class="secondary-button" id="copy-secret" type="button">Copy key</button>
+      </div>
+      <p class="copy-status" id="copy-status" aria-live="polite"></p>
+      <div class="modal-actions">
+        <button class="primary-button" id="close-secret" type="button">I’ve stored this key</button>
+      </div>
+    </dialog>
+  </body>
+</html>
