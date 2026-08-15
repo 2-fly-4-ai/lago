@@ -98,6 +98,7 @@ describe("legacy schedule ownership", () => {
       "schedule:terminate_coupons",
       "schedule:bill_ended_trial_subscriptions",
       "schedule:terminate_wallets",
+      "schedule:termination_alert",
       "schedule:terminate_expired_wallet_transaction_rules",
       "schedule:top_up_wallet_interval_credits",
       "schedule:clean_webhooks",

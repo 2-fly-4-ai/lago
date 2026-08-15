@@ -2375,3 +2375,9 @@ resource and mutation described.
   aggregate-only audit remained empty apart from 385 schedule runs. All three external-action flags
   remain `0`; no production route/domain, secret, provider action, customer data, payment action,
   or billing ledger row changed.
+- 2026-08-15: Ported the hourly subscription termination-alert owner as deterministic D1 outbox
+  evidence. Active subscriptions ending on the exact UTC 15/45-day windows receive one event per
+  subscription/trigger date; pending, terminated, canceled, and nonmatching endings are excluded,
+  and Workflow replay is conflict-safe. Outbound delivery remains behind its disabled safety gate.
+  Strict format/lint/inventory/bindings/TypeScript pass, all 231 tests across 44 files pass serially
+  in 144.43 seconds, and the dry-run bundle is 1133.38 KiB (196.95 KiB gzip).

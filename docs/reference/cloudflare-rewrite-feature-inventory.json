@@ -18821,12 +18821,12 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/subscription-lifecycle.ts",
+        "target": "cloudflare/src/billing/termination-alerts.ts",
         "evidence": [
-          "cloudflare/test/subscription-lifecycle.test.ts",
-          "cloudflare/test/billing-cycle.test.ts"
+          "cloudflare/test/termination-alerts.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": "cloudflare/test/subscription-lifecycle.test.ts",
+        "testFixture": "cloudflare/test/termination-alerts.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -19587,11 +19587,12 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/billing/termination-alerts.ts",
         "evidence": [
-          "cloudflare/fixtures/store-new/subscription-create.json"
+          "cloudflare/test/termination-alerts.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/subscription-create.json",
+        "testFixture": "cloudflare/test/termination-alerts.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."

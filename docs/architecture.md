@@ -343,7 +343,7 @@ Lago uses Clockwork to schedule recurring jobs. The clock process runs independe
 | Bill Ended Trial Subscriptions | At :35 | Bills subscriptions when trials end | - |
 | Terminate Wallets | At :45 | Expires wallets | - |
 | Process Dunning Campaigns | At :45 | Executes dunning campaign actions | - |
-| Termination Alert | At :50 | Sends alerts for upcoming subscription terminations | - |
+| Termination Alert | At :50 | Persists deduplicated 15/45-day termination-alert events | D1 outbox; outbound delivery safety-gated |
 | Terminate Expired Wallet Transaction Rules | At :50 | Cleans up expired wallet rules | - |
 | Top Up Wallet Interval Credits | At :55 | Adds recurring wallet credits | - |
 

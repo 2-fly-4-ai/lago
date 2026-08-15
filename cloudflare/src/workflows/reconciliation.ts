@@ -4,6 +4,7 @@ import type { DomainEvent } from "../domain-events";
 import { closeBillingPeriod } from "../billing/close-period";
 import { activatePendingSubscriptions } from "../billing/activate-pending-subscriptions";
 import { terminateEndedSubscriptions } from "../billing/terminate-subscription";
+import { enqueueTerminationAlerts } from "../billing/termination-alerts";
 import { billEndedTrialSubscriptions } from "../billing/bill-ended-trials";
 import {
   cleanupDeletedMetricEvents,
@@ -238,6 +239,14 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           )
         : 0;
 
+      const terminationAlerts = executors.has("enqueue_termination_alerts")
+        ? await step.do(
+            "enqueue subscription termination alerts",
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => enqueueTerminationAlerts(this.env.BILLING_DB, triggeredAtIso, runId),
+          )
+        : { candidates: 0, enqueued: 0 };
+
       const endedTrialSubscriptions = executors.has("bill_ended_trials")
         ? await step.do(
             "bill ended trial subscriptions",
@@ -437,6 +446,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           ? "synchronous_authentication_write"
           : null,
         terminatedSubscriptions,
+        terminationAlerts,
         endedTrialSubscriptions,
         pendingReceipts: pendingReceiptIds.length,
         processedReceipts,

@@ -18,7 +18,8 @@ export type ScheduleExecutor =
   | "reconcile_provider_receipts"
   | "terminate_recurring_wallet_rules"
   | "top_up_recurring_wallets"
-  | "terminate_ended_subscriptions";
+  | "terminate_ended_subscriptions"
+  | "enqueue_termination_alerts";
 
 export type ScheduleParity = "implemented" | "partial" | "not_started";
 
@@ -176,7 +177,8 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     legacyJob: "Clock::SubscriptionsToBeTerminatedJob",
     cadence: hourly(50),
     owner: "subscription lifecycle workflow",
-    parity: "not_started",
+    parity: "implemented",
+    executor: "enqueue_termination_alerts",
   },
   {
     key: "schedule:terminate_expired_wallet_transaction_rules",
