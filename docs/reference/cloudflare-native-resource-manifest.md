@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `f5e9777d-c4b7-4ece-9667-0fc61dfe1d10`
+- Latest verified version: `be0a0056-2a14-4f33-8633-172fea750fd5`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -36,10 +36,22 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0066_payment_receipt_documents.sql`.
+`0067_credit_note_documents.sql`.
 
 ## Verified behavior
 
+- Version `be0a0056-2a14-4f33-8633-172fea750fd5` deployed finalized/voided credit-note PDFs after
+  applying only migration `0067`. Remote verification found the 12-column artifact ledger, all
+  three tenant/version/identity/generated-event guards, no pending migration, zero credit notes/
+  artifacts/events/payments, and no foreign-key violations. A disposable hashed key exercised the
+  empty credit-note list, not-found show/PDF download, explicit XML-disabled boundary,
+  health/readiness, and authentication, then was revoked. No synthetic credit note was created, so
+  Browser Rendering, versioned void regeneration, and R2 archival remain proven by the full local
+  Workers suite rather than a remote billing mutation. The final audit found zero active or
+  malformed key hashes, zero billing/document state, and 737 schedule audits. The deployed bundle
+  was 1314.55 KiB (228.43 KiB gzip) with a 6 ms startup; version inspection confirmed only fetch/
+  scheduled/queue handlers and all external-action flags at `0`. No production route/domain,
+  provider action, customer message, payment action, secret, or customer data changed.
 - Version `f5e9777d-c4b7-4ece-9667-0fc61dfe1d10` deployed the payment-receipt PDF pipeline after
   applying only migration `0066`. Remote verification found the 12-column artifact ledger, both
   tenant/version and immutable-identity triggers, no pending migration, zero artifacts/receipts/

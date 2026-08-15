@@ -2808,3 +2808,18 @@ resource and mutation described.
   suite passes 15 tests, all 279 tests across 54 files pass serially in 169.83 seconds, and the dry-
   run bundle is 1314.55 KiB (228.43 KiB gzip). This is a local pre-deployment checkpoint; no remote
   schema, artifact, provider, message, payment, route, secret, or customer data changed.
+- 2026-08-15: Credit-note-document remote preflight found exactly
+  `0067_credit_note_documents.sql` pending, zero credit notes/items/payments, zero active or malformed
+  key hashes, and no foreign-key violations. Applied only migration 0067, then verified the
+  12-column artifact ledger, all three tenant/version/identity/generated-event guards, no pending
+  migration, zero artifacts, and unchanged billing state. Deployed only the isolated Worker as
+  version `be0a0056-2a14-4f33-8633-172fea750fd5` with a 6 ms startup and unchanged resources/flags.
+  A disposable hashed key exercised the empty list, missing show/PDF download, explicit XML-disabled
+  response, authentication, and health/readiness, then was revoked. No synthetic credit note was
+  created because a remote billing mutation remained outside the approved smoke boundary; escaped
+  rendering, R2 checksums, versioned void regeneration, private download, failure recording, and
+  workflow replay remain locally proven. Final audit found zero active/malformed keys, credit notes,
+  artifacts, credit-note events, or payments, 737 schedule audits, and no foreign-key violations.
+  Version inspection confirmed only fetch/scheduled/queue handlers with all external-action flags at
+  `0`. No production route/domain, provider action, customer message, payment action, secret, or
+  customer data changed.
