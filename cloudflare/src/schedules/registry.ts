@@ -10,6 +10,7 @@ export type ScheduleExecutor =
   | "finalize_invoices"
   | "mark_invoices_overdue"
   | "process_subscription_activity"
+  | "project_daily_usage"
   | "refresh_draft_invoices"
   | "refresh_lifetime_usages"
   | "refresh_wallet_balances"
@@ -219,8 +220,9 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     key: "schedule:compute_daily_usage",
     legacyJob: "Clock::ComputeAllDailyUsagesJob",
     cadence: hourly(15),
-    owner: "usage projection workflow",
-    parity: "not_started",
+    owner: "D1 daily revenue analytics projection",
+    parity: "implemented",
+    executor: "project_daily_usage",
   },
   {
     key: "schedule:process_dunning_campaigns",

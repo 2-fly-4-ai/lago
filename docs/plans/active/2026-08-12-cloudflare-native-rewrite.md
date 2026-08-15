@@ -2298,3 +2298,21 @@ resource and mutation described.
   apart from 277 schedule audits. All three external-action flags remain `0`; no resource
   provisioning, production route/domain, secret, provider action, customer data, or billing row
   changed.
+- 2026-08-15: Ported the retained `ComputeAllDailyUsages` revenue-analytics owner without Rails,
+  Sidekiq, PostgreSQL, Redis, or ClickHouse. Migration `0054_daily_usage_projection.sql` adds a
+  strict D1 cumulative snapshot plus normalized per-charge cumulative/delta rows. Customer-local
+  runs at the legacy hourly `:15` slot select only the 00:00-02:59 repair window, stop rating at
+  local midnight, require recent subscription activity, skip an already-advanced billing day, and
+  use one deterministic retryable Workflow step per subscription/date. Versioned draft/finalized
+  invoice lines repair the skipped billing boundary across periodic and single-subscription invoice
+  paths; event-triggered pay-in-advance usage invoices are excluded because they are marginal
+  billing evidence. Invoice versions can replace an older projection, scheduled replay cannot
+  replace invoice authority, and one poison candidate does not block its peers. Lago's cumulative
+  `usage` and `usage_diff` payloads remain durable while indexed exact-decimal delta rows prevent
+  weekly/monthly rollups from summing cumulative values. The internal D1 rollup query is ready for
+  the later operator analytics API/GraphQL adapter. The official Workers runtime applies all 54
+  migrations; independent SQLite replay found 21 snapshot columns, 20 normalized-line columns, 11
+  relevant indexes, an indexed organization/date query plan, and zero foreign-key violations.
+  Strict format/lint, inventory, generated bindings, TypeScript, and Wrangler dry run pass; the
+  complete serial suite passes all 217 tests across 40 files in 131.69 seconds. The dry-run bundle
+  is 1077.87 KiB (187.19 KiB gzip).

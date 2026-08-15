@@ -335,7 +335,7 @@ Lago uses Clockwork to schedule recurring jobs. The clock process runs independe
 | Post-Validate Events | At :05 | Validates events | Disable with `LAGO_DISABLE_EVENTS_VALIDATION=true` |
 | Bill Customers | At :10 | Processes subscription billing | - |
 | API Keys Track Usage | At :15 | Tracks API key usage metrics | - |
-| Compute Daily Usage | At :15 | Calculates daily usage statistics | - |
+| Compute Daily Usage | At :15 | Calculates customer-local daily usage statistics | D1 snapshot + normalized charge-delta projection in Reconciliation Workflow |
 | Finalize Invoices | At :20 | Finalizes pending invoices | - |
 | Mark Invoices as Payment Overdue | At :25 | Updates overdue invoice status | - |
 | Terminate Coupons | At :30 | Expires coupons that have reached their end date | - |

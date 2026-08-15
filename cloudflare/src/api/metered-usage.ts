@@ -2917,6 +2917,7 @@ async function currentUsage(
 export async function calculateCurrentUsageProjection(
   database: D1Database,
   subscription: SubscriptionUsageRow,
+  options: { calculatedThrough?: string } = {},
 ): Promise<{ total: Decimal; chargeUsage: Array<Record<string, unknown>> }> {
   const charges = await database
     .prepare(
@@ -2938,7 +2939,19 @@ export async function calculateCurrentUsageProjection(
   let total = Decimal.zero();
   const chargeUsage: Array<Record<string, unknown>> = [];
   for (const charge of charges.results) {
-    const events = await usageEventsForPeriod(database, subscription, charge.metric_id);
+    const periodStartMs = Date.parse(subscription.current_period_start);
+    const periodEndMs = Date.parse(subscription.current_period_end);
+    const requestedEndMs = options.calculatedThrough
+      ? Date.parse(options.calculatedThrough)
+      : periodEndMs;
+    if (!Number.isFinite(requestedEndMs)) throw new Error("invalid_usage_calculation_timestamp");
+    const calculationEndMs = Math.min(periodEndMs, Math.max(periodStartMs, requestedEndMs));
+    const events = await usageEventsForPeriod(
+      database,
+      subscription,
+      charge.metric_id,
+      calculationEndMs,
+    );
     const aggregationType = supportedAggregation(charge.aggregation_type);
     assertStoredWeightedConfiguration(aggregationType, charge.weighted_interval);
     const filters = parseStoredChargeFilters(
@@ -2947,8 +2960,6 @@ export async function calculateCurrentUsageProjection(
       charge.charge_model,
       charge.id,
     );
-    const periodStartMs = Date.parse(subscription.current_period_start);
-    const periodEndMs = Date.parse(subscription.current_period_end);
     const initialValues =
       aggregationType === "weighted_sum_agg" && charge.recurring === 1
         ? await recurringWeightedBaseline(
@@ -2974,7 +2985,7 @@ export async function calculateCurrentUsageProjection(
         partitionEvents,
         {
           periodStartMs,
-          periodEndMs,
+          periodEndMs: calculationEndMs,
           periodDurationDays:
             aggregationType === "weighted_sum_agg"
               ? billingPeriodDurationDays(
@@ -3054,6 +3065,7 @@ export async function calculateCurrentUsageProjection(
       amount_currency: subscription.currency,
       charge: {
         lago_id: charge.id,
+        code: charge.code,
         charge_model: charge.charge_model,
         invoice_display_name: charge.invoice_display_name,
       },
@@ -3085,6 +3097,7 @@ async function usageEventsForPeriod(
   database: D1Database,
   subscription: SubscriptionUsageRow,
   metricId: string,
+  calculationEndMs = Date.parse(subscription.current_period_end),
 ): Promise<Array<{ id: string; timestampMs: number; properties: Record<string, unknown> }>> {
   const result = await database
     .prepare(
@@ -3098,7 +3111,7 @@ async function usageEventsForPeriod(
       subscription.id,
       metricId,
       Date.parse(subscription.current_period_start),
-      Date.parse(subscription.current_period_end),
+      calculationEndMs,
     )
     .all<{ id: string; timestamp_ms: number; properties_json: string }>();
   if (result.results.length > 10000) {

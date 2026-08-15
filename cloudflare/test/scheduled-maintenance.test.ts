@@ -102,6 +102,7 @@ describe("legacy schedule ownership", () => {
       "schedule:clean_webhooks",
       "schedule:clean_inbound_webhooks",
       "schedule:post_validate_events",
+      "schedule:compute_daily_usage",
       "schedule:retry_inbound_webhooks",
       "schedule:refresh_flagged_subscriptions",
     ]);
@@ -133,6 +134,15 @@ describe("legacy schedule ownership", () => {
       parity: "implemented",
       executor: "audit_synchronous_event_validation",
       owner: "synchronous usage ingestion validation",
+    });
+  });
+
+  it("owns the retained daily revenue projection in the hourly :15 workflow slot", () => {
+    const due = dueLegacySchedules(Date.parse("2026-08-14T01:15:00.000Z"));
+    expect(due.find((schedule) => schedule.key === "schedule:compute_daily_usage")).toMatchObject({
+      parity: "implemented",
+      executor: "project_daily_usage",
+      owner: "D1 daily revenue analytics projection",
     });
   });
 });

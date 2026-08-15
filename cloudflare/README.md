@@ -169,13 +169,23 @@ remaining Lago feature inventory is dispositioned and ported.
   and rotates through retained lifetime projections every five minutes, replacing the legacy
   Clockwork and Sidekiq fanout without Redis or a dedicated queue process. Progressive-billing
   thresholds and usage-alert delivery remain outside this retained slice.
+  The retained hourly `:15` revenue-analytics owner now writes customer-local daily snapshots to
+  D1. It preserves Lago's cumulative usage and `usage_diff` JSON while also materializing exact
+  per-charge cumulative and delta units, event counts, and amounts for indexed rollups. Scheduled
+  snapshots stop at the customer's local midnight and skip the billing boundary; a second
+  idempotent projection repairs that boundary from versioned draft/finalized invoice lines. The
+  invoice reader excludes event-triggered pay-in-advance usage invoices, which are marginal
+  billing evidence rather than period-close analytics. This removes the daily usage dependency on
+  PostgreSQL, Sidekiq, Redis, and ClickHouse. The operator analytics API/GraphQL adapter remains a
+  separate consumer of this D1 projection.
 - Workflows and Cron: a deterministic one-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,
   coupon-expiration, wallet-expiration, ongoing wallet projection/threshold-grant, and interval
   wallet top-up paths on their original slots, drains subscription activity every minute, refreshes
-  lifetime usage every five minutes, and records the legacy hourly post-validation owner as a
-  synchronous-precommit boundary. The latter no longer scans a materialized view: invalid metric
+  lifetime usage every five minutes, projects daily revenue usage at the retained hourly `:15`
+  slot, and records the legacy hourly post-validation owner as a synchronous-precommit boundary.
+  The latter no longer scans a materialized view: invalid metric
   codes, missing/non-numeric aggregation fields, and invalid filter values are rejected before the
   event, R2 archive, or outbox entry commits. The old Redis/ClickHouse refreshed-subscription loop
   is likewise consolidated into the D1 activity and wallet projection owners. Cron also performs 90-day

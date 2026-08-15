@@ -31,6 +31,12 @@ import {
   processSubscriptionActivity,
   refreshLifetimeUsage,
 } from "../usage/lifetime-usage";
+import {
+  invoiceDailyUsageCandidates,
+  projectInvoiceDailyUsage,
+  projectScheduledDailyUsage,
+  scheduledDailyUsageCandidates,
+} from "../usage/daily-usage";
 
 type ReconciliationParams = {
   schedule?: {
@@ -145,6 +151,50 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           if (refreshed) refreshedLifetimeUsages += 1;
         } catch {
           failedLifetimeUsageRefreshes += 1;
+        }
+      }
+
+      const scheduledUsageCandidates = await step.do(
+        "load scheduled daily usage candidates",
+        async () =>
+          executors.has("project_daily_usage")
+            ? scheduledDailyUsageCandidates(this.env.BILLING_DB, triggeredAt)
+            : [],
+      );
+      let projectedScheduledDailyUsages = 0;
+      let failedScheduledDailyUsages = 0;
+      for (const candidate of scheduledUsageCandidates) {
+        try {
+          const projected = await step.do(
+            `project scheduled daily usage ${candidate.id} ${candidate.usageDate}`,
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => projectScheduledDailyUsage(this.env.BILLING_DB, candidate, triggeredAtIso),
+          );
+          if (projected) projectedScheduledDailyUsages += 1;
+        } catch {
+          failedScheduledDailyUsages += 1;
+        }
+      }
+
+      const invoiceUsageCandidates = await step.do(
+        "load invoice daily usage candidates",
+        async () =>
+          executors.has("project_daily_usage")
+            ? invoiceDailyUsageCandidates(this.env.BILLING_DB)
+            : [],
+      );
+      let projectedInvoiceDailyUsages = 0;
+      let failedInvoiceDailyUsages = 0;
+      for (const candidate of invoiceUsageCandidates) {
+        try {
+          const projected = await step.do(
+            `project invoice daily usage ${candidate.invoiceId} ${candidate.subscriptionId} v${candidate.invoiceVersion}`,
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => projectInvoiceDailyUsage(this.env.BILLING_DB, candidate),
+          );
+          if (projected) projectedInvoiceDailyUsages += 1;
+        } catch {
+          failedInvoiceDailyUsages += 1;
         }
       }
 
@@ -339,6 +389,12 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         lifetimeUsageRefreshCandidates: lifetimeUsageCandidates.length,
         refreshedLifetimeUsages,
         failedLifetimeUsageRefreshes,
+        scheduledDailyUsageCandidates: scheduledUsageCandidates.length,
+        projectedScheduledDailyUsages,
+        failedScheduledDailyUsages,
+        invoiceDailyUsageCandidates: invoiceUsageCandidates.length,
+        projectedInvoiceDailyUsages,
+        failedInvoiceDailyUsages,
         eventValidationMode: executors.has("audit_synchronous_event_validation")
           ? "synchronous_precommit"
           : null,
