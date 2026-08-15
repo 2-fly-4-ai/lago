@@ -66,6 +66,16 @@ mechanism, callback URL, and temporary flag change.
 - Any unsupported contract fails explicitly and is added to the active plan; it is never silently
   approximated.
 
+## Executed runs
+
+- `synthetic-e2e-20260815-001`: completed the provider-free SERP checkout prefix on Worker version
+  `80fee6c9-5be3-481e-898e-26013daa14ea`. Plan, customer, and subscription replay preserved IDs;
+  divergent subscription replay failed explicitly; invoice discovery returned the expected single
+  finalized/pending invoice; and the hosted-payment call proved the disabled mutation gate. The
+  run produced no payment link or provider request, passed the foreign-key check, and ended with its
+  one-time API key revoked. Provider sandbox, Queue failure injection, restart, and full billing-
+  cycle phases remain pending.
+
 ## Cleanup and rollback
 
 Prefer a disposable D1 database for destructive scenarios. Deleting synthetic rows from the shared

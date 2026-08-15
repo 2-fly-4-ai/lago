@@ -44,6 +44,13 @@ Applied D1 migrations: `0001_foundation.sql` through
   `PUBLIC_BASE_URL` to the isolated workers.dev hostname. Health/readiness returned `200`/`200`,
   unauthenticated hosted-payment access returned `401`, all three external-action flags remained
   `0`, and the post-deploy aggregate audit found no business/payment rows or foreign-key violations.
+- Provider-free staging run `synthetic-e2e-20260815-001` created one synthetic tenant, plan,
+  customer, subscription, finalized invoice, and invoice line. Exact create replays preserved
+  identity, divergent subscription replay returned `subscription_idempotency_conflict`, invoice
+  discovery returned one pending 1,999-cent invoice, and hosted-payment creation returned
+  `payment_mutations_disabled`. No payment link or provider action occurred. The run-scoped API key
+  plaintext existed only in the runner and its stored hash was revoked after the assertions; the
+  synthetic ledger and five outbox records remain for inspection under the documented cleanup rule.
 - `GET /health` returned `200` with environment `development`.
 - `GET /ready` returned `200` after querying the remote D1 database.
 - `GET /api/v1/invoices` without a bearer key returned the expected `401` envelope.

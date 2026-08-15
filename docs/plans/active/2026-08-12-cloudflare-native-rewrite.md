@@ -2595,3 +2595,14 @@ resource and mutation described.
   scheduled, and queue handlers and all three external-action flags at `0`. The post-deploy audit
   remained empty apart from 576 schedule runs, with no foreign-key violations; no production
   route/domain, secret, provider action, customer/message data, or payment action occurred.
+- 2026-08-15: Ran the first provider-free isolated staging checkout as
+  `synthetic-e2e-20260815-001`. A one-time random API key existed only inside the runner; D1 received
+  its SHA-256 hash, and the exact key row was revoked after the run. The public API created one
+  synthetic plan, customer, subscription, finalized 1,999-cent invoice, and invoice line. Exact
+  plan/customer/subscription replay preserved identity, divergent subscription replay returned
+  `subscription_idempotency_conflict`, and invoice discovery returned the expected finalized/
+  pending invoice. The fourth frozen checkout call returned `payment_mutations_disabled`, proving
+  the remote gate without contacting Authorize.Net. Aggregate verification found one expected
+  synthetic graph, five outbox rows, zero payment links, zero active run keys, and no foreign-key
+  violations. Records remain for inspection as required by the staging cleanup policy; provider
+  sandbox, restart/failure injection, reconciliation, and complete billing-cycle phases remain open.
