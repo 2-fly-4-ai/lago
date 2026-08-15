@@ -2993,3 +2993,14 @@ resource and mutation described.
   three external-action flags at `0`. No migration is required. This is a local pre-deployment
   checkpoint; no remote resource, provider action, customer message, payment action, secret, or
   customer data changed.
+- 2026-08-15: Invoice-payment-retry remote preflight found no pending migration, zero active or
+  malformed key hashes, zero payment attempts/request payments/receipts/credit notes/exports, and
+  no foreign-key violations. Deployed only the isolated Worker as version
+  `da276f6c-30d8-4458-81f0-263dbdd47888` with a 5 ms startup and unchanged resources/flags. A
+  disposable hashed key proved health/readiness `200`/`200`, unauthenticated retry `401`, and
+  authenticated retry `503 payment_mutations_disabled`, then was revoked. No invoice was selected
+  or mutated, and no payment attempt, retry event, hosted link, provider call, message, or artifact
+  was created. Final audit found zero active/malformed keys, zero payment/retry/document/export
+  state, no pending migration, and clean foreign keys. Version inspection confirmed only fetch/
+  scheduled/queue handlers with all external-action flags at `0`. No production route/domain,
+  provider action, customer message, payment action, secret, or customer data changed.

@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `2d8cb873-d28b-481f-8eff-3b7155e36fe5`
+- Latest verified version: `da276f6c-30d8-4458-81f0-263dbdd47888`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -40,6 +40,17 @@ Applied D1 migrations: `0001_foundation.sql` through
 
 ## Verified behavior
 
+- Version `da276f6c-30d8-4458-81f0-263dbdd47888` deployed the code-only, kill-switched
+  Authorize.Net invoice-payment retry boundary with no migration or resource change. Remote
+  preflight and final audit both found no pending migration, zero active or malformed key hashes,
+  zero payment attempts/request payments/receipts/retry events/credit notes/exports, and no foreign-
+  key violations. A disposable hashed key proved health/readiness `200`/`200`, unauthenticated retry
+  `401`, and authenticated retry `503 payment_mutations_disabled`, then was revoked. No invoice was
+  selected or mutated and no provider call, payment intent, retry event, hosted link, message, or
+  artifact was created. The deployed bundle was 1406.01 KiB (245.80 KiB gzip) with a 5 ms startup;
+  version inspection confirmed only fetch/scheduled/queue handlers and all external-action flags at
+  `0`. No production route/domain, provider action, customer message, payment action, secret, or
+  customer data changed.
 - Version `2d8cb873-d28b-481f-8eff-3b7155e36fe5` deployed the container-free data-export pipeline
   after applying only migration `0069`. Remote verification found the 21-column lifecycle ledger,
   all four requester/identity/artifact/outbox guards, no pending migration, empty export state, and
