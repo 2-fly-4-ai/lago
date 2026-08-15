@@ -439,8 +439,12 @@ Acceptance:
       does not pass those resources to section application.
       Calendar billing and trial dates use a snapshotted customer IANA
       timezone; the retained termination subset remains UTC-specific.
-- [ ] Add golden fixtures derived from existing tests, not customer data.
-- [ ] Add deterministic replay and total reconciliation.
+- [x] Add golden fixtures derived from existing tests, not customer data. The synthetic month-end
+      fixture records the approved period, advance base, usage price/quantities, coupon credit,
+      precise/rounded lines, and invoice totals without any production identifiers or values.
+- [x] Add deterministic replay and total reconciliation. The fixture-driven test proves one cycle,
+      invoice, and finalization event; exact period advancement; precise/rounded line parity; line
+      sum to subtotal; and `subtotal + tax - credits = total_due` across replay.
 
 Acceptance:
 
@@ -2945,3 +2949,11 @@ resource and mutation described.
   substituting behavior. All 40 focused tests across the lifecycle, plan-change, termination-action,
   and billing-cycle suites pass. This plan-only reconciliation adds no runtime code, migration,
   deployment, provider action, secret, customer data, or production resource change.
+- 2026-08-15: Added the first fixture-driven M3 billing golden from the existing synthetic
+  month-end test. The checked-in JSON records only synthetic period, pricing, usage, coupon, line,
+  and total values. Its test now proves precise `0.75` usage rounds to one minor unit, the two line
+  amounts sum to the `1001` subtotal, `subtotal + tax - credits` reconciles to `901` due, the
+  subscription advances from the July/August boundary to the August/September boundary, and replay
+  leaves exactly one cycle, invoice, and finalization event. Formatting, lint, TypeScript, the
+  11-test billing-cycle suite, and generated-inventory freshness pass. No runtime implementation,
+  migration, deployment, provider action, secret, customer data, or production resource changed.

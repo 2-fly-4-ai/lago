@@ -452,4 +452,10 @@ consumer capabilities are explicitly selected is in
 `../docs/reference/serp-enabled-lago-capabilities.md`; it deliberately does not infer production
 runtime state.
 
+`fixtures/billing/month-end-reconciliation.json` is the synthetic month-end golden contract. Its
+test closes and replays one cycle, compares precise and rounded line amounts, reconciles the line
+sum and credit/tax equation to the invoice total, proves one invoice/cycle/finalization event, and
+checks the persisted period advancement. It was extracted from the existing billing-cycle test and
+contains no production or customer data.
+
 `store-new` and `serp-auth` are not modified by this branch.

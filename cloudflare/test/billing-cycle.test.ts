@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { closeBillingPeriod } from "../src/billing/close-period";
 import { activatePendingSubscriptions } from "../src/billing/activate-pending-subscriptions";
 import { sha256Hex } from "../src/auth/api-key";
+import monthEndGolden from "../fixtures/billing/month-end-reconciliation.json";
 
 const apiKey = "billing-cycle-key";
 
@@ -448,26 +449,41 @@ describe("billing period close", () => {
   });
 
   it("creates one reconciled invoice and advances a month-end subscription once", async () => {
+    const expected = monthEndGolden.expected;
+    const [expectedSubscriptionLine, expectedUsageLine] = expected.lines;
+    const [expectedSubscriptionPeriod, expectedUsagePeriod] = expected.line_periods;
+    if (
+      !expectedSubscriptionLine ||
+      !expectedUsageLine ||
+      !expectedSubscriptionPeriod ||
+      !expectedUsagePeriod
+    ) {
+      throw new Error("month_end_golden_fixture_incomplete");
+    }
     const first = await closeBillingPeriod(
       env,
       "subscription-cycle",
-      "2026-08-31T00:00:00.000Z",
+      monthEndGolden.period.end,
       "cycle-test-1",
     );
-    expect(first).toMatchObject({ replayed: false, totalDueMinor: 901, lineCount: 2 });
-    expect(first.nextPeriodEnd).toBe("2026-09-30T00:00:00.000Z");
+    expect(first).toMatchObject({
+      replayed: false,
+      totalDueMinor: expected.total_due_minor,
+      lineCount: expected.line_count,
+    });
+    expect(first.nextPeriodEnd).toBe(monthEndGolden.period.next_end);
 
     const replay = await closeBillingPeriod(
       env,
       "subscription-cycle",
-      "2026-08-31T00:00:00.000Z",
+      monthEndGolden.period.end,
       "cycle-test-replay",
     );
     expect(replay).toMatchObject({
       replayed: true,
       invoiceId: first.invoiceId,
-      totalDueMinor: 901,
-      lineCount: 2,
+      totalDueMinor: expected.total_due_minor,
+      lineCount: expected.line_count,
     });
 
     const counts = await env.BILLING_DB.prepare(
@@ -482,7 +498,10 @@ describe("billing period close", () => {
     expect(counts).toEqual({ cycles: 1, invoices: 1, events: 1 });
     await expect(
       env.BILLING_DB.prepare(
-        `SELECT i.credits_minor, i.total_due_minor, ac.status,
+        `SELECT i.subtotal_minor, i.tax_minor, i.credits_minor, i.total_due_minor,
+                (SELECT COALESCE(SUM(il.amount_minor), 0) FROM invoice_lines il
+                 WHERE il.invoice_id = i.id) AS line_total_minor,
+                ac.status,
                 (SELECT COUNT(*) FROM coupon_credits WHERE invoice_id = i.id) AS credit_count
          FROM invoices i JOIN applied_coupons ac ON ac.id = 'applied-cycle'
          WHERE i.id = ?`,
@@ -490,11 +509,30 @@ describe("billing period close", () => {
         .bind(first.invoiceId)
         .first(),
     ).resolves.toEqual({
-      credits_minor: 100,
-      total_due_minor: 901,
+      subtotal_minor: expected.subtotal_minor,
+      tax_minor: expected.tax_minor,
+      credits_minor: expected.credits_minor,
+      total_due_minor: expected.total_due_minor,
+      line_total_minor: expected.subtotal_minor,
       status: "terminated",
       credit_count: 1,
     });
+
+    const reconciled = await env.BILLING_DB.prepare(
+      `SELECT subtotal_minor, tax_minor, credits_minor, total_due_minor
+       FROM invoices WHERE id = ?`,
+    )
+      .bind(first.invoiceId)
+      .first<{
+        subtotal_minor: number;
+        tax_minor: number;
+        credits_minor: number;
+        total_due_minor: number;
+      }>();
+    expect(reconciled).not.toBeNull();
+    expect(reconciled!.subtotal_minor + reconciled!.tax_minor - reconciled!.credits_minor).toBe(
+      reconciled!.total_due_minor,
+    );
 
     const lines = await env.BILLING_DB.prepare(
       `SELECT line_type, amount_minor, precise_amount_minor, quantity_decimal
@@ -507,20 +545,7 @@ describe("billing period close", () => {
         precise_amount_minor: string;
         quantity_decimal: string;
       }>();
-    expect(lines.results).toEqual([
-      {
-        line_type: "subscription",
-        amount_minor: 1000,
-        precise_amount_minor: "1000",
-        quantity_decimal: "1",
-      },
-      {
-        line_type: "usage",
-        amount_minor: 1,
-        precise_amount_minor: "0.75",
-        quantity_decimal: "0.3",
-      },
-    ]);
+    expect(lines.results).toEqual(expected.lines);
     const periods = await env.BILLING_DB.prepare(
       `SELECT line_type, metadata_json FROM invoice_lines
        WHERE invoice_id = ? AND line_type IN ('subscription', 'usage') ORDER BY line_type`,
@@ -536,21 +561,32 @@ describe("billing period close", () => {
       {
         line_type: "subscription",
         billingCycleId: first.billingCycleId,
-        billingMode: "in_advance",
-        periodStart: "2026-08-31T00:00:00.000Z",
-        periodEnd: "2026-09-30T00:00:00.000Z",
+        billingMode: expectedSubscriptionPeriod.billing_mode,
+        periodStart: expectedSubscriptionPeriod.period_start,
+        periodEnd: expectedSubscriptionPeriod.period_end,
       },
       {
         line_type: "usage",
         billingCycleId: first.billingCycleId,
-        billableMetricCode: "units",
-        chargeCode: "unit-charge",
-        chargeModel: "standard",
-        eventCount: 2,
-        periodStart: "2026-07-31T00:00:00.000Z",
-        periodEnd: "2026-08-31T00:00:00.000Z",
+        billableMetricCode: expectedUsagePeriod.billable_metric_code,
+        chargeCode: expectedUsagePeriod.charge_code,
+        chargeModel: expectedUsagePeriod.charge_model,
+        eventCount: expectedUsagePeriod.event_count,
+        periodStart: expectedUsagePeriod.period_start,
+        periodEnd: expectedUsagePeriod.period_end,
       },
     ]);
+
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT current_period_start, current_period_end FROM subscriptions WHERE id = ?`,
+      )
+        .bind("subscription-cycle")
+        .first(),
+    ).resolves.toEqual({
+      current_period_start: monthEndGolden.period.next_start,
+      current_period_end: monthEndGolden.period.next_end,
+    });
 
     const shown = await invoiceRequest(`/api/v1/invoices/${first.invoiceId}`);
     expect(shown.status).toBe(200);
@@ -558,20 +594,24 @@ describe("billing period close", () => {
       invoice: {
         lago_id: first.invoiceId,
         status: "finalized",
-        coupons_amount_cents: 100,
+        coupons_amount_cents: expected.credits_minor,
         credit_notes_amount_cents: 0,
-        total_amount_cents: 901,
+        total_amount_cents: expected.total_due_minor,
         credits: [
           {
-            amount_cents: 100,
-            amount_currency: "USD",
+            amount_cents: expected.credits_minor,
+            amount_currency: monthEndGolden.inputs.currency,
             before_taxes: true,
             item: { type: "coupon", code: "cycle-credit", name: "Cycle credit" },
           },
         ],
         fees: [
-          { item: { type: "subscription" }, amount_cents: 1000 },
-          { item: { type: "usage" }, amount_cents: 1, precise_amount_cents: "0.75" },
+          { item: { type: "subscription" }, amount_cents: expectedSubscriptionLine.amount_minor },
+          {
+            item: { type: "usage" },
+            amount_cents: expectedUsageLine.amount_minor,
+            precise_amount_cents: expectedUsageLine.precise_amount_minor,
+          },
         ],
       },
     });

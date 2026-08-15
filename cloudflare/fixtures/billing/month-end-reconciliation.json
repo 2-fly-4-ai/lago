@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "name": "monthly advance base with in-arrears standard usage and one-time credit",
+  "provenance": "Synthetic values extracted from the existing billing-cycle test; no production or customer data.",
+  "period": {
+    "start": "2026-07-31T00:00:00.000Z",
+    "end": "2026-08-31T00:00:00.000Z",
+    "next_start": "2026-08-31T00:00:00.000Z",
+    "next_end": "2026-09-30T00:00:00.000Z"
+  },
+  "inputs": {
+    "currency": "USD",
+    "advance_subscription_amount_minor": 1000,
+    "usage_unit_price": "2.5",
+    "usage_quantities": ["0.1", "0.2"],
+    "coupon_credit_minor": 100
+  },
+  "expected": {
+    "line_count": 2,
+    "subtotal_minor": 1001,
+    "tax_minor": 0,
+    "credits_minor": 100,
+    "total_due_minor": 901,
+    "lines": [
+      {
+        "line_type": "subscription",
+        "amount_minor": 1000,
+        "precise_amount_minor": "1000",
+        "quantity_decimal": "1"
+      },
+      {
+        "line_type": "usage",
+        "amount_minor": 1,
+        "precise_amount_minor": "0.75",
+        "quantity_decimal": "0.3"
+      }
+    ],
+    "line_periods": [
+      {
+        "line_type": "subscription",
+        "billing_mode": "in_advance",
+        "period_start": "2026-08-31T00:00:00.000Z",
+        "period_end": "2026-09-30T00:00:00.000Z"
+      },
+      {
+        "line_type": "usage",
+        "billable_metric_code": "units",
+        "charge_code": "unit-charge",
+        "charge_model": "standard",
+        "event_count": 2,
+        "period_start": "2026-07-31T00:00:00.000Z",
+        "period_end": "2026-08-31T00:00:00.000Z"
+      }
+    ]
+  }
+}
