@@ -2518,6 +2518,19 @@ resource and mutation described.
   Strict format/lint/inventory/bindings/TypeScript pass; all 244 tests across 46 files pass serially
   in 150.44 seconds. The dry-run bundle is 1206.42 KiB (209.38 KiB gzip). This is a local pre-
   deployment checkpoint; no remote resource or data was changed by this entry.
+- 2026-08-15: Remote preflight found exactly `0060_payment_request_payments.sql` pending and zero
+  organizations, customers, invoices, payment attempts, payment requests, invoice links, dunning
+  campaigns, and outbox rows, with zero foreign-key violations and 531 schedule audits. Applied
+  only migration 0060, then verified 60 migrations, all four request-payment/allocation/
+  reconciliation-guard tables, the webhook payable column, expected indexes/triggers, empty new
+  ledgers, zero foreign-key violations, and no pending migration. Deployed only
+  `serp-dev-lago-native` as version `0601e495-d49b-4e9d-a118-0d36836f1cd4` with a 5 ms startup and
+  unchanged one-minute Cron/resource bindings. Health/readiness returned `200`/`200`,
+  unauthenticated payment access returned `401`, and post-deploy aggregate verification remained
+  empty apart from 533 schedule audits. Version inspection confirmed only the expected fetch,
+  scheduled, and queue handlers and all three external-action flags at `0`; no production
+  route/domain, secret, customer message, provider action, customer data, or payment action
+  occurred.
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.

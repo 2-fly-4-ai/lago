@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `07654b79-8774-4de2-988b-b7323f86ebba`
+- Latest verified version: `0601e495-d49b-4e9d-a118-0d36836f1cd4`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -35,7 +35,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0059_invoice_payment_processing_state.sql`.
+`0060_payment_request_payments.sql`.
 
 ## Verified behavior
 
@@ -568,6 +568,19 @@ Applied D1 migrations: `0001_foundation.sql` through
   the expected fetch, scheduled, and queue handlers and all three external-action flags at `0`; no
   production route/domain, secret, customer message, provider action, customer data, payment
   action, or billing row changed.
+- The payment-request reconciliation deployment applied only
+  `0060_payment_request_payments.sql`. Remote verification found 60 migrations, all four request-
+  payment/allocation/reconciliation-guard tables, the provider-webhook payable column, expected
+  indexes/triggers, zero rows in every new ledger, zero foreign-key violations, and no remaining
+  migration. Worker version `0601e495-d49b-4e9d-a118-0d36836f1cd4` retained the existing
+  workers.dev URL, one-minute Cron, D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow
+  bindings. The deployed bundle was 1206.42 KiB (209.38 KiB gzip) with a 5 ms startup.
+  Health/readiness returned `200`/`200`, unauthenticated payment access returned `401`, and
+  aggregate-only verification found zero organizations, customers, invoices, payment requests,
+  request payments, allocations, reconciliation guards, and outbox rows plus 533 schedule audits.
+  Version inspection confirmed only the expected fetch, scheduled, and queue handlers and all three
+  external-action flags at `0`; no production route/domain, secret, customer message, provider
+  action, customer data, or payment action occurred.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
