@@ -339,7 +339,7 @@ Lago uses Clockwork to schedule recurring jobs. The clock process runs independe
 | Finalize Invoices | At :20 | Finalizes pending invoices | - |
 | Mark Invoices as Payment Overdue | At :25 | Updates overdue invoice status | - |
 | Terminate Coupons | At :30 | Expires coupons that have reached their end date | - |
-| Retry Generating Subscription Invoices | At :30 | Retries failed invoice generation | - |
+| Retry Generating Subscription Invoices | At :30 | Reclaims failed/stale transactional billing cycles | Shared billing-close Workflow executor |
 | Bill Ended Trial Subscriptions | At :35 | Bills subscriptions when trials end | - |
 | Terminate Wallets | At :45 | Expires wallets | - |
 | Process Dunning Campaigns | At :45 | Executes dunning campaign actions | - |

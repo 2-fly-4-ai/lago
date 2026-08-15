@@ -129,8 +129,9 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     key: "schedule:retry_generating_subscription_invoices",
     legacyJob: "Clock::RetryGeneratingSubscriptionInvoicesJob",
     cadence: hourly(30),
-    owner: "invoice retry workflow",
-    parity: "not_started",
+    owner: "transactional billing-cycle recovery",
+    parity: "implemented",
+    executor: "close_billing_periods",
   },
   {
     key: "schedule:finalize_invoices",

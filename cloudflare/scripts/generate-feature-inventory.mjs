@@ -263,6 +263,15 @@ function extractOperatorSurface(frontRoot) {
 
 const portRules = [
   {
+    pattern: /retry_generating_subscription_invoices/i,
+    target:
+      "cloudflare/src/schedules/registry.ts, cloudflare/src/workflows/reconciliation.ts, and cloudflare/src/billing/close-period.ts",
+    evidence: [
+      "cloudflare/test/scheduled-maintenance.test.ts",
+      "cloudflare/test/billing-cycle.test.ts",
+    ],
+  },
+  {
     pattern: /subscriptions_to_be_terminated|termination_alert_service/i,
     target: "cloudflare/src/billing/termination-alerts.ts",
     evidence: [

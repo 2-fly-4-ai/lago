@@ -2388,3 +2388,9 @@ resource and mutation described.
   state plus 396 schedule runs. Health/readiness returned `200`/`200`, unauthenticated plan access
   returned `401`, and all three external-action flags remain `0`; no customer message, production
   route/domain, secret, provider action, customer data, payment action, or billing row changed.
+- 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
+  billing-close executor. The Worker never persists a partially generated invoice: the complete
+  graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.
+  The retained `:30` slot now provides an additional real recovery pass without Sidekiq. Strict
+  format/lint/inventory/bindings/TypeScript pass, all 232 tests across 44 files pass serially in
+  144.19 seconds, and the dry-run bundle is 1133.43 KiB (196.96 KiB gzip).

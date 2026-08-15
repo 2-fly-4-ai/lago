@@ -205,6 +205,10 @@ remaining Lago feature inventory is dispositioned and ported.
   The hourly `:50` owner selects active subscriptions ending on the exact UTC 15/45-day windows and
   inserts one deterministic termination-alert outbox event per subscription/day. Delivery remains
   subject to the existing outbound-webhook safety gate.
+  The legacy hourly `:30` stuck-generating-invoice retry reuses the normal billing-close executor.
+  Invoice rows are never exposed in a generating state: D1 commits the complete invoice graph
+  atomically, while the leased billing-cycle record reclaims failed or stale attempts. The extra
+  slot therefore provides a real recovery pass without a Sidekiq invoice job.
   Successful bearer authentication also advances the API key's D1 last-use timestamp under the
   active-key predicate; the legacy Rails-cache write and hourly flush no longer need a runtime
   owner.

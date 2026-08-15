@@ -274,6 +274,10 @@ Required evidence for a new aggregate or a boundary change:
   subscriptions ending exactly 15 or 45 days ahead are selected, and the outbox event identity
   includes the subscription and trigger date so Workflow replay cannot duplicate that day's alert.
   Event delivery still obeys the outbound-webhook safety gate.
+- Subscription invoices have no externally visible generating state. A complete invoice graph and
+  period transition commit in one D1 batch behind a leased billing-cycle record; failed or stale
+  cycles are reclaimable. Both the hourly billing slot and the legacy hourly generating-retry slot
+  invoke that same recovery executor.
 - Manual invoice custom sections have a tenant-scoped REST catalog equivalent for the retained
   operator workflow. Explicit subscription selections follow Lago's attach/skip semantics and are
   copied into draft/final invoice snapshots used by the API and PDF renderer. The retained

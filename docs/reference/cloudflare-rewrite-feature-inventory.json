@@ -19555,11 +19555,12 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/schedules/registry.ts, cloudflare/src/workflows/reconciliation.ts, and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/fixtures/store-new/subscription-create.json"
+          "cloudflare/test/scheduled-maintenance.test.ts",
+          "cloudflare/test/billing-cycle.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/subscription-create.json",
+        "testFixture": "cloudflare/test/scheduled-maintenance.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -36059,11 +36060,12 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/schedules/registry.ts, cloudflare/src/workflows/reconciliation.ts, and cloudflare/src/billing/close-period.ts",
         "evidence": [
-          "cloudflare/fixtures/store-new/subscription-create.json"
+          "cloudflare/test/scheduled-maintenance.test.ts",
+          "cloudflare/test/billing-cycle.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/subscription-create.json",
+        "testFixture": "cloudflare/test/scheduled-maintenance.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
