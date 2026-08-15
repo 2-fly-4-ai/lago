@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `1371f1ee-0afa-4bbe-a4cd-46e7645def2e`
+- Latest verified version: `987740af-530f-4dea-a609-f2c6ecb71f95`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -36,10 +36,16 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0061_payment_request_checkout_intents.sql`.
+`0062_api_key_lifecycle.sql`.
 
 ## Verified behavior
 
+- Version `987740af-530f-4dea-a609-f2c6ecb71f95` deployed the API-key lifecycle after applying
+  only migration `0062`. A disposable bootstrap key exercised create, sanitized update, rotation,
+  old-key invalidation, replacement authentication, replacement revocation, fine-grained permission
+  refusal, and last-key protection. Every run key was revoked. The final audit found five hashed/
+  revoked synthetic key records, zero active or malformed hashes, four secret-free API-key outbox
+  events, zero payment state, and no foreign-key violations; all external-action flags remained `0`.
 - Version `1371f1ee-0afa-4bbe-a4cd-46e7645def2e` deployed the tenant-scoped fee API without a
   migration. A run-scoped key proved authenticated list/show against the retained synthetic invoice
   and the explicit mutation guard, then was revoked. Health/readiness returned `200`/`200`,

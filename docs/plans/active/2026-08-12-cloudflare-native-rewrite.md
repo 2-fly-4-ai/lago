@@ -2642,3 +2642,17 @@ resource and mutation described.
   violations. Strict format/lint/inventory/bindings/TypeScript pass; all 257 tests across 49 files
   pass serially in 166.38 seconds, and the dry-run bundle is 1245.87 KiB (216.10 KiB gzip). This is a
   local pre-deployment checkpoint; no remote key, secret, provider, message, payment, or data changed.
+- 2026-08-15: API-key remote preflight found exactly `0062_api_key_lifecycle.sql` pending, the
+  retained synthetic tenant graph, two already-revoked smoke keys, zero active keys/payment state,
+  and no foreign-key violations. Applied only migration 0062, then verified 62 migrations, 13 key
+  columns, four relevant indexes, four expiry/outbox guards, no pending migration, and unchanged
+  synthetic rows. Deployed only the isolated Worker as version
+  `987740af-530f-4dea-a609-f2c6ecb71f95` with a 5 ms startup and unchanged resources/flags. A
+  disposable bootstrap key exercised create, sanitized update, rotation, old-key `401`, replacement
+  authentication, replacement revocation/`401`, non-empty-permission refusal, and last-key
+  protection. Cleanup revoked every run key. Health/readiness returned `200`/`200`, unauthenticated
+  key access returned `401`, and version inspection confirmed only fetch/scheduled/queue handlers
+  with all external-action flags at `0`. The final audit found five hashed/revoked synthetic key
+  records, zero active or malformed hashes, four API-key audit events with zero secret-like payloads,
+  zero payment state, and no foreign-key violations. No production route/domain, provider action,
+  message, customer data, payment action, or secret persistence occurred.
