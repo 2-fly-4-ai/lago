@@ -276,7 +276,12 @@ Acceptance:
 - [x] Implement tenant-scoped plan create/list/show and embedded core charge creation required to
       operate the metered path; plan update/deletion and advanced nested features remain pending.
 - [x] Implement idempotent customer upsert.
-- [ ] Implement subscription creation and lifecycle state machine.
+- [x] Implement subscription creation and lifecycle state machine. The retained REST contract now
+      covers idempotent immediate, future, trial, and backdated creation; pending reschedule and
+      cancellation; active scalar, payment-policy, custom-section, threshold, and scheduled-ending
+      updates; activation; manual and scheduled termination; upgrade/downgrade generations; and
+      exact replay/concurrency rollback. Unsupported one-time backdating and unsupported prepaid
+      termination combinations fail explicitly.
 - [x] Implement invoice listing required by the current store flow.
 - [x] Implement the four verified Lago-compatible routes and error envelopes.
 
@@ -2929,3 +2934,14 @@ resource and mutation described.
   Authorize.Net adapter. Reintroduction requires a verified consumer contract and must start behind
   disabled provider flags with synthetic fixtures. No runtime code, migration, deployment, provider
   action, repository outside Lago, secret, customer data, or production resource changed.
+- 2026-08-15: Reconciled the stale M2 subscription checkbox with the implemented Worker contract.
+  Subscription creation already handles immediate, future, trial, and supported backdated starts;
+  pending subscriptions can be rescheduled or canceled; active and pending resources expose guarded
+  mutable fields; scheduled and manual termination share versioned state transitions; and plan
+  changes preserve explicit pending, upgrade, and downgrade generations. Durable Object command
+  reservations, D1 uniqueness/version guards, deterministic identities, transactional outbox rows,
+  and failure-injection tests cover replay and rollback. The lifecycle deliberately rejects
+  unsupported one-time backdating and unsafe prepaid termination combinations instead of silently
+  substituting behavior. All 40 focused tests across the lifecycle, plan-change, termination-action,
+  and billing-cycle suites pass. This plan-only reconciliation adds no runtime code, migration,
+  deployment, provider action, secret, customer data, or production resource change.
