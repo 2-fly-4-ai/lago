@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `0601e495-d49b-4e9d-a118-0d36836f1cd4`
+- Latest verified version: `2961998a-0351-4620-ab58-d2d8ffa786d1`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
@@ -35,7 +35,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0060_payment_request_payments.sql`.
+`0061_payment_request_checkout_intents.sql`.
 
 ## Verified behavior
 
@@ -581,6 +581,19 @@ Applied D1 migrations: `0001_foundation.sql` through
   Version inspection confirmed only the expected fetch, scheduled, and queue handlers and all three
   external-action flags at `0`; no production route/domain, secret, customer message, provider
   action, customer data, or payment action occurred.
+- The payment-request Checkout Workflow deployment applied only
+  `0061_payment_request_checkout_intents.sql`. Remote verification found 61 migrations, the intent
+  table, both indexes and both state/tenant guards, zero checkout intents, zero foreign-key
+  violations, and no remaining migration. Worker version
+  `2961998a-0351-4620-ab58-d2d8ffa786d1` retained the existing workers.dev URL, one-minute Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The deployed bundle was
+  1221.38 KiB (211.80 KiB gzip) with a 5 ms startup. Health/readiness returned `200`/`200`,
+  unauthenticated payment-request access returned `401`, and aggregate-only verification found zero
+  organizations, customers, invoices, payment requests, request payments, checkout intents, and
+  outbox rows plus 558 schedule audits. Version inspection confirmed only the expected fetch,
+  scheduled, and queue handlers and all three external-action flags at `0`; the checkout dispatcher
+  therefore performed no provider call. No production route/domain, secret, customer message,
+  provider action, customer data, or payment action occurred.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
