@@ -49,7 +49,11 @@ Applied D1 migrations: `0001_foundation.sql` through
   it also maps viewer reads and admin create/edit/terminate actions for the canonical invoice custom-
   section catalog. Its planned bindings are D1 and producer-only access to the existing internal
   domain-event Queue. The separate `operator-app` Static Assets bundle implements those
-  organization, API-key, and invoice-section screens. The deployed API Worker still serves
+  organization, API-key, and invoice-section screens. It also implements the retained single
+  default billing-entity profile: viewers receive the canonical detailed projection and admins can
+  update only the supported D1-backed fields through same-origin/CSRF checks. Additional entities,
+  e-invoicing, tax assignment, and side-effecting configuration remain unavailable. The deployed
+  API Worker still serves
   `operator-ui`, the non-interactive migration shell. Local desktop/mobile browser QA proved the
   operator bundle renders only the fail-closed state while Access is disabled, with no browser
   warnings or errors.

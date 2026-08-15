@@ -632,6 +632,9 @@ Acceptance:
       reusing the canonical secret-safe control plane behind operator origin/CSRF checks. The first
       catalog BFF maps invoice custom-section list/show for viewers and create/edit/terminate for
       admins through the canonical handler and its transactional outbox/internal Queue publication.
+      The first billing BFF maps the retained default billing entity's detailed read for viewers and
+      supported updates for admins through the canonical D1 handler. Multi-entity creation,
+      e-invoicing, tax assignment, and other explicit side-effecting boundaries remain unavailable.
 - [x] Serve the operator application with Workers Static Assets. The deployed API Worker retains
       its script-free `operator-ui` rollback shell. The separate, undeployed operator Worker now
       serves `operator-app`: a same-origin native-ES-module organization/API-key workspace with a
@@ -3220,3 +3223,19 @@ resource and mutation described.
   and non-secret disabled Access bindings. No remote migration, resource, Access application/
   policy, membership, deployment, provider action, payment action, customer message, secret access,
   customer-data access, or production operation occurred.
+- 2026-08-16: Added the first bounded operator billing family for the retained single default billing
+  entity. `/api/operator/v1/billing-entities/default` validates the Access session and immutable
+  membership tenant, permits viewers to read the canonical detailed profile, and requires admin role
+  plus same-origin/CSRF checks for updates. The shared handler's environment type now reflects its
+  actual D1-only dependency; its optimistic organization update and value-free transactional outbox
+  evidence remain unchanged. The operator app adds a responsive billing-profile projection and an
+  admin editor for supported identity, legal, address, payment-term, numbering, locale, and document
+  defaults. It explicitly omits additional entities, e-invoicing, tax assignment, and external
+  actions. Viewer refusal, admin normalization/update, and audit-redaction assertions pass alongside
+  the canonical billing-entity and static-contract suites; the focused run passes 19/19. The
+  authoritative serial suite passes all 317 tests across 61 files in 68.86 seconds. Lint, TypeScript,
+  JavaScript syntax, and dry builds pass. The API dry bundle remains 1406.92 KiB (245.95 KiB gzip);
+  the disabled operator bundle is 114.10 KiB (24.82 KiB gzip) with D1, producer-only domain-event
+  Queue access, and non-secret disabled Access bindings. No remote migration, resource, Access
+  application/policy, membership, deployment, provider action, payment action, customer message,
+  secret access, customer-data access, or production operation occurred.

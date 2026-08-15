@@ -32,6 +32,10 @@
             <span class="nav-icon" aria-hidden="true">⌂</span>
             Overview
           </a>
+          <a class="nav-item" href="#billing-profile">
+            <span class="nav-icon" aria-hidden="true">▤</span>
+            Billing profile
+          </a>
           <a class="nav-item" href="#api-keys">
             <span class="nav-icon" aria-hidden="true">⌁</span>
             API keys
@@ -131,6 +135,63 @@
                   <dd id="organization-version">—</dd>
                 </div>
               </dl>
+            </section>
+
+            <section class="keys-section" id="billing-profile" aria-labelledby="billing-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Default billing entity</p>
+                  <h2 id="billing-title">Billing profile</h2>
+                  <p>
+                    Review the legal, address, payment-term, and invoice defaults used by this
+                    organization’s single billing entity.
+                  </p>
+                </div>
+                <button class="primary-button" id="open-edit-billing" type="button" hidden>
+                  Edit billing profile
+                </button>
+              </div>
+
+              <div class="profile-card" id="billing-profile-card" aria-live="polite">
+                <div class="table-loading" id="billing-loading">Loading billing profile…</div>
+                <dl class="profile-grid" id="billing-profile-grid" hidden>
+                  <div>
+                    <dt>Legal identity</dt>
+                    <dd id="billing-legal-name">—</dd>
+                    <small id="billing-legal-number">—</small>
+                  </div>
+                  <div>
+                    <dt>Billing email</dt>
+                    <dd id="billing-email">—</dd>
+                  </div>
+                  <div>
+                    <dt>Billing address</dt>
+                    <dd id="billing-address">—</dd>
+                  </div>
+                  <div>
+                    <dt>Payment terms</dt>
+                    <dd id="billing-payment-terms">—</dd>
+                  </div>
+                  <div>
+                    <dt>Invoice numbering</dt>
+                    <dd id="billing-numbering">—</dd>
+                    <small id="billing-prefix">—</small>
+                  </div>
+                  <div>
+                    <dt>Document defaults</dt>
+                    <dd id="billing-document-locale">—</dd>
+                    <small id="billing-zero-invoices">—</small>
+                  </div>
+                  <div>
+                    <dt>Default taxes</dt>
+                    <dd id="billing-tax-count">—</dd>
+                  </div>
+                  <div>
+                    <dt>Selected sections</dt>
+                    <dd id="billing-section-count">—</dd>
+                  </div>
+                </dl>
+              </div>
             </section>
 
             <section class="keys-section" id="api-keys" aria-labelledby="keys-title">
@@ -278,6 +339,224 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button>
           <button class="primary-button" id="submit-section-form" value="default" type="submit">
             Create section
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal billing-modal"
+      id="billing-form-dialog"
+      aria-labelledby="billing-form-title"
+    >
+      <form method="dialog" id="billing-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Default billing entity</p>
+            <h2 id="billing-form-title">Edit billing profile</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy">
+          These settings control future billing documents. Existing finalized documents remain
+          immutable.
+        </p>
+
+        <fieldset>
+          <legend>Identity</legend>
+          <div class="field-grid">
+            <div>
+              <label for="billing-name">Billing entity name</label>
+              <input
+                id="billing-name"
+                name="name"
+                maxlength="255"
+                autocomplete="organization"
+                required
+              />
+            </div>
+            <div>
+              <label for="billing-form-email">Billing email</label>
+              <input
+                id="billing-form-email"
+                name="email"
+                type="email"
+                maxlength="320"
+                autocomplete="email"
+              />
+            </div>
+            <div>
+              <label for="billing-form-legal-name">Legal name</label>
+              <input
+                id="billing-form-legal-name"
+                name="legal_name"
+                maxlength="255"
+                autocomplete="organization"
+              />
+            </div>
+            <div>
+              <label for="billing-form-legal-number">Legal number</label>
+              <input
+                id="billing-form-legal-number"
+                name="legal_number"
+                maxlength="255"
+                autocomplete="off"
+              />
+            </div>
+            <div>
+              <label for="billing-tax-id">Tax identification number</label>
+              <input
+                id="billing-tax-id"
+                name="tax_identification_number"
+                maxlength="255"
+                autocomplete="off"
+              />
+            </div>
+            <div>
+              <label for="billing-country">Country code</label>
+              <input
+                id="billing-country"
+                name="country"
+                maxlength="2"
+                autocomplete="country"
+                placeholder="US"
+              />
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Address</legend>
+          <label for="billing-address-line1">Address line 1</label>
+          <input
+            id="billing-address-line1"
+            name="address_line1"
+            maxlength="255"
+            autocomplete="address-line1"
+          />
+          <label for="billing-address-line2">Address line 2</label>
+          <input
+            id="billing-address-line2"
+            name="address_line2"
+            maxlength="255"
+            autocomplete="address-line2"
+          />
+          <div class="field-grid compact-fields">
+            <div>
+              <label for="billing-city">City</label>
+              <input id="billing-city" name="city" maxlength="255" autocomplete="address-level2" />
+            </div>
+            <div>
+              <label for="billing-state">State or region</label>
+              <input
+                id="billing-state"
+                name="state"
+                maxlength="255"
+                autocomplete="address-level1"
+              />
+            </div>
+            <div>
+              <label for="billing-zipcode">Postal code</label>
+              <input
+                id="billing-zipcode"
+                name="zipcode"
+                maxlength="255"
+                autocomplete="postal-code"
+              />
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Invoice defaults</legend>
+          <div class="field-grid">
+            <div>
+              <label for="billing-currency">Currency</label>
+              <input
+                id="billing-currency"
+                name="default_currency"
+                minlength="3"
+                maxlength="3"
+                autocomplete="off"
+                required
+              />
+            </div>
+            <div>
+              <label for="billing-timezone">Timezone</label>
+              <input
+                id="billing-timezone"
+                name="timezone"
+                maxlength="255"
+                autocomplete="off"
+                required
+              />
+            </div>
+            <div>
+              <label for="billing-net-term">Net payment term (days)</label>
+              <input
+                id="billing-net-term"
+                name="net_payment_term"
+                type="number"
+                min="0"
+                step="1"
+                required
+              />
+            </div>
+            <div>
+              <label for="billing-grace-period">Invoice grace period (days)</label>
+              <input
+                id="billing-grace-period"
+                name="invoice_grace_period"
+                type="number"
+                min="0"
+                step="1"
+                required
+              />
+            </div>
+            <div>
+              <label for="billing-document-numbering">Document numbering</label>
+              <select id="billing-document-numbering" name="document_numbering">
+                <option value="per_billing_entity">Per billing entity</option>
+                <option value="per_customer">Per customer</option>
+              </select>
+            </div>
+            <div>
+              <label for="billing-document-prefix">Document prefix</label>
+              <input
+                id="billing-document-prefix"
+                name="document_number_prefix"
+                maxlength="10"
+                autocomplete="off"
+              />
+            </div>
+            <div>
+              <label for="billing-locale">Document locale</label>
+              <input
+                id="billing-locale"
+                name="document_locale"
+                maxlength="10"
+                autocomplete="off"
+                required
+              />
+            </div>
+          </div>
+          <label for="billing-footer">Invoice footer</label>
+          <textarea id="billing-footer" name="invoice_footer" rows="3"></textarea>
+          <label class="checkbox-field" for="billing-finalize-zero">
+            <input id="billing-finalize-zero" name="finalize_zero_amount_invoice" type="checkbox" />
+            <span>Finalize zero-amount invoices</span>
+          </label>
+        </fieldset>
+
+        <p class="field-hint">
+          E-invoicing, tax assignment, and additional billing entities are intentionally
+          unavailable.
+        </p>
+        <p class="form-error" id="billing-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-billing-form" value="default" type="submit">
+            Save billing profile
           </button>
         </div>
       </form>

@@ -460,6 +460,61 @@ main {
   padding-top: 8px;
 }
 
+.profile-card {
+  overflow: hidden;
+  min-height: 198px;
+  border: 1px solid #dfe4dc;
+  border-radius: 16px;
+  background: #fbfcfa;
+  box-shadow: 0 14px 45px rgb(31 53 42 / 4%);
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+
+.profile-grid > div {
+  min-width: 0;
+  min-height: 108px;
+  padding: 20px;
+  border-right: 1px solid #e8ece7;
+  border-bottom: 1px solid #e8ece7;
+}
+
+.profile-grid > div:nth-child(4n) {
+  border-right: 0;
+}
+
+.profile-grid > div:nth-last-child(-n + 4) {
+  border-bottom: 0;
+}
+
+.profile-grid dt {
+  color: #78867e;
+  font-size: 0.65rem;
+  font-weight: 760;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.profile-grid dd {
+  margin: 10px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+  font-weight: 680;
+  line-height: 1.45;
+}
+
+.profile-grid small {
+  display: block;
+  margin-top: 5px;
+  color: #849188;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
 .section-heading {
   display: flex;
   align-items: flex-end;
@@ -740,7 +795,8 @@ tbody tr:hover {
 }
 
 .modal input,
-.modal textarea {
+.modal textarea,
+.modal select {
   width: 100%;
   padding: 11px 12px;
   border: 1px solid #cad3ca;
@@ -761,13 +817,58 @@ tbody tr:hover {
 }
 
 .modal input:focus,
-.modal textarea:focus {
+.modal textarea:focus,
+.modal select:focus {
   border-color: #317953;
   box-shadow: 0 0 0 3px rgb(49 121 83 / 13%);
 }
 
 .section-modal {
   width: min(620px, calc(100% - 32px));
+}
+
+.billing-modal {
+  width: min(760px, calc(100% - 32px));
+  max-height: calc(100vh - 32px);
+}
+
+.billing-modal form {
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.billing-modal fieldset {
+  margin: 24px 0 0;
+  padding: 20px;
+  border: 1px solid #e0e6de;
+  border-radius: 12px;
+}
+
+.billing-modal legend {
+  padding: 0 7px;
+  color: #66746c;
+  font-size: 0.7rem;
+  font-weight: 760;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.compact-fields {
+  grid-template-columns: 1fr 1fr 0.75fr;
+  margin-top: 16px;
+}
+
+.checkbox-field {
+  display: flex !important;
+  align-items: center;
+  gap: 9px;
+  margin-top: 18px !important;
+}
+
+.checkbox-field input {
+  width: 17px;
+  height: 17px;
+  margin: 0;
 }
 
 .field-grid {
@@ -868,6 +969,26 @@ tbody tr:hover {
     grid-template-columns: auto 1fr;
   }
 
+  .profile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .profile-grid > div:nth-child(4n) {
+    border-right: 1px solid #e8ece7;
+  }
+
+  .profile-grid > div:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .profile-grid > div:nth-last-child(-n + 4) {
+    border-bottom: 1px solid #e8ece7;
+  }
+
+  .profile-grid > div:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
   .organization-meta {
     grid-column: 1 / -1;
     padding-top: 18px;
@@ -942,6 +1063,21 @@ tbody tr:hover {
 
   .field-grid {
     grid-template-columns: 1fr;
+  }
+
+  .profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-grid > div,
+  .profile-grid > div:nth-child(2n),
+  .profile-grid > div:nth-last-child(-n + 2) {
+    border-right: 0;
+    border-bottom: 1px solid #e8ece7;
+  }
+
+  .profile-grid > div:last-child {
+    border-bottom: 0;
   }
 }
 

@@ -1,6 +1,7 @@
 const endpoints = {
   session: "/api/operator/v1/session",
   organization: "/api/operator/v1/organization",
+  billingEntity: "/api/operator/v1/billing-entities/default",
   apiKeys: "/api/operator/v1/api-keys",
   invoiceSections: "/api/operator/v1/invoice-custom-sections",
 };
@@ -24,6 +25,44 @@ const elements = {
   organizationCurrency: document.querySelector("#organization-currency"),
   organizationTimezone: document.querySelector("#organization-timezone"),
   organizationVersion: document.querySelector("#organization-version"),
+  openEditBilling: document.querySelector("#open-edit-billing"),
+  billingLoading: document.querySelector("#billing-loading"),
+  billingProfileGrid: document.querySelector("#billing-profile-grid"),
+  billingLegalName: document.querySelector("#billing-legal-name"),
+  billingLegalNumber: document.querySelector("#billing-legal-number"),
+  billingEmail: document.querySelector("#billing-email"),
+  billingAddress: document.querySelector("#billing-address"),
+  billingPaymentTerms: document.querySelector("#billing-payment-terms"),
+  billingNumbering: document.querySelector("#billing-numbering"),
+  billingPrefix: document.querySelector("#billing-prefix"),
+  billingDocumentLocale: document.querySelector("#billing-document-locale"),
+  billingZeroInvoices: document.querySelector("#billing-zero-invoices"),
+  billingTaxCount: document.querySelector("#billing-tax-count"),
+  billingSectionCount: document.querySelector("#billing-section-count"),
+  billingFormDialog: document.querySelector("#billing-form-dialog"),
+  billingForm: document.querySelector("#billing-form"),
+  billingName: document.querySelector("#billing-name"),
+  billingFormEmail: document.querySelector("#billing-form-email"),
+  billingFormLegalName: document.querySelector("#billing-form-legal-name"),
+  billingFormLegalNumber: document.querySelector("#billing-form-legal-number"),
+  billingTaxId: document.querySelector("#billing-tax-id"),
+  billingCountry: document.querySelector("#billing-country"),
+  billingAddressLine1: document.querySelector("#billing-address-line1"),
+  billingAddressLine2: document.querySelector("#billing-address-line2"),
+  billingCity: document.querySelector("#billing-city"),
+  billingState: document.querySelector("#billing-state"),
+  billingZipcode: document.querySelector("#billing-zipcode"),
+  billingCurrency: document.querySelector("#billing-currency"),
+  billingTimezone: document.querySelector("#billing-timezone"),
+  billingNetTerm: document.querySelector("#billing-net-term"),
+  billingGracePeriod: document.querySelector("#billing-grace-period"),
+  billingDocumentNumbering: document.querySelector("#billing-document-numbering"),
+  billingDocumentPrefix: document.querySelector("#billing-document-prefix"),
+  billingLocale: document.querySelector("#billing-locale"),
+  billingFooter: document.querySelector("#billing-footer"),
+  billingFinalizeZero: document.querySelector("#billing-finalize-zero"),
+  billingFormError: document.querySelector("#billing-form-error"),
+  submitBillingForm: document.querySelector("#submit-billing-form"),
   openCreateKey: document.querySelector("#open-create-key"),
   keysLoading: document.querySelector("#keys-loading"),
   keysEmpty: document.querySelector("#keys-empty"),
@@ -78,6 +117,7 @@ const state = {
   sections: [],
   sectionFormMode: "create",
   selectedSectionCode: null,
+  billingEntity: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -93,6 +133,8 @@ elements.secretDialog.addEventListener("close", clearOneTimeSecret);
 elements.openCreateSection.addEventListener("click", openCreateSectionDialog);
 elements.sectionsTableBody.addEventListener("click", handleSectionAction);
 elements.sectionForm.addEventListener("submit", submitSectionForm);
+elements.openEditBilling.addEventListener("click", openBillingDialog);
+elements.billingForm.addEventListener("submit", submitBillingForm);
 
 void initialize();
 
@@ -101,13 +143,15 @@ async function initialize() {
     const session = await requestJson(endpoints.session);
     const operator = session.operator;
     state.role = operator.role === "admin" ? "admin" : "viewer";
-    const [organizationPayload, keyPayload, sectionsPayload] = await Promise.all([
+    const [organizationPayload, billingPayload, keyPayload, sectionsPayload] = await Promise.all([
       requestJson(endpoints.organization),
+      requestJson(endpoints.billingEntity),
       requestJson(endpoints.apiKeys),
       requestJson(endpoints.invoiceSections),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
+    renderBillingEntity(billingPayload.billing_entity);
     renderKeys(keyPayload.api_keys);
     renderSections(sectionsPayload.invoice_custom_sections);
     elements.loading.hidden = true;
@@ -125,6 +169,7 @@ function renderOperator(operator) {
   elements.rolePill.classList.toggle("admin", isAdmin);
   elements.openCreateKey.hidden = !isAdmin;
   elements.openCreateSection.hidden = !isAdmin;
+  elements.openEditBilling.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -145,6 +190,121 @@ function renderOrganization(organization) {
   elements.organizationVersion.textContent = `v${Number(organization.version) || 1}`;
   elements.organizationMonogram.textContent = initials(name);
   elements.workspaceName.textContent = name;
+}
+
+function renderBillingEntity(entity) {
+  state.billingEntity = entity && typeof entity === "object" ? entity : null;
+  if (!state.billingEntity) return;
+
+  elements.billingLegalName.textContent = safeText(entity.legal_name, safeText(entity.name, "—"));
+  elements.billingLegalNumber.textContent = entity.legal_number
+    ? `Legal number: ${entity.legal_number}`
+    : "No legal number";
+  elements.billingEmail.textContent = safeText(entity.email, "No billing email");
+  elements.billingAddress.textContent = billingAddress(entity);
+  elements.billingPaymentTerms.textContent = `${nonNegativeNumber(entity.net_payment_term)} days`;
+  elements.billingNumbering.textContent =
+    entity.document_numbering === "per_customer" ? "Per customer" : "Per billing entity";
+  elements.billingPrefix.textContent = entity.document_number_prefix
+    ? `Prefix: ${entity.document_number_prefix}`
+    : "No document prefix";
+  elements.billingDocumentLocale.textContent = safeText(entity.document_locale, "—");
+  elements.billingZeroInvoices.textContent = entity.finalize_zero_amount_invoice
+    ? "Zero-amount invoices finalize"
+    : "Zero-amount invoices stay draft";
+  elements.billingTaxCount.textContent = countLabel(entity.taxes, "tax", "taxes");
+  elements.billingSectionCount.textContent = countLabel(
+    entity.selected_invoice_custom_sections,
+    "section",
+    "sections",
+  );
+  elements.billingLoading.hidden = true;
+  elements.billingProfileGrid.hidden = false;
+}
+
+function openBillingDialog() {
+  if (state.role !== "admin" || !state.billingEntity) return;
+  const entity = state.billingEntity;
+  elements.billingName.value = formValue(entity.name);
+  elements.billingFormEmail.value = formValue(entity.email);
+  elements.billingFormLegalName.value = formValue(entity.legal_name);
+  elements.billingFormLegalNumber.value = formValue(entity.legal_number);
+  elements.billingTaxId.value = formValue(entity.tax_identification_number);
+  elements.billingCountry.value = formValue(entity.country);
+  elements.billingAddressLine1.value = formValue(entity.address_line1);
+  elements.billingAddressLine2.value = formValue(entity.address_line2);
+  elements.billingCity.value = formValue(entity.city);
+  elements.billingState.value = formValue(entity.state);
+  elements.billingZipcode.value = formValue(entity.zipcode);
+  elements.billingCurrency.value = formValue(entity.default_currency);
+  elements.billingTimezone.value = formValue(entity.timezone);
+  elements.billingNetTerm.value = String(nonNegativeNumber(entity.net_payment_term));
+  elements.billingGracePeriod.value = String(nonNegativeNumber(entity.invoice_grace_period));
+  elements.billingDocumentNumbering.value =
+    entity.document_numbering === "per_customer" ? "per_customer" : "per_billing_entity";
+  elements.billingDocumentPrefix.value = formValue(entity.document_number_prefix);
+  elements.billingLocale.value = formValue(entity.document_locale);
+  elements.billingFooter.value = formValue(entity.invoice_footer);
+  elements.billingFinalizeZero.checked = entity.finalize_zero_amount_invoice === true;
+  elements.billingFormError.hidden = true;
+  elements.billingFormDialog.showModal();
+  elements.billingName.focus();
+}
+
+async function submitBillingForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    elements.billingFormDialog.close();
+    return;
+  }
+  if (!elements.billingForm.reportValidity()) return;
+
+  const payload = {
+    billing_entity: {
+      name: elements.billingName.value.trim(),
+      email: optionalFormValue(elements.billingFormEmail.value),
+      legal_name: optionalFormValue(elements.billingFormLegalName.value),
+      legal_number: optionalFormValue(elements.billingFormLegalNumber.value),
+      tax_identification_number: optionalFormValue(elements.billingTaxId.value),
+      country: optionalFormValue(elements.billingCountry.value),
+      address_line1: optionalFormValue(elements.billingAddressLine1.value),
+      address_line2: optionalFormValue(elements.billingAddressLine2.value),
+      city: optionalFormValue(elements.billingCity.value),
+      state: optionalFormValue(elements.billingState.value),
+      zipcode: optionalFormValue(elements.billingZipcode.value),
+      default_currency: elements.billingCurrency.value.trim(),
+      timezone: elements.billingTimezone.value.trim(),
+      net_payment_term: Number(elements.billingNetTerm.value),
+      document_numbering: elements.billingDocumentNumbering.value,
+      document_number_prefix: optionalFormValue(elements.billingDocumentPrefix.value),
+      finalize_zero_amount_invoice: elements.billingFinalizeZero.checked,
+      billing_configuration: {
+        invoice_footer: optionalFormValue(elements.billingFooter.value),
+        invoice_grace_period: Number(elements.billingGracePeriod.value),
+        document_locale: elements.billingLocale.value.trim(),
+      },
+    },
+  };
+
+  setBusy(elements.submitBillingForm, true, "Saving…");
+  elements.billingFormError.hidden = true;
+  try {
+    const response = await requestJson(endpoints.billingEntity, { method: "PUT", body: payload });
+    renderBillingEntity(response.billing_entity);
+    elements.billingFormDialog.close();
+    try {
+      const organizationPayload = await requestJson(endpoints.organization);
+      renderOrganization(organizationPayload.organization);
+      hidePageError();
+    } catch (error) {
+      showPageError(errorMessage(error));
+    }
+  } catch (error) {
+    elements.billingFormError.textContent = errorMessage(error);
+    elements.billingFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitBillingForm, false, "Save billing profile");
+  }
 }
 
 function renderKeys(keys) {
@@ -674,6 +834,32 @@ function safeText(value, fallback) {
 function optionalFormValue(value) {
   const normalized = value.trim();
   return normalized || null;
+}
+
+function formValue(value) {
+  return typeof value === "string" ? value : "";
+}
+
+function nonNegativeNumber(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 ? number : 0;
+}
+
+function billingAddress(entity) {
+  const locality = [entity.city, entity.state, entity.zipcode].filter(isPresent).join(", ");
+  const lines = [entity.address_line1, entity.address_line2, locality, entity.country].filter(
+    isPresent,
+  );
+  return lines.length > 0 ? lines.join(" · ") : "No billing address";
+}
+
+function countLabel(value, singular, plural) {
+  const count = Array.isArray(value) ? value.length : 0;
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function isPresent(value) {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function initials(value) {

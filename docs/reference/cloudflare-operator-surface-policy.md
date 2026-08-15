@@ -110,7 +110,10 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    mapping and rollback to the migration shell. The first catalog family, manual invoice custom-
    section viewer reads plus admin create/edit/terminate, is implemented locally through the
    canonical REST handler and existing internal domain-event Queue; remote Access proof remains
-   pending.
+   pending. The first billing family, single-default-entity viewer reads plus admin updates, is also
+   implemented locally through the canonical D1 handler. It exposes only supported legal, address,
+   payment-term, numbering, locale, and document defaults; multi-entity, e-invoicing, tax-assignment,
+   and external-action paths remain unavailable.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

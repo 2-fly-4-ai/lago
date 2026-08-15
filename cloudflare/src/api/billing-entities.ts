@@ -75,7 +75,7 @@ type SectionRow = {
 
 export async function handleBillingEntitiesApi(
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {

@@ -463,6 +463,89 @@ describe("operator Worker disabled boundary", () => {
     );
     await expect(empty.json()).resolves.toMatchObject({ meta: { total_count: 0 } });
   });
+
+  it("maps the single billing entity for viewers and gates updates to same-origin admins", async () => {
+    const viewerShow = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/billing-entities/default", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    expect(viewerShow.status).toBe(200);
+    await expect(viewerShow.json()).resolves.toMatchObject({
+      billing_entity: {
+        lago_id: "org-operator-access",
+        code: "default",
+        name: "Operator Access",
+        default_currency: "USD",
+        is_default: true,
+        version: 1,
+      },
+    });
+
+    const viewerUpdate = await operatorMutation("PUT", "/billing-entities/default", {
+      billing_entity: { timezone: "Pacific/Fiji" },
+    });
+    expect(viewerUpdate.status).toBe(403);
+    await expect(viewerUpdate.json()).resolves.toMatchObject({
+      code: "operator_admin_required",
+    });
+
+    await promoteOperatorAdmin();
+    const updated = await operatorMutation("PUT", "/billing-entities/default", {
+      billing_entity: {
+        name: "Operator Billing",
+        default_currency: "nzd",
+        country: "nz",
+        email: "BILLING@EXAMPLE.INVALID",
+        timezone: "Pacific/Auckland",
+        net_payment_term: 14,
+        document_numbering: "per_customer",
+        document_number_prefix: "op",
+        finalize_zero_amount_invoice: true,
+        billing_configuration: {
+          invoice_footer: "Synthetic operator footer",
+          invoice_grace_period: 2,
+          document_locale: "en",
+        },
+      },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      billing_entity: {
+        name: "Operator Billing",
+        default_currency: "NZD",
+        country: "NZ",
+        email: "billing@example.invalid",
+        timezone: "Pacific/Auckland",
+        net_payment_term: 14,
+        document_numbering: "per_customer",
+        document_number_prefix: "OP",
+        finalize_zero_amount_invoice: true,
+        invoice_footer: "Synthetic operator footer",
+        invoice_grace_period: 2,
+        document_locale: "en",
+        version: 2,
+      },
+    });
+
+    const event = await env.BILLING_DB.prepare(
+      `SELECT payload_json FROM outbox_events
+       WHERE organization_id = 'org-operator-access' AND aggregate_type = 'billing_entity'`,
+    ).first<{ payload_json: string }>();
+    expect(event?.payload_json).toContain("default_currency");
+    expect(event?.payload_json).not.toContain("billing@example.invalid");
+    expect(event?.payload_json).not.toContain("Synthetic operator footer");
+
+    const unsupported = await operatorMutation("PUT", "/billing-entities/default", {
+      billing_entity: { einvoicing: true },
+    });
+    expect(unsupported.status).toBe(422);
+    await expect(unsupported.json()).resolves.toMatchObject({
+      code: "unsupported_billing_entity_feature",
+    });
+  });
 });
 
 async function promoteOperatorAdmin(): Promise<void> {

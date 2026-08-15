@@ -279,8 +279,9 @@ remaining Lago feature inventory is dispositioned and ported.
   authorities. The measured limits and sharding/fanout gates are recorded in
   `../docs/reference/cloudflare-usage-storage-decision.md`.
 - Operator Static Assets: the API Worker continues to serve a script-free migration shell while the
-  separate, undeployed operator Worker serves `operator-app`, a native-ES-module organization and
-  API-key workspace. Both bundles use direct Static Assets delivery, restrictive CSP/framing/
+  separate, undeployed operator Worker serves `operator-app`, a native-ES-module organization,
+  billing-profile, API-key, and invoice-section workspace. Both bundles use direct Static Assets
+  delivery, restrictive CSP/framing/
   no-index headers, SPA fallback, and Worker-first `/api/*`, health, and readiness paths. The
   operator app validates its Cloudflare Access session before exposing the dashboard, renders a
   disabled or unauthorized state fail-closed, gives viewers sanitized key metadata only, and gives
@@ -306,6 +307,10 @@ remaining Lago feature inventory is dispositioned and ported.
   section handler: viewers can read active manual invoice content, and admins can create, edit, and
   terminate it. Its D1 mutation and transactional outbox continue to publish through the existing
   internal domain-event Queue; the operator Worker is a producer only.
+  `/api/operator/v1/billing-entities/default` reuses the canonical single-entity handler: viewers
+  can read the detailed billing profile, while same-origin/CSRF-checked admins can update the
+  supported legal, address, payment-term, numbering, locale, and document defaults. Additional
+  entities, e-invoicing, tax assignment, and other side-effecting features remain unavailable.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

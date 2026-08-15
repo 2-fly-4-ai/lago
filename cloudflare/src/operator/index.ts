@@ -1,6 +1,7 @@
 import type { JWTVerifyGetKey } from "jose";
 
 import { handleApiKeysApi } from "../api/api-keys";
+import { handleBillingEntitiesApi } from "../api/billing-entities";
 import { handleInvoiceCustomSectionRequest } from "../api/invoice-custom-sections";
 import { showOrganization } from "../api/organizations";
 import type { AuthContext } from "../auth/api-key";
@@ -89,6 +90,31 @@ export async function handleOperatorRequest(
         "/api/v1/api_keys",
       );
       const response = await handleApiKeysApi(
+        new Request(forwardedUrl, request),
+        env,
+        auth,
+        requestId,
+      );
+      if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/billing-entities(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/billing-entities",
+        "/api/v1/billing_entities",
+      );
+      const response = await handleBillingEntitiesApi(
         new Request(forwardedUrl, request),
         env,
         auth,
