@@ -483,7 +483,15 @@ Acceptance:
 
 ### M5: Jobs, schedules, outbound events, and reconciliation
 
-- [ ] Replace enabled Active Jobs with domain commands, Queue consumers, or Workflow steps.
+- [x] Replace enabled Active Jobs with domain commands, Queue consumers, or Workflow steps. The
+      generated pinned-source inventory now requires an explicit job-specific rule and aborts if a
+      new Rails job lacks one. Of 242 job files, 95 retained commands consolidate into tested
+      Worker/D1, Queue, Workflow, Cron, document, webhook, usage, wallet, and Authorize.Net owners;
+      143 are explicitly `not-used` historical backfills, non-retained providers/integrations,
+      external tax/VIES/e-invoicing/email/telemetry/alert paths, or unsupported provider-funded and
+      bulk mutations; and four Rails/Active Job/Sidekiq/Clock/Sentry framework scaffolds are retired
+      by Cloudflare's native runtime. No job retains the generic Workflow/Queue placeholder or
+      self-referential source-only evidence.
 - [x] Replace enabled Clockwork entries with deterministic Cron-to-Workflow dispatch.
       All 27 legacy entries now have an exhaustive code-level ownership registry. A deterministic
       one-minute Cron dispatches a versioned Workflow instance and records due/unimplemented
@@ -3004,3 +3012,16 @@ resource and mutation described.
   state, no pending migration, and clean foreign keys. Version inspection confirmed only fetch/
   scheduled/queue handlers with all external-action flags at `0`. No production route/domain,
   provider action, customer message, payment action, secret, or customer data changed.
+- 2026-08-15: Closed the M5 Active Job ownership milestone by replacing broad filename guesses with
+  an exhaustive pinned-source job rule set. Inventory generation now fails if any of the 242 Rails
+  job files lacks an explicit disposition. Ninety-five retained commands map to tested Worker/D1,
+  Queue, Workflow, Cron, document, webhook, usage, wallet, and Authorize.Net owners; 143 historical,
+  provider/integration, external-tax/VIES/e-invoicing/email/telemetry/alert, provider-funded, or bulk-
+  mutation jobs are explicitly `not-used`; and four Rails/Active Job/Sidekiq/Clock/Sentry framework
+  files are retired by Cloudflare's native runtime. The generated summary records these counts, no
+  job retains the generic Workflow/Queue placeholder or self-referential evidence, and every cited
+  evidence path exists. Formatting, zero-warning lint, and inventory freshness pass; all 158 tests
+  across the 27 distinct retained-job evidence files pass serially in 98.00 seconds. The earlier
+  post-runtime full suite remains 297/297. This inventory/documentation slice requires no runtime,
+  schema, resource, or deployment change and performed no provider action, customer message,
+  payment action, secret access, customer-data access, or production operation.

@@ -261,6 +261,319 @@ function extractOperatorSurface(frontRoot) {
   };
 }
 
+const jobRules = [
+  {
+    pattern:
+      /api\/app\/jobs\/(?:application_job|clock_job|concerns\/(?:concurrency_throttlable|sentry_cron_concern))\.rb$/i,
+    disposition: "retire",
+    target: "Cloudflare Workers, Queues, Workflows, Cron Triggers, and native observability",
+    evidence: ["cloudflare/test/health.test.ts", "cloudflare/test/scheduled-maintenance.test.ts"],
+    migrationNotes:
+      "These files are Rails, Active Job, Sidekiq throttling, and Sentry-Cron scaffolding rather than domain commands. Cloudflare supplies the runtime, retry, concurrency, schedule, and observability owners directly.",
+    rollbackNotes:
+      "Keep the legacy runtime available only until the separately approved cutover; do not copy framework base classes into the Worker package.",
+  },
+  {
+    pattern: /api\/app\/jobs\/database_migrations\/.*\.rb$/i,
+    disposition: "not-used",
+    target: "cloudflare/migrations/ forward-only D1 schema and separately approved cutover tooling",
+    evidence: ["cloudflare/migrations/0001_foundation.sql", "cloudflare/test/setup.ts"],
+    migrationNotes:
+      "These are historical PostgreSQL row backfills, including already-retired provider fields. Empty D1 databases replay forward migrations; legacy production data movement belongs to the separate cutover plan and must not run as an application job.",
+    rollbackNotes:
+      "Do not enqueue historical Rails backfills against D1. Keep production data migration outside this isolated rewrite until explicitly approved.",
+  },
+  {
+    pattern:
+      /api\/app\/jobs\/(?:ai_conversations\/.*|segment_(?:identify|track)_job|integrations\/.*|integration_customers\/.*|usage_monitoring\/.*)\.rb$/i,
+    disposition: "not-used",
+    target: "No retained SERP Lago runtime contract",
+    evidence: ["cloudflare/README.md", "docs/plans/active/2026-08-12-cloudflare-native-rewrite.md"],
+    migrationNotes:
+      "Read-only consumer audits found no Lago API dependency for AI conversation streaming, Segment telemetry, CRM/accounting/tax integrations, integration-customer fanout, or Lago premium usage-alert delivery.",
+    rollbackNotes:
+      "If an owning SERP repository adopts one of these capabilities, add its exact contract behind disabled external-action gates with synthetic fixtures before enabling it.",
+  },
+  {
+    pattern:
+      /api\/app\/jobs\/(?:credit_notes\/refunds\/.*|invoices\/payments\/(?:adyen|gocardless|moneyhash|stripe)_create_job|payment_provider_customers\/.*|payment_providers\/(?:adyen|cashfree|flutterwave|gocardless|moneyhash|stripe)\/.*|payment_providers\/cancel_payment_authorization_job|payment_requests\/payments\/(?:adyen|gocardless|moneyhash|stripe)_create_job|payments\/set_payment_method_and_create_receipt_job)\.rb$/i,
+    disposition: "not-used",
+    target:
+      "No retained Lago runtime; SERP commerce and entitlement recovery call Stripe directly from their owning Workers",
+    evidence: ["cloudflare/README.md", "docs/plans/active/2026-08-12-cloudflare-native-rewrite.md"],
+    migrationNotes:
+      "These jobs are provider-specific to Lago-managed Stripe, Adyen, GoCardless, Cashfree, Flutterwave, or MoneyHash. The retained Lago adapter is Authorize.Net hosted payment only.",
+    rollbackNotes:
+      "Keep these provider mutations absent. Any later adoption requires a verified consumer and isolated fake-provider contract suite.",
+  },
+  {
+    pattern:
+      /api\/app\/jobs\/(?:bill_paid_credit_job|invoices\/prepaid_credit_job|subscriptions\/activation_rules\/payment\/resolve_job)\.rb$/i,
+    disposition: "not-used",
+    target: "Explicit provider-funded-credit and provider-gated-subscription boundaries",
+    evidence: [
+      "cloudflare/test/wallet-ledger.test.ts",
+      "cloudflare/test/subscription-lifecycle.test.ts",
+    ],
+    migrationNotes:
+      "Paid wallet funding and provider-gated subscription activation are outside the retained provider-free billing contract. Granted credits and supported subscription lifecycle commands have direct D1 owners.",
+    rollbackNotes:
+      "Do not enable provider-funded credits or payment-gated activation without a separately approved payment workflow and reconciliation contract.",
+  },
+  {
+    pattern:
+      /api\/app\/jobs\/(?:customers\/(?:retry_vies_check|terminate_relations|vies_check)_job|invoices\/finalize_pending_vies_invoice_job|taxes\/.*|(?:credit_notes|invoices)\/provider_taxes\/.*)\.rb$/i,
+    disposition: "not-used",
+    target: "Explicit VIES, destructive-customer, and external-tax-provider disabled boundaries",
+    evidence: ["cloudflare/test/tax-ledger.test.ts", "cloudflare/test/billing-entities.test.ts"],
+    migrationNotes:
+      "The retained contract supports manual percentage taxes and non-destructive customer lifecycle. VIES, automatic EU tax management, external tax providers, and destructive relation teardown are not enabled.",
+    rollbackNotes:
+      "Keep these external/destructive paths rejected until their provider, data-retention, and reconciliation contracts are separately approved.",
+  },
+  {
+    pattern: /api\/app\/jobs\/(?:credit_notes|invoices|payment_receipts)\/generate_xml_job\.rb$/i,
+    disposition: "not-used",
+    target: "Explicit e-invoicing-disabled document API boundaries",
+    evidence: [
+      "cloudflare/test/billing-entities.test.ts",
+      "cloudflare/test/payment-receipt-document.test.ts",
+      "cloudflare/test/credit-note-document.test.ts",
+    ],
+    migrationNotes:
+      "Factur-X/UBL XML generation is unreachable because the retained single billing entity rejects e-invoicing configuration. PDF generation remains container-free through Browser Rendering.",
+    rollbackNotes:
+      "Do not enqueue XML work unless a separately approved e-invoicing slice supplies Workers-native generation and structural verification.",
+  },
+  {
+    pattern:
+      /api\/app\/jobs\/(?:send_email_job|invoices\/notify_job|payment_receipts\/notify_job)\.rb$/i,
+    disposition: "not-used",
+    target: "No retained Lago email-delivery contract",
+    evidence: ["cloudflare/README.md", "docs/plans/active/2026-08-12-cloudflare-native-rewrite.md"],
+    migrationNotes:
+      "SERP does not consume Lago email delivery. Document generation and outbox evidence remain available without a mailer, SMTP process, or customer-message side effect.",
+    rollbackNotes:
+      "Customer messaging requires a separately approved owner, templates, delivery provider, consent policy, and synthetic tests.",
+  },
+  {
+    pattern: /api\/app\/jobs\/events\/stores\/clickhouse\/.*\.rb$/i,
+    disposition: "not-used",
+    target: "D1 usage-event ledger and projections; no ClickHouse migration runtime",
+    evidence: ["cloudflare/test/metered-usage.test.ts", "cloudflare/test/daily-usage.test.ts"],
+    migrationNotes:
+      "The Worker writes its authoritative D1/R2 usage model directly, so ClickHouse pre-enrichment and enriched-store migration orchestration have no source or destination.",
+    rollbackNotes:
+      "Do not recreate ClickHouse migration loops unless approved volume evidence selects ClickHouse as a product requirement.",
+  },
+  {
+    pattern: /api\/app\/jobs\/clock\/.*\.rb$/i,
+    target: "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
+    evidence: ["cloudflare/test/scheduled-maintenance.test.ts"],
+    migrationNotes:
+      "The exhaustive one-minute registry assigns all 27 legacy Clockwork entries an executable or audited Cloudflare owner; no Rails clock queue remains.",
+  },
+  {
+    pattern: /api\/app\/jobs\/(?:bill_non_invoiceable_fees_job|bill_subscription_job)\.rb$/i,
+    target: "cloudflare/src/billing/close-period.ts and cloudflare/src/api/metered-usage.ts",
+    evidence: ["cloudflare/test/billing-cycle.test.ts", "cloudflare/test/metered-usage.test.ts"],
+  },
+  {
+    pattern:
+      /api\/app\/jobs\/(?:billable_metric_filters\/.*|billable_metrics\/delete_events_job)\.rb$/i,
+    target:
+      "cloudflare/src/api/plan-catalog.ts, cloudflare/src/api/metered-usage.ts, and transactional retention tasks",
+    evidence: ["cloudflare/test/plan-catalog.test.ts", "cloudflare/test/metered-usage.test.ts"],
+  },
+  {
+    pattern: /api\/app\/jobs\/billing_entities\/taxes\/refresh_draft_invoices_job\.rb$/i,
+    target: "cloudflare/src/api/billing-entities.ts and D1 draft invalidation triggers",
+    evidence: ["cloudflare/test/billing-entities.test.ts", "cloudflare/test/billing-cycle.test.ts"],
+  },
+  {
+    pattern: /api\/app\/jobs\/(?:charge_filters|charges|fixed_charges)\/.*\.rb$/i,
+    target:
+      "cloudflare/src/api/plan-catalog.ts and cloudflare/src/api/subscription-charge-filters.ts",
+    evidence: [
+      "cloudflare/test/subscription-charge-filters.test.ts",
+      "cloudflare/test/charge-filters.test.ts",
+    ],
+  },
+  {
+    pattern:
+      /api\/app\/jobs\/(?:credit_notes\/(?:generate_documents|generate_pdf)_job|invoices\/(?:generate_documents|generate_pdf|generate_pdf_and_notify)_job|payment_receipts\/(?:generate_documents|generate_pdf|generate_pdf_and_notify)_job)\.rb$/i,
+    target: "cloudflare/src/documents/ and cloudflare/src/workflows/documents.ts",
+    evidence: [
+      "cloudflare/test/invoice-document.test.ts",
+      "cloudflare/test/payment-receipt-document.test.ts",
+      "cloudflare/test/credit-note-document.test.ts",
+    ],
+    migrationNotes:
+      "Browser Rendering and the ownership-checked Document Workflow replace PDF jobs. Combined notify wrappers retain the PDF command while the unconsumed email side effect stays disabled.",
+  },
+  {
+    pattern: /api\/app\/jobs\/customers\/refresh_wallet_job\.rb$/i,
+    target: "cloudflare/src/schedules/wallet-balances.ts and cloudflare/src/api/wallet-ledger.ts",
+    evidence: [
+      "cloudflare/test/wallet-ongoing-balances.test.ts",
+      "cloudflare/test/wallet-ledger.test.ts",
+    ],
+  },
+  {
+    pattern: /api\/app\/jobs\/daily_usages\/.*\.rb$/i,
+    target: "cloudflare/src/usage/daily-usage.ts and cloudflare/src/workflows/reconciliation.ts",
+    evidence: [
+      "cloudflare/test/daily-usage.test.ts",
+      "cloudflare/test/scheduled-maintenance.test.ts",
+    ],
+  },
+  {
+    pattern: /api\/app\/jobs\/data_exports\/.*\.rb$/i,
+    target: "cloudflare/src/documents/data-export.ts and cloudflare/src/workflows/documents.ts",
+    evidence: ["cloudflare/test/data-exports.test.ts"],
+  },
+  {
+    pattern: /api\/app\/jobs\/dunning_campaigns\/.*\.rb$/i,
+    target: "cloudflare/src/schedules/dunning.ts and cloudflare/src/workflows/reconciliation.ts",
+    evidence: [
+      "cloudflare/test/dunning-campaigns.test.ts",
+      "cloudflare/test/scheduled-maintenance.test.ts",
+    ],
+  },
+  {
+    pattern:
+      /api\/app\/jobs\/events\/(?:create_batch|pay_in_advance|post_process|post_validation)_job\.rb$/i,
+    target: "cloudflare/src/api/metered-usage.ts and cloudflare/src/workflows/reconciliation.ts",
+    evidence: [
+      "cloudflare/test/metered-usage.test.ts",
+      "cloudflare/test/scheduled-maintenance.test.ts",
+    ],
+  },
+  {
+    pattern: /api\/app\/jobs\/fees\/create_pay_in_advance_job\.rb$/i,
+    target: "cloudflare/src/api/metered-usage.ts",
+    evidence: ["cloudflare/test/metered-usage.test.ts"],
+  },
+  {
+    pattern: /api\/app\/jobs\/inbound_webhooks\/process_job\.rb$/i,
+    target:
+      "cloudflare/src/webhooks/authorize-net.ts and cloudflare/src/reconciliation/authorize-net.ts",
+    evidence: ["cloudflare/test/authorize-net-webhook.test.ts"],
+  },
+  {
+    pattern:
+      /api\/app\/jobs\/invoices\/(?:create_pay_in_advance_charge|create_pay_in_advance_fixed_charges)_job\.rb$/i,
+    target:
+      "cloudflare/src/api/metered-usage.ts and cloudflare/src/billing/pay-in-advance-fixed-charges.ts",
+    evidence: [
+      "cloudflare/test/metered-usage.test.ts",
+      "cloudflare/test/pay-in-advance-fixed-charge.test.ts",
+    ],
+  },
+  {
+    pattern: /api\/app\/jobs\/invoices\/(?:finalize_all|finalize|refresh_draft)_job\.rb$/i,
+    target: "cloudflare/src/billing/close-period.ts and cloudflare/src/api/lago-compatibility.ts",
+    evidence: [
+      "cloudflare/test/billing-cycle.test.ts",
+      "cloudflare/test/invoice-finalization.test.ts",
+    ],
+  },
+  {
+    pattern:
+      /api\/app\/jobs\/invoices\/(?:update_all_invoice_(?:grace_period|issuing_date)_from_billing_entity|update_(?:grace_period|issuing_date)_from_billing_entity)_job\.rb$/i,
+    target: "cloudflare/src/api/billing-entities.ts and D1 draft invalidation triggers",
+    evidence: [
+      "cloudflare/test/billing-entities.test.ts",
+      "cloudflare/test/invoice-finalization.test.ts",
+    ],
+  },
+  {
+    pattern: /api\/app\/jobs\/invoices\/payments\/mark_overdue_job\.rb$/i,
+    target: "cloudflare/src/schedules/maintenance.ts",
+    evidence: [
+      "cloudflare/test/scheduled-maintenance.test.ts",
+      "cloudflare/test/invoice-finalization.test.ts",
+    ],
+  },
+  {
+    pattern: /api\/app\/jobs\/invoices\/update_fees_payment_status_job\.rb$/i,
+    target: "cloudflare/src/api/payment-ledger.ts and the normalized invoice/payment projection",
+    evidence: ["cloudflare/test/payment-ledger.test.ts", "cloudflare/test/fees.test.ts"],
+  },
+  {
+    pattern: /api\/app\/jobs\/invoices\/(?:payments\/(?:create|retry_all)_job|retry_all_job)\.rb$/i,
+    disposition: "not-used",
+    target: "Retained single-invoice Authorize.Net hosted-payment commands only",
+    evidence: [
+      "cloudflare/test/invoice-payment-retry.test.ts",
+      "cloudflare/test/authorize-net-provider.test.ts",
+    ],
+    migrationNotes:
+      "Generic automatic collection and operator bulk retry are not retained. The hosted-payment URL and single-invoice retry boundaries are explicit, idempotent, and kill-switched.",
+    rollbackNotes:
+      "Do not introduce provider-wide batch mutations without a verified consumer, reservation ledger, and fake-provider concurrency suite.",
+  },
+  {
+    pattern: /api\/app\/jobs\/lifetime_usages\/.*\.rb$/i,
+    target:
+      "cloudflare/src/usage/lifetime-usage.ts, cloudflare/src/billing/progressive-billing.ts, and cloudflare/src/workflows/reconciliation.ts",
+    evidence: [
+      "cloudflare/test/lifetime-usage.test.ts",
+      "cloudflare/test/progressive-billing.test.ts",
+    ],
+  },
+  {
+    pattern: /api\/app\/jobs\/payment_providers\/authorize_net\/handle_event_job\.rb$/i,
+    target:
+      "cloudflare/src/webhooks/authorize-net.ts and cloudflare/src/reconciliation/authorize-net.ts",
+    evidence: ["cloudflare/test/authorize-net-webhook.test.ts"],
+  },
+  {
+    pattern: /api\/app\/jobs\/payment_receipts\/create_job\.rb$/i,
+    target: "cloudflare/src/api/payment-receipts.ts and atomic settlement commands",
+    evidence: ["cloudflare/test/payment-receipts.test.ts"],
+  },
+  {
+    pattern: /api\/app\/jobs\/payment_requests\/payments\/create_job\.rb$/i,
+    target: "cloudflare/src/workflows/checkout.ts",
+    evidence: [
+      "cloudflare/test/payment-requests.test.ts",
+      "cloudflare/test/checkout-workflow.test.ts",
+    ],
+  },
+  {
+    pattern: /api\/app\/jobs\/payments\/manual_create_job\.rb$/i,
+    target: "cloudflare/src/api/payment-ledger.ts",
+    evidence: ["cloudflare/test/payment-ledger.test.ts"],
+  },
+  {
+    pattern: /api\/app\/jobs\/plans\/(?:destroy|update_amount)_job\.rb$/i,
+    target: "cloudflare/src/api/plan-catalog.ts and cloudflare/src/billing/plan-deletion.ts",
+    evidence: ["cloudflare/test/plan-catalog.test.ts"],
+  },
+  {
+    pattern: /api\/app\/jobs\/send_(?:http_)?webhook_job\.rb$/i,
+    target: "cloudflare/src/webhooks/outbound.ts and the domain-event Queue consumer",
+    evidence: ["cloudflare/test/outbound-webhooks.test.ts"],
+  },
+  {
+    pattern:
+      /api\/app\/jobs\/subscriptions\/(?:flag_refreshed|organization_billing|terminate_ended_subscription|terminate)_job\.rb$/i,
+    target:
+      "cloudflare/src/api/subscription-lifecycle.ts, cloudflare/src/billing/close-period.ts, and cloudflare/src/workflows/reconciliation.ts",
+    evidence: [
+      "cloudflare/test/subscription-lifecycle.test.ts",
+      "cloudflare/test/billing-cycle.test.ts",
+      "cloudflare/test/scheduled-maintenance.test.ts",
+    ],
+  },
+  {
+    pattern: /api\/app\/jobs\/wallet_transactions\/create_job\.rb$/i,
+    target: "cloudflare/src/api/wallet-ledger.ts",
+    evidence: ["cloudflare/test/wallet-ledger.test.ts"],
+  },
+];
+
 const portRules = [
   {
     pattern: /api\/app\/services\/utils\/pdf_attachment_service\.rb/i,
@@ -523,7 +836,11 @@ const portRules = [
 function disposition(source) {
   const owner = ownerFor(source);
   const consumers = consumersFor(source);
-  const match = portRules.find((rule) => rule.pattern.test(source));
+  const isJob = source.startsWith("api/app/jobs/");
+  const match = (isJob ? jobRules : portRules).find((rule) => rule.pattern.test(source));
+  if (isJob && !match) {
+    throw new Error(`Active Job is missing an explicit Cloudflare disposition: ${source}`);
+  }
   return match
     ? {
         source,
@@ -630,6 +947,7 @@ const schedules = statSafe(clockFile)
       .map((line, index) => ({ line: index + 1, source: line.trim() }))
       .filter(({ source }) => source.startsWith("every("))
   : [];
+const jobFeatures = jobs.map(disposition);
 
 const inventory = {
   schemaVersion: 1,
@@ -645,6 +963,7 @@ const inventory = {
     defaultDisposition: "port",
     retirementRequiresApproval: true,
     consolidationAllowed: true,
+    jobsRequireExplicitDispositionRule: true,
     parityStatusMeaning:
       "partial means at least one behavior has executable evidence; not-started means the source is assigned but has no Cloudflare parity fixture yet",
   },
@@ -653,6 +972,7 @@ const inventory = {
     controllers: controllers.length,
     services: services.length,
     jobs: jobs.length,
+    jobDispositions: countBy(jobFeatures, (job) => job.disposition),
     graphqlFiles: graphql.length,
     migrations: migrations.length,
     schedules: schedules.length,
@@ -672,7 +992,7 @@ const inventory = {
     models: models.map(disposition),
     controllers: controllers.map(disposition),
     services: services.map(disposition),
-    jobs: jobs.map(disposition),
+    jobs: jobFeatures,
     graphql: graphql.map(disposition),
     schedules: schedules.map((schedule) => ({
       ...schedule,

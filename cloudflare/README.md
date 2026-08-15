@@ -261,6 +261,16 @@ remaining Lago feature inventory is dispositioned and ported.
   The legacy failed-invoice retry is retained as an audited no-work boundary: it only retried
   persisted external-tax API-limit failures, while external tax-provider configuration is rejected
   before this Worker's atomic invoice write and no tax-error-detail ledger exists.
+- Active Job consolidation: the generated pinned-source inventory requires an explicit rule for
+  every one of the 242 Rails job files and fails closed when a new job lacks one. Ninety-five
+  retained commands collapse into the Worker/D1, Queue, Workflow, Cron, document, webhook, usage,
+  wallet, and Authorize.Net owners described above, each with checked-in executable evidence.
+  Another 143 jobs are not used: historical PostgreSQL backfills; Lago-managed non-Authorize.Net
+  providers; CRM/accounting, Segment, AI-conversation, VIES/external-tax, XML/e-invoicing, email,
+  and premium usage-alert paths without a verified SERP consumer; plus unsupported provider-funded
+  credits and bulk provider mutations. The final four files are Active Job/Sidekiq/Clock/Sentry
+  scaffolding retired by Cloudflare's native runtime. No generic background-job placeholder or
+  continuously running queue process remains in the retained architecture.
 - R2: immutable provider webhook, usage-event, invoice-document, payment-receipt, and credit-note
   archives.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
