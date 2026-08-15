@@ -582,8 +582,13 @@ Acceptance:
       projection repair. Voided lines are excluded and projection-version guards prevent older
       Queue work from clearing newer activity. Progressive thresholds, alerts, and broader analytics
       projections remain pending as separately inventoried breadth.
-- [ ] Select D1, Durable Object SQL, R2/Pipelines, or Analytics Engine by verified query and volume
-      requirements; do not recreate Kafka/ClickHouse by habit.
+- [x] Select D1, Durable Object SQL, R2/Pipelines, or Analytics Engine by verified query and volume
+      requirements; do not recreate Kafka/ClickHouse by habit. D1 remains the exact relational
+      billing authority and R2 retains immutable raw evidence for the verified SERP scope. Durable
+      Object SQL remains aggregate coordination, Analytics Engine is eligible only for derived
+      three-month analytics, and open-beta Pipelines/R2 Data Catalog is deferred until measured
+      scale or cross-tenant analytical demand crosses the documented re-evaluation gates in
+      `docs/reference/cloudflare-usage-storage-decision.md`.
 
 Acceptance:
 
@@ -3055,3 +3060,17 @@ resource and mutation described.
   access occurred. Final audit again found no pending migration, zero audited state, and clean
   foreign keys; version inspection confirmed only fetch/scheduled/queue handlers and no production
   route or domain.
+- 2026-08-16: Closed the M7 storage-selection milestone with an evidence-bounded D1/R2 decision.
+  Current SERP source explicitly selects only the safe-store checkout contract and contains no
+  checked-in usage-event caller or volume requirement; production traffic and external consumers
+  remain unknown rather than inferred. The isolated read-only audit found zero usage events, daily/
+  charge snapshots, lifetime projections, or pending activities in a 4,677,632-byte D1 database.
+  Exact replay uniqueness, tenant/subscription ownership, bounded time scans, and atomic event/
+  invoice/wallet/outbox behavior keep D1 as billing authority, while R2 remains immutable raw
+  evidence. Current official limits confirm the 10 GB D1 hard cap/single writer, three-month
+  Analytics Engine retention, private 10 GB-per-object Durable Object SQL model, unlimited R2
+  bucket data/object counts, and open-beta Pipelines 5 MB/s per-stream ceiling. The checked-in
+  decision defines required canary telemetry, an 8 GB size trigger, tenant-skew/latency/overload/
+  analytics gates, and an outbox/R2 backfill reconciliation protocol before sharding or analytical
+  fanout. No runtime, migration, resource, deployment, provider action, payment action, customer
+  message, secret access, customer-data access, or production operation changed.

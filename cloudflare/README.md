@@ -273,6 +273,11 @@ remaining Lago feature inventory is dispositioned and ported.
   continuously running queue process remains in the retained architecture.
 - R2: immutable provider webhook, usage-event, invoice-document, payment-receipt, and credit-note
   archives.
+- Usage storage: D1 is the authoritative exact event and billing-projection ledger; R2 holds
+  immutable raw evidence. Durable Object SQL remains command coordination, while Analytics Engine
+  and Pipelines/R2 Data Catalog are deferred derived-analytics options rather than billing
+  authorities. The measured limits and sharding/fanout gates are recorded in
+  `../docs/reference/cloudflare-usage-storage-decision.md`.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
