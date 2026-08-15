@@ -635,6 +635,8 @@ Acceptance:
       The first billing BFF maps the retained default billing entity's detailed read for viewers and
       supported updates for admins through the canonical D1 handler. Multi-entity creation,
       e-invoicing, tax assignment, and other explicit side-effecting boundaries remain unavailable.
+      Payment-receipt list/show is the next read-only BFF: it reuses the canonical D1 projection but
+      suppresses document URLs and rejects document generation/download, email, and all mutations.
 - [x] Serve the operator application with Workers Static Assets. The deployed API Worker retains
       its script-free `operator-ui` rollback shell. The separate, undeployed operator Worker now
       serves `operator-app`: a same-origin native-ES-module organization/API-key workspace with a
@@ -3239,3 +3241,17 @@ resource and mutation described.
   Queue access, and non-secret disabled Access bindings. No remote migration, resource, Access
   application/policy, membership, deployment, provider action, payment action, customer message,
   secret access, customer-data access, or production operation occurred.
+- 2026-08-16: Added the retained payment-receipt operator read family. The canonical D1 list/show
+  projection is now independently reusable from document download and email handling.
+  `/api/operator/v1/payment-receipts` authenticates the Access identity and membership tenant,
+  permits GET list/show only, strips both stored and generated document URLs, and rejects every
+  mutation with an explicit read-only boundary. The operator app renders receipt number, customer,
+  invoice, amount, status, and creation metadata without document or email controls. Synthetic
+  tenant data proves list/show behavior, URL suppression, and resend rejection while the canonical
+  payment-receipt suite remains unchanged. The focused operator/receipt/static run passes 20/20;
+  the authoritative serial suite passes all 318 tests across 61 files in 60.62 seconds. Lint,
+  TypeScript, JavaScript syntax, and dry builds pass. The API dry bundle is 1407.36 KiB (246.05 KiB
+  gzip); the disabled operator bundle is 125.33 KiB (26.94 KiB gzip) with no new binding. No remote
+  migration, resource, Access application/policy, membership, deployment, document generation,
+  email, provider action, payment action, customer message, secret access, customer-data access, or
+  production operation occurred.

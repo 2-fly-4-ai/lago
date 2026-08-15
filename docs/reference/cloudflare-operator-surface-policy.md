@@ -113,7 +113,9 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    pending. The first billing family, single-default-entity viewer reads plus admin updates, is also
    implemented locally through the canonical D1 handler. It exposes only supported legal, address,
    payment-term, numbering, locale, and document defaults; multi-entity, e-invoicing, tax-assignment,
-   and external-action paths remain unavailable.
+   and external-action paths remain unavailable. Payment-receipt list/show metadata is implemented
+   as the next read-only family, with document URLs, generation/download, email, and every mutation
+   suppressed at the operator boundary.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

@@ -37,10 +37,9 @@ export async function handlePaymentReceiptsApi(
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
+  const readResponse = await handlePaymentReceiptReadsApi(request, env, auth, requestId);
+  if (readResponse) return readResponse;
   const url = new URL(request.url);
-  if (url.pathname === "/api/v1/payment_receipts" && request.method === "GET") {
-    return listPaymentReceipts(url, env.BILLING_DB, auth, requestId);
-  }
   const download = url.pathname.match(/^\/api\/v1\/payment_receipts\/([^/]+)\/download$/);
   if (download?.[1] && request.method === "GET") {
     return downloadPaymentReceipt(env, auth, decodeURIComponent(download[1]), requestId);
@@ -55,6 +54,21 @@ export async function handlePaymentReceiptsApi(
       "Payment receipt email delivery is not implemented by the Cloudflare billing subset",
     );
   }
+  return null;
+}
+
+export async function handlePaymentReceiptReadsApi(
+  request: Request,
+  env: Pick<Env, "BILLING_DB">,
+  auth: AuthContext,
+  requestId: string,
+  options: { includeFileUrls?: boolean } = {},
+): Promise<Response | null> {
+  const url = new URL(request.url);
+  const origin = options.includeFileUrls === false ? null : url.origin;
+  if (url.pathname === "/api/v1/payment_receipts" && request.method === "GET") {
+    return listPaymentReceipts(url, env.BILLING_DB, auth, requestId, origin);
+  }
   const match = url.pathname.match(/^\/api\/v1\/payment_receipts\/([^/]+)$/);
   if (!match?.[1] || request.method !== "GET") return null;
   const receipt = await requiredPaymentReceipt(
@@ -62,7 +76,7 @@ export async function handlePaymentReceiptsApi(
     auth.organizationId,
     decodeURIComponent(match[1]),
   );
-  return json({ payment_receipt: serializePaymentReceipt(receipt, url.origin) }, { requestId });
+  return json({ payment_receipt: serializePaymentReceipt(receipt, origin) }, { requestId });
 }
 
 async function listPaymentReceipts(
@@ -70,6 +84,7 @@ async function listPaymentReceipts(
   database: D1Database,
   auth: AuthContext,
   requestId: string,
+  origin: string | null,
 ): Promise<Response> {
   const page = positivePage(url.searchParams.get("page"));
   const perPage = Math.min(positivePage(url.searchParams.get("per_page"), 20), 100);
@@ -98,7 +113,7 @@ async function listPaymentReceipts(
     .all<ReceiptPaymentRow>();
   return json(
     {
-      payment_receipts: rows.results.map((row) => serializePaymentReceipt(row, url.origin)),
+      payment_receipts: rows.results.map((row) => serializePaymentReceipt(row, origin)),
       meta: pagination(count?.total ?? 0, page, perPage),
     },
     { requestId },
@@ -143,7 +158,7 @@ function receiptPaymentRows(): string {
 
 function serializePaymentReceipt(
   receipt: ReceiptPaymentRow,
-  origin: string,
+  origin: string | null,
 ): Record<string, unknown> {
   const payment: PaymentRow = {
     id: receipt.payment_id,
@@ -169,9 +184,11 @@ function serializePaymentReceipt(
     lago_id: receipt.receipt_id,
     number: receipt.receipt_number,
     file_url:
-      receipt.pdf_status === "ready" && receipt.pdf_object_key
-        ? `${origin}/api/v1/payment_receipts/${encodeURIComponent(receipt.receipt_id)}/download`
-        : receipt.file_url,
+      origin === null
+        ? null
+        : receipt.pdf_status === "ready" && receipt.pdf_object_key
+          ? `${origin}/api/v1/payment_receipts/${encodeURIComponent(receipt.receipt_id)}/download`
+          : receipt.file_url,
     xml_url: receipt.xml_url,
     payment: serializePayment(payment),
     created_at: receipt.receipt_created_at,

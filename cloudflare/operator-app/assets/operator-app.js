@@ -4,6 +4,7 @@ const endpoints = {
   billingEntity: "/api/operator/v1/billing-entities/default",
   apiKeys: "/api/operator/v1/api-keys",
   invoiceSections: "/api/operator/v1/invoice-custom-sections",
+  paymentReceipts: "/api/operator/v1/payment-receipts",
 };
 
 const elements = {
@@ -75,6 +76,10 @@ const elements = {
   sectionsEmptyCopy: document.querySelector("#sections-empty-copy"),
   sectionsTableShell: document.querySelector("#sections-table-shell"),
   sectionsTableBody: document.querySelector("#sections-table-body"),
+  receiptsLoading: document.querySelector("#receipts-loading"),
+  receiptsEmpty: document.querySelector("#receipts-empty"),
+  receiptsTableShell: document.querySelector("#receipts-table-shell"),
+  receiptsTableBody: document.querySelector("#receipts-table-body"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -118,6 +123,7 @@ const state = {
   sectionFormMode: "create",
   selectedSectionCode: null,
   billingEntity: null,
+  receipts: [],
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -143,17 +149,20 @@ async function initialize() {
     const session = await requestJson(endpoints.session);
     const operator = session.operator;
     state.role = operator.role === "admin" ? "admin" : "viewer";
-    const [organizationPayload, billingPayload, keyPayload, sectionsPayload] = await Promise.all([
-      requestJson(endpoints.organization),
-      requestJson(endpoints.billingEntity),
-      requestJson(endpoints.apiKeys),
-      requestJson(endpoints.invoiceSections),
-    ]);
+    const [organizationPayload, billingPayload, keyPayload, sectionsPayload, receiptsPayload] =
+      await Promise.all([
+        requestJson(endpoints.organization),
+        requestJson(endpoints.billingEntity),
+        requestJson(endpoints.apiKeys),
+        requestJson(endpoints.invoiceSections),
+        requestJson(endpoints.paymentReceipts),
+      ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
     renderBillingEntity(billingPayload.billing_entity);
     renderKeys(keyPayload.api_keys);
     renderSections(sectionsPayload.invoice_custom_sections);
+    renderReceipts(receiptsPayload.payment_receipts);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -421,6 +430,47 @@ function createSectionRow(section) {
   }
 
   row.append(nameCell, codeCell, displayCell, detailsCell, actionCell);
+  return row;
+}
+
+function renderReceipts(receipts) {
+  state.receipts = Array.isArray(receipts) ? receipts : [];
+  elements.receiptsTableBody.replaceChildren();
+  elements.receiptsLoading.hidden = true;
+  elements.receiptsEmpty.hidden = state.receipts.length !== 0;
+  elements.receiptsTableShell.hidden = state.receipts.length === 0;
+  for (const receipt of state.receipts)
+    elements.receiptsTableBody.append(createReceiptRow(receipt));
+}
+
+function createReceiptRow(receipt) {
+  const payment = receipt?.payment && typeof receipt.payment === "object" ? receipt.payment : {};
+  const row = document.createElement("tr");
+  const receiptCell = document.createElement("td");
+  const number = document.createElement("span");
+  number.className = "key-name";
+  number.textContent = safeText(receipt.number, "Unnamed receipt");
+  const id = document.createElement("span");
+  id.className = "key-id";
+  id.textContent = safeText(receipt.lago_id, "—");
+  receiptCell.append(number, id);
+
+  const customerCell = document.createElement("td");
+  customerCell.textContent = safeText(payment.external_customer_id, "—");
+  const invoicesCell = document.createElement("td");
+  invoicesCell.textContent = Array.isArray(payment.invoice_numbers)
+    ? payment.invoice_numbers.join(", ") || "—"
+    : "—";
+  const amountCell = document.createElement("td");
+  amountCell.textContent = formatMoney(payment.amount_cents, payment.amount_currency);
+  const statusCell = document.createElement("td");
+  const status = document.createElement("span");
+  status.className = "code-chip";
+  status.textContent = safeText(payment.payment_status, "unknown");
+  statusCell.append(status);
+  const createdCell = document.createElement("td");
+  createdCell.textContent = formatDate(receipt.created_at);
+  row.append(receiptCell, customerCell, invoicesCell, amountCell, statusCell, createdCell);
   return row;
 }
 
@@ -879,4 +929,17 @@ function formatDate(value) {
     month: "short",
     day: "numeric",
   }).format(date);
+}
+
+function formatMoney(amount, currency) {
+  const minor = Number(amount);
+  const code = safeText(currency, "USD");
+  if (!Number.isFinite(minor)) return "—";
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: code }).format(
+      minor / 100,
+    );
+  } catch {
+    return `${code} ${(minor / 100).toFixed(2)}`;
+  }
 }

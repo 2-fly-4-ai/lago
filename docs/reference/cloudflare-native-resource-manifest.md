@@ -53,7 +53,8 @@ Applied D1 migrations: `0001_foundation.sql` through
   default billing-entity profile: viewers receive the canonical detailed projection and admins can
   update only the supported D1-backed fields through same-origin/CSRF checks. Additional entities,
   e-invoicing, tax assignment, and side-effecting configuration remain unavailable. The deployed
-  API Worker still serves
+  app also provides tenant-scoped payment-receipt list/show metadata while suppressing file URLs and
+  rejecting document/email actions. The deployed API Worker still serves
   `operator-ui`, the non-interactive migration shell. Local desktop/mobile browser QA proved the
   operator bundle renders only the fail-closed state while Access is disabled, with no browser
   warnings or errors.

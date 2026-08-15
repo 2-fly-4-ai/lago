@@ -73,7 +73,15 @@ beforeEach(async () => {
     env.BILLING_DB.prepare(
       "DELETE FROM invoice_custom_sections WHERE organization_id = 'org-operator-access'",
     ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM payment_receipts WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM payment_attempts WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare("DELETE FROM invoices WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare("DELETE FROM api_keys WHERE organization_id = 'org-operator-access'"),
+    env.BILLING_DB.prepare("DELETE FROM customers WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare("DELETE FROM organizations WHERE id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
       `INSERT INTO organizations (id, external_id, name, created_at, updated_at)
@@ -544,6 +552,92 @@ describe("operator Worker disabled boundary", () => {
     expect(unsupported.status).toBe(422);
     await expect(unsupported.json()).resolves.toMatchObject({
       code: "unsupported_billing_entity_feature",
+    });
+  });
+
+  it("maps payment-receipt reads without exposing document or email actions", async () => {
+    const now = "2026-08-16T00:02:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, name, currency, metadata_json, version,
+          created_at, updated_at)
+         VALUES ('customer-operator-receipt', 'org-operator-access', 'operator-customer',
+                 'Operator Customer', 'USD', '{}', 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices
+         (id, organization_id, customer_id, number, status, payment_status, currency,
+          subtotal_minor, tax_minor, credits_minor, total_due_minor, version, payment_overdue,
+          finalized_at, created_at, updated_at)
+         VALUES ('invoice-operator-receipt', 'org-operator-access', 'customer-operator-receipt',
+                 'INV-OPERATOR', 'finalized', 'succeeded', 'USD', 1250, 0, 0, 1250, 1, 0,
+                 ?, ?, ?)`,
+      ).bind(now, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_attempts
+         (id, organization_id, invoice_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          payment_type, version, created_at, updated_at)
+         VALUES ('payment-operator-receipt', 'org-operator-access', 'invoice-operator-receipt',
+                 'manual', 'manual', NULL, 'operator-receipt', 1250, 'USD', 'succeeded',
+                 'manual', 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `UPDATE payment_receipts SET file_url = 'https://files.invalid/receipt.pdf'
+         WHERE payment_id = 'payment-operator-receipt'`,
+      ),
+    ]);
+
+    const list = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/payment-receipts", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    expect(list.status).toBe(200);
+    await expect(list.json()).resolves.toMatchObject({
+      payment_receipts: [
+        {
+          lago_id: "payment-receipt:payment-operator-receipt",
+          number: "operator-customer-RCPT-000001",
+          file_url: null,
+          xml_url: null,
+          payment: {
+            external_customer_id: "operator-customer",
+            invoice_numbers: ["INV-OPERATOR"],
+            amount_cents: 1250,
+            amount_currency: "USD",
+          },
+        },
+      ],
+      meta: { total_count: 1 },
+    });
+
+    const shown = await handleOperatorRequest(
+      new Request(
+        "https://operator.test/api/operator/v1/payment-receipts/payment-receipt%3Apayment-operator-receipt",
+        { headers: { "Cf-Access-Jwt-Assertion": await accessToken() } },
+      ),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(shown.json()).resolves.toMatchObject({
+      payment_receipt: {
+        lago_id: "payment-receipt:payment-operator-receipt",
+        file_url: null,
+      },
+    });
+
+    const blocked = await operatorMutation(
+      "POST",
+      "/payment-receipts/payment-receipt%3Apayment-operator-receipt/resend_email",
+      {},
+    );
+    expect(blocked.status).toBe(405);
+    await expect(blocked.json()).resolves.toMatchObject({
+      code: "operator_payment_receipts_read_only",
     });
   });
 });

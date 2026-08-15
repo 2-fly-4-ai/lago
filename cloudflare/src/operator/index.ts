@@ -4,6 +4,7 @@ import { handleApiKeysApi } from "../api/api-keys";
 import { handleBillingEntitiesApi } from "../api/billing-entities";
 import { handleInvoiceCustomSectionRequest } from "../api/invoice-custom-sections";
 import { showOrganization } from "../api/organizations";
+import { handlePaymentReceiptReadsApi } from "../api/payment-receipts";
 import type { AuthContext } from "../auth/api-key";
 import { ApiError, apiErrorResponse, json } from "../http";
 import {
@@ -144,6 +145,35 @@ export async function handleOperatorRequest(
         env,
         auth,
         requestId,
+      );
+      if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/payment-receipts(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        throw new ApiError(
+          405,
+          "operator_payment_receipts_read_only",
+          "Payment receipts are read-only in the operator workspace",
+        );
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/payment-receipts",
+        "/api/v1/payment_receipts",
+      );
+      const response = await handlePaymentReceiptReadsApi(
+        new Request(forwardedUrl, request),
+        env,
+        auth,
+        requestId,
+        { includeFileUrls: false },
       );
       if (response) return response;
     }

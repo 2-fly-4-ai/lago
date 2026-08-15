@@ -44,6 +44,10 @@
             <span class="nav-icon" aria-hidden="true">≡</span>
             Invoice sections
           </a>
+          <a class="nav-item" href="#payment-receipts">
+            <span class="nav-icon" aria-hidden="true">¤</span>
+            Payment receipts
+          </a>
         </nav>
 
         <div class="sidebar-note">
@@ -271,6 +275,42 @@
                       </tr>
                     </thead>
                     <tbody id="sections-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="payment-receipts" aria-labelledby="receipts-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Payment evidence</p>
+                  <h2 id="receipts-title">Payment receipts</h2>
+                  <p>Review tenant-scoped receipt metadata without document or email actions.</p>
+                </div>
+              </div>
+
+              <div class="table-shell">
+                <div class="table-loading" id="receipts-loading" aria-live="polite">
+                  Loading payment receipts…
+                </div>
+                <div class="empty-state" id="receipts-empty" hidden>
+                  <span aria-hidden="true">¤</span>
+                  <h3>No payment receipts</h3>
+                  <p>Receipts appear after a payment fully settles its payable.</p>
+                </div>
+                <div class="table-scroll" id="receipts-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Receipt</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Invoices</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Created</th>
+                      </tr>
+                    </thead>
+                    <tbody id="receipts-table-body"></tbody>
                   </table>
                 </div>
               </div>

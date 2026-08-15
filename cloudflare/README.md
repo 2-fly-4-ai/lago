@@ -311,6 +311,9 @@ remaining Lago feature inventory is dispositioned and ported.
   can read the detailed billing profile, while same-origin/CSRF-checked admins can update the
   supported legal, address, payment-term, numbering, locale, and document defaults. Additional
   entities, e-invoicing, tax assignment, and other side-effecting features remain unavailable.
+  `/api/operator/v1/payment-receipts` exposes tenant-scoped list/show metadata only. It suppresses
+  document URLs and rejects every mutation, keeping PDF generation/download and email delivery out
+  of the operator Worker until those actions receive a separate approved contract.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
