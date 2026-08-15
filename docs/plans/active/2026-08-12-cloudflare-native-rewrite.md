@@ -2407,6 +2407,21 @@ resource and mutation described.
   two triggers, and zero foreign-key violations. Strict format/lint/inventory/bindings/TypeScript
   pass; all 236 tests across 45 files pass serially in 146.55 seconds. The dry-run bundle is
   1147.23 KiB (200.28 KiB gzip).
+- 2026-08-15: Remote preflight found exactly `0057_payment_requests.sql` pending and zero
+  organizations, customers, subscriptions, invoices, payment attempts, and outbox rows, with zero
+  foreign-key violations and 433 schedule audits. The first apply attempt failed atomically with
+  Cloudflare error `7500` because its SQL splitter rejected a `CASE` expression inside each trigger;
+  the migration remained pending and neither table existed. Rewrote the equivalent guards using
+  the repository's proven trigger-level `WHEN NOT EXISTS` form, replayed all 57 migrations and the
+  focused tests locally, then applied only 0057 successfully. Remote verification found 57
+  migrations, two request tables, nine relevant indexes, two triggers, empty request/link ledgers,
+  zero foreign-key violations, and no pending migration. Deployed only `serp-dev-lago-native` as
+  version `95137700-dbf8-4f20-98cb-c7a399ca9cd2` with a 6 ms startup and unchanged one-minute Cron/
+  resource bindings. Health/readiness returned `200`/`200`, unauthenticated payment-request access
+  returned `401`, and post-deploy aggregate verification remained empty apart from 436 schedule
+  audits. Version inspection confirmed only fetch/scheduled/queue handlers and all three external-
+  action flags at `0`; no production route/domain, secret, provider action, customer data, payment
+  action, or billing row changed.
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.

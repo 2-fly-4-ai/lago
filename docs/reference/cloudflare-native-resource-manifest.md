@@ -518,6 +518,19 @@ Applied D1 migrations: `0001_foundation.sql` through
   only verification found zero organizations, subscriptions, invoices, billing cycles, and outbox
   rows plus 405 schedule runs, with zero foreign-key violations. No production route/domain,
   secret, provider action, customer data, payment action, or billing row changed.
+- The payment-request deployment applied only `0057_payment_requests.sql`. Its first remote attempt
+  failed atomically with Cloudflare error `7500`; the migration remained pending and created no
+  table. After converting the equivalent guards to the repository's remote-proven trigger-level
+  `WHEN NOT EXISTS` form, verification found 57 migrations, two request tables, nine relevant
+  indexes, two triggers, empty request/link ledgers, zero foreign-key violations, and no remaining
+  migration. Worker version `95137700-dbf8-4f20-98cb-c7a399ca9cd2` retained the existing workers.dev
+  URL, one-minute Cron, D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The
+  deployed bundle was 1147.23 KiB (200.28 KiB gzip) with a 6 ms startup. Health/readiness returned
+  `200`/`200`, unauthenticated payment-request access returned `401`, and aggregate-only
+  verification found zero organizations, customers, subscriptions, invoices, payment attempts,
+  payment requests, invoice links, and outbox rows plus 436 schedule runs. All three external-
+  action flags remain `0`; no production route/domain, secret, provider action, customer data,
+  payment action, or billing row changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
