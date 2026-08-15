@@ -579,7 +579,7 @@ Acceptance:
 
 ### M9: Local parity and staging readiness
 
-- [ ] Run full contract, invariant, integration, migration, replay, and document suites.
+- [x] Run full contract, invariant, integration, migration, replay, and document suites.
 - [x] Run the repository harness and secret scan.
 - [x] Run Wrangler type generation, config validation, and deployment dry run.
 - [x] Produce a resource manifest with development/staging names, bindings, retention, and deletion
@@ -2576,3 +2576,13 @@ resource and mutation described.
   empty apart from 405 schedule runs. The deployed version exposes only the expected fetch,
   scheduled, and queue handlers, and all three external-action flags remain `0`; no production
   route/domain, secret, provider action, customer data, payment action, or billing row changed.
+- 2026-08-15: Closed the remaining local gap in the frozen four-call `store-new` checkout fixture.
+  The compatibility suite now creates the customer/subscription/invoice, invokes the real invoice
+  payment-URL route, intercepts a synthetic Authorize.Net response inside the Workers test runtime,
+  verifies exact invoice metadata and amount, proves the Durable Object replay makes only one
+  provider request, and verifies D1 retains the hosted URL plus a token hash rather than a plaintext
+  token field. Added the previously missing non-secret `PUBLIC_BASE_URL` binding for the isolated
+  workers.dev hostname; all three external-action gates remain `0`. Strict format, lint, inventory,
+  generated bindings, and TypeScript checks pass; all 248 tests across 47 files pass serially in
+  153.32 seconds, and the dry-run bundle remains 1221.38 KiB (211.80 KiB gzip). This is a local
+  checkpoint only: no remote provider, secret, message, route, customer, or payment action occurred.

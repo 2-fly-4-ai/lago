@@ -14,6 +14,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Latest verified version: `2961998a-0351-4620-ab58-d2d8ffa786d1`
 - Custom domains/routes: none
 - Payment provider secrets: none
+- `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
 - `PROVIDER_READS_ENABLED`: `0`
 - `OUTBOUND_WEBHOOKS_ENABLED`: `0`

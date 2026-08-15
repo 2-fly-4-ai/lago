@@ -9,13 +9,14 @@ provider credentials, payment mutations, outbound messages, DNS changes, or enti
 ## Safety prerequisites
 
 1. Confirm the Cloudflare account ID and exact `serp-dev-lago-*` resource names.
-2. Confirm no D1 migration is pending unexpectedly and `PRAGMA foreign_key_check` is empty.
-3. Confirm `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and
+2. Confirm `PUBLIC_BASE_URL` is the isolated workers.dev hostname and there are no custom routes.
+3. Confirm no D1 migration is pending unexpectedly and `PRAGMA foreign_key_check` is empty.
+4. Confirm `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and
    `OUTBOUND_WEBHOOKS_ENABLED` are all `0` for provider-free phases.
-4. Use only a run-scoped prefix such as `synthetic-e2e-YYYYMMDD-NNNN`, reserved documentation
+5. Use only a run-scoped prefix such as `synthetic-e2e-YYYYMMDD-NNNN`, reserved documentation
    domains such as `example.invalid`, and non-personal names. Never copy a production identifier,
    payload, credential, cookie, or email address.
-5. Record pre-run aggregate row counts. Stop if any pre-existing non-audit business row is present
+6. Record pre-run aggregate row counts. Stop if any pre-existing non-audit business row is present
    unless a human explicitly approves that exact dataset.
 
 ## Provider-free phases

@@ -340,6 +340,8 @@ unsupported.
 
 ## Safety defaults
 
+- `PUBLIC_BASE_URL` is the isolated workers.dev hostname used to construct hosted-payment form
+  redirects; it is not a provider endpoint, credential, custom domain, or production route.
 - `PAYMENT_MUTATIONS_ENABLED=0` prevents hosted-payment token creation.
 - `PROVIDER_READS_ENABLED=0` defers provider reconciliation.
 - `OUTBOUND_WEBHOOKS_ENABLED=0` prevents endpoint creation/update and outbound delivery until an

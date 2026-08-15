@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../../src/auth/api-key";
 import customerRequest from "../../fixtures/store-new/customer-upsert.json";
 import subscriptionRequest from "../../fixtures/store-new/subscription-create.json";
@@ -29,6 +29,11 @@ beforeEach(async () => {
                'monthly', 1999, 'USD', 1, 1, 1, ?, ?)`,
     ).bind(now, now),
   ]);
+});
+
+afterEach(() => {
+  (env as unknown as { PAYMENT_MUTATIONS_ENABLED: string }).PAYMENT_MUTATIONS_ENABLED = "0";
+  vi.unstubAllGlobals();
 });
 
 describe("store-new Lago checkout compatibility", () => {
@@ -183,16 +188,38 @@ describe("store-new Lago checkout compatibility", () => {
 
     const invoiceId = invoiceBody.invoices[0]?.lago_id;
     expect(invoiceId).toBeTruthy();
-    await env.BILLING_DB.prepare(
-      `INSERT INTO payment_links
-       (invoice_id, provider, provider_account_code, payment_url, provider_token_sha256,
-        expires_at, created_at, updated_at)
-       VALUES (?, 'authorize_net', 'paymentcloud-authorize-net',
-               'https://lago.test/authorize_net/payment_form?token=synthetic&environment=sandbox',
-               'synthetic-hash', NULL, ?, ?)`,
-    )
-      .bind(invoiceId, nowIso(), nowIso())
-      .run();
+    const hostedToken = "synthetic-hosted-token";
+    const providerFetch = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe("https://apitest.authorize.net/xml/v1/request.api");
+      const request = JSON.parse(String(init?.body)) as {
+        getHostedPaymentPageRequest: {
+          transactionRequest: {
+            amount: string;
+            userFields: { userField: Array<{ name: string; value: string }> };
+          };
+        };
+      };
+      const transaction = request.getHostedPaymentPageRequest.transactionRequest;
+      expect(transaction.amount).toBe(
+        (Number(invoiceBody.invoices[0]?.total_due_amount_cents) / 100).toFixed(2),
+      );
+      expect(
+        Object.fromEntries(
+          transaction.userFields.userField.map((field) => [field.name, field.value]),
+        ),
+      ).toMatchObject({
+        lago_invoice_id: invoiceId,
+        lago_customer_id: firstCustomerBody.customer.lago_id,
+        lago_organization_id: "org-test",
+        lago_payable_id: invoiceId,
+        lago_payable_type: "Invoice",
+        payment_type: "one-time",
+        currency: "USD",
+      });
+      return Response.json({ token: hostedToken, messages: { resultCode: "Ok" } });
+    });
+    vi.stubGlobal("fetch", providerFetch);
+    (env as unknown as { PAYMENT_MUTATIONS_ENABLED: string }).PAYMENT_MUTATIONS_ENABLED = "1";
 
     const paymentUrl = await SELF.fetch(
       `https://lago.test/api/v1/invoices/${invoiceId}/payment_url`,
@@ -209,9 +236,48 @@ describe("store-new Lago checkout compatibility", () => {
         external_customer_id: "store_safe_email_customer_example_com",
         payment_provider: "authorize_net",
         payment_url:
-          "https://lago.test/authorize_net/payment_form?token=synthetic&environment=sandbox",
+          "https://serp-dev-lago-native.serpcompany.workers.dev/authorize_net/payment_form?token=synthetic-hosted-token&environment=sandbox",
       },
     });
+    expect(providerFetch).toHaveBeenCalledOnce();
+
+    const replayPaymentUrl = await SELF.fetch(
+      `https://lago.test/api/v1/invoices/${invoiceId}/payment_url`,
+      {
+        method: "POST",
+        headers: authorization,
+        body: JSON.stringify(paymentUrlRequest),
+      },
+    );
+    expect(replayPaymentUrl.status).toBe(200);
+    await expect(replayPaymentUrl.json()).resolves.toMatchObject({
+      invoice_payment_details: {
+        lago_invoice_id: invoiceId,
+        payment_url:
+          "https://serp-dev-lago-native.serpcompany.workers.dev/authorize_net/payment_form?token=synthetic-hosted-token&environment=sandbox",
+      },
+    });
+    expect(providerFetch).toHaveBeenCalledOnce();
+
+    const storedPaymentLink = await env.BILLING_DB.prepare(
+      `SELECT provider, provider_account_code, payment_url, provider_token_sha256, expires_at
+       FROM payment_links WHERE invoice_id = ?`,
+    )
+      .bind(invoiceId)
+      .first<{
+        provider: string;
+        provider_account_code: string;
+        payment_url: string;
+        provider_token_sha256: string;
+        expires_at: string | null;
+      }>();
+    expect(storedPaymentLink).toMatchObject({
+      provider: "authorize_net",
+      provider_account_code: "paymentcloud-authorize-net",
+      provider_token_sha256: await sha256Hex(hostedToken),
+    });
+    expect(storedPaymentLink?.provider_token_sha256).not.toContain(hostedToken);
+    expect(storedPaymentLink?.expires_at).toBeTruthy();
 
     const updatedCustomer = await SELF.fetch("https://lago.test/api/v1/customers", {
       method: "POST",
