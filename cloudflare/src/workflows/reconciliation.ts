@@ -454,6 +454,9 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         apiKeyUsageTrackingMode: executors.has("audit_synchronous_api_key_usage")
           ? "synchronous_authentication_write"
           : null,
+        failedTaxInvoiceRetryMode: executors.has("audit_atomic_tax_invoice_generation")
+          ? "unreachable_external_tax_failure_state"
+          : null,
         terminatedSubscriptions,
         terminationAlerts,
         endedTrialSubscriptions,

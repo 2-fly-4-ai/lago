@@ -107,6 +107,7 @@ describe("legacy schedule ownership", () => {
       "schedule:post_validate_events",
       "schedule:compute_daily_usage",
       "schedule:process_dunning_campaigns",
+      "schedule:retry_failed_invoices",
       "schedule:retry_inbound_webhooks",
       "schedule:refresh_flagged_subscriptions",
     ]);
@@ -194,6 +195,17 @@ describe("legacy schedule ownership", () => {
       executor: "process_dunning_campaigns",
       owner: "dunning workflow",
     });
+  });
+
+  it("records the legacy failed-tax-invoice retry as an unreachable atomic boundary", () => {
+    const due = dueLegacySchedules(Date.parse("2026-08-14T01:30:00.000Z"));
+    expect(due.find((schedule) => schedule.key === "schedule:retry_failed_invoices")).toMatchObject(
+      {
+        parity: "implemented",
+        executor: "audit_atomic_tax_invoice_generation",
+        owner: "atomic invoice generation and unsupported external-tax boundary",
+      },
+    );
   });
 });
 

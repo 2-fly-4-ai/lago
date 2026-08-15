@@ -287,6 +287,11 @@ const portRules = [
     ],
   },
   {
+    pattern: /retry_failed_invoices/i,
+    target: "cloudflare/src/schedules/registry.ts and cloudflare/src/workflows/reconciliation.ts",
+    evidence: ["cloudflare/test/scheduled-maintenance.test.ts"],
+  },
+  {
     pattern: /retry_generating_subscription_invoices/i,
     target:
       "cloudflare/src/schedules/registry.ts, cloudflare/src/workflows/reconciliation.ts, and cloudflare/src/billing/close-period.ts",

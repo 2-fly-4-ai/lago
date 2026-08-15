@@ -215,6 +215,9 @@ remaining Lago feature inventory is dispositioned and ported.
   The dedicated-organization wallet refresher is also retired as a separate runtime owner. The
   global D1 wallet-projection scan includes every tenant, while Workers supplies horizontal
   isolation without a dedicated Sidekiq process or tenant-ID environment list.
+  The legacy failed-invoice retry is retained as an audited no-work boundary: it only retried
+  persisted external-tax API-limit failures, while external tax-provider configuration is rejected
+  before this Worker's atomic invoice write and no tax-error-detail ledger exists.
 - R2: immutable provider webhook, usage-event, and invoice-document archives.
 - Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

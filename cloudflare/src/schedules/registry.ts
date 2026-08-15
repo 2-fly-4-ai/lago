@@ -2,6 +2,7 @@ export type ScheduleExecutor =
   | "activate_subscriptions"
   | "audit_synchronous_api_key_usage"
   | "audit_synchronous_event_validation"
+  | "audit_atomic_tax_invoice_generation"
   | "bill_ended_trials"
   | "cleanup_inbound_webhooks"
   | "cleanup_outbound_webhooks"
@@ -242,8 +243,9 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     key: "schedule:retry_failed_invoices",
     legacyJob: "Clock::RetryFailedInvoicesJob",
     cadence: everyMinutes(15),
-    owner: "invoice retry workflow",
-    parity: "not_started",
+    owner: "atomic invoice generation and unsupported external-tax boundary",
+    parity: "implemented",
+    executor: "audit_atomic_tax_invoice_generation",
   },
   {
     key: "schedule:retry_inbound_webhooks",

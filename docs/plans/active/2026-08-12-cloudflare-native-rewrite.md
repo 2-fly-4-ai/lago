@@ -462,7 +462,7 @@ Acceptance:
 ### M5: Jobs, schedules, outbound events, and reconciliation
 
 - [ ] Replace enabled Active Jobs with domain commands, Queue consumers, or Workflow steps.
-- [ ] Replace enabled Clockwork entries with deterministic Cron-to-Workflow dispatch.
+- [x] Replace enabled Clockwork entries with deterministic Cron-to-Workflow dispatch.
       All 27 legacy entries now have an exhaustive code-level ownership registry. A deterministic
       one-minute Cron dispatches a versioned Workflow instance and records due/unimplemented
       schedules in D1. The retained pending-subscription activation, recurring billing, draft
@@ -471,10 +471,10 @@ Acceptance:
       invoice-overdue, subscription-activity, and lifetime-usage refresh paths run on their legacy
       slots. The post-validation entry is retained as an audited synchronous-precommit boundary
       because invalid code/property/filter events cannot commit, and the deprecated Redis/ClickHouse
-      refreshed-subscription loop is consolidated into D1 activity plus wallet projection. The other
-      entries remain explicitly
-      `not_started` until their underlying feature
-      families are ported. The two daily webhook-retention schedules now enforce Lago's 90-day
+      refreshed-subscription loop is consolidated into D1 activity plus wallet projection. Every
+      dispatchable entry now has an executable or audited owner; entries marked `partial` retain
+      that status until their broader feature families are ported. The two daily webhook-retention
+      schedules now enforce Lago's 90-day
       boundary; inbound receipt deletion uses a transactional D1 cleanup queue so R2 failures remain
       replayable without orphaning payloads.
 - [x] Add outbox publication and dead-letter handling for the implemented payment events.
@@ -2477,6 +2477,15 @@ resource and mutation described.
   scheduled, and queue handlers and all three external-action flags at `0`; no production
   route/domain, secret, customer message, provider action, customer data, payment action, or
   billing row changed.
+- 2026-08-15: Closed the last `not_started` Clockwork entry by consolidating
+  `RetryFailedInvoicesJob` into an audited atomic-invoice boundary. The legacy job only scans
+  persisted failed invoices whose error details contain an external-tax API-limit message. The
+  Worker rejects external tax-provider configuration before mutation, has no tax-error-detail
+  ledger, and commits each invoice graph atomically; therefore that retry state cannot be created.
+  The every-15-minute slot remains visible, executable, and tested in the registry without adding
+  a fake retry loop or container process. All 17 schedule-maintenance tests pass; strict formatting,
+  lint, generated-inventory freshness, and TypeScript pass. The dry-run bundle is 1187.64 KiB
+  (206.59 KiB gzip). No migration or remote resource is required for this code-only boundary.
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.
