@@ -471,6 +471,15 @@ Applied D1 migrations: `0001_foundation.sql` through
   events, lifetime usages, subscription activities, and outbox rows plus 270 schedule audits. All
   three external-action flags remain `0`; no resource provisioning, production route/domain,
   secret, provider action, customer data, or billing row changed.
+- The usage-loop disposition was code-only. Worker version
+  `e954f939-9d91-4459-b71f-df3a5dd2aa75` retained the existing workers.dev URL, one-minute Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The deployed bundle was
+  1053.82 KiB (182.27 KiB gzip) with a 5 ms startup. Health/readiness returned `200`/`200`.
+  Aggregate-only verification found zero organizations, subscriptions, usage events, lifetime
+  usages, subscription activities, and outbox rows plus 277 schedule audits, with zero foreign-key
+  violations and no pending migration. All three external-action flags remain `0`; no resource
+  provisioning, production route/domain, secret, provider action, customer data, or billing row
+  changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

@@ -2281,3 +2281,20 @@ resource and mutation described.
   stayed empty apart from 270 schedule audits. All three external-action flags remain `0`; no
   resource provisioning, production route/domain, secret, provider action, customer data, or
   billing row changed.
+- 2026-08-15: Dispositioned two more analytics-container loops without inventing replacement
+  infrastructure. `post_validate_events` is now an implemented, audited
+  `synchronous_precommit` boundary because metric-code, aggregation-property, and filter-value
+  errors are rejected before the Worker commits D1, R2, or outbox state. The deprecated
+  `refresh_flagged_subscriptions` Redis/ClickHouse loop now shares the one-minute D1 subscription-
+  activity executor and existing wallet projection; `compute_daily_usage` remains explicitly
+  unported because it owns real revenue-analytics snapshots rather than transport compensation.
+  Focused schedule, metering, lifetime, and wallet evidence passes all 34 tests, strict
+  format/lint/TypeScript pass, and the dry-run bundle is 1053.82 KiB (182.27 KiB gzip). Code
+  checkpoint: `cbc5553`. Code-only remote preflight found no pending migration, zero organizations,
+  subscriptions, usage events, lifetime usages, subscription activities, and outbox rows, with
+  zero foreign-key violations. Deployed only the isolated Worker as version
+  `e954f939-9d91-4459-b71f-df3a5dd2aa75` with a 5 ms startup and unchanged resources/one-minute
+  Cron. Health/readiness returned `200`/`200`; post-deploy aggregate-only verification stayed empty
+  apart from 277 schedule audits. All three external-action flags remain `0`; no resource
+  provisioning, production route/domain, secret, provider action, customer data, or billing row
+  changed.
