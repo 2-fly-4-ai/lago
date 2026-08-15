@@ -2673,3 +2673,20 @@ resource and mutation described.
   across 50 files pass serially in 163.42 seconds, and the dry-run bundle is 1263.97 KiB
   (220.68 KiB gzip). This is a local pre-deployment checkpoint; no remote configuration, provider,
   message, payment, route, secret, or customer data changed.
+- 2026-08-15: Organization API remote preflight found exactly
+  `0063_organization_configuration.sql` pending, the retained one-tenant synthetic graph, zero
+  active keys/payment state, and no foreign-key violations. Applied only migration 0063, then
+  verified 63 migrations, 29 organization columns, the slug index, all three configuration/outbox
+  guards, no pending migration, and unchanged billing aggregates. Deployed only the isolated
+  Worker as version `99ef39b9-71ca-4d49-9e08-fa2a9c0e6ca8` with a 7 ms startup and unchanged
+  resources/flags. The first disposable-key attempt safely returned `401` because the local digest
+  parser captured an empty OpenSSL field; its trap revoked the row before any organization update,
+  and the revoked synthetic row was repaired with a random 64-character hash. A second disposable
+  key exercised show, normalized update, stable version-2 replay, webhook-mutation refusal, and fake-
+  currency refusal, then was revoked. Health/readiness returned `200`/`200`, unauthenticated
+  organization access returned `401`, and version inspection confirmed only fetch/scheduled/queue
+  handlers with all external-action flags at `0`. The final audit found seven hashed/revoked
+  synthetic key records, zero active or malformed hashes, one organization event containing field
+  names but no configuration values, zero payment state, 646 schedule audits, and no foreign-key
+  violations. No production route/domain, provider action, message, customer data, payment action,
+  or secret persistence occurred.

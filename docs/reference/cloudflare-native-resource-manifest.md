@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `987740af-530f-4dea-a609-f2c6ecb71f95`
+- Latest verified version: `99ef39b9-71ca-4d49-9e08-fa2a9c0e6ca8`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -36,10 +36,19 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0062_api_key_lifecycle.sql`.
+`0063_organization_configuration.sql`.
 
 ## Verified behavior
 
+- Version `99ef39b9-71ca-4d49-9e08-fa2a9c0e6ca8` deployed the tenant-scoped organization
+  show/update API after applying only migration `0063`. Remote verification found 63 migrations,
+  29 organization columns, one slug index, all three configuration/outbox guards, no pending
+  migration, and no foreign-key violations. A disposable hashed key exercised show, normalized
+  update, stable no-op replay, webhook-mutation refusal, and unsupported-currency refusal, then was
+  revoked. The final audit found one value-free organization event, seven hashed/revoked synthetic
+  key records, zero active or malformed hashes, zero payment state, and the retained one-tenant
+  synthetic billing graph. Health/readiness returned `200`/`200`, unauthenticated organization
+  access returned `401`, startup was 7 ms, and every external-action flag remained `0`.
 - Version `987740af-530f-4dea-a609-f2c6ecb71f95` deployed the API-key lifecycle after applying
   only migration `0062`. A disposable bootstrap key exercised create, sanitized update, rotation,
   old-key invalidation, replacement authentication, replacement revocation, fine-grained permission
@@ -618,8 +627,9 @@ Applied D1 migrations: `0001_foundation.sql` through
   scheduled, and queue handlers and all three external-action flags at `0`; the checkout dispatcher
   therefore performed no provider call. No production route/domain, secret, customer message,
   provider action, customer data, or payment action occurred.
-- No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
-  document artifact, provider secret, or customer data was seeded remotely.
+- Remote business state is limited to the documented `synthetic-e2e-20260815-001` tenant graph and
+  revoked smoke-key/audit evidence. No production/customer data, active key, payment state,
+  document artifact, provider secret, or customer message is present.
 
 ## Cleanup procedure
 
