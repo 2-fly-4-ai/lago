@@ -480,6 +480,17 @@ Applied D1 migrations: `0001_foundation.sql` through
   violations and no pending migration. All three external-action flags remain `0`; no resource
   provisioning, production route/domain, secret, provider action, customer data, or billing row
   changed.
+- The progressive-usage deployment applied only `0055_progressive_usage_thresholds.sql`. Remote
+  schema verification found 55 migrations, 11 threshold columns, 10 progressive-marker columns,
+  seven applied-threshold columns, 16 relevant indexes, zero foreign-key violations, and no
+  remaining migration. Worker version `281964e8-37a4-4e11-b555-91f941a797cd` retained the existing
+  workers.dev URL, one-minute Cron, D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow
+  bindings. The deployed bundle was 1130.41 KiB (196.38 KiB gzip) with a 5 ms startup.
+  Health/readiness returned `200`/`200`, and unauthenticated plan access returned `401`.
+  Aggregate-only verification found zero organizations, customers, plans, subscriptions, invoices,
+  usage thresholds, progressive invoices/credits, applied thresholds, credit notes, and outbox rows
+  plus 374 schedule runs. All three external-action flags remain `0`; no production route/domain,
+  secret, provider action, customer data, payment action, or billing ledger row changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

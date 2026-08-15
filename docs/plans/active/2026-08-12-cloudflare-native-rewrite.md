@@ -2345,3 +2345,14 @@ resource and mutation described.
   Wrangler bindings, TypeScript, and the dry build pass; all 228 tests across 42 files pass serially
   in 138.36 seconds. The dry-run bundle is 1130.41 KiB (196.38 KiB gzip). Dedicated
   usage-monitoring alerts and the operator progressive-billing UI remain later contracts.
+- 2026-08-15: Remote preflight found only `0055_progressive_usage_thresholds.sql` pending and zero
+  organizations, customers, plans, subscriptions, invoices, usage events, lifetime/daily-usage
+  projections, and outbox rows, with zero foreign-key violations. Applied only migration 0055 to
+  the isolated non-production D1 and verified 55 migrations, 11 threshold columns, 10 progressive-
+  marker columns, seven applied-threshold columns, 16 relevant indexes, zero new ledger rows, zero
+  foreign-key violations, and no remaining migration. Deployed only `serp-dev-lago-native` as
+  version `281964e8-37a4-4e11-b555-91f941a797cd` with a 5 ms startup and unchanged resources/
+  one-minute Cron. Health/readiness returned `200`/`200`, unauthenticated plan access returned
+  `401`, and the aggregate-only audit remained empty apart from 374 schedule runs. All three
+  external-action flags remain `0`; no production route/domain, secret, provider action, customer
+  data, payment action, or billing ledger row changed.
