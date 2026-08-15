@@ -557,6 +557,17 @@ Applied D1 migrations: `0001_foundation.sql` through
   fetch, scheduled, and queue handlers and all three external-action flags at `0`; no production
   route/domain, secret, customer message, provider action, customer data, payment action, or
   billing row changed.
+- The failed-tax-invoice schedule consolidation was code-only with no pending migration. The first
+  read-only migration-list preflight received transient OAuth error `10000`; the D1 audit succeeded
+  and an immediate list retry confirmed no pending migration. Worker version
+  `07654b79-8774-4de2-988b-b7323f86ebba` retained the existing workers.dev URL, one-minute Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The deployed bundle was
+  1187.64 KiB (206.59 KiB gzip) with a 5 ms startup. Health/readiness returned `200`/`200`, and
+  aggregate-only verification found zero organizations, customers, invoices, payment requests,
+  dunning campaigns, and outbox rows plus 494 schedule audits. Version inspection confirmed only
+  the expected fetch, scheduled, and queue handlers and all three external-action flags at `0`; no
+  production route/domain, secret, customer message, provider action, customer data, payment
+  action, or billing row changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

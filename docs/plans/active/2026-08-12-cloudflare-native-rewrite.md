@@ -2486,6 +2486,17 @@ resource and mutation described.
   a fake retry loop or container process. All 17 schedule-maintenance tests pass; strict formatting,
   lint, generated-inventory freshness, and TypeScript pass. The dry-run bundle is 1187.64 KiB
   (206.59 KiB gzip). No migration or remote resource is required for this code-only boundary.
+- 2026-08-15: The first code-only remote migration-list preflight received transient Cloudflare
+  OAuth error `10000`; the following read-only D1 audit succeeded, and an immediate list retry
+  confirmed no pending migration. The audit found zero organizations, customers, invoices,
+  payment requests, dunning campaigns, and outbox rows, zero foreign-key violations, and 493
+  schedule audits. Deployed only `serp-dev-lago-native` as version
+  `07654b79-8774-4de2-988b-b7323f86ebba` with a 5 ms startup and unchanged one-minute Cron/resource
+  bindings. Health/readiness returned `200`/`200`; post-deploy aggregate verification remained
+  empty apart from 494 schedule audits. Version inspection confirmed only the expected fetch,
+  scheduled, and queue handlers and all three external-action flags at `0`; no production
+  route/domain, secret, customer message, provider action, customer data, payment action, or
+  billing row changed.
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.
