@@ -1,6 +1,6 @@
 # Cloudflare-Native Lago Resource Manifest
 
-Last verified: 2026-08-15
+Last verified: 2026-08-16
 
 This manifest covers the isolated, non-production stack created for the Cloudflare-native rewrite.
 It is not a production inventory and contains no secrets or customer data.
@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `da276f6c-30d8-4458-81f0-263dbdd47888`
+- Latest verified version: `a2ed2b7b-93e3-4b3e-9337-01e5bad159e0`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -40,6 +40,19 @@ Applied D1 migrations: `0001_foundation.sql` through
 
 ## Verified behavior
 
+- Version `a2ed2b7b-93e3-4b3e-9337-01e5bad159e0` deployed the M6 document-golden runtime
+  hardening without a migration or resource change. Invoice, payment-receipt, and credit-note HTML
+  now selects a portable Arial/CID TrueType print path instead of macOS variable `system-ui` Type 3
+  subsets; checked-in synthetic PDFs and four visually inspected 300-DPI pages remain the local
+  rendering evidence. Remote preflight and final audit found no pending migration, zero active or
+  malformed key hashes, zero payment/retry/receipt/credit-note/export/document-artifact state, and
+  no foreign-key violations. Health/readiness returned `200`/`200`; unauthenticated invoice,
+  payment-receipt, and credit-note PDF downloads each returned `401`. No remote document was
+  generated because the isolated database contains no eligible billing state and no active key was
+  created. The deployed bundle was 1406.76 KiB (245.92 KiB gzip) with a 6 ms startup; version
+  inspection confirmed only fetch/scheduled/queue handlers and all external-action flags at `0`.
+  No production route/domain, provider action, customer message, payment action, secret, or
+  customer data changed.
 - Version `da276f6c-30d8-4458-81f0-263dbdd47888` deployed the code-only, kill-switched
   Authorize.Net invoice-payment retry boundary with no migration or resource change. Remote
   preflight and final audit both found no pending migration, zero active or malformed key hashes,

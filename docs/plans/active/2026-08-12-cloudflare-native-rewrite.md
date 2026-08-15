@@ -3044,3 +3044,14 @@ resource and mutation described.
   bundle is 1406.76 KiB (245.92 KiB gzip) with unchanged bindings and all three external-action
   flags at `0`. This local checkpoint performed no migration, deployment, provider action, customer
   message, payment action, secret access, customer-data access, or production operation.
+- 2026-08-16: Document-golden remote preflight found no pending migration, zero active or malformed
+  key hashes, zero payment/retry/receipt/credit-note/export/document-artifact state, and no foreign-
+  key violations. Deployed only the isolated Worker as version
+  `a2ed2b7b-93e3-4b3e-9337-01e5bad159e0`; the 1406.76 KiB (245.92 KiB gzip) bundle started in 6 ms
+  with unchanged resources and all external-action flags at `0`. Health/readiness returned
+  `200`/`200`, and unauthenticated invoice, payment-receipt, and credit-note PDF downloads each
+  returned `401`. No active key or billing state was created, so no remote Browser Rendering job,
+  R2 artifact, provider action, payment action, customer message, secret access, or customer-data
+  access occurred. Final audit again found no pending migration, zero audited state, and clean
+  foreign keys; version inspection confirmed only fetch/scheduled/queue handlers and no production
+  route or domain.
