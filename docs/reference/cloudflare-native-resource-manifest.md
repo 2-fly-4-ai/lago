@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `99ef39b9-71ca-4d49-9e08-fa2a9c0e6ca8`
+- Latest verified version: `252479ec-4581-4c72-bf84-32e439ed1b5a`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -36,10 +36,20 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0063_organization_configuration.sql`.
+`0064_single_billing_entity.sql`.
 
 ## Verified behavior
 
+- Version `252479ec-4581-4c72-bf84-32e439ed1b5a` deployed the retained single billing-entity
+  list/show/update API after applying only migration `0064`. Remote verification found 64
+  migrations, one 33-field default-entity view, one update-event guard, one projected entity, no
+  pending migration, and no foreign-key violations. A disposable hashed key exercised list/show,
+  the existing nested custom-section route, normalized update, stable no-op replay, second-entity
+  creation/lookup refusal, and e-invoicing refusal, then was revoked. The final audit found eight
+  hashed/revoked synthetic key records, zero active or malformed hashes, one value-free billing-
+  entity event, zero payment state, and the unchanged one-tenant billing graph. Health/readiness
+  returned `200`/`200`, unauthenticated entity access returned `401`, startup was 6 ms, and every
+  external-action flag remained `0`.
 - Version `99ef39b9-71ca-4d49-9e08-fa2a9c0e6ca8` deployed the tenant-scoped organization
   show/update API after applying only migration `0063`. Remote verification found 63 migrations,
   29 organization columns, one slug index, all three configuration/outbox guards, no pending

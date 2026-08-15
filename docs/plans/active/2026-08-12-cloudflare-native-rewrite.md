@@ -2709,3 +2709,18 @@ resource and mutation described.
   discarded, and the dry-run bundle is 1278.41 KiB (222.38 KiB gzip). This is a local pre-
   deployment checkpoint; no remote schema, entity, provider, message, payment, route, secret, or
   customer data changed.
+- 2026-08-15: Single billing-entity remote preflight found exactly
+  `0064_single_billing_entity.sql` pending, organization version 2, the retained one-tenant billing
+  graph, zero active keys/payment state, and no foreign-key violations. Applied only migration
+  0064, then verified 64 migrations, the 33-field view, its scoped update-event guard, exactly one
+  default entity, no pending migration, and unchanged billing aggregates. Deployed only the
+  isolated Worker as version `252479ec-4581-4c72-bf84-32e439ed1b5a` with a 6 ms startup and
+  unchanged resources/flags. A disposable hashed key exercised list/show, the existing nested
+  custom-section route, normalized update from shared version 2 to 3, stable version-3 replay,
+  second-entity creation/lookup refusal, and e-invoicing refusal, then was revoked. Health/readiness
+  returned `200`/`200`, unauthenticated entity access returned `401`, and version inspection
+  confirmed only fetch/scheduled/queue handlers with all external-action flags at `0`. The final
+  audit found eight hashed/revoked synthetic key records, zero active or malformed hashes, one
+  billing-entity event containing field names but no configuration values, zero payment state, 678
+  schedule audits, and no foreign-key violations. No production route/domain, provider action,
+  message, customer data, payment action, or secret persistence occurred.
