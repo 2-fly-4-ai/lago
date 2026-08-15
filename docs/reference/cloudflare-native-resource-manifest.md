@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `80fee6c9-5be3-481e-898e-26013daa14ea`
+- Latest verified version: `1371f1ee-0afa-4bbe-a4cd-46e7645def2e`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -40,6 +40,12 @@ Applied D1 migrations: `0001_foundation.sql` through
 
 ## Verified behavior
 
+- Version `1371f1ee-0afa-4bbe-a4cd-46e7645def2e` deployed the tenant-scoped fee API without a
+  migration. A run-scoped key proved authenticated list/show against the retained synthetic invoice
+  and the explicit mutation guard, then was revoked. Health/readiness returned `200`/`200`,
+  unauthenticated fee access returned `401`, all external-action flags stayed `0`, and the audit
+  found one expected synthetic fee, zero payment state, zero active keys, and no foreign-key
+  violations.
 - Version `80fee6c9-5be3-481e-898e-26013daa14ea` binds the non-secret
   `PUBLIC_BASE_URL` to the isolated workers.dev hostname. Health/readiness returned `200`/`200`,
   unauthenticated hosted-payment access returned `401`, all three external-action flags remained

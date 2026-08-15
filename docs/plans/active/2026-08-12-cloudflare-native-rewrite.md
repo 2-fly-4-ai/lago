@@ -2617,3 +2617,14 @@ resource and mutation described.
   251 tests across 48 files pass serially in 155.47 seconds. The dry-run bundle is 1231.56 KiB
   (213.95 KiB gzip). This is a local pre-deployment checkpoint with no migration, provider, secret,
   message, payment, or remote-data action.
+- 2026-08-15: Fee API remote preflight found no pending migration and exactly the retained
+  `synthetic-e2e-20260815-001` graph: one tenant/plan/customer/subscription/invoice/fee, five outbox
+  rows, zero active keys, zero payment links/attempts/requests/checkout intents, and no foreign-key
+  violations. Deployed only the isolated Worker as version
+  `1371f1ee-0afa-4bbe-a4cd-46e7645def2e` with a 5 ms startup and unchanged resources/flags. A
+  run-scoped random key authenticated fee list/show, returned the expected single 1,999-cent fee,
+  and proved `unsupported_fee_mutation`; the key was immediately revoked. Health/readiness returned
+  `200`/`200`, unauthenticated fee access returned `401`, and version inspection confirmed only
+  fetch/scheduled/queue handlers with all external-action flags at `0`. The post-deploy audit found
+  zero active keys/payment state and no foreign-key violations; no production route/domain, secret,
+  provider action, message, customer data, or payment action occurred.
