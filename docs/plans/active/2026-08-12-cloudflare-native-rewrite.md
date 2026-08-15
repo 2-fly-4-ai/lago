@@ -565,8 +565,9 @@ Acceptance:
       remains explicitly unmapped rather than making an unsupported screen appear functional.
 - [ ] Implement the GraphQL compatibility surface or replace individual screens with a documented
       Worker API equivalent. Manual invoice custom-section catalog CRUD now uses the documented
-      tenant-scoped REST equivalent; the remaining operator operations and screens are still
-      inventoried/ported individually.
+      tenant-scoped REST equivalent, and API-key create/list/show/name-update/rotate/revoke now uses
+      a secret-safe tenant-scoped REST control plane; the remaining operator operations and screens
+      are still inventoried/ported individually.
 - [ ] Serve the operator application with Workers Static Assets.
 - [ ] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained.
 - [ ] Mark retired screens explicitly with approved product rationale.
@@ -2628,3 +2629,16 @@ resource and mutation described.
   fetch/scheduled/queue handlers with all external-action flags at `0`. The post-deploy audit found
   zero active keys/payment state and no foreign-key violations; no production route/domain, secret,
   provider action, message, customer data, or payment action occurred.
+- 2026-08-15: Replaced direct-D1-only API-key lifecycle with a tenant-scoped Worker control plane.
+  Migration `0062_api_key_lifecycle.sql` adds name, empty-permission, short-ending, expiry, version,
+  and update metadata plus expiry-order and outbox-version/rotation guards. Create and rotate return
+  raw key material once; D1 stores only SHA-256 hashes and three-character endings, while list/show/
+  update/revoke remain sanitized. Authentication now rejects expired keys atomically with usage
+  tracking. Revocation protects the final non-expiring key, rotation creates the replacement and
+  expires the old key in one batch, non-empty permissions fail until enforcement exists, and every
+  mutation commits secret-free versioned outbox evidence or rolls back. The generated inventory
+  maps the upstream model/services/GraphQL API-key surface to this REST equivalent. All 62 migrations
+  replay from empty D1 with 13 key columns, four relevant indexes, four guards, and no foreign-key
+  violations. Strict format/lint/inventory/bindings/TypeScript pass; all 257 tests across 49 files
+  pass serially in 166.38 seconds, and the dry-run bundle is 1245.87 KiB (216.10 KiB gzip). This is a
+  local pre-deployment checkpoint; no remote key, secret, provider, message, payment, or data changed.

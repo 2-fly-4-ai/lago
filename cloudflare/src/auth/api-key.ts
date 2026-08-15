@@ -24,9 +24,10 @@ export async function authenticateApiKey(
        FROM api_keys
        JOIN organizations ON organizations.id = api_keys.organization_id
        WHERE api_keys.key_hash = ? AND api_keys.revoked_at IS NULL
+         AND (api_keys.expires_at IS NULL OR api_keys.expires_at > ?)
        LIMIT 1`,
     )
-    .bind(keyHash)
+    .bind(keyHash, new Date().toISOString())
     .first<{
       api_key_id: string;
       organization_id: string;
@@ -39,9 +40,10 @@ export async function authenticateApiKey(
     .prepare(
       `UPDATE api_keys
        SET last_used_at = CASE WHEN last_used_at IS NULL OR last_used_at < ? THEN ? ELSE last_used_at END
-       WHERE id = ? AND revoked_at IS NULL`,
+       WHERE id = ? AND revoked_at IS NULL
+         AND (expires_at IS NULL OR expires_at > ?)`,
     )
-    .bind(usedAt, usedAt, row.api_key_id)
+    .bind(usedAt, usedAt, row.api_key_id, usedAt)
     .run();
   if (tracked.meta.changes !== 1) {
     throw new ApiError(401, "unauthorized", "The API key is invalid or revoked");

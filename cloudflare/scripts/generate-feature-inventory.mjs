@@ -270,6 +270,15 @@ const portRules = [
   },
   {
     pattern:
+      /api\/app\/(models\/api_key|services\/api_keys\/(?:create|destroy|rotate|update)_service|graphql\/(?:mutations\/api_keys\/(?:create|destroy|rotate|update)|resolvers\/api_keys_resolver|types\/api_keys\/(?:object|rotate_input|sanitized_object|update_input)))\.rb/i,
+    target: "cloudflare/src/api/api-keys.ts and cloudflare/src/auth/api-key.ts",
+    evidence: [
+      "cloudflare/test/api-key-lifecycle.test.ts",
+      "cloudflare/test/api-key-usage.test.ts",
+    ],
+  },
+  {
+    pattern:
       /api\/app\/(models\/dunning_campaign(?:_threshold)?|services\/(?:dunning_campaigns\/(?:bulk_process|create|destroy|process_attempt|update)_service|webhooks\/dunning_campaigns\/finished_service)|jobs\/(?:clock\/process_dunning_campaigns_job|dunning_campaigns\/(?:bulk_process|process_attempt)_job)|graphql\/(?:mutations\/dunning_campaigns\/(?:create|destroy|update)|resolvers\/dunning_campaigns?_resolver|types\/dunning_campaign))/i,
     target:
       "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
