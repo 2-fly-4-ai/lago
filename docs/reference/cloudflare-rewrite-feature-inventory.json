@@ -2669,9 +2669,10 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/payment-receipts.ts and cloudflare/migrations/0065_payment_receipts.sql",
+        "target": "cloudflare/src/api/payment-receipts.ts, cloudflare/src/documents/payment-receipt.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0065-0066",
         "evidence": [
-          "cloudflare/test/payment-receipts.test.ts"
+          "cloudflare/test/payment-receipts.test.ts",
+          "cloudflare/test/payment-receipt-document.test.ts"
         ],
         "testFixture": "cloudflare/test/payment-receipts.test.ts",
         "parityStatus": "partial",
@@ -4245,9 +4246,10 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/payment-receipts.ts and cloudflare/migrations/0065_payment_receipts.sql",
+        "target": "cloudflare/src/api/payment-receipts.ts, cloudflare/src/documents/payment-receipt.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0065-0066",
         "evidence": [
-          "cloudflare/test/payment-receipts.test.ts"
+          "cloudflare/test/payment-receipts.test.ts",
+          "cloudflare/test/payment-receipt-document.test.ts"
         ],
         "testFixture": "cloudflare/test/payment-receipts.test.ts",
         "parityStatus": "partial",
@@ -15486,9 +15488,10 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/payment-receipts.ts and cloudflare/migrations/0065_payment_receipts.sql",
+        "target": "cloudflare/src/api/payment-receipts.ts, cloudflare/src/documents/payment-receipt.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0065-0066",
         "evidence": [
-          "cloudflare/test/payment-receipts.test.ts"
+          "cloudflare/test/payment-receipts.test.ts",
+          "cloudflare/test/payment-receipt-document.test.ts"
         ],
         "testFixture": "cloudflare/test/payment-receipts.test.ts",
         "parityStatus": "partial",
@@ -15518,11 +15521,12 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/documents/invoice.ts",
+        "target": "cloudflare/src/api/payment-receipts.ts, cloudflare/src/documents/payment-receipt.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0065-0066",
         "evidence": [
-          "cloudflare/test/invoice-document.test.ts"
+          "cloudflare/test/payment-receipts.test.ts",
+          "cloudflare/test/payment-receipt-document.test.ts"
         ],
-        "testFixture": "cloudflare/test/invoice-document.test.ts",
+        "testFixture": "cloudflare/test/payment-receipts.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -22436,11 +22440,12 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/documents/invoice.ts",
+        "target": "cloudflare/src/api/payment-receipts.ts, cloudflare/src/documents/payment-receipt.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0065-0066",
         "evidence": [
-          "cloudflare/test/invoice-document.test.ts"
+          "cloudflare/test/payment-receipts.test.ts",
+          "cloudflare/test/payment-receipt-document.test.ts"
         ],
-        "testFixture": "cloudflare/test/invoice-document.test.ts",
+        "testFixture": "cloudflare/test/payment-receipts.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -22468,11 +22473,12 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/documents/invoice.ts",
+        "target": "cloudflare/src/api/payment-receipts.ts, cloudflare/src/documents/payment-receipt.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0065-0066",
         "evidence": [
-          "cloudflare/test/invoice-document.test.ts"
+          "cloudflare/test/payment-receipts.test.ts",
+          "cloudflare/test/payment-receipt-document.test.ts"
         ],
-        "testFixture": "cloudflare/test/invoice-document.test.ts",
+        "testFixture": "cloudflare/test/payment-receipts.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."

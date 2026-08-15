@@ -15,7 +15,7 @@ import { handleFeesApi } from "./api/fees";
 import { handleApiKeysApi } from "./api/api-keys";
 import { handleOrganizationsApi } from "./api/organizations";
 import { handleBillingEntitiesApi } from "./api/billing-entities";
-import { handlePaymentReceiptsApi } from "./api/payment-receipts";
+import { dispatchPaymentReceiptDocument, handlePaymentReceiptsApi } from "./api/payment-receipts";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -169,6 +169,19 @@ export default {
             message.ack();
             continue;
           }
+        }
+
+        if (event.type === "payment_receipt.created") {
+          const organizationId = event.payload.organizationId;
+          if (typeof organizationId !== "string" || organizationId.length === 0)
+            throw new Error("invalid_payment_receipt_event");
+          await dispatchPaymentReceiptDocument(
+            env,
+            event.aggregateId,
+            organizationId,
+            event.aggregateVersion,
+            event.correlationId,
+          );
         }
 
         const outboundOutcome = await deliverOutboundWebhooks(env, event);

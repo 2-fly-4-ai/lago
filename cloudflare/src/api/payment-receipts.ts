@@ -9,6 +9,8 @@ type ReceiptPaymentRow = {
   xml_url: string | null;
   receipt_created_at: string;
   receipt_version: number;
+  pdf_status: "generating" | "ready" | "failed" | null;
+  pdf_object_key: string | null;
   payment_id: string;
   payment_organization_id: string;
   payable_id: string;
@@ -39,6 +41,10 @@ export async function handlePaymentReceiptsApi(
   if (url.pathname === "/api/v1/payment_receipts" && request.method === "GET") {
     return listPaymentReceipts(url, env.BILLING_DB, auth, requestId);
   }
+  const download = url.pathname.match(/^\/api\/v1\/payment_receipts\/([^/]+)\/download$/);
+  if (download?.[1] && request.method === "GET") {
+    return downloadPaymentReceipt(env, auth, decodeURIComponent(download[1]), requestId);
+  }
   const resend = url.pathname.match(/^\/api\/v1\/payment_receipts\/([^/]+)\/resend_email$/);
   if (resend?.[1] && request.method === "POST") {
     const id = decodeURIComponent(resend[1]);
@@ -56,7 +62,7 @@ export async function handlePaymentReceiptsApi(
     auth.organizationId,
     decodeURIComponent(match[1]),
   );
-  return json({ payment_receipt: serializePaymentReceipt(receipt) }, { requestId });
+  return json({ payment_receipt: serializePaymentReceipt(receipt, url.origin) }, { requestId });
 }
 
 async function listPaymentReceipts(
@@ -92,7 +98,7 @@ async function listPaymentReceipts(
     .all<ReceiptPaymentRow>();
   return json(
     {
-      payment_receipts: rows.results.map(serializePaymentReceipt),
+      payment_receipts: rows.results.map((row) => serializePaymentReceipt(row, url.origin)),
       meta: pagination(count?.total ?? 0, page, perPage),
     },
     { requestId },
@@ -116,7 +122,8 @@ async function requiredPaymentReceipt(
 function receiptPaymentRows(): string {
   return `SELECT receipt.id AS receipt_id, receipt.number AS receipt_number,
                  receipt.file_url, receipt.xml_url, receipt.created_at AS receipt_created_at,
-                 receipt.version AS receipt_version, payment.id AS payment_id,
+                 receipt.version AS receipt_version, artifact.status AS pdf_status,
+                 artifact.object_key AS pdf_object_key, payment.id AS payment_id,
                  payment.organization_id AS payment_organization_id, payment.payable_id,
                  payment.payable_type, payment.invoice_ids_json, payment.invoice_numbers_json,
                  payment.customer_id, payment.external_customer_id, payment.provider,
@@ -125,13 +132,19 @@ function receiptPaymentRows(): string {
                  payment.payment_type, payment.reference, payment.version AS payment_version,
                  payment.created_at AS payment_created_at
           FROM payment_receipts receipt
+          LEFT JOIN payment_receipt_document_artifacts artifact
+            ON artifact.payment_receipt_id = receipt.id
+           AND artifact.receipt_version = receipt.version
           JOIN (${paymentRows()}) payment ON payment.id = receipt.payment_id
             AND ((receipt.payment_kind = 'invoice' AND payment.payable_type = 'Invoice')
               OR (receipt.payment_kind = 'payment_request'
                   AND payment.payable_type = 'PaymentRequest'))`;
 }
 
-function serializePaymentReceipt(receipt: ReceiptPaymentRow): Record<string, unknown> {
+function serializePaymentReceipt(
+  receipt: ReceiptPaymentRow,
+  origin: string,
+): Record<string, unknown> {
   const payment: PaymentRow = {
     id: receipt.payment_id,
     organization_id: receipt.payment_organization_id,
@@ -155,12 +168,79 @@ function serializePaymentReceipt(receipt: ReceiptPaymentRow): Record<string, unk
   return {
     lago_id: receipt.receipt_id,
     number: receipt.receipt_number,
-    file_url: receipt.file_url,
+    file_url:
+      receipt.pdf_status === "ready" && receipt.pdf_object_key
+        ? `${origin}/api/v1/payment_receipts/${encodeURIComponent(receipt.receipt_id)}/download`
+        : receipt.file_url,
     xml_url: receipt.xml_url,
     payment: serializePayment(payment),
     created_at: receipt.receipt_created_at,
     version: receipt.receipt_version,
   };
+}
+
+async function downloadPaymentReceipt(
+  env: Env,
+  auth: AuthContext,
+  paymentReceiptId: string,
+  requestId: string,
+): Promise<Response> {
+  const receipt = await requiredPaymentReceipt(
+    env.BILLING_DB,
+    auth.organizationId,
+    paymentReceiptId,
+  );
+  if (receipt.pdf_status === "ready" && receipt.pdf_object_key) {
+    const object = await env.BILLING_ARTIFACTS.get(receipt.pdf_object_key);
+    if (!object)
+      throw new ApiError(503, "artifact_missing", "Payment receipt PDF artifact is unavailable");
+    const safeNumber = receipt.receipt_number.replaceAll(/[^A-Za-z0-9._-]/g, "_");
+    return new Response(object.body, {
+      headers: {
+        "Cache-Control": "private, no-store",
+        "Content-Disposition": `attachment; filename="payment-receipt-${safeNumber}.pdf"`,
+        "Content-Type": "application/pdf",
+        "X-Request-Id": requestId,
+      },
+    });
+  }
+  await dispatchPaymentReceiptDocument(
+    env,
+    receipt.receipt_id,
+    auth.organizationId,
+    receipt.receipt_version,
+    requestId,
+  );
+  return json(
+    {
+      payment_receipt: serializePaymentReceipt(receipt, ""),
+      document_status: receipt.pdf_status === "failed" ? "retrying" : "generating",
+    },
+    { requestId, status: 202 },
+  );
+}
+
+export async function dispatchPaymentReceiptDocument(
+  env: Pick<Env, "DOCUMENT_WORKFLOW">,
+  paymentReceiptId: string,
+  organizationId: string,
+  receiptVersion: number,
+  correlationId: string,
+): Promise<void> {
+  try {
+    await env.DOCUMENT_WORKFLOW.create({
+      id: `payment-receipt-pdf-${paymentReceiptId}-v${receiptVersion}`,
+      params: {
+        kind: "payment_receipt",
+        paymentReceiptId,
+        organizationId,
+        correlationId,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : "";
+    if (!message.includes("already exists")) throw error;
+  }
 }
 
 function positivePage(value: string | null, fallback = 1): number {

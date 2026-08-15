@@ -24,7 +24,10 @@ remaining Lago feature inventory is dispositioned and ported.
 - Payment-receipt API: tenant-scoped Lago-compatible list/show and invoice filtering over receipts
   created atomically when an invoice or payment request first settles. Customer-scoped numbering,
   payment serialization, payment-first/payable-first ordering, replay, and value-free outbox evidence
-  are D1-owned; PDF/XML generation and email resend remain explicitly disabled.
+  are D1-owned. Receipt-created events idempotently dispatch Browser Rendering PDF generation through
+  the shared Document Workflow, immutable checksummed artifacts live in R2, and authenticated private
+  downloads are projected as `file_url` only after generation. UBL/XML e-invoicing and email resend
+  remain explicitly disabled.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
@@ -236,8 +239,9 @@ remaining Lago feature inventory is dispositioned and ported.
   The legacy failed-invoice retry is retained as an audited no-work boundary: it only retried
   persisted external-tax API-limit failures, while external tax-provider configuration is rejected
   before this Worker's atomic invoice write and no tax-error-detail ledger exists.
-- R2: immutable provider webhook, usage-event, and invoice-document archives.
-- Browser Rendering: deterministic invoice PDF generation through a retryable Document Workflow.
+- R2: immutable provider webhook, usage-event, invoice-document, and payment-receipt archives.
+- Browser Rendering: deterministic invoice and payment-receipt PDF generation through a retryable
+  Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
   `/api/v1/invoice_custom_sections` replace the retained operator GraphQL workflow for this
   feature. Draft invoices refresh their snapshots; finalized invoice API/PDF output uses only the

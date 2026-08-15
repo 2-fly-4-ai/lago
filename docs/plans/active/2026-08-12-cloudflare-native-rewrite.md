@@ -2758,3 +2758,21 @@ resource and mutation described.
   revoked synthetic key records, zero active or malformed hashes, zero receipts/events/payment
   state, 697 schedule audits, and no foreign-key violations. No production route/domain, provider
   action, message, customer data, payment action, or secret persistence occurred.
+- 2026-08-15: Added the container-free payment-receipt PDF pipeline while preserving the explicit
+  e-invoicing and email boundaries. Migration `0066_payment_receipt_documents.sql` adds a
+  tenant/version-guarded immutable artifact ledger without weakening the existing invoice artifact
+  table. `payment_receipt.created` outbox delivery now idempotently dispatches the shared Document
+  Workflow; Browser Rendering produces escaped A4 HTML/PDF, R2 stores the bounded checksummed object
+  under an immutable receipt/version key, and the D1 ready transition atomically emits one value-free
+  `payment_receipt.generated` event. Authenticated list/show project `file_url` only after the object
+  is ready, and the private no-store download route fails closed if R2 is missing. Failed rendering is
+  recorded and safely retryable. UBL/XML remains null because the current billing-entity subset
+  explicitly rejects the upstream e-invoicing country/configuration contract; resend remains a
+  side-effect-free disabled error. The generated inventory maps the upstream PDF service and document/
+  PDF jobs but intentionally leaves XML generation unclaimed. All 66 migrations replay through the
+  fresh Workers test databases. Strict format/lint/inventory/bindings/TypeScript pass; the focused
+  document/receipt suite passes 13 tests, all 275 tests across 53 files pass serially in 169.63
+  seconds, and the dry-run bundle is 1300.73 KiB (226.38 KiB gzip). The default Wrangler local
+  persistence cache returned `SQLITE_BUSY` twice with no owning process; this did not affect the
+  isolated fresh-D1 Workers test replay. This is a local pre-deployment checkpoint; no remote schema,
+  artifact, provider, message, payment, route, secret, or customer data changed.
