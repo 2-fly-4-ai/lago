@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `252479ec-4581-4c72-bf84-32e439ed1b5a`
+- Latest verified version: `04561b02-dbe9-4a8b-a71b-aa2a127a87f5`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
@@ -36,10 +36,21 @@ It is not a production inventory and contains no secrets or customer data.
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0064_single_billing_entity.sql`.
+`0065_payment_receipts.sql`.
 
 ## Verified behavior
 
+- Version `04561b02-dbe9-4a8b-a71b-aa2a127a87f5` deployed the tenant-scoped payment-receipt
+  list/show/filter API and atomic settlement ledger after applying only migration `0065`. Remote
+  verification found 65 migrations, 12 receipt columns, the customer counter, nine state/tenant/
+  version triggers, no pending migration, and no foreign-key violations. Because a remote payment
+  action was outside the approved smoke boundary, a disposable hashed key exercised only the empty
+  list/filter, not-found show/resend, health/readiness, and authentication paths, then was revoked;
+  the full manual/provider/payment-request settlement and rollback behavior is proven locally. The
+  final audit found nine hashed/revoked synthetic key records, zero active or malformed hashes,
+  zero receipts/payment state, and the unchanged one-tenant billing graph. Health/readiness returned
+  `200`/`200`, unauthenticated receipt access returned `401`, startup was 5 ms, and every external-
+  action flag remained `0`.
 - Version `252479ec-4581-4c72-bf84-32e439ed1b5a` deployed the retained single billing-entity
   list/show/update API after applying only migration `0064`. Remote verification found 64
   migrations, one 33-field default-entity view, one update-event guard, one projected entity, no

@@ -2743,3 +2743,18 @@ resource and mutation described.
   52 files pass serially in 171.22 seconds, and the dry-run bundle is 1284.63 KiB (223.71 KiB gzip).
   This is a local pre-deployment checkpoint; no remote schema, receipt, provider, message, payment,
   route, secret, or customer data changed.
+- 2026-08-15: Payment-receipt remote preflight found exactly `0065_payment_receipts.sql` pending,
+  the retained one-tenant/customer/invoice graph, eight revoked keys, zero active keys/payment state,
+  and no foreign-key violations. Applied only migration 0065, then verified 65 migrations, 12
+  receipt columns, the customer counter, all nine state/tenant/version triggers, no pending
+  migration, and empty receipt/payment ledgers. Deployed only the isolated Worker as version
+  `04561b02-dbe9-4a8b-a71b-aa2a127a87f5` with a 5 ms startup and unchanged resources/flags. A
+  disposable hashed key exercised empty receipt list/filter, missing show/resend, and authentication,
+  then was revoked. No synthetic remote payment was created because payment mutation was outside the
+  approved smoke boundary; manual/provider/payment-request settlement, replay, numbering, and
+  rollback remain covered by the local Worker/D1 suite. Health/readiness returned `200`/`200`,
+  unauthenticated receipt access returned `401`, and version inspection confirmed only fetch/
+  scheduled/queue handlers with all external-action flags at `0`. The final audit found nine hashed/
+  revoked synthetic key records, zero active or malformed hashes, zero receipts/events/payment
+  state, 697 schedule audits, and no foreign-key violations. No production route/domain, provider
+  action, message, customer data, payment action, or secret persistence occurred.
