@@ -2248,3 +2248,21 @@ resource and mutation described.
   verification stayed empty apart from 254 schedule audits. All three external-action flags remain
   `0`; no resource provisioning, production route/domain, secret, provider action, customer data,
   or billing row changed.
+- 2026-08-15: Replaced Lago's `ProcessAllSubscriptionActivities`, dedicated subscription-activity,
+  and `RefreshLifetimeUsages` Clockwork/Sidekiq path with D1, Queue, and Workflows. Migration
+  `0053_lifetime_usage_projection.sql` adds a coalesced activity record, guarded activity version,
+  last-received event date, and lineage-scoped lifetime projection. Event and activity writes are
+  atomic; Queue delivery refreshes immediately without blocking unrelated outbound delivery, the
+  one-minute Workflow drains missed activity, and the five-minute owner rotates through retained
+  projections. Current usage reuses the existing bounded rating pipeline, invoiced usage sums
+  draft/finalized usage lines across non-canceled subscription generations, and
+  `GET`/`PUT /api/v1/subscriptions/:external_id/lifetime_usage` preserve Lago's external historical
+  amount contract. A poison projection exhausts only its own retries and remains pending for later
+  repair. All 53 migrations apply in the official Workers test runtime; an independent SQLite
+  replay found 13 lifetime columns, 10 activity columns, four lifetime indexes, and zero foreign-
+  key violations. The standalone local-D1 launcher in Wrangler 4.122.0 and 4.123.0 crashed on this
+  mounted workspace, so it was not treated as schema evidence. Strict format/lint, inventory,
+  generated bindings, TypeScript, and Wrangler dry run pass; the complete serial suite passes all
+  213 tests across 39 files. The dry-run bundle is 1053.25 KiB (182.18 KiB gzip). Progressive
+  thresholds and usage-alert delivery remain explicit follow-up scope. Feature checkpoint:
+  `85c6a0e`.
