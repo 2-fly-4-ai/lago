@@ -10,6 +10,7 @@ export type ScheduleExecutor =
   | "expire_wallets"
   | "finalize_invoices"
   | "mark_invoices_overdue"
+  | "process_dunning_campaigns"
   | "process_subscription_activity"
   | "project_daily_usage"
   | "refresh_draft_invoices"
@@ -234,7 +235,8 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
     legacyJob: "Clock::ProcessDunningCampaignsJob",
     cadence: hourly(45),
     owner: "dunning workflow",
-    parity: "not_started",
+    parity: "partial",
+    executor: "process_dunning_campaigns",
   },
   {
     key: "schedule:retry_failed_invoices",

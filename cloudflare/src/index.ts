@@ -10,6 +10,7 @@ import { scheduleInstanceId } from "./schedules/registry";
 import { processPayInAdvanceUsageEvent } from "./billing/pay-in-advance-usage";
 import { processUsageEventSubscriptionActivity } from "./usage/lifetime-usage";
 import { handlePaymentRequestApi } from "./api/payment-requests";
+import { handleDunningCampaignApi } from "./api/dunning-campaigns";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -68,6 +69,13 @@ export default {
 
       if (url.pathname.startsWith("/api/v1/")) {
         const auth = await authenticateApiKey(request, env.BILLING_DB);
+        const dunningCampaignResponse = await handleDunningCampaignApi(
+          request,
+          env,
+          auth,
+          requestId,
+        );
+        if (dunningCampaignResponse) return dunningCampaignResponse;
         const paymentRequestResponse = await handlePaymentRequestApi(request, env, auth, requestId);
         if (paymentRequestResponse) return paymentRequestResponse;
         const response = await handleLagoCompatibilityRequest(request, env, auth, requestId);

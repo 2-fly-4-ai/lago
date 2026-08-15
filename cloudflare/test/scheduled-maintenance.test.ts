@@ -106,6 +106,7 @@ describe("legacy schedule ownership", () => {
       "schedule:clean_inbound_webhooks",
       "schedule:post_validate_events",
       "schedule:compute_daily_usage",
+      "schedule:process_dunning_campaigns",
       "schedule:retry_inbound_webhooks",
       "schedule:refresh_flagged_subscriptions",
     ]);
@@ -181,6 +182,17 @@ describe("legacy schedule ownership", () => {
       parity: "implemented",
       executor: "project_daily_usage",
       owner: "D1 daily revenue analytics projection",
+    });
+  });
+
+  it("runs the partial dunning request projection in the hourly :45 workflow slot", () => {
+    const due = dueLegacySchedules(Date.parse("2026-08-14T01:45:00.000Z"));
+    expect(
+      due.find((schedule) => schedule.key === "schedule:process_dunning_campaigns"),
+    ).toMatchObject({
+      parity: "partial",
+      executor: "process_dunning_campaigns",
+      owner: "dunning workflow",
     });
   });
 });

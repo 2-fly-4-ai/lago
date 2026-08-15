@@ -1235,14 +1235,15 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/models/dunning_campaign.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/dunning_campaign_threshold.rb",
@@ -1251,14 +1252,15 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/models/dunning_campaign_threshold.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/enriched_event.rb",
@@ -8929,14 +8931,15 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/services/dunning_campaigns/bulk_process_service.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/dunning_campaigns/create_service.rb",
@@ -8945,14 +8948,15 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/services/dunning_campaigns/create_service.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/dunning_campaigns/destroy_service.rb",
@@ -8961,14 +8965,15 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/services/dunning_campaigns/destroy_service.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/dunning_campaigns/process_attempt_service.rb",
@@ -8977,14 +8982,15 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/services/dunning_campaigns/process_attempt_service.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/dunning_campaigns/update_service.rb",
@@ -8993,14 +8999,15 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/services/dunning_campaigns/update_service.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/e_invoices/credit_notes/factur_x/create_service.rb",
@@ -18045,14 +18052,15 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/services/webhooks/dunning_campaigns/finished_service.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/webhooks/events/error_service.rb",
@@ -19459,14 +19467,15 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/jobs/clock/process_dunning_campaigns_job.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/clock/refresh_dedicated_org_wallets_ongoing_balance_job.rb",
@@ -20959,14 +20968,15 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/jobs/dunning_campaigns/bulk_process_job.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/dunning_campaigns/process_attempt_job.rb",
@@ -20975,14 +20985,15 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/jobs/dunning_campaigns/process_attempt_job.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/events/create_batch_job.rb",
@@ -24001,14 +24012,15 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/graphql/mutations/dunning_campaigns/create.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/dunning_campaigns/destroy.rb",
@@ -24018,14 +24030,15 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/graphql/mutations/dunning_campaigns/destroy.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/dunning_campaigns/update.rb",
@@ -24035,14 +24048,15 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/graphql/mutations/dunning_campaigns/update.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/entitlement/create_feature.rb",
@@ -27336,14 +27350,15 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/graphql/resolvers/dunning_campaign_resolver.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/resolvers/dunning_campaigns_resolver.rb",
@@ -27353,14 +27368,15 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/graphql/resolvers/dunning_campaigns_resolver.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/resolvers/entitlement/feature_resolver.rb",
@@ -31232,14 +31248,15 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/graphql/types/dunning_campaign_thresholds/input.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/dunning_campaign_thresholds/object.rb",
@@ -31249,14 +31266,15 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/graphql/types/dunning_campaign_thresholds/object.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/dunning_campaigns/create_input.rb",
@@ -31266,14 +31284,15 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/graphql/types/dunning_campaigns/create_input.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/dunning_campaigns/object.rb",
@@ -31283,14 +31302,15 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/graphql/types/dunning_campaigns/object.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/dunning_campaigns/update_input.rb",
@@ -31300,14 +31320,15 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "api/app/graphql/types/dunning_campaigns/update_input.rb"
+          "cloudflare/test/dunning-campaigns.test.ts",
+          "cloudflare/test/scheduled-maintenance.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/dunning-campaigns.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/emails/resend_email_input.rb",

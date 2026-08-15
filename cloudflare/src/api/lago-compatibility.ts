@@ -84,6 +84,10 @@ export type CustomerRow = {
   invoice_grace_period: number | null;
   timezone: string | null;
   skip_invoice_custom_sections: number;
+  applied_dunning_campaign_id: string | null;
+  exclude_from_dunning_campaign: number;
+  last_dunning_campaign_attempt: number;
+  last_dunning_campaign_attempt_at: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -322,6 +326,22 @@ async function upsertCustomer(
       ? false
       : (customSections.skip ?? existing?.skip_invoice_custom_sections === 1);
   const billingConfiguration = readCustomerBillingConfiguration(input.billing_configuration);
+  const requestedDunningCampaignId =
+    input.applied_dunning_campaign_id === undefined
+      ? (existing?.applied_dunning_campaign_id ?? null)
+      : input.applied_dunning_campaign_id === null
+        ? null
+        : requiredString(input, "applied_dunning_campaign_id");
+  const requestedDunningExclusion =
+    input.exclude_from_dunning_campaign === undefined
+      ? input.applied_dunning_campaign_id === undefined
+        ? existing?.exclude_from_dunning_campaign === 1
+        : false
+      : requiredBoolean(input.exclude_from_dunning_campaign, "exclude_from_dunning_campaign");
+  const appliedDunningCampaignId = requestedDunningExclusion ? null : requestedDunningCampaignId;
+  if (appliedDunningCampaignId) {
+    await assertDunningCampaign(database, auth.organizationId, appliedDunningCampaignId);
+  }
   const normalized = {
     name: input.name === undefined ? (existing?.name ?? null) : optionalString(input, "name"),
     email:
@@ -365,6 +385,8 @@ async function upsertCustomer(
       input.timezone === undefined
         ? (existing?.timezone ?? null)
         : normalizeBillingTimezone(optionalString(input, "timezone")),
+    appliedDunningCampaignId,
+    excludeFromDunningCampaign: requestedDunningExclusion,
     skipInvoiceCustomSections: nextSkipInvoiceCustomSections,
     customSectionIds: customSections.skip === true ? [] : customSectionIds,
     replaceCustomSections,
@@ -407,8 +429,9 @@ async function upsertCustomer(
           `INSERT INTO customers
            (id, organization_id, external_id, email, name, currency, metadata_json,
             payment_provider, payment_provider_code, net_payment_term, invoice_grace_period,
-            timezone, skip_invoice_custom_sections, version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+            timezone, skip_invoice_custom_sections, applied_dunning_campaign_id,
+            exclude_from_dunning_campaign, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .bind(
           id,
@@ -424,6 +447,8 @@ async function upsertCustomer(
           normalized.invoiceGracePeriod,
           normalized.timezone,
           normalized.skipInvoiceCustomSections ? 1 : 0,
+          normalized.appliedDunningCampaignId,
+          normalized.excludeFromDunningCampaign ? 1 : 0,
           now,
           now,
         ),
@@ -475,6 +500,8 @@ type NormalizedCustomer = {
   netPaymentTerm: number | null;
   invoiceGracePeriod: number | null;
   timezone: string | null;
+  appliedDunningCampaignId: string | null;
+  excludeFromDunningCampaign: boolean;
   skipInvoiceCustomSections: boolean;
   customSectionIds: string[] | undefined;
   replaceCustomSections: boolean;
@@ -490,6 +517,9 @@ async function updateCustomer(
 ): Promise<Response> {
   const now = new Date().toISOString();
   const nextVersion = customer.version + 1;
+  const dunningAssignmentChanged =
+    customer.applied_dunning_campaign_id !== normalized.appliedDunningCampaignId ||
+    (customer.exclude_from_dunning_campaign === 1) !== normalized.excludeFromDunningCampaign;
   const event = customerEvent(
     "customer.updated",
     customer.id,
@@ -505,7 +535,9 @@ async function updateCustomer(
       `UPDATE customers
        SET email = ?, name = ?, currency = ?, metadata_json = ?, payment_provider = ?,
            payment_provider_code = ?, net_payment_term = ?, invoice_grace_period = ?, timezone = ?,
-           skip_invoice_custom_sections = ?, version = version + 1, updated_at = ?
+           skip_invoice_custom_sections = ?, applied_dunning_campaign_id = ?,
+           exclude_from_dunning_campaign = ?, last_dunning_campaign_attempt = ?,
+           last_dunning_campaign_attempt_at = ?, version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?`,
     ).bind(
       normalized.email,
@@ -518,6 +550,10 @@ async function updateCustomer(
       normalized.invoiceGracePeriod,
       normalized.timezone,
       normalized.skipInvoiceCustomSections ? 1 : 0,
+      normalized.appliedDunningCampaignId,
+      normalized.excludeFromDunningCampaign ? 1 : 0,
+      dunningAssignmentChanged ? 0 : customer.last_dunning_campaign_attempt,
+      dunningAssignmentChanged ? null : customer.last_dunning_campaign_attempt_at,
       now,
       customer.id,
       auth.organizationId,
@@ -643,7 +679,9 @@ async function listCustomers(
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
               payment_provider_code, net_payment_term, invoice_grace_period, timezone, version,
-              skip_invoice_custom_sections, created_at, updated_at
+              skip_invoice_custom_sections, applied_dunning_campaign_id,
+              exclude_from_dunning_campaign, last_dunning_campaign_attempt,
+              last_dunning_campaign_attempt_at, created_at, updated_at
        FROM customers WHERE ${where}
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     )
@@ -2735,7 +2773,9 @@ export async function findCustomer(
     .prepare(
       `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
               payment_provider_code, net_payment_term, invoice_grace_period, timezone, version,
-              skip_invoice_custom_sections, created_at, updated_at
+              skip_invoice_custom_sections, applied_dunning_campaign_id,
+              exclude_from_dunning_campaign, last_dunning_campaign_attempt,
+              last_dunning_campaign_attempt_at, created_at, updated_at
        FROM customers WHERE organization_id = ? AND external_id = ? LIMIT 1`,
     )
     .bind(organizationId, externalId)
@@ -2856,6 +2896,10 @@ function serializeCustomerRow(
     currency: customer.currency,
     timezone: customer.timezone,
     net_payment_term: customer.net_payment_term,
+    applied_dunning_campaign_id: customer.applied_dunning_campaign_id,
+    exclude_from_dunning_campaign: customer.exclude_from_dunning_campaign === 1,
+    last_dunning_campaign_attempt: customer.last_dunning_campaign_attempt,
+    last_dunning_campaign_attempt_at: customer.last_dunning_campaign_attempt_at,
     skip_invoice_custom_sections: customer.skip_invoice_custom_sections === 1,
     applicable_invoice_custom_sections: applicableInvoiceCustomSections,
     version_number: customer.version,
@@ -3183,6 +3227,8 @@ function rejectUnsupportedCustomerFields(input: Record<string, unknown>): void {
     "tax_provider_code",
     "skip_invoice_custom_sections",
     "invoice_custom_section_codes",
+    "applied_dunning_campaign_id",
+    "exclude_from_dunning_campaign",
   ]);
   const unsupported = Object.keys(input).find((key) => !supported.has(key));
   if (unsupported)
@@ -3206,6 +3252,34 @@ function validateCustomerProvider(provider: string | null, code: string | null):
       "invalid_payment_provider_configuration",
       "payment_provider and payment_provider_code must be configured together",
     );
+}
+
+function requiredBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new ApiError(422, "validation_error", `${field} must be boolean`);
+  }
+  return value;
+}
+
+async function assertDunningCampaign(
+  database: D1Database,
+  organizationId: string,
+  campaignId: string,
+): Promise<void> {
+  const campaign = await database
+    .prepare(
+      `SELECT id FROM dunning_campaigns
+       WHERE id = ? AND organization_id = ? AND active = 1 LIMIT 1`,
+    )
+    .bind(campaignId, organizationId)
+    .first();
+  if (!campaign) {
+    throw new ApiError(
+      422,
+      "invalid_dunning_campaign",
+      "applied_dunning_campaign_id must identify an active campaign in this organization",
+    );
+  }
 }
 
 function normalizeBillingTimezone(value: string | null): string | null {
@@ -3234,6 +3308,8 @@ function customerMatches(customer: CustomerRow, normalized: NormalizedCustomer):
     customer.net_payment_term === normalized.netPaymentTerm &&
     customer.invoice_grace_period === normalized.invoiceGracePeriod &&
     customer.timezone === normalized.timezone &&
+    customer.applied_dunning_campaign_id === normalized.appliedDunningCampaignId &&
+    (customer.exclude_from_dunning_campaign === 1) === normalized.excludeFromDunningCampaign &&
     (customer.skip_invoice_custom_sections === 1) === normalized.skipInvoiceCustomSections &&
     stableJson(parseCustomerMetadata(customer.metadata_json)) === stableJson(normalized.metadata)
   );
@@ -3393,6 +3469,8 @@ function customerEvent(
       netPaymentTerm: normalized.netPaymentTerm,
       invoiceGracePeriod: normalized.invoiceGracePeriod,
       timezone: normalized.timezone,
+      appliedDunningCampaignId: normalized.appliedDunningCampaignId,
+      excludeFromDunningCampaign: normalized.excludeFromDunningCampaign,
       skipInvoiceCustomSections: normalized.skipInvoiceCustomSections,
       invoiceCustomSectionIds: normalized.customSectionIds,
       metadata: normalized.metadata,

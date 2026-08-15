@@ -238,6 +238,14 @@ remaining Lago feature inventory is dispositioned and ported.
   event in a guarded D1 batch. The amount is the exact remaining balance across one currency.
   Creating this internal ledger does not call a provider or send email; later dunning/payment
   execution remains subject to the existing external-action gates.
+- Dunning campaigns: authenticated tenant-scoped create/list/show/update/delete routes own campaign
+  thresholds, organization defaults, customer overrides, and exclusions in D1. The hourly `:45`
+  Workflow executor creates at most one deterministic payment request per eligible customer and
+  attempt, observes currency thresholds, elapsed-day spacing, exclusions, and maximum attempts,
+  and emits `dunning_campaign.finished` at the terminal attempt. Each request, version-pinned
+  invoice link, customer attempt advance, and outbox event commits in one guarded D1 batch.
+  Provider payment handoff and fallback email remain intentionally absent, so schedule parity stays
+  partial and all external-action gates remain authoritative.
 
 No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or
 OS command is required by this package.

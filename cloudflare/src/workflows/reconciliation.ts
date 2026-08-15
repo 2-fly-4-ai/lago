@@ -42,6 +42,7 @@ import {
   createProgressiveBillingInvoice,
   progressiveBillingCandidates,
 } from "../billing/progressive-billing";
+import { processDunningCampaigns } from "../schedules/dunning";
 
 type ReconciliationParams = {
   schedule?: {
@@ -408,6 +409,14 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           )
         : { artifactsDeleted: 0, receiptsDeleted: 0 };
 
+      const dunning = executors.has("process_dunning_campaigns")
+        ? await step.do(
+            "process dunning campaigns",
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () => processDunningCampaigns(this.env, triggeredAtIso, runId),
+          )
+        : { candidates: 0, requestsCreated: 0, campaignsFinished: 0 };
+
       const publishedEvents = await step.do(
         "publish pending outbox events",
         { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" }, timeout: "1 minute" },
@@ -465,6 +474,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         dispatchedPlanDeletions,
         deletedOutboundWebhooks,
         deletedInboundWebhooks,
+        dunning,
         publishedEvents,
       };
       await step.do("complete schedule run", async () => {

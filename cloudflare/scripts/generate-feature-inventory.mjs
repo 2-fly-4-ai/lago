@@ -264,6 +264,16 @@ function extractOperatorSurface(frontRoot) {
 const portRules = [
   {
     pattern:
+      /api\/app\/(models\/dunning_campaign(?:_threshold)?|services\/(?:dunning_campaigns\/(?:bulk_process|create|destroy|process_attempt|update)_service|webhooks\/dunning_campaigns\/finished_service)|jobs\/(?:clock\/process_dunning_campaigns_job|dunning_campaigns\/(?:bulk_process|process_attempt)_job)|graphql\/(?:mutations\/dunning_campaigns\/(?:create|destroy|update)|resolvers\/dunning_campaigns?_resolver|types\/dunning_campaign))/i,
+    target:
+      "cloudflare/src/api/dunning-campaigns.ts, cloudflare/src/schedules/dunning.ts, and cloudflare/src/api/lago-compatibility.ts",
+    evidence: [
+      "cloudflare/test/dunning-campaigns.test.ts",
+      "cloudflare/test/scheduled-maintenance.test.ts",
+    ],
+  },
+  {
+    pattern:
       /api\/app\/(controllers\/(api\/v1\/(customers\/)?payment_requests_controller|concerns\/payment_request_index)|models\/payment_request(\/applied_invoice)?|queries\/payment_requests_query|serializers\/v1\/payment_request_serializer|services\/payment_requests\/create_service)\.rb/i,
     target: "cloudflare/src/api/payment-requests.ts",
     evidence: ["cloudflare/test/payment-requests.test.ts"],

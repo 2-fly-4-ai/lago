@@ -2422,6 +2422,21 @@ resource and mutation described.
   audits. Version inspection confirmed only fetch/scheduled/queue handlers and all three external-
   action flags at `0`; no production route/domain, secret, provider action, customer data, payment
   action, or billing row changed.
+- 2026-08-15: Added the container-free dunning campaign and scheduled-request foundation.
+  Migration `0058_dunning_campaigns.sql` owns tenant-scoped campaigns, currency thresholds,
+  organization defaults, customer overrides/exclusions and attempt state, plus guarded dunning
+  request provenance. Authenticated REST CRUD replaces the retained operator campaign mutations;
+  customer upserts accept campaign overrides and exclusions and reset attempt state when assignment
+  changes. The hourly `:45` Workflow executor selects overdue outstanding balances, respects
+  threshold currency, elapsed days, maximum attempts and exclusions, and atomically writes one
+  deterministic payment request, version-pinned invoice links, the customer attempt advance, and
+  outbox evidence. The terminal attempt emits `dunning_campaign.finished`. Provider submission and
+  fallback email remain deliberately unported and externally gated, so the schedule is recorded as
+  partial rather than implemented. All 58 migrations replay independently with three dunning
+  tables, ten related indexes, seven triggers, and zero foreign-key violations. Strict formatting,
+  lint, inventory, Wrangler binding types, and TypeScript pass; all 241 tests across 46 files pass
+  serially in 155.72 seconds. The dry-run bundle is 1186.95 KiB (206.42 KiB gzip). This is a local
+  pre-deployment checkpoint; no remote resource or data was changed by this entry.
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.
