@@ -447,7 +447,12 @@ Acceptance:
 
 - [x] Define a provider adapter contract.
 - [x] Implement Authorize.Net first because it is the verified store dependency.
-- [ ] Port other providers according to the feature inventory.
+- [x] Disposition other providers according to the feature inventory. A read-only audit at
+      `store-new@5f7781f678bb8263e83e67089f915109a5e7a025` and
+      `serp-auth@bb037306a4eb0de660971dfb222db215fd93c233` found that both own their Stripe
+      calls directly and neither consumes Lago APIs. Lago-managed Stripe, Adyen, GoCardless,
+      Cashfree, Flutterwave, and MoneyHash therefore remain `not-used`; Authorize.Net is the only
+      retained Lago provider adapter.
 - [x] Implement checkout/payment Workflows with intent, attempt, outcome, and reconciliation records.
       Invoice hosted checkout retains the synchronous store contract with Durable Object command
       reservations; payment-request checkout uses a D1 intent/outcome ledger and a retryable
@@ -2915,3 +2920,12 @@ resource and mutation described.
   falsely claiming e-invoicing parity. Formatting, lint, and generated-inventory checks pass. No
   runtime code, migration, Worker version, remote resource, artifact, provider action, customer
   message, payment action, secret, or customer data changed.
+- 2026-08-15: Re-audited payment-provider ownership against committed `store-new` and `serp-auth`
+  sources without modifying either repository. `store-new` owns checkout, subscriptions, billing,
+  provider webhooks, reconciliation, and operator Stripe actions directly; `serp-auth` owns its
+  direct Stripe receipt-recovery reads. Neither consumer references Lago APIs. The feature inventory
+  now marks the upstream Lago Stripe, Adyen, GoCardless, Cashfree, Flutterwave, and MoneyHash model,
+  service, job, GraphQL, and operator-UI surfaces `not-used`, while retaining the already isolated
+  Authorize.Net adapter. Reintroduction requires a verified consumer contract and must start behind
+  disabled provider flags with synthetic fixtures. No runtime code, migration, deployment, provider
+  action, repository outside Lago, secret, customer data, or production resource changed.

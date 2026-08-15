@@ -470,6 +470,17 @@ const portRules = [
     ],
   },
   {
+    pattern: /adyen|cashfree|flutterwave|gocardless|moneyhash|stripe/i,
+    disposition: "not-used",
+    target:
+      "No retained Lago runtime; SERP commerce and entitlement recovery call Stripe directly from their owning Workers",
+    evidence: ["cloudflare/README.md", "docs/plans/active/2026-08-12-cloudflare-native-rewrite.md"],
+    migrationNotes:
+      "A read-only audit of the pinned store-new and serp-auth consumers found direct Stripe ownership and no Lago API dependency. Adyen, Cashfree, Flutterwave, GoCardless, MoneyHash, and Lago-managed Stripe therefore have no retained SERP runtime contract.",
+    rollbackNotes:
+      "Keep these adapters absent. If an owning SERP repository later adopts a Lago-managed provider contract, add that exact provider behind disabled mutation/read flags with synthetic contract fixtures before enabling it.",
+  },
+  {
     pattern: /authorize_net|authorize\/net/i,
     target: "cloudflare/src/providers/authorize-net.ts",
     evidence: [

@@ -353,6 +353,16 @@ then subscription skip, then customer skip, then a manual customer selection, th
 default. The same projection drives recurring drafts, finalized snapshots, and one-off invoices.
 Multi-billing-entity routing and provider-created system sections remain explicitly unported.
 
+### Retained payment-provider scope
+
+The Cloudflare rewrite retains only the Authorize.Net adapter used by the pinned Lago compatibility
+contract. A read-only audit of committed `store-new` and `serp-auth` sources found that those systems
+own Stripe checkout, billing, webhooks, reconciliation, operator actions, and receipt recovery
+directly; neither calls Lago for provider operations. Lago-managed Stripe, Adyen, GoCardless,
+Cashfree, Flutterwave, and MoneyHash are therefore explicit `not-used` feature-inventory entries,
+not missing Worker implementations. Adding one back requires a verified SERP consumer contract,
+synthetic provider fixtures, and the existing disabled-by-default provider gates.
+
 Wallet create/update and granted wallet-transaction create accept the same
 `invoice_custom_section` attach/skip wrapper. Wallet list/show and wallet-transaction reads expose
 the persisted `applied_invoice_custom_sections` without per-row queries. These are resource API
