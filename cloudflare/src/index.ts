@@ -13,6 +13,7 @@ import { handlePaymentRequestApi } from "./api/payment-requests";
 import { handleDunningCampaignApi } from "./api/dunning-campaigns";
 import { handleFeesApi } from "./api/fees";
 import { handleApiKeysApi } from "./api/api-keys";
+import { handleOrganizationsApi } from "./api/organizations";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -84,6 +85,8 @@ export default {
         if (feeResponse) return feeResponse;
         const apiKeyResponse = await handleApiKeysApi(request, env, auth, requestId);
         if (apiKeyResponse) return apiKeyResponse;
+        const organizationResponse = await handleOrganizationsApi(request, env, auth, requestId);
+        if (organizationResponse) return organizationResponse;
         const response = await handleLagoCompatibilityRequest(request, env, auth, requestId);
         if (response) return response;
       }

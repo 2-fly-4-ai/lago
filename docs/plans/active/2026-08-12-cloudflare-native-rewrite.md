@@ -566,8 +566,10 @@ Acceptance:
 - [ ] Implement the GraphQL compatibility surface or replace individual screens with a documented
       Worker API equivalent. Manual invoice custom-section catalog CRUD now uses the documented
       tenant-scoped REST equivalent, and API-key create/list/show/name-update/rotate/revoke now uses
-      a secret-safe tenant-scoped REST control plane; the remaining operator operations and screens
-      are still inventoried/ported individually.
+      a secret-safe tenant-scoped REST control plane. Organization show/update now uses a
+      tenant-scoped REST equivalent for identity, billing, locale, and document configuration while
+      webhook mutation stays behind its separately gated endpoint API; the remaining operator
+      operations and screens are still inventoried/ported individually.
 - [ ] Serve the operator application with Workers Static Assets.
 - [ ] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained.
 - [ ] Mark retired screens explicitly with approved product rationale.
@@ -2656,3 +2658,18 @@ resource and mutation described.
   records, zero active or malformed hashes, four API-key audit events with zero secret-like payloads,
   zero payment state, and no foreign-key violations. No production route/domain, provider action,
   message, customer data, payment action, or secret persistence occurred.
+- 2026-08-15: Added a tenant-scoped Lago-compatible organization show/update REST equivalent.
+  Migration `0063_organization_configuration.sql` adds normalized identity/address/currency,
+  document numbering, email settings, invoice configuration, a globally unique slug, and optimistic
+  version state. Reads project active webhook URLs and organization-default taxes without invoking
+  either system. Updates reject implicit webhook changes, validate reserved slugs and billing
+  values, preserve no-op versions, and atomically commit the configuration with an
+  `organization.updated` outbox payload containing changed field names but no configuration values.
+  D1 guards invalid lengths and stale outbox versions. The generated inventory maps only the
+  upstream organization model, REST controller, update service, and update mutation to this partial
+  port; unrelated authentication/feature-flag GraphQL types remain unclaimed. All 63 migrations
+  replay from empty D1 with 29 organization columns, the slug index, three new guards, and no
+  foreign-key violations. Strict format/lint/inventory/bindings/TypeScript pass; all 262 tests
+  across 50 files pass serially in 163.42 seconds, and the dry-run bundle is 1263.97 KiB
+  (220.68 KiB gzip). This is a local pre-deployment checkpoint; no remote configuration, provider,
+  message, payment, route, secret, or customer data changed.

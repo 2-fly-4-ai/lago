@@ -13,6 +13,10 @@ remaining Lago feature inventory is dispositioned and ported.
   key material only from create/rotate, store only SHA-256 hashes and short endings, enforce expiry
   during authentication, protect the last non-expiring key, reject unenforced fine-grained
   permissions, and commit secret-free versioned audit evidence atomically.
+- Organization API: Lago-compatible show/update for identity, address, currency, timezone, payment
+  terms, document numbering, email settings, and invoice configuration, with default-tax and active
+  webhook projections, global slug uniqueness, replay-safe versions, and secret/value-free audit
+  evidence. Webhook mutation remains in the separately gated endpoint API.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring

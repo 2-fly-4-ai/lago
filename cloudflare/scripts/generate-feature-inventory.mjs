@@ -264,6 +264,12 @@ function extractOperatorSurface(frontRoot) {
 const portRules = [
   {
     pattern:
+      /api\/app\/(controllers\/api\/v1\/organizations_controller|models\/organization|serializers\/v1\/organization_serializer|services\/organizations\/update_service|graphql\/mutations\/organizations\/update)\.rb/i,
+    target: "cloudflare/src/api/organizations.ts",
+    evidence: ["cloudflare/test/organizations.test.ts"],
+  },
+  {
+    pattern:
       /api\/app\/(controllers\/api\/v1\/fees_controller|models\/fee|queries\/fees_query|serializers\/v1\/fee_serializer|services\/fees\/(?:destroy|update)_service)\.rb/i,
     target: "cloudflare/src/api/fees.ts",
     evidence: ["cloudflare/test/fees.test.ts"],
