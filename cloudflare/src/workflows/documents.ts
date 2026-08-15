@@ -2,6 +2,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { browserPdfRenderer, generateInvoicePdf } from "../documents/invoice";
 import { generatePaymentReceiptPdf } from "../documents/payment-receipt";
 import { generateCreditNotePdf } from "../documents/credit-note";
+import { failDataExport, generateDataExport } from "../documents/data-export";
 
 export type DocumentWorkflowParams =
   | {
@@ -21,12 +22,47 @@ export type DocumentWorkflowParams =
       creditNoteId: string;
       organizationId: string;
       correlationId: string;
+    }
+  | {
+      kind: "data_export";
+      dataExportId: string;
+      organizationId: string;
+      correlationId: string;
     };
 
 export class DocumentWorkflow extends WorkflowEntrypoint<Env, DocumentWorkflowParams> {
   override async run(event: WorkflowEvent<DocumentWorkflowParams>, step: WorkflowStep) {
     const { organizationId, correlationId } = event.payload;
     if (!organizationId || !correlationId) throw new Error("invalid_document_payload");
+    if (event.payload.kind === "data_export") {
+      const { dataExportId } = event.payload;
+      if (!dataExportId) throw new Error("invalid_document_payload");
+      const owned = await step.do("verify data export ownership", async () => {
+        const dataExport = await this.env.BILLING_DB.prepare(
+          "SELECT id FROM data_exports WHERE id = ? AND organization_id = ? LIMIT 1",
+        )
+          .bind(dataExportId, organizationId)
+          .first();
+        return !!dataExport;
+      });
+      if (!owned) throw new Error("data_export_not_found");
+      try {
+        return await step.do(
+          "stream and archive data export csv",
+          {
+            retries: { limit: 5, delay: "10 seconds", backoff: "exponential" },
+            timeout: "10 minutes",
+          },
+          async () => generateDataExport(this.env, dataExportId),
+        );
+      } catch (error) {
+        await step.do("record data export failure", async () => {
+          await failDataExport(this.env, dataExportId, correlationId);
+          return { failed: true };
+        });
+        throw error;
+      }
+    }
     if (event.payload.kind === "credit_note") {
       const { creditNoteId } = event.payload;
       if (!creditNoteId) throw new Error("invalid_document_payload");

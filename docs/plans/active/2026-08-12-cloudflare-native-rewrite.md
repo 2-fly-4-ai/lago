@@ -496,17 +496,18 @@ Acceptance:
 
 ### M6: Documents and object storage
 
-- [ ] Port invoice, receipt, credit-note, and export templates according to inventory. Invoice,
-      receipt, and credit-note templates plus authenticated generation/download boundaries are
-      implemented; export documents remain pending. The pinned Lago revision's quote domain is
-      GraphQL-only and contains no quote template, PDF service/job, or download contract, so there
-      is no authoritative quote document surface to port.
+- [x] Port invoice, receipt, credit-note, and export templates according to inventory. Invoice,
+      receipt, and credit-note templates use authenticated PDF generation/download boundaries. The
+      four pinned invoice/credit-note CSV exports use an authenticated REST replacement and stream
+      from bounded D1 pages through the shared Document Workflow directly into R2. The pinned Lago
+      revision's quote domain is GraphQL-only and contains no quote template, PDF service/job, or
+      download contract, so there is no authoritative quote document surface to port.
 - [x] Generate invoice, receipt, and credit-note PDFs using Browser Rendering through a retryable,
       ownership-checked Document Workflow.
 - [ ] Replace `pdfcpu` attachment behavior with a Workers-compatible JavaScript or precompiled Wasm
       implementation.
-- [x] Store immutable, version-addressed invoice, receipt, and credit-note artifacts in R2 with
-      checksums, byte length, and generation metadata; export handling remains pending.
+- [x] Store immutable, version-addressed invoice, receipt, credit-note, and data-export artifacts in
+      R2 with integrity metadata, byte length, and generation metadata.
 - [ ] Add visual and structural golden-file verification.
 
 Acceptance:
@@ -576,8 +577,10 @@ Acceptance:
       tenant-scoped REST equivalent while document generation and email resend remain explicit
       boundaries. The pinned quote create/read/filter/owner and version edit/approve/void/clone
       lifecycle now uses a tenant-scoped REST equivalent with D1-owned sequencing, active-version
-      uniqueness, optimistic revisions, and idempotent creation/clone commands; the remaining
-      operator operations and screens are still inventoried/ported individually.
+      uniqueness, optimistic revisions, and idempotent creation/clone commands. Invoice and
+      credit-note export mutations now use an authenticated REST create/status/download lifecycle;
+      completion email is retained as an explicit disabled boundary. The remaining operator
+      operations and screens are still inventoried/ported individually.
 - [ ] Serve the operator application with Workers Static Assets.
 - [ ] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained.
 - [ ] Mark retired screens explicitly with approved product rationale.
@@ -2858,3 +2861,22 @@ resource and mutation described.
   receipts, or credit notes, 769 schedule audits, and no foreign-key violations. Version inspection
   confirmed only fetch/scheduled/queue handlers with all external-action flags at `0`. No production
   route/domain, provider action, customer message, payment action, secret, or customer data changed.
+- 2026-08-15: Replaced the pinned invoice/credit-note data-export container chain with a
+  Cloudflare-native CSV pipeline. Forward migration `0069_data_exports.sql` adds a tenant/requester-
+  guarded, idempotent, optimistic lifecycle ledger with pending/processing/completed/failed states,
+  immutable completion metadata, seven-day expiry, and value-free outbox guards. Authenticated REST
+  create/list/show/download routes replace the GraphQL mutations and expose the four retained
+  `invoices`, `invoice_fees`, `credit_notes`, and `credit_note_items` contracts. The shared Document
+  Workflow pages a creation-time-bounded D1 selection twice: the first pass measures exact UTF-8
+  length and rows, and the second writes through `FixedLengthStream` directly to a deterministic R2
+  key. A data change between passes fails closed and retries. This eliminates export-part rows,
+  Active Jobs, Tempfile/File.unlink, Active Storage combination, and whole-export buffering. CSV
+  user strings that could become spreadsheet formulas are neutralized; downloads are private; raw
+  filters and exception messages never enter outbox evidence; completion email remains explicitly
+  disabled. The feature inventory maps only the pinned data-export models/jobs/services/GraphQL
+  surface, leaving mailer/UI dependencies unclaimed. All 69 migrations replay from empty D1. Strict
+  format/lint/inventory/bindings/TypeScript pass; the focused export suite passes 6 tests, the final
+  migration/failure regression passes in a 9-test focused run, and all 291 tests across 56 files pass
+  serially in 180.29 seconds. The dry-run bundle is 1396.05 KiB (243.58 KiB gzip). This is a local
+  pre-deployment checkpoint; no remote schema, artifact, export, provider, message, payment, route,
+  secret, or customer data changed.

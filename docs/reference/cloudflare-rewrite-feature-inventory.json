@@ -1188,14 +1188,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/models/data_export.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/data_export_part.rb",
@@ -1204,14 +1204,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/models/data_export_part.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/deprecation.rb",
@@ -2846,14 +2846,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/models/quote.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/quote_owner.rb",
@@ -2862,14 +2862,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/models/quote_owner.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/quote_version.rb",
@@ -2878,14 +2878,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/models/quote_version.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/recurring_transaction_rule.rb",
@@ -8779,14 +8779,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/services/data_exports/combine_parts_service.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/data_exports/create_part_service.rb",
@@ -8795,14 +8795,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/services/data_exports/create_part_service.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/data_exports/create_service.rb",
@@ -8811,14 +8811,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/services/data_exports/create_service.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/data_exports/csv/base_csv_service.rb",
@@ -8827,14 +8827,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/services/data_exports/csv/base_csv_service.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/data_exports/csv/credit_note_items.rb",
@@ -8843,14 +8843,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/services/data_exports/csv/credit_note_items.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/data_exports/csv/credit_notes.rb",
@@ -8859,14 +8859,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/services/data_exports/csv/credit_notes.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/data_exports/csv/invoice_fees.rb",
@@ -8875,11 +8875,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "cloudflare/fixtures/store-new/invoice-list-query.json"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
+        "testFixture": "cloudflare/test/data-exports.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -8891,11 +8891,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "cloudflare/fixtures/store-new/invoice-list-query.json"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
+        "testFixture": "cloudflare/test/data-exports.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -8907,14 +8907,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/services/data_exports/export_resources_service.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/data_exports/process_part_service.rb",
@@ -8923,14 +8923,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/services/data_exports/process_part_service.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/dunning_campaigns/bulk_process_service.rb",
@@ -16006,14 +16006,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/services/quote_versions/approve_service.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/quote_versions/clone_service.rb",
@@ -16022,14 +16022,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/services/quote_versions/clone_service.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/quote_versions/create_service.rb",
@@ -16038,14 +16038,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/services/quote_versions/create_service.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/quote_versions/update_service.rb",
@@ -16054,14 +16054,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/services/quote_versions/update_service.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/quote_versions/void_service.rb",
@@ -16070,14 +16070,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/services/quote_versions/void_service.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/quotes/create_service.rb",
@@ -16086,14 +16086,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/services/quotes/create_service.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/quotes/update_service.rb",
@@ -16102,14 +16102,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/services/quotes/update_service.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/result.rb",
@@ -19980,14 +19980,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/jobs/data_exports/combine_parts_job.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/data_exports/export_resources_job.rb",
@@ -19996,14 +19996,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/jobs/data_exports/export_resources_job.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/data_exports/process_part_job.rb",
@@ -20012,14 +20012,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/jobs/data_exports/process_part_job.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/jobs/database_migrations/backfill_adyen_payment_methods_job.rb",
@@ -23996,14 +23996,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/graphql/mutations/data_exports/credit_notes/create.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/data_exports/invoices/create.rb",
@@ -24013,11 +24013,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "cloudflare/fixtures/store-new/invoice-list-query.json"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
+        "testFixture": "cloudflare/test/data-exports.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -25807,14 +25807,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/mutations/quote_versions/approve.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/quote_versions/clone.rb",
@@ -25824,14 +25824,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/mutations/quote_versions/clone.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/quote_versions/update.rb",
@@ -25841,14 +25841,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/mutations/quote_versions/update.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/quote_versions/void.rb",
@@ -25858,14 +25858,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/mutations/quote_versions/void.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/quotes/create.rb",
@@ -25875,14 +25875,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/mutations/quotes/create.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/quotes/update.rb",
@@ -25892,14 +25892,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/mutations/quotes/update.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/mutations/register_user.rb",
@@ -27951,14 +27951,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/resolvers/quote_resolver.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/resolvers/quotes_resolver.rb",
@@ -27968,14 +27968,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/resolvers/quotes_resolver.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/resolvers/role_resolver.rb",
@@ -31118,14 +31118,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/graphql/types/data_exports/credit_notes/create_input.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/data_exports/credit_notes/export_type_enum.rb",
@@ -31135,14 +31135,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/graphql/types/data_exports/credit_notes/export_type_enum.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/data_exports/credit_notes/filters_input.rb",
@@ -31152,14 +31152,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/graphql/types/data_exports/credit_notes/filters_input.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/data_exports/format_type_enum.rb",
@@ -31169,14 +31169,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/graphql/types/data_exports/format_type_enum.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/data_exports/invoices/create_input.rb",
@@ -31186,11 +31186,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "cloudflare/fixtures/store-new/invoice-list-query.json"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
+        "testFixture": "cloudflare/test/data-exports.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -31203,11 +31203,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "cloudflare/fixtures/store-new/invoice-list-query.json"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
+        "testFixture": "cloudflare/test/data-exports.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -31220,11 +31220,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "cloudflare/fixtures/store-new/invoice-list-query.json"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
+        "testFixture": "cloudflare/test/data-exports.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -31237,14 +31237,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/graphql/types/data_exports/object.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/data_exports/status_enum.rb",
@@ -31254,14 +31254,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
         "evidence": [
-          "api/app/graphql/types/data_exports/status_enum.rb"
+          "cloudflare/test/data-exports.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/data-exports.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/dunning_campaign_thresholds/input.rb",
@@ -34380,14 +34380,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/types/quote_versions/object.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/quote_versions/status_enum.rb",
@@ -34397,14 +34397,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/types/quote_versions/status_enum.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/quote_versions/update_input.rb",
@@ -34414,14 +34414,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/types/quote_versions/update_input.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/quote_versions/void_reason_enum.rb",
@@ -34431,14 +34431,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/types/quote_versions/void_reason_enum.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/quotes/create_input.rb",
@@ -34448,14 +34448,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/types/quotes/create_input.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/quotes/object.rb",
@@ -34465,14 +34465,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/types/quotes/object.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/quotes/order_type_enum.rb",
@@ -34482,14 +34482,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/types/quotes/order_type_enum.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/quotes/update_input.rb",
@@ -34499,14 +34499,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/operator-api/",
+        "target": "cloudflare/src/api/quotes.ts and cloudflare/migrations/0068_quote_versioning.sql",
         "evidence": [
-          "api/app/graphql/types/quotes/update_input.rb"
+          "cloudflare/test/quotes.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/quotes.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/graphql/types/reset_passwords/object.rb",

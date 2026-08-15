@@ -421,6 +421,13 @@ const portRules = [
     evidence: ["cloudflare/test/quotes.test.ts"],
   },
   {
+    pattern:
+      /api\/app\/(models\/data_export(?:_part)?|jobs\/data_exports\/.*|services\/data_exports\/.*|graphql\/(?:mutations|types)\/data_exports\/.*)\.rb/i,
+    target:
+      "cloudflare/src/api/data-exports.ts, cloudflare/src/documents/data-export.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0069_data_exports.sql",
+    evidence: ["cloudflare/test/data-exports.test.ts"],
+  },
+  {
     pattern: /document|generate_pdf|pdf_service|invoice.*file/i,
     target: "cloudflare/src/documents/invoice.ts",
     evidence: ["cloudflare/test/invoice-document.test.ts"],

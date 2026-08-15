@@ -38,6 +38,13 @@ remaining Lago feature inventory is dispositioned and ported.
   one active version, draft edits, approval, voiding, superseding clones, optimistic revisions,
   idempotent creation/clone commands, and value-free outbox evidence. The pinned revision has no
   quote PDF, template, generation job, or download contract, so this surface does not invent one.
+- Data exports: authenticated create/list/show/download routes replace the pinned GraphQL mutations
+  and Rails job chain for invoice, invoice-fee, credit-note, and credit-note-item CSVs. D1 owns the
+  replay-safe lifecycle; the shared Document Workflow pages a creation-time-bounded snapshot twice,
+  measures it, then streams through `FixedLengthStream` directly to an immutable R2 key. This removes
+  temporary files, export-part rows, local unlink/combine work, and Active Storage. CSV formula-like
+  user strings are neutralized, downloads are private and expire after seven days, and completion
+  email remains explicitly disabled.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
@@ -52,8 +59,8 @@ remaining Lago feature inventory is dispositioned and ported.
   invoice precedence projection, wallet ongoing-balance/depletion projections, and fixed granted
   threshold-rule state,
   customer time zones, subscription billing mode/timezone snapshots, immutable trial boundaries,
-  overdue state, quote identities/versions/owners, payment attempts, outbox state, and webhook
-  receipt metadata;
+  overdue state, quote identities/versions/owners, data-export lifecycle metadata, payment attempts,
+  outbox state, and webhook receipt metadata;
   plan-level minimum commitments are reconciled as auditable period true-up lines after recurring
   subscription, usage, and fixed-charge fees.
 - Plan catalog: idempotent creation and optimistic scalar updates with transactional versioned
