@@ -264,6 +264,13 @@ function extractOperatorSurface(frontRoot) {
 const portRules = [
   {
     pattern:
+      /api\/app\/(controllers\/api\/v1\/payment_receipts_controller|models\/payment_receipt|queries\/payment_receipts_query|serializers\/v1\/payment_receipt_serializer|services\/payment_receipts\/create_service)\.rb/i,
+    target:
+      "cloudflare/src/api/payment-receipts.ts and cloudflare/migrations/0065_payment_receipts.sql",
+    evidence: ["cloudflare/test/payment-receipts.test.ts"],
+  },
+  {
+    pattern:
       /api\/app\/(controllers\/api\/v1\/billing_entities_controller|models\/billing_entity|serializers\/v1\/billing_entity_serializer|services\/billing_entities\/update_service)\.rb/i,
     target: "cloudflare/src/api/billing-entities.ts",
     evidence: ["cloudflare/test/billing-entities.test.ts"],

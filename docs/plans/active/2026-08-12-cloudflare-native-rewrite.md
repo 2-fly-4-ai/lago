@@ -570,8 +570,10 @@ Acceptance:
       tenant-scoped REST equivalent for identity, billing, locale, and document configuration while
       webhook mutation stays behind its separately gated endpoint API. Billing-entity list/show/
       update now projects the retained one-default-entity architecture, with creation and non-default
-      entities rejected explicitly; the remaining operator operations and screens are still
-      inventoried/ported individually.
+      entities rejected explicitly. Payment-receipt list/show and invoice filtering now use a
+      tenant-scoped REST equivalent while document generation and email resend remain explicit
+      boundaries; the remaining operator operations and screens are still inventoried/ported
+      individually.
 - [ ] Serve the operator application with Workers Static Assets.
 - [ ] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained.
 - [ ] Mark retired screens explicitly with approved product rationale.
@@ -2724,3 +2726,20 @@ resource and mutation described.
   billing-entity event containing field names but no configuration values, zero payment state, 678
   schedule audits, and no foreign-key violations. No production route/domain, provider action,
   message, customer data, payment action, or secret persistence occurred.
+- 2026-08-15: Added the tenant-scoped payment-receipt ledger and Lago-compatible list/show/invoice-
+  filter REST surface. Migration `0065_payment_receipts.sql` adds customer-scoped counters, immutable
+  receipt/payment ownership, versioned value-free outbox evidence, and guarded triggers covering
+  both payment-first provider reconciliation and payable-first callers. The manual payment batch now
+  inserts its optimistic-version-guarded payment before advancing the invoice, so a final settlement
+  selects the actual final payment rather than an earlier partial payment. Partial payments remain
+  receipt-free; the first invoice or payment-request settlement creates exactly one replay-safe
+  receipt numbered from the customer identifier and counter. Reads embed the existing Lago-shaped
+  payment serializer. PDF/XML URLs remain null until document generation is ported, and email resend
+  returns an explicit disabled error without a message side effect. The generated inventory maps the
+  upstream controller/model/query/serializer/create service; receipt documents, jobs, templates,
+  downloads, mail, and webhook delivery remain separately unported. All 65 migrations replay from
+  empty D1 with 12 receipt columns, the customer counter, nine state/tenant/version triggers, and no
+  foreign-key violations. Strict format/lint/inventory/bindings/TypeScript pass; all 270 tests across
+  52 files pass serially in 171.22 seconds, and the dry-run bundle is 1284.63 KiB (223.71 KiB gzip).
+  This is a local pre-deployment checkpoint; no remote schema, receipt, provider, message, payment,
+  route, secret, or customer data changed.

@@ -2669,14 +2669,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/domain/",
+        "target": "cloudflare/src/api/payment-receipts.ts and cloudflare/migrations/0065_payment_receipts.sql",
         "evidence": [
-          "api/app/models/payment_receipt.rb"
+          "cloudflare/test/payment-receipts.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/payment-receipts.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/models/payment_request.rb",
@@ -4245,14 +4245,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/",
+        "target": "cloudflare/src/api/payment-receipts.ts and cloudflare/migrations/0065_payment_receipts.sql",
         "evidence": [
-          "api/app/controllers/api/v1/payment_receipts_controller.rb"
+          "cloudflare/test/payment-receipts.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/payment-receipts.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/controllers/api/v1/payment_requests_controller.rb",
@@ -15486,14 +15486,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/billing/",
+        "target": "cloudflare/src/api/payment-receipts.ts and cloudflare/migrations/0065_payment_receipts.sql",
         "evidence": [
-          "api/app/services/payment_receipts/create_service.rb"
+          "cloudflare/test/payment-receipts.test.ts"
         ],
-        "testFixture": null,
-        "parityStatus": "not-started",
-        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
-        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
+        "testFixture": "cloudflare/test/payment-receipts.test.ts",
+        "parityStatus": "partial",
+        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
+        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
       },
       {
         "source": "api/app/services/payment_receipts/files_not_ready_error.rb",

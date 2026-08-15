@@ -15,6 +15,7 @@ import { handleFeesApi } from "./api/fees";
 import { handleApiKeysApi } from "./api/api-keys";
 import { handleOrganizationsApi } from "./api/organizations";
 import { handleBillingEntitiesApi } from "./api/billing-entities";
+import { handlePaymentReceiptsApi } from "./api/payment-receipts";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -90,6 +91,13 @@ export default {
         if (organizationResponse) return organizationResponse;
         const billingEntityResponse = await handleBillingEntitiesApi(request, env, auth, requestId);
         if (billingEntityResponse) return billingEntityResponse;
+        const paymentReceiptResponse = await handlePaymentReceiptsApi(
+          request,
+          env,
+          auth,
+          requestId,
+        );
+        if (paymentReceiptResponse) return paymentReceiptResponse;
         const response = await handleLagoCompatibilityRequest(request, env, auth, requestId);
         if (response) return response;
       }

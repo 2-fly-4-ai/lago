@@ -5,7 +5,7 @@ import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredStri
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 
-type PaymentRow = {
+export type PaymentRow = {
   id: string;
   organization_id: string;
   payable_id: string;
@@ -194,22 +194,6 @@ async function recordManualPayment(
       : null;
   const statements = [
     env.BILLING_DB.prepare(
-      `UPDATE invoices SET payment_status = ?,
-       payment_overdue = CASE WHEN ? = 'succeeded' THEN 0 ELSE payment_overdue END,
-       ready_for_payment_processing = CASE WHEN ? = 'succeeded' THEN 0
-                                           ELSE ready_for_payment_processing END,
-       version = version + 1, updated_at = ?
-       WHERE id = ? AND organization_id = ? AND version = ? AND payment_status <> 'succeeded'`,
-    ).bind(
-      nextInvoiceStatus,
-      nextInvoiceStatus,
-      nextInvoiceStatus,
-      now,
-      invoice.id,
-      auth.organizationId,
-      invoice.version,
-    ),
-    env.BILLING_DB.prepare(
       `INSERT INTO payment_attempts
        (id, organization_id, invoice_id, provider, provider_account_code,
         provider_transaction_id, idempotency_key, amount_minor, currency, status,
@@ -217,7 +201,8 @@ async function recordManualPayment(
        SELECT ?, ?, ?, 'manual', 'manual', NULL, ?, ?, ?, 'succeeded', NULL, NULL,
               'manual', ?, 1, ?, ?
        FROM invoices
-       WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
+       WHERE id = ? AND organization_id = ? AND version = ?
+         AND payment_status <> 'succeeded'`,
     ).bind(
       paymentId,
       auth.organizationId,
@@ -230,8 +215,29 @@ async function recordManualPayment(
       now,
       invoice.id,
       auth.organizationId,
-      invoice.version + 1,
+      invoice.version,
+    ),
+    env.BILLING_DB.prepare(
+      `UPDATE invoices SET payment_status = ?,
+       payment_overdue = CASE WHEN ? = 'succeeded' THEN 0 ELSE payment_overdue END,
+       ready_for_payment_processing = CASE WHEN ? = 'succeeded' THEN 0
+                                           ELSE ready_for_payment_processing END,
+       version = version + 1, updated_at = ?
+       WHERE id = ? AND organization_id = ? AND version = ? AND payment_status <> 'succeeded'
+         AND EXISTS (
+           SELECT 1 FROM payment_attempts payment
+           WHERE payment.id = ? AND payment.organization_id = ?
+         )`,
+    ).bind(
+      nextInvoiceStatus,
+      nextInvoiceStatus,
+      nextInvoiceStatus,
       now,
+      invoice.id,
+      auth.organizationId,
+      invoice.version,
+      paymentId,
+      auth.organizationId,
     ),
     env.BILLING_DB.prepare(
       `INSERT INTO outbox_events
@@ -301,7 +307,7 @@ async function recordManualPayment(
   return json({ payment: serializePayment(payment) }, { requestId });
 }
 
-function paymentRows(): string {
+export function paymentRows(): string {
   return `SELECT payment.id, payment.organization_id, payment.invoice_id AS payable_id,
                  'Invoice' AS payable_type, json_array(payment.invoice_id) AS invoice_ids_json,
                  CASE WHEN invoice.number IS NULL THEN '[]' ELSE json_array(invoice.number) END
@@ -389,7 +395,7 @@ async function successfulPaymentTotal(database: D1Database, invoiceId: string): 
   return value?.total ?? 0;
 }
 
-function serializePayment(payment: PaymentRow): Record<string, unknown> {
+export function serializePayment(payment: PaymentRow): Record<string, unknown> {
   const provider = payment.payment_type === "provider";
   const invoiceIds = jsonStringArray(payment.invoice_ids_json);
   const invoiceNumbers = jsonStringArray(payment.invoice_numbers_json);

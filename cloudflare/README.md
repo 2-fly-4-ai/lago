@@ -21,6 +21,10 @@ remaining Lago feature inventory is dispositioned and ported.
   organization architecture, including tax and custom-section projections, normalized shared
   invoice configuration, replay-safe versions, and value-free audit evidence. Creation, non-default
   entities, e-invoicing, EU tax automation, and compound side-effecting mutations fail explicitly.
+- Payment-receipt API: tenant-scoped Lago-compatible list/show and invoice filtering over receipts
+  created atomically when an invoice or payment request first settles. Customer-scoped numbering,
+  payment serialization, payment-first/payable-first ordering, replay, and value-free outbox evidence
+  are D1-owned; PDF/XML generation and email resend remain explicitly disabled.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
