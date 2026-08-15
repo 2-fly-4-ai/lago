@@ -576,7 +576,7 @@ Acceptance:
 ### M9: Local parity and staging readiness
 
 - [ ] Run full contract, invariant, integration, migration, replay, and document suites.
-- [ ] Run the repository harness and secret scan.
+- [x] Run the repository harness and secret scan.
 - [x] Run Wrangler type generation, config validation, and deployment dry run.
 - [x] Produce a resource manifest with development/staging names, bindings, retention, and deletion
       procedures.
@@ -2497,6 +2497,13 @@ resource and mutation described.
   scheduled, and queue handlers and all three external-action flags at `0`; no production
   route/domain, secret, customer message, provider action, customer data, payment action, or
   billing row changed.
+- 2026-08-15: Completed the current staging-readiness documentation audit. The resource manifest
+  now names the actual latest version and all 59 migrations; the generated inventory maps all 27
+  Clockwork entries to executable evidence with none left `not-started`; and the synthetic-only
+  staging test plan defines provider-free replay/failure phases plus a separately approved sandbox
+  phase. The direct package harness remains green, and a filename-only secret-pattern scan found no
+  private-key, live Stripe, AWS access-key, GitHub token, or Slack token signatures across 212
+  tracked `cloudflare/` and `docs/` files.
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.
