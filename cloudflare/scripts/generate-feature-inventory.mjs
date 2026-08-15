@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
@@ -61,6 +61,17 @@ function gitTimestamp(path) {
   }
 }
 
+function gitTreeRevision(repository, path) {
+  try {
+    const entry = execFileSync("git", ["-C", repository, "ls-tree", "HEAD", "--", path], {
+      encoding: "utf8",
+    }).trim();
+    return entry.split(/\s+/)[2] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function primaryCheckout(repository) {
   try {
     const commonDirectory = execFileSync(
@@ -108,6 +119,146 @@ function topLevelCounts(files, prefix) {
   return Object.fromEntries(
     [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)),
   );
+}
+
+function operatorDomain(source) {
+  const parts = source.replace(/^front\/src\//, "").split("/");
+  if (parts[0] === "components" || parts[0] === "pages") {
+    return parts.slice(0, 2).join("/");
+  }
+  return parts[0] || "(root)";
+}
+
+function countBy(values, keyFor) {
+  const counts = new Map();
+  for (const value of values) {
+    const key = keyFor(value);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return Object.fromEntries(
+    [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function extractOperatorSurface(frontRoot) {
+  const sourceRoot = join(frontRoot, "src");
+  const generatedOperations = new Set();
+  const generatedGraphql = readFileSync(join(sourceRoot, "generated", "graphql.tsx"), "utf8");
+  for (const match of generatedGraphql.matchAll(
+    /export type ([A-Za-z0-9_]+?)(Query|Mutation|Subscription)Variables\b/g,
+  )) {
+    generatedOperations.add(`${match[2].toLowerCase()}:${match[1]}`);
+  }
+  const sourceFiles = filesBelow(
+    sourceRoot,
+    (path) => {
+      const segments = path.split(sep);
+      return (
+        /\.(ts|tsx)$/.test(path) &&
+        !segments.includes("generated") &&
+        !segments.includes("__tests__") &&
+        !segments.includes("__mocks__") &&
+        !segments.includes("test-utils") &&
+        !/\.(test|spec)\.(ts|tsx)$/.test(path)
+      );
+    },
+    "front/src",
+  );
+  const operations = new Map();
+  const routes = new Map();
+
+  for (const source of sourceFiles) {
+    const absolute = resolve(frontRoot, relative("front", source));
+    const contents = readFileSync(absolute, "utf8");
+    for (const document of contents.matchAll(/\bgql\s*`([\s\S]*?)`/g)) {
+      for (const match of document[1].matchAll(
+        /(?:^|\n)[ \t]*(query|mutation|subscription)[ \t]+([A-Za-z_][A-Za-z0-9_]*)\b/g,
+      )) {
+        const [, kind, name] = match;
+        const key = `${kind}:${name}`;
+        const operation = operations.get(key) ?? { name, kind, sources: [] };
+        if (!operation.sources.includes(source)) operation.sources.push(source);
+        operations.set(key, operation);
+      }
+    }
+    for (const match of contents.matchAll(
+      /export\s+const\s+([A-Z][A-Z0-9_]*(?:ROUTE|BASE)[A-Z0-9_]*)\s*=\s*(["'`])([^"'`]+)\2/g,
+    )) {
+      const [, name, , value] = match;
+      const key = `${name}:${value}`;
+      const route = routes.get(key) ?? { name, value, sources: [] };
+      if (!route.sources.includes(source)) route.sources.push(source);
+      routes.set(key, route);
+    }
+  }
+
+  const sourcedOperationKeys = new Set(
+    [...operations.values()].map(
+      (operation) =>
+        `${operation.kind}:${operation.name.slice(0, 1).toUpperCase()}${operation.name.slice(1)}`,
+    ),
+  );
+  const missingGeneratedOperations = [...generatedOperations].filter(
+    (operation) => !sourcedOperationKeys.has(operation),
+  );
+  if (missingGeneratedOperations.length > 0) {
+    throw new Error(
+      `Generated frontend operations are missing source documents: ${missingGeneratedOperations.join(", ")}`,
+    );
+  }
+
+  const operationList = [...operations.values()]
+    .map((operation) => ({
+      ...operation,
+      sources: operation.sources.sort(),
+      generated: generatedOperations.has(
+        `${operation.kind}:${operation.name.slice(0, 1).toUpperCase()}${operation.name.slice(1)}`,
+      ),
+      owner: "lago-operator-ui",
+      consumers: ["lago-operators"],
+      disposition: "port",
+      target: "Cloudflare REST compatibility or cloudflare/src/operator-api/",
+      parityStatus: "not-started",
+      mappingStatus: "unmapped",
+      migrationNotes:
+        "Map the complete screen contract before exposing this operation from a Cloudflare-hosted operator UI.",
+      rollbackNotes:
+        "Keep the legacy operator UI hidden until every visible screen dependency is mapped.",
+    }))
+    .sort(
+      (left, right) => left.kind.localeCompare(right.kind) || left.name.localeCompare(right.name),
+    );
+  const routeList = [...routes.values()]
+    .map((route) => ({
+      ...route,
+      sources: route.sources.sort(),
+      owner: "lago-operator-ui",
+      disposition: "port",
+      target: "Cloudflare Workers Static Assets",
+      parityStatus: "not-started",
+      mappingStatus: "unmapped",
+    }))
+    .sort(
+      (left, right) => left.name.localeCompare(right.name) || left.value.localeCompare(right.value),
+    );
+
+  return {
+    summary: {
+      operations: operationList.length,
+      queries: operationList.filter((operation) => operation.kind === "query").length,
+      mutations: operationList.filter((operation) => operation.kind === "mutation").length,
+      subscriptions: operationList.filter((operation) => operation.kind === "subscription").length,
+      generatedOperations: generatedOperations.size,
+      sourceOnlyOperations: operationList.filter((operation) => !operation.generated).length,
+      missingGeneratedOperations: missingGeneratedOperations.length,
+      literalRouteConstants: routeList.length,
+    },
+    operationDomains: countBy(operationList, (operation) =>
+      operatorDomain(operation.sources[0] ?? "front/src/(unknown)"),
+    ),
+    operations: operationList,
+    routes: routeList,
+  };
 }
 
 const portRules = [
@@ -278,6 +429,20 @@ const frontDirectory = resolve(
       ? resolve(repositoryDirectory, "front")
       : resolve(primaryDirectory, "front")),
 );
+const pinnedApiRevision = gitTreeRevision(repositoryDirectory, "api");
+const pinnedFrontRevision = gitTreeRevision(repositoryDirectory, "front");
+const apiRevision = gitRevision(apiDirectory);
+const frontRevision = gitRevision(frontDirectory);
+for (const [name, pinned, actual] of [
+  ["api", pinnedApiRevision, apiRevision],
+  ["front", pinnedFrontRevision, frontRevision],
+]) {
+  if (!pinned || actual !== pinned) {
+    throw new Error(
+      `${name} source revision mismatch: expected ${pinned ?? "a pinned gitlink"}, found ${actual ?? "no checkout"}. Initialize the exact submodule revision before generating inventory.`,
+    );
+  }
+}
 const ruby = (path) => path.endsWith(".rb");
 const models = gitFilesBelow(apiDirectory, "app/models", ruby, "api/app/models");
 const controllers = gitFilesBelow(apiDirectory, "app/controllers", ruby, "api/app/controllers");
@@ -291,6 +456,7 @@ const frontSource = gitFilesBelow(
   (path) => /\.(ts|tsx|graphql)$/.test(path),
   "front/src",
 );
+const operatorSurface = extractOperatorSurface(frontDirectory);
 
 const clockFile = join(apiDirectory, "clock.rb");
 const schedules = statSafe(clockFile)
@@ -304,8 +470,10 @@ const inventory = {
   schemaVersion: 1,
   generatedAt: gitTimestamp(apiDirectory),
   inputs: {
-    apiRevision: gitRevision(apiDirectory),
-    frontRevision: gitRevision(frontDirectory),
+    apiRevision,
+    apiPinnedRevision: pinnedApiRevision,
+    frontRevision,
+    frontPinnedRevision: pinnedFrontRevision,
   },
   policy: {
     allowedDispositions: ["port", "retire", "external", "blocked", "not-used", "unknown"],
@@ -324,6 +492,11 @@ const inventory = {
     migrations: migrations.length,
     schedules: schedules.length,
     frontSourceFiles: frontSource.length,
+    frontGraphqlOperations: operatorSurface.summary.operations,
+    frontGraphqlQueries: operatorSurface.summary.queries,
+    frontGraphqlMutations: operatorSurface.summary.mutations,
+    frontGraphqlSubscriptions: operatorSurface.summary.subscriptions,
+    frontLiteralRouteConstants: operatorSurface.summary.literalRouteConstants,
   },
   domains: {
     services: topLevelCounts(services, "api/app/services"),
@@ -342,6 +515,7 @@ const inventory = {
     })),
     front: frontSource.map(disposition),
   },
+  operatorSurface,
 };
 
 const generated = `${JSON.stringify(inventory, null, 2)}\n`;

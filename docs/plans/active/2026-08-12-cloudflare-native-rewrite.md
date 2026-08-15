@@ -542,7 +542,14 @@ Acceptance:
 
 ### M8: Operator API and UI
 
-- [ ] Inventory the Vite UI's GraphQL operations and screen-level feature dependencies.
+- [x] Inventory the Vite UI's GraphQL operations and screen-level feature dependencies. The
+      generated inventory now records 503 source operations (267 queries, 235 mutations, and one
+      subscription), their owning screens/domains, 161 literal route constants, and mapping status.
+      Of those operations, 496 have generated Apollo types; seven source-only operations belong to
+      the pinned Authorize.Net integration UI and expose a code-generation drift that must be
+      resolved before that screen can be retained. The generator refuses API or frontend sources
+      whose revisions differ from this branch's submodule gitlinks. Every operation and route
+      remains explicitly unmapped rather than making an unsupported screen appear functional.
 - [ ] Implement the GraphQL compatibility surface or replace individual screens with a documented
       Worker API equivalent. Manual invoice custom-section catalog CRUD now uses the documented
       tenant-scoped REST equivalent; the remaining operator operations and screens are still
