@@ -2316,3 +2316,15 @@ resource and mutation described.
   Strict format/lint, inventory, generated bindings, TypeScript, and Wrangler dry run pass; the
   complete serial suite passes all 217 tests across 40 files in 131.69 seconds. The dry-run bundle
   is 1077.87 KiB (187.19 KiB gzip).
+- 2026-08-15: Remote preflight found only `0054_daily_usage_projection.sql` pending and zero
+  organizations, customers, plans, subscriptions, invoices, billable metrics, charges, usage
+  events, advance-usage billings, outbox rows, and foreign-key violations; the existing 307 rows
+  were schedule audits only. Applied only migration 0054 to the isolated non-production D1, then
+  verified 54 migrations, 21 snapshot columns, 20 normalized-line columns, 11 projection indexes,
+  the indexed rollup query plan, zero projection rows, zero foreign-key violations, and no pending
+  migration. Deployed only `serp-dev-lago-native` as version
+  `e52643ed-8a2a-4614-9465-dcef63bd448f` with a 5 ms startup and the unchanged one-minute Cron.
+  Health/readiness returned `200`/`200`, unauthenticated current usage returned `401`, and the
+  post-deploy aggregate-only audit remained empty apart from 308 schedule runs. All three external-
+  action flags remain `0`; no production route/domain, secret, provider action, customer data,
+  payment action, or billing row changed.
