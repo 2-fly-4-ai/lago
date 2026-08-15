@@ -2967,3 +2967,9 @@ resource and mutation described.
   evidence rather than inventing a Kafka/ClickHouse replacement. All three focused lifetime-usage
   tests pass. This plan-only reconciliation adds no runtime code, migration, deployment, provider
   action, secret, customer data, or production resource change.
+- 2026-08-15: Completed the post-audit local checkpoint after provider disposition, subscription/
+  usage milestone reconciliation, and the billing golden fixture. All 291 tests across 56 files
+  pass serially in 197.30 seconds. The Wrangler 4.122.0 dry bundle remains 1396.05 KiB (243.58 KiB
+  gzip) with the same Durable Object, four Workflows, Queue, D1, R2, and Browser bindings and all
+  three external-action flags at `0`. No deployment was performed because this checkpoint changed
+  no Worker runtime or schema; the isolated remote version and resources remain untouched.
