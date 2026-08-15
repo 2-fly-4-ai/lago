@@ -26,6 +26,7 @@ import { handleCouponLedgerRequest } from "./coupon-ledger";
 import { handleWalletLedgerRequest } from "./wallet-ledger";
 import { handleCreditNoteLedgerRequest } from "./credit-note-ledger";
 import { handleTaxLedgerRequest } from "./tax-ledger";
+import { handleInvoicePaymentRetryRequest } from "./invoice-payment-retries";
 import { Decimal } from "../rating/decimal";
 import { handleWebhookEndpointRequest } from "./webhook-endpoints";
 import { handleAddOnLedgerRequest } from "./add-on-ledger";
@@ -221,6 +222,14 @@ export async function handleLagoCompatibilityRequest(
 
   const paymentResponse = await handlePaymentLedgerRequest(request, env, auth, requestId);
   if (paymentResponse) return paymentResponse;
+
+  const paymentRetryResponse = await handleInvoicePaymentRetryRequest(
+    request,
+    env,
+    auth,
+    requestId,
+  );
+  if (paymentRetryResponse) return paymentRetryResponse;
 
   if (request.method === "POST" && url.pathname === "/api/v1/customers") {
     return upsertCustomer(request, null, env, auth, requestId);

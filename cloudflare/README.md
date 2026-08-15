@@ -293,6 +293,15 @@ remaining Lago feature inventory is dispositioned and ported.
   create the matching hosted link once per request version, persist processing/success/failure
   outcomes, and emit token-free outbox evidence. Its dispatcher and provider call both require
   `PAYMENT_MUTATIONS_ENABLED=1`; creating the request itself never calls a provider or sends email.
+- Invoice payment retry: `POST /api/v1/invoices/:id/retry_payment` retains the pinned Authorize.Net
+  behavior without a provider call. A required `Idempotency-Key` is stored only as an
+  organization-scoped SHA-256 derivative. One version-guarded D1 batch records a pending payment
+  intent, resets a retryable finalized invoice to pending, invalidates its stale hosted-payment
+  link, and writes value-free outbox evidence. Same-key replay returns the original result, while
+  different commands racing one invoice version have exactly one winner. Payment-method overrides
+  are rejected because the retained provider uses a newly generated Accept Hosted form rather than
+  a stored method. The route remains disabled unless `PAYMENT_MUTATIONS_ENABLED=1`; the deployed
+  isolated environment keeps that flag at `0`.
 - Dunning campaigns: authenticated tenant-scoped create/list/show/update/delete routes own campaign
   thresholds, organization defaults, customer overrides, and exclusions in D1. The hourly `:45`
   Workflow executor creates at most one deterministic payment request per eligible customer and

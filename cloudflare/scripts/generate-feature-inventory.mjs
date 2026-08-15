@@ -331,6 +331,11 @@ const portRules = [
     evidence: ["cloudflare/test/payment-requests.test.ts"],
   },
   {
+    pattern: /api\/app\/services\/invoices\/payments\/retry_service\.rb/i,
+    target: "cloudflare/src/api/invoice-payment-retries.ts",
+    evidence: ["cloudflare/test/invoice-payment-retry.test.ts"],
+  },
+  {
     pattern: /refresh_(dedicated_org_)?wallets_ongoing_balance/i,
     target: "cloudflare/src/schedules/registry.ts and cloudflare/src/schedules/wallet-balances.ts",
     evidence: [

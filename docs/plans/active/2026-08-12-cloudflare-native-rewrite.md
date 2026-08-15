@@ -390,8 +390,12 @@ Acceptance:
       unused-period note beside the termination draft, reprices it with its draft prepaid source,
       finalizes it only after that source, and applies it before wallets while finalizing the
       termination invoice. Adjusted draft sources, paid-invoice refund/offset voids, allocated-source
-      adjustments, destructive plan/charge graph replacement, and broader retry transitions remain
-      pending.
+      adjustments and destructive plan/charge graph replacement remain pending. The pinned
+      Authorize.Net `POST /api/v1/invoices/:id/retry_payment` transition is now retained as a
+      provider-free, kill-switched D1 command: it accepts one idempotent winner per invoice version,
+      records a pending payment intent, returns the invoice to pending, invalidates the stale hosted-
+      payment link, and emits value-free outbox evidence. Generic provider retry, regeneration, and
+      unsupported invoice-adjustment transitions remain pending.
       Customer net-payment terms now snapshot onto finalized initial, recurring, and one-off
       invoices with deterministic due dates. The legacy hourly overdue transition is replay-safe,
       emits a transactional outbox event, and successful manual or Authorize.Net settlement clears
@@ -2973,3 +2977,19 @@ resource and mutation described.
   gzip) with the same Durable Object, four Workflows, Queue, D1, R2, and Browser bindings and all
   three external-action flags at `0`. No deployment was performed because this checkpoint changed
   no Worker runtime or schema; the isolated remote version and resources remain untouched.
+- 2026-08-15: Retained the pinned Authorize.Net invoice-payment retry as a container-free Worker/D1
+  command. `POST /api/v1/invoices/:id/retry_payment` requires the disabled-by-default payment
+  mutation gate and an organization-scoped hashed idempotency key; it makes no provider call. One
+  version-guarded D1 batch records the pending intent, returns an eligible finalized invoice to
+  pending, removes its stale hosted-payment link, and stores value-free outbox evidence. Same-key
+  retries replay, while different keys racing one invoice version produce exactly one winner. Empty
+  payment-method input remains compatible and stored-method overrides fail explicitly because the
+  retained provider uses Accept Hosted. The exact Rails retry service now maps to the dedicated
+  Worker source and six focused tests cover the gate, replay, tenant/provider/status validation,
+  same- and different-key races, stale-link invalidation, hashed evidence, payment projection, and
+  late-statement rollback. Strict formatting, zero-warning lint, bindings, TypeScript, and generated-
+  inventory freshness pass. All 297 tests across 57 files pass serially in 236.53 seconds, and the
+  Wrangler 4.122.0 dry bundle is 1406.01 KiB (245.80 KiB gzip) with unchanged resources and all
+  three external-action flags at `0`. No migration is required. This is a local pre-deployment
+  checkpoint; no remote resource, provider action, customer message, payment action, secret, or
+  customer data changed.

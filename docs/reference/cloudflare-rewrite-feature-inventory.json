@@ -13414,11 +13414,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/lago-compatibility.ts",
+        "target": "cloudflare/src/api/invoice-payment-retries.ts",
         "evidence": [
-          "cloudflare/fixtures/store-new/invoice-list-query.json"
+          "cloudflare/test/invoice-payment-retry.test.ts"
         ],
-        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
+        "testFixture": "cloudflare/test/invoice-payment-retry.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
