@@ -1091,11 +1091,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/tax-ledger.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/tax-ledger.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/tax-ledger.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -3801,14 +3801,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/controllers/api/v1/credit_notes/base_controller.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/controllers/api/v1/credit_notes/metadata_controller.rb",
@@ -3818,14 +3818,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/controllers/api/v1/credit_notes/metadata_controller.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/controllers/api/v1/credit_notes_controller.rb",
@@ -7653,14 +7653,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/credit_notes/adjust_amounts_with_rounding_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/credit_notes/apply_taxes_service.rb",
@@ -7669,11 +7669,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/tax-ledger.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/tax-ledger.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/tax-ledger.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -7703,14 +7703,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/credit_notes/create_from_termination.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/credit_notes/create_service.rb",
@@ -7735,14 +7735,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/credit_notes/estimate_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/credit_notes/generate_pdf_service.rb",
@@ -7751,9 +7751,10 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/credit-note-ledger.ts, cloudflare/src/documents/credit-note.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0067_credit_note_documents.sql",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/credit-note-ledger.test.ts",
+          "cloudflare/test/credit-note-document.test.ts"
         ],
         "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
         "parityStatus": "partial",
@@ -7767,14 +7768,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/credit_notes/generate_xml_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/credit_notes/lock_service.rb",
@@ -7783,14 +7784,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/credit_notes/lock_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/credit_notes/provider_taxes/report_service.rb",
@@ -7799,11 +7800,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/tax-ledger.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/tax-ledger.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/tax-ledger.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -7847,14 +7848,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/credit_notes/refunds/adyen_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/credit_notes/refunds/gocardless_service.rb",
@@ -7863,14 +7864,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/credit_notes/refunds/gocardless_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/credit_notes/refunds/stripe_service.rb",
@@ -7879,14 +7880,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/credit_notes/refunds/stripe_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/credit_notes/update_service.rb",
@@ -7895,14 +7896,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/credit_notes/update_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/credit_notes/validate_item_service.rb",
@@ -8842,14 +8843,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/data_exports/csv/credit_note_items.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/data_exports/csv/credit_notes.rb",
@@ -8858,14 +8859,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/data_exports/csv/credit_notes.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/data_exports/csv/invoice_fees.rb",
@@ -9023,11 +9024,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/fixtures/store-new/invoice-list-query.json"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -9039,11 +9040,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/fixtures/store-new/invoice-list-query.json"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -11264,14 +11265,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/integrations/aggregator/credit_notes/create_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/integrations/aggregator/credit_notes/payloads/anrok.rb",
@@ -11280,14 +11281,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/integrations/aggregator/credit_notes/payloads/anrok.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/integrations/aggregator/credit_notes/payloads/base_payload.rb",
@@ -11296,14 +11297,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/integrations/aggregator/credit_notes/payloads/base_payload.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/integrations/aggregator/credit_notes/payloads/factory.rb",
@@ -11312,14 +11313,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/integrations/aggregator/credit_notes/payloads/factory.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/integrations/aggregator/credit_notes/payloads/netsuite.rb",
@@ -11328,14 +11329,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/integrations/aggregator/credit_notes/payloads/netsuite.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/integrations/aggregator/credit_notes/payloads/xero.rb",
@@ -11344,14 +11345,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/integrations/aggregator/credit_notes/payloads/xero.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/integrations/aggregator/custom_object_service.rb",
@@ -11912,11 +11913,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/tax-ledger.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/tax-ledger.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/tax-ledger.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -11928,11 +11929,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/tax-ledger.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/tax-ledger.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/tax-ledger.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -11944,11 +11945,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/tax-ledger.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/tax-ledger.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/tax-ledger.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -11960,11 +11961,11 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/tax-ledger.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/tax-ledger.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/tax-ledger.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -17965,14 +17966,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/webhooks/credit_notes/created_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/webhooks/credit_notes/generated_service.rb",
@@ -17981,14 +17982,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/webhooks/credit_notes/generated_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/webhooks/credit_notes/payment_provider_refund_failure_service.rb",
@@ -17997,14 +17998,14 @@
           "lago-internal"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/billing/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/services/webhooks/credit_notes/payment_provider_refund_failure_service.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/services/webhooks/customers/created_service.rb",
@@ -19753,9 +19754,10 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/credit-note-ledger.ts, cloudflare/src/documents/credit-note.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0067_credit_note_documents.sql",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/credit-note-ledger.test.ts",
+          "cloudflare/test/credit-note-document.test.ts"
         ],
         "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
         "parityStatus": "partial",
@@ -19769,9 +19771,10 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/credit-note-ledger.ts, cloudflare/src/documents/credit-note.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0067_credit_note_documents.sql",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/credit-note-ledger.test.ts",
+          "cloudflare/test/credit-note-document.test.ts"
         ],
         "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
         "parityStatus": "partial",
@@ -19785,14 +19788,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/jobs/credit_notes/generate_xml_job.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/jobs/credit_notes/provider_taxes/report_job.rb",
@@ -19801,11 +19804,11 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/tax-ledger.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/tax-ledger.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/tax-ledger.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -19817,14 +19820,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/jobs/credit_notes/refunds/adyen_create_job.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/jobs/credit_notes/refunds/gocardless_create_job.rb",
@@ -19833,14 +19836,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/jobs/credit_notes/refunds/gocardless_create_job.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/jobs/credit_notes/refunds/stripe_create_job.rb",
@@ -19849,14 +19852,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/jobs/credit_notes/refunds/stripe_create_job.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/jobs/customers/refresh_wallet_job.rb",
@@ -20399,14 +20402,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/jobs/database_migrations/populate_credit_note_items_with_organization_job.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/jobs/database_migrations/populate_credit_notes_taxes_with_organization_job.rb",
@@ -20415,11 +20418,11 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/tax-ledger.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/tax-ledger.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/tax-ledger.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -20431,14 +20434,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/jobs/database_migrations/populate_credit_notes_with_organization_job.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/jobs/database_migrations/populate_credits_with_organization_job.rb",
@@ -21331,14 +21334,14 @@
           "lago-runtime"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/workflows/ or cloudflare/src/queues/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/jobs/integrations/aggregator/credit_notes/create_job.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/jobs/integrations/aggregator/fetch_items_job.rb",
@@ -23738,14 +23741,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/mutations/credit_notes/create.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/mutations/credit_notes/download.rb",
@@ -23755,14 +23758,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/mutations/credit_notes/download.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/mutations/credit_notes/download_xml.rb",
@@ -23772,14 +23775,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/mutations/credit_notes/download_xml.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/mutations/credit_notes/resend_email.rb",
@@ -23789,14 +23792,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/mutations/credit_notes/resend_email.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/mutations/credit_notes/retry_tax_reporting.rb",
@@ -23806,11 +23809,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/tax-ledger.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/tax-ledger.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/tax-ledger.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -23823,14 +23826,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/mutations/credit_notes/update.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/mutations/credit_notes/void.rb",
@@ -23840,14 +23843,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/mutations/credit_notes/void.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/mutations/customer_portal/download_invoice.rb",
@@ -23993,14 +23996,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/mutations/data_exports/credit_notes/create.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/mutations/data_exports/invoices/create.rb",
@@ -24625,14 +24628,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/mutations/integrations/sync_credit_note.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/mutations/integrations/sync_invoice.rb",
@@ -26839,14 +26842,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/resolvers/credit_note_resolver.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/resolvers/credit_notes/estimate_resolver.rb",
@@ -26856,14 +26859,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/resolvers/credit_notes/estimate_resolver.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/resolvers/credit_notes_resolver.rb",
@@ -26873,14 +26876,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/resolvers/credit_notes_resolver.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/resolvers/current_user_resolver.rb",
@@ -27640,11 +27643,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/fixtures/store-new/invoice-list-query.json"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/fixtures/store-new/invoice-list-query.json",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -30129,14 +30132,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/credit_note_items/estimate.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/credit_note_items/input.rb",
@@ -30146,14 +30149,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/credit_note_items/input.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/credit_note_items/object.rb",
@@ -30163,14 +30166,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/credit_note_items/object.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/credit_notes/applied_taxes/object.rb",
@@ -30180,11 +30183,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/tax-ledger.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/tax-ledger.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/tax-ledger.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -30197,14 +30200,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/credit_notes/credit_status_type_enum.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/credit_notes/estimate.rb",
@@ -30214,14 +30217,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/credit_notes/estimate.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/credit_notes/object.rb",
@@ -30231,14 +30234,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/credit_notes/object.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/credit_notes/reason_type_enum.rb",
@@ -30248,14 +30251,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/credit_notes/reason_type_enum.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/credit_notes/refund_status_type_enum.rb",
@@ -30265,14 +30268,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/credit_notes/refund_status_type_enum.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/credit_notes/type_enum.rb",
@@ -30282,14 +30285,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/credit_notes/type_enum.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/credit_notes/update_credit_note_input.rb",
@@ -30299,14 +30302,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/credit_notes/update_credit_note_input.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/currency_enum.rb",
@@ -30520,11 +30523,11 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/lago-compatibility.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/fixtures/store-new/customer-upsert.json"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/fixtures/store-new/customer-upsert.json",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
@@ -31115,14 +31118,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/data_exports/credit_notes/create_input.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/data_exports/credit_notes/export_type_enum.rb",
@@ -31132,14 +31135,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/data_exports/credit_notes/export_type_enum.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/data_exports/credit_notes/filters_input.rb",
@@ -31149,14 +31152,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/data_exports/credit_notes/filters_input.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/data_exports/format_type_enum.rb",
@@ -32721,14 +32724,14 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/operator-api/",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "api/app/graphql/types/integrations/sync_credit_note_input.rb"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
-        "parityStatus": "partial",
-        "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
-        "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."
+        "testFixture": null,
+        "parityStatus": "not-started",
+        "migrationNotes": "Port or consolidate this behavior in the assigned Cloudflare component; do not assume a one-file-for-one-file translation.",
+        "rollbackNotes": "Keep the legacy Lago behavior authoritative until a contract fixture and parity evidence exist."
       },
       {
         "source": "api/app/graphql/types/integrations/sync_hubspot_invoice_input.rb",
@@ -34883,11 +34886,12 @@
           "lago-operator-ui"
         ],
         "disposition": "port",
-        "target": "cloudflare/src/api/credit-note-ledger.ts",
+        "target": "cloudflare/src/api/subscription-lifecycle.ts",
         "evidence": [
-          "cloudflare/test/credit-note-ledger.test.ts"
+          "cloudflare/test/subscription-lifecycle.test.ts",
+          "cloudflare/test/billing-cycle.test.ts"
         ],
-        "testFixture": "cloudflare/test/credit-note-ledger.test.ts",
+        "testFixture": "cloudflare/test/subscription-lifecycle.test.ts",
         "parityStatus": "partial",
         "migrationNotes": "Port incrementally behind isolated Cloudflare development resources.",
         "rollbackNotes": "Keep the legacy Lago path authoritative until parity and cutover approval."

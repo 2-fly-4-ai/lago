@@ -1,6 +1,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { browserPdfRenderer, generateInvoicePdf } from "../documents/invoice";
 import { generatePaymentReceiptPdf } from "../documents/payment-receipt";
+import { generateCreditNotePdf } from "../documents/credit-note";
 
 export type DocumentWorkflowParams =
   | {
@@ -14,12 +15,41 @@ export type DocumentWorkflowParams =
       paymentReceiptId: string;
       organizationId: string;
       correlationId: string;
+    }
+  | {
+      kind: "credit_note";
+      creditNoteId: string;
+      organizationId: string;
+      correlationId: string;
     };
 
 export class DocumentWorkflow extends WorkflowEntrypoint<Env, DocumentWorkflowParams> {
   override async run(event: WorkflowEvent<DocumentWorkflowParams>, step: WorkflowStep) {
     const { organizationId, correlationId } = event.payload;
     if (!organizationId || !correlationId) throw new Error("invalid_document_payload");
+    if (event.payload.kind === "credit_note") {
+      const { creditNoteId } = event.payload;
+      if (!creditNoteId) throw new Error("invalid_document_payload");
+      const owned = await step.do("verify credit note ownership", async () => {
+        const note = await this.env.BILLING_DB.prepare(
+          `SELECT id FROM credit_notes
+           WHERE id = ? AND organization_id = ? AND allocation_state = 'finalized' LIMIT 1`,
+        )
+          .bind(creditNoteId, organizationId)
+          .first();
+        return !!note;
+      });
+      if (!owned) throw new Error("credit_note_not_found");
+      return step.do(
+        "render and archive credit note pdf",
+        {
+          retries: { limit: 5, delay: "10 seconds", backoff: "exponential" },
+          timeout: "2 minutes",
+        },
+        async () =>
+          generateCreditNotePdf(this.env, creditNoteId, browserPdfRenderer(this.env.BROWSER)),
+      );
+    }
     if (event.payload.kind === "payment_receipt") {
       const { paymentReceiptId } = event.payload;
       if (!paymentReceiptId) throw new Error("invalid_document_payload");

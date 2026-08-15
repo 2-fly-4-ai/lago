@@ -384,7 +384,18 @@ const portRules = [
     evidence: ["cloudflare/test/coupon-ledger.test.ts"],
   },
   {
-    pattern: /credit_note/i,
+    pattern:
+      /api\/app\/(jobs\/credit_notes\/generate_(?:documents|pdf)_job|services\/credit_notes\/generate_pdf_service)\.rb/i,
+    target:
+      "cloudflare/src/api/credit-note-ledger.ts, cloudflare/src/documents/credit-note.ts, cloudflare/src/workflows/documents.ts, and cloudflare/migrations/0067_credit_note_documents.sql",
+    evidence: [
+      "cloudflare/test/credit-note-ledger.test.ts",
+      "cloudflare/test/credit-note-document.test.ts",
+    ],
+  },
+  {
+    pattern:
+      /api\/app\/(models\/(?:credit_note|credit_note_item)|controllers\/api\/v1\/(?:customers\/)?credit_notes_controller|controllers\/concerns\/credit_note_index|services\/credit_notes\/(?:create_from_termination|create|recredit|refresh_draft|validate_item|validate|void)_service|services\/credits\/credit_note_service)\.rb/i,
     target: "cloudflare/src/api/credit-note-ledger.ts",
     evidence: ["cloudflare/test/credit-note-ledger.test.ts"],
   },

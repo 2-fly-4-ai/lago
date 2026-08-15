@@ -166,7 +166,7 @@ describe("credit-note ledger", () => {
     ).resolves.toMatchObject({ credit_notes: [{ lago_id: creditNoteId }] });
   });
 
-  it("rejects provider refunds and document side effects explicitly", async () => {
+  it("rejects provider refunds and reports a missing document", async () => {
     const refund = await request(
       "/api/v1/credit_notes",
       "POST",
@@ -178,9 +178,9 @@ describe("credit-note ledger", () => {
       code: "unsupported_credit_note_side_effect",
     });
     const document = await request("/api/v1/credit_notes/unknown/download", "POST");
-    expect(document.status).toBe(422);
+    expect(document.status).toBe(404);
     await expect(document.json()).resolves.toMatchObject({
-      code: "unsupported_credit_note_side_effect",
+      code: "credit_note_not_found",
     });
   });
 });

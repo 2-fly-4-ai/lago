@@ -1,8 +1,6 @@
 import { paymentRows } from "../api/payment-ledger";
 import { deterministicUuid } from "../identifiers";
-import type { PdfRenderer } from "./invoice";
-
-const MAX_PDF_BYTES = 10 * 1024 * 1024;
+import { sha256HexBytes, type PdfRenderer, validatedPdfBytes } from "./invoice";
 
 type PaymentReceiptDocumentRow = {
   id: string;
@@ -90,12 +88,7 @@ export async function generatePaymentReceiptPdf(
 
   try {
     const response = await renderer.render(renderPaymentReceiptHtml(receipt, invoices));
-    if (!response.ok || !response.body) throw new Error(`browser_pdf_error:${response.status}`);
-    const declared = Number.parseInt(response.headers.get("Content-Length") ?? "", 10);
-    if (Number.isFinite(declared) && declared > MAX_PDF_BYTES) throw new Error("pdf_too_large");
-    const bytes = await readBoundedBytes(response.body, MAX_PDF_BYTES);
-    if (bytes.byteLength === 0) throw new Error("invalid_pdf_size");
-    if (!startsWithPdfSignature(bytes)) throw new Error("invalid_pdf_signature");
+    const bytes = await validatedPdfBytes(response);
     const sha256 = await sha256HexBytes(bytes);
     await env.BILLING_ARTIFACTS.put(objectKey, bytes, {
       httpMetadata: { contentType: "application/pdf" },
@@ -243,39 +236,6 @@ function jsonStringArray(value: string): string[] {
   } catch {
     return [];
   }
-}
-
-async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function readBoundedBytes(stream: ReadableStream<Uint8Array>, maximum: number) {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maximum) throw new Error("pdf_too_large");
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
-}
-
-function startsWithPdfSignature(bytes: Uint8Array): boolean {
-  return bytes.length >= 5 && String.fromCharCode(...bytes.slice(0, 5)) === "%PDF-";
 }
 
 function formatMinor(value: number, currency: string): string {

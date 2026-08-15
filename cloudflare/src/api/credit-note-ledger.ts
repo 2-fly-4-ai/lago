@@ -32,6 +32,8 @@ type CreditNoteRow = {
   created_at: string;
   updated_at: string;
   voided_at: string | null;
+  pdf_status: "generating" | "ready" | "failed" | null;
+  pdf_object_key: string | null;
 };
 
 type InputItem = { lineId: string; amountMinor: number };
@@ -61,9 +63,20 @@ export async function handleCreditNoteLedgerRequest(
   if (!match?.[1]) return null;
   const id = decodeURIComponent(match[1]);
   if (request.method === "GET" && !match[2])
-    return showCreditNote(id, env.BILLING_DB, auth, requestId);
+    return showCreditNote(id, env.BILLING_DB, auth, requestId, url.origin);
   if (request.method === "PUT" && match[2] === "void")
-    return voidCreditNote(id, env, auth, requestId);
+    return voidCreditNote(id, env, auth, requestId, url.origin);
+  if (
+    (request.method === "POST" || request.method === "GET") &&
+    (match[2] === "download" || match[2] === "download_pdf")
+  )
+    return downloadCreditNote(id, env, auth, requestId);
+  if (match[2] === "download_xml")
+    throw new ApiError(
+      422,
+      "credit_note_xml_disabled",
+      "Credit note XML requires e-invoicing, which is not implemented by the Cloudflare subset",
+    );
   if (match[2])
     throw new ApiError(
       422,
@@ -110,7 +123,13 @@ async function createCreditNote(
         "Idempotency-Key was already used with different credit note values",
       );
     return json(
-      { credit_note: await serializeCreditNote(env.BILLING_DB, existing) },
+      {
+        credit_note: await serializeCreditNote(
+          env.BILLING_DB,
+          existing,
+          new URL(request.url).origin,
+        ),
+      },
       { requestId },
     );
   }
@@ -219,7 +238,13 @@ async function createCreditNote(
       if (concurrent.request_sha256 !== requestHash)
         throw new ApiError(409, "idempotency_conflict", "Idempotency-Key is already in use");
       return json(
-        { credit_note: await serializeCreditNote(env.BILLING_DB, concurrent) },
+        {
+          credit_note: await serializeCreditNote(
+            env.BILLING_DB,
+            concurrent,
+            new URL(request.url).origin,
+          ),
+        },
         { requestId },
       );
     }
@@ -232,7 +257,12 @@ async function createCreditNote(
   await env.DOMAIN_EVENTS.send(event);
   const note = await findCreditNote(env.BILLING_DB, auth.organizationId, id);
   if (!note) throw new ApiError(500, "persistence_error", "Credit note was not persisted");
-  return json({ credit_note: await serializeCreditNote(env.BILLING_DB, note) }, { requestId });
+  return json(
+    {
+      credit_note: await serializeCreditNote(env.BILLING_DB, note, new URL(request.url).origin),
+    },
+    { requestId },
+  );
 }
 
 async function listCreditNotes(
@@ -254,7 +284,9 @@ async function listCreditNotes(
     .all<CreditNoteRow>();
   return json(
     {
-      credit_notes: await Promise.all(rows.results.map((note) => serializeCreditNote(db, note))),
+      credit_notes: await Promise.all(
+        rows.results.map((note) => serializeCreditNote(db, note, url.origin)),
+      ),
       meta: pagination(rows.results.length),
     },
     { requestId },
@@ -266,10 +298,11 @@ async function showCreditNote(
   db: D1Database,
   auth: AuthContext,
   requestId: string,
+  origin: string,
 ): Promise<Response> {
   const note = await findCreditNote(db, auth.organizationId, id);
   if (!note) throw new ApiError(404, "credit_note_not_found", "Credit note was not found");
-  return json({ credit_note: await serializeCreditNote(db, note) }, { requestId });
+  return json({ credit_note: await serializeCreditNote(db, note, origin) }, { requestId });
 }
 
 async function voidCreditNote(
@@ -277,13 +310,17 @@ async function voidCreditNote(
   env: Env,
   auth: AuthContext,
   requestId: string,
+  origin: string,
 ): Promise<Response> {
   let note = await findCreditNote(env.BILLING_DB, auth.organizationId, id);
   if (!note) throw new ApiError(404, "credit_note_not_found", "Credit note was not found");
   if (note.status === "draft")
     throw new ApiError(422, "credit_note_not_finalized", "Draft credit notes cannot be voided");
   if (note.credit_status === "voided")
-    return json({ credit_note: await serializeCreditNote(env.BILLING_DB, note) }, { requestId });
+    return json(
+      { credit_note: await serializeCreditNote(env.BILLING_DB, note, origin) },
+      { requestId },
+    );
   if (note.credit_status !== "available" || note.balance_amount_minor !== note.credit_amount_minor)
     throw new ApiError(
       422,
@@ -338,7 +375,67 @@ async function voidCreditNote(
   await env.DOMAIN_EVENTS.send(event);
   note = await findCreditNote(env.BILLING_DB, auth.organizationId, id);
   if (!note) throw new ApiError(500, "persistence_error", "Credit note disappeared");
-  return json({ credit_note: await serializeCreditNote(env.BILLING_DB, note) }, { requestId });
+  return json(
+    { credit_note: await serializeCreditNote(env.BILLING_DB, note, origin) },
+    { requestId },
+  );
+}
+
+async function downloadCreditNote(
+  id: string,
+  env: Env,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  const note = await findCreditNote(env.BILLING_DB, auth.organizationId, id);
+  if (!note) throw new ApiError(404, "credit_note_not_found", "Credit note was not found");
+  if (note.status !== "finalized")
+    throw new ApiError(422, "credit_note_not_finalized", "Only finalized credit notes have PDFs");
+  if (note.pdf_status === "ready" && note.pdf_object_key) {
+    const object = await env.BILLING_ARTIFACTS.get(note.pdf_object_key);
+    if (!object)
+      throw new ApiError(503, "artifact_missing", "Credit note PDF artifact is unavailable");
+    const safeNumber = note.number.replaceAll(/[^A-Za-z0-9._-]/g, "_");
+    return new Response(object.body, {
+      headers: {
+        "Cache-Control": "private, no-store",
+        "Content-Disposition": `attachment; filename="credit-note-${safeNumber}.pdf"`,
+        "Content-Type": "application/pdf",
+        "X-Request-Id": requestId,
+      },
+    });
+  }
+  await dispatchCreditNoteDocument(env, note.id, auth.organizationId, note.version, requestId);
+  return json(
+    {
+      credit_note: await serializeCreditNote(env.BILLING_DB, note, ""),
+      document_status: note.pdf_status === "failed" ? "retrying" : "generating",
+    },
+    { requestId, status: 202 },
+  );
+}
+
+export async function dispatchCreditNoteDocument(
+  env: Pick<Env, "DOCUMENT_WORKFLOW">,
+  creditNoteId: string,
+  organizationId: string,
+  creditNoteVersion: number,
+  correlationId: string,
+): Promise<void> {
+  try {
+    await env.DOCUMENT_WORKFLOW.create({
+      id: `credit-note-pdf-${creditNoteId}-v${creditNoteVersion}`,
+      params: {
+        kind: "credit_note",
+        creditNoteId,
+        organizationId,
+        correlationId,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : "";
+    if (!message.includes("already exists")) throw error;
+  }
 }
 
 function parseItems(value: unknown): InputItem[] {
@@ -387,7 +484,7 @@ async function validateItems(
 }
 
 function creditNoteSelect() {
-  return `SELECT cn.id, cn.invoice_id, i.number AS invoice_number, cn.customer_id, c.external_id AS customer_external_id, cn.sequential_id, cn.number, CASE WHEN cn.allocation_state = 'draft' THEN 'draft' ELSE cn.status END AS status, cn.credit_status, cn.reason, cn.description, cn.currency, cn.total_amount_minor, cn.credit_amount_minor, cn.balance_amount_minor, cn.refund_amount_minor, cn.offset_amount_minor, cn.taxes_amount_minor, cn.coupons_adjustment_minor, cn.version, cn.idempotency_key, cn.request_sha256, cn.issuing_date, cn.created_at, cn.updated_at, cn.voided_at FROM credit_notes cn JOIN invoices i ON i.id = cn.invoice_id JOIN customers c ON c.id = cn.customer_id`;
+  return `SELECT cn.id, cn.invoice_id, i.number AS invoice_number, cn.customer_id, c.external_id AS customer_external_id, cn.sequential_id, cn.number, CASE WHEN cn.allocation_state = 'draft' THEN 'draft' ELSE cn.status END AS status, cn.credit_status, cn.reason, cn.description, cn.currency, cn.total_amount_minor, cn.credit_amount_minor, cn.balance_amount_minor, cn.refund_amount_minor, cn.offset_amount_minor, cn.taxes_amount_minor, cn.coupons_adjustment_minor, cn.version, cn.idempotency_key, cn.request_sha256, cn.issuing_date, cn.created_at, cn.updated_at, cn.voided_at, artifact.status AS pdf_status, artifact.object_key AS pdf_object_key FROM credit_notes cn JOIN invoices i ON i.id = cn.invoice_id JOIN customers c ON c.id = cn.customer_id LEFT JOIN credit_note_document_artifacts artifact ON artifact.credit_note_id = cn.id AND artifact.credit_note_version = cn.version`;
 }
 async function findCreditNote(db: D1Database, org: string, id: string) {
   return db
@@ -403,7 +500,7 @@ async function findCreditNoteByIdempotencyKey(db: D1Database, org: string, key: 
     .bind(org, key)
     .first<CreditNoteRow>();
 }
-async function serializeCreditNote(db: D1Database, note: CreditNoteRow) {
+async function serializeCreditNote(db: D1Database, note: CreditNoteRow, origin: string) {
   const items = await db
     .prepare(
       `SELECT cni.id, cni.invoice_line_id, cni.amount_minor, cni.precise_amount_minor,
@@ -448,7 +545,10 @@ async function serializeCreditNote(db: D1Database, note: CreditNoteRow) {
     taxes_rate: 0,
     created_at: note.created_at,
     updated_at: note.updated_at,
-    file_url: null,
+    file_url:
+      note.pdf_status === "ready" && note.pdf_object_key
+        ? `${origin}/api/v1/credit_notes/${encodeURIComponent(note.id)}/download`
+        : null,
     xml_url: null,
     voided_at: note.voided_at,
     customer: { lago_id: note.customer_id, external_id: note.customer_external_id },

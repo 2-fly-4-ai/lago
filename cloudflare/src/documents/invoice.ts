@@ -98,12 +98,7 @@ export async function generateInvoicePdf(
   }
   try {
     const response = await renderer.render(renderInvoiceHtml(invoice, lines, customSections));
-    if (!response.ok || !response.body) throw new Error(`browser_pdf_error:${response.status}`);
-    const declared = Number.parseInt(response.headers.get("Content-Length") ?? "", 10);
-    if (Number.isFinite(declared) && declared > MAX_PDF_BYTES) throw new Error("pdf_too_large");
-    const bytes = await readBoundedBytes(response.body, MAX_PDF_BYTES);
-    if (bytes.byteLength === 0) throw new Error("invalid_pdf_size");
-    if (!startsWithPdfSignature(bytes)) throw new Error("invalid_pdf_signature");
+    const bytes = await validatedPdfBytes(response);
     const sha256 = await sha256HexBytes(bytes);
     await env.BILLING_ARTIFACTS.put(objectKey, bytes, {
       httpMetadata: { contentType: "application/pdf" },
@@ -192,9 +187,22 @@ async function loadCustomSections(database: D1Database, invoiceId: string) {
   return [...result.results];
 }
 
-async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
+export async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function validatedPdfBytes(
+  response: Response,
+  maximum = MAX_PDF_BYTES,
+): Promise<Uint8Array> {
+  if (!response.ok || !response.body) throw new Error(`browser_pdf_error:${response.status}`);
+  const declared = Number.parseInt(response.headers.get("Content-Length") ?? "", 10);
+  if (Number.isFinite(declared) && declared > maximum) throw new Error("pdf_too_large");
+  const bytes = await readBoundedBytes(response.body, maximum);
+  if (bytes.byteLength === 0) throw new Error("invalid_pdf_size");
+  if (!startsWithPdfSignature(bytes)) throw new Error("invalid_pdf_signature");
+  return bytes;
 }
 
 async function readBoundedBytes(stream: ReadableStream<Uint8Array>, maximum: number) {

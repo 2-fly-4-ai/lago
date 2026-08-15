@@ -496,15 +496,15 @@ Acceptance:
 
 ### M6: Documents and object storage
 
-- [ ] Port invoice, receipt, credit-note, quote, and export templates according to inventory. The
-      invoice template and authenticated generation/download boundary are implemented; all other
-      document types remain pending.
-- [x] Generate invoice PDFs using Browser Rendering through a retryable, ownership-checked
-      Document Workflow.
+- [ ] Port invoice, receipt, credit-note, quote, and export templates according to inventory. Invoice,
+      receipt, and credit-note templates plus authenticated generation/download boundaries are
+      implemented; quote and export documents remain pending.
+- [x] Generate invoice, receipt, and credit-note PDFs using Browser Rendering through a retryable,
+      ownership-checked Document Workflow.
 - [ ] Replace `pdfcpu` attachment behavior with a Workers-compatible JavaScript or precompiled Wasm
       implementation.
-- [x] Store immutable, version-addressed invoice artifacts in R2 with checksums, byte length, and
-      generation metadata; equivalent handling for other document types remains pending.
+- [x] Store immutable, version-addressed invoice, receipt, and credit-note artifacts in R2 with
+      checksums, byte length, and generation metadata; quote/export handling remains pending.
 - [ ] Add visual and structural golden-file verification.
 
 Acceptance:
@@ -2790,3 +2790,21 @@ resource and mutation described.
   718 schedule audits, and no foreign-key violations. Version inspection confirmed only fetch/
   scheduled/queue handlers with all external-action flags at `0`. No production route/domain,
   provider action, customer message, payment action, secret, or customer data changed.
+- 2026-08-15: Added container-free finalized/voided credit-note PDFs. Forward migration
+  `0067_credit_note_documents.sql` adds a tenant/version/finalization-guarded immutable artifact
+  ledger and a version guard for value-free `credit_note.generated` evidence. Credit-note creation
+  and void events idempotently dispatch the shared ownership-checked Document Workflow; Browser
+  Rendering produces bounded escaped PDF content, R2 stores checksummed version-addressed objects,
+  and authenticated POST/GET download aliases return private no-store responses. Voiding advances
+  the note version, makes the prior `file_url` inapplicable, and archives a distinct VOIDED PDF
+  without replacing version 1. Missing R2 objects fail closed, invalid browser output is recorded,
+  and UBL/XML remains an explicit e-invoicing-disabled boundary. The common PDF response validator
+  is now shared by invoice, receipt, and credit-note generation. Test-only queue dispatch is skipped
+  because Miniflare's Browser binding lacks `quickAction`; deterministic dispatch is separately
+  exercised, while deployed environments retain event-driven generation. The feature-inventory
+  matcher was narrowed so unrelated credit-note XML, provider refund, integration, export, metadata,
+  and operator sources are no longer falsely marked partial. All 67 migrations replay through fresh
+  Workers test databases. Strict format/lint/inventory/bindings/TypeScript pass; the focused document
+  suite passes 15 tests, all 279 tests across 54 files pass serially in 169.83 seconds, and the dry-
+  run bundle is 1314.55 KiB (228.43 KiB gzip). This is a local pre-deployment checkpoint; no remote
+  schema, artifact, provider, message, payment, route, secret, or customer data changed.

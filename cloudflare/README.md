@@ -28,6 +28,11 @@ remaining Lago feature inventory is dispositioned and ported.
   the shared Document Workflow, immutable checksummed artifacts live in R2, and authenticated private
   downloads are projected as `file_url` only after generation. UBL/XML e-invoicing and email resend
   remain explicitly disabled.
+- Credit-note documents: finalized and voided credit notes use the shared ownership-checked Document
+  Workflow, Browser Rendering, version-addressed R2 objects, checksums, value-free generated events,
+  and authenticated private downloads. Voiding advances the credit-note version and produces a new
+  immutable PDF without replacing the prior artifact. UBL/XML e-invoicing remains explicitly
+  disabled.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
@@ -239,9 +244,10 @@ remaining Lago feature inventory is dispositioned and ported.
   The legacy failed-invoice retry is retained as an audited no-work boundary: it only retried
   persisted external-tax API-limit failures, while external tax-provider configuration is rejected
   before this Worker's atomic invoice write and no tax-error-detail ledger exists.
-- R2: immutable provider webhook, usage-event, invoice-document, and payment-receipt archives.
-- Browser Rendering: deterministic invoice and payment-receipt PDF generation through a retryable
-  Document Workflow.
+- R2: immutable provider webhook, usage-event, invoice-document, payment-receipt, and credit-note
+  archives.
+- Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
+  a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
   `/api/v1/invoice_custom_sections` replace the retained operator GraphQL workflow for this
   feature. Draft invoices refresh their snapshots; finalized invoice API/PDF output uses only the

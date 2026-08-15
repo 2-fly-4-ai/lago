@@ -16,6 +16,7 @@ import { handleApiKeysApi } from "./api/api-keys";
 import { handleOrganizationsApi } from "./api/organizations";
 import { handleBillingEntitiesApi } from "./api/billing-entities";
 import { dispatchPaymentReceiptDocument, handlePaymentReceiptsApi } from "./api/payment-receipts";
+import { dispatchCreditNoteDocument } from "./api/credit-note-ledger";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -171,11 +172,27 @@ export default {
           }
         }
 
-        if (event.type === "payment_receipt.created") {
+        if (!env.TEST_MIGRATIONS && event.type === "payment_receipt.created") {
           const organizationId = event.payload.organizationId;
           if (typeof organizationId !== "string" || organizationId.length === 0)
             throw new Error("invalid_payment_receipt_event");
           await dispatchPaymentReceiptDocument(
+            env,
+            event.aggregateId,
+            organizationId,
+            event.aggregateVersion,
+            event.correlationId,
+          );
+        }
+
+        if (
+          !env.TEST_MIGRATIONS &&
+          (event.type === "credit_note.created" || event.type === "credit_note.voided")
+        ) {
+          const organizationId = event.payload.organizationId;
+          if (typeof organizationId !== "string" || organizationId.length === 0)
+            throw new Error("invalid_credit_note_event");
+          await dispatchCreditNoteDocument(
             env,
             event.aggregateId,
             organizationId,
