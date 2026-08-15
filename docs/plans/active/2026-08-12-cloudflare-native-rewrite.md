@@ -568,8 +568,10 @@ Acceptance:
       tenant-scoped REST equivalent, and API-key create/list/show/name-update/rotate/revoke now uses
       a secret-safe tenant-scoped REST control plane. Organization show/update now uses a
       tenant-scoped REST equivalent for identity, billing, locale, and document configuration while
-      webhook mutation stays behind its separately gated endpoint API; the remaining operator
-      operations and screens are still inventoried/ported individually.
+      webhook mutation stays behind its separately gated endpoint API. Billing-entity list/show/
+      update now projects the retained one-default-entity architecture, with creation and non-default
+      entities rejected explicitly; the remaining operator operations and screens are still
+      inventoried/ported individually.
 - [ ] Serve the operator application with Workers Static Assets.
 - [ ] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained.
 - [ ] Mark retired screens explicitly with approved product rationale.
@@ -2690,3 +2692,20 @@ resource and mutation described.
   names but no configuration values, zero payment state, 646 schedule audits, and no foreign-key
   violations. No production route/domain, provider action, message, customer data, payment action,
   or secret persistence occurred.
+- 2026-08-15: Added the retained single billing entity as a Lago-compatible list/show/update REST
+  equivalent. Migration `0064_single_billing_entity.sql` projects the organization-owned invoice
+  configuration as a 33-field `billing_entities` D1 view and guards only scalar
+  `billing_entity.updated` outbox versions, leaving the existing custom-section version stream
+  independent. Detailed reads project the current default taxes and invoice custom sections.
+  Scalar updates normalize the shared identity, address, currency, timezone, payment-term, email,
+  numbering, and invoice settings, preserve no-op versions, and atomically emit audit evidence
+  containing changed field names but no values. Creation, non-default entity codes, e-invoicing, EU
+  tax automation, non-default issuing-date behavior, and compound tax/section mutation fail
+  explicitly through documented dedicated boundaries. The generated inventory maps only the
+  upstream controller/model/serializer/update service; the creation service remains unported. All
+  64 migrations replay from empty D1 with the view, scoped guard, and no foreign-key violations.
+  Strict format/lint/inventory/bindings/TypeScript pass; all 266 tests across 51 files pass serially
+  in one clean 165.32-second invocation after a transient local pool-start/filesystem stall was
+  discarded, and the dry-run bundle is 1278.41 KiB (222.38 KiB gzip). This is a local pre-
+  deployment checkpoint; no remote schema, entity, provider, message, payment, route, secret, or
+  customer data changed.

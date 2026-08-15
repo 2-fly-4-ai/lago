@@ -17,6 +17,10 @@ remaining Lago feature inventory is dispositioned and ported.
   terms, document numbering, email settings, and invoice configuration, with default-tax and active
   webhook projections, global slug uniqueness, replay-safe versions, and secret/value-free audit
   evidence. Webhook mutation remains in the separately gated endpoint API.
+- Billing-entity API: Lago-compatible list/show/update over the retained one-default-entity-per-
+  organization architecture, including tax and custom-section projections, normalized shared
+  invoice configuration, replay-safe versions, and value-free audit evidence. Creation, non-default
+  entities, e-invoicing, EU tax automation, and compound side-effecting mutations fail explicitly.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
   credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring

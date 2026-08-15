@@ -432,7 +432,7 @@ function organizationChangedFields(current: OrganizationRow, next: OrganizationR
   return fields.filter((fieldName) => current[fieldName] !== next[fieldName]);
 }
 
-function field<T>(
+export function field<T>(
   input: Record<string, unknown>,
   name: string,
   current: T,
@@ -441,7 +441,7 @@ function field<T>(
   return input[name] === undefined ? current : normalize(input[name]);
 }
 
-function optionalObject(value: unknown, name: string): Record<string, unknown> {
+export function optionalObject(value: unknown, name: string): Record<string, unknown> {
   if (value === undefined || value === null) return {};
   if (typeof value !== "object" || Array.isArray(value)) {
     throw new ApiError(422, "validation_error", `${name} must be an object`);
@@ -449,7 +449,7 @@ function optionalObject(value: unknown, name: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function nullableString(value: unknown): string | null {
+export function nullableString(value: unknown): string | null {
   if (value === null || value === "") return null;
   if (typeof value !== "string")
     throw new ApiError(422, "validation_error", "Value must be a string");
@@ -470,7 +470,7 @@ function slug(value: unknown): string {
   return normalized;
 }
 
-function currencyCode(value: unknown): string {
+export function currencyCode(value: unknown): string {
   const normalized = nullableString(value)?.toUpperCase();
   if (!normalized || !LAGO_CURRENCIES.has(normalized)) {
     throw new ApiError(
@@ -482,7 +482,7 @@ function currencyCode(value: unknown): string {
   return normalized;
 }
 
-function countryCode(value: unknown): string | null {
+export function countryCode(value: unknown): string | null {
   const normalized = nullableString(value)?.toUpperCase() ?? null;
   if (normalized !== null && !ISO_COUNTRIES.has(normalized)) {
     throw new ApiError(422, "validation_error", "country must be an ISO country code");
@@ -490,7 +490,7 @@ function countryCode(value: unknown): string | null {
   return normalized;
 }
 
-function emailAddress(value: unknown): string | null {
+export function emailAddress(value: unknown): string | null {
   const normalized = nullableString(value)?.toLowerCase() ?? null;
   if (normalized !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
     throw new ApiError(422, "validation_error", "email must be valid");
@@ -498,7 +498,7 @@ function emailAddress(value: unknown): string | null {
   return normalized;
 }
 
-function timezone(value: unknown): string {
+export function timezone(value: unknown): string {
   const normalized = nullableString(value);
   if (!normalized) throw new ApiError(422, "validation_error", "timezone is required");
   try {
@@ -509,7 +509,7 @@ function timezone(value: unknown): string {
   return normalized;
 }
 
-function nonNegativeInteger(value: unknown): number {
+export function nonNegativeInteger(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 0) {
     throw new ApiError(422, "validation_error", "Value must be a non-negative integer");
   }
@@ -524,7 +524,7 @@ function documentNumbering(value: unknown): string {
   return normalized;
 }
 
-function documentPrefix(value: unknown): string | null {
+export function documentPrefix(value: unknown): string | null {
   const normalized = nullableString(value)?.toUpperCase() ?? null;
   if (normalized !== null && (normalized.length < 1 || normalized.length > 10)) {
     throw new ApiError(
@@ -536,14 +536,14 @@ function documentPrefix(value: unknown): string | null {
   return normalized;
 }
 
-function booleanInteger(value: unknown): number {
+export function booleanInteger(value: unknown): number {
   if (typeof value !== "boolean") {
     throw new ApiError(422, "validation_error", "Value must be a boolean");
   }
   return value ? 1 : 0;
 }
 
-function emailSettings(value: unknown): string {
+export function emailSettings(value: unknown): string {
   if (
     !Array.isArray(value) ||
     value.some((entry) => typeof entry !== "string" || !EMAIL_SETTINGS.has(entry))
@@ -553,7 +553,7 @@ function emailSettings(value: unknown): string {
   return JSON.stringify([...new Set(value)].sort());
 }
 
-function invoiceFooter(value: unknown): string | null {
+export function invoiceFooter(value: unknown): string | null {
   const normalized = nullableString(value);
   if (normalized && normalized.length > 600) {
     throw new ApiError(422, "validation_error", "invoice_footer must not exceed 600 characters");
@@ -561,7 +561,7 @@ function invoiceFooter(value: unknown): string | null {
   return normalized;
 }
 
-function documentLocale(value: unknown): string {
+export function documentLocale(value: unknown): string {
   const normalized = nullableString(value)?.toLowerCase();
   const locale = normalized ? DOCUMENT_LOCALES.get(normalized) : undefined;
   if (!locale) {
@@ -570,7 +570,7 @@ function documentLocale(value: unknown): string {
   return locale;
 }
 
-function parseStringArray(value: string): string[] {
+export function parseStringArray(value: string): string[] {
   try {
     const parsed = JSON.parse(value) as unknown;
     return Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string")
