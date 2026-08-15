@@ -629,7 +629,9 @@ Acceptance:
       BFF read contract: it authorizes through the membership tenant and reuses the canonical
       organization REST serializer, with no browser-specific duplicate projection. The API-key
       BFF now maps sanitized list/show for viewers and create/name-update/rotate/revoke for admins,
-      reusing the canonical secret-safe control plane behind operator origin/CSRF checks.
+      reusing the canonical secret-safe control plane behind operator origin/CSRF checks. The first
+      catalog BFF maps invoice custom-section list/show for viewers and create/edit/terminate for
+      admins through the canonical handler and its transactional outbox/internal Queue publication.
 - [x] Serve the operator application with Workers Static Assets. The deployed API Worker retains
       its script-free `operator-ui` rollback shell. The separate, undeployed operator Worker now
       serves `operator-app`: a same-origin native-ES-module organization/API-key workspace with a
@@ -3200,3 +3202,21 @@ resource and mutation described.
   bundle remains 70.25 KiB (17.92 KiB gzip) and reads five operator assets. No remote migration,
   resource, Access application/policy, membership, deployment, provider action, payment action,
   customer message, secret access, customer-data access, or production operation occurred.
+- 2026-08-16: Added the first bounded operator catalog family for manual invoice custom sections.
+  `/api/operator/v1/invoice-custom-sections` validates the Access session and membership tenant,
+  permits viewers to list/show active sections, and requires admin role plus same-origin/CSRF checks
+  for create/edit/terminate. It reuses the canonical D1 handler after narrowing that handler's
+  environment type to its actual D1 and Queue dependencies, preserving transactional outbox writes
+  and producer-only publication to the existing internal domain-event Queue. The operator app adds
+  read-only rows for viewers, admin create/edit/terminate dialogs, text-only DOM rendering, and the
+  same fail-closed bootstrap; it still has no GraphQL client, bearer login, browser credential
+  storage, cookie write, `innerHTML`, or auth bypass. Viewer refusal and the complete admin lifecycle
+  pass alongside the canonical catalog suite; the focused operator/app/catalog run passes 21/21.
+  The authoritative serial suite passes all 316 tests across 61 files in 263.08 seconds. Formatting,
+  lint, generated inventory, both binding checks, and TypeScript pass. Local browser regression
+  showed the updated navigation but only `Operator Access not configured`, with no controls, billing
+  data, warnings, or errors. The API dry bundle remains 1406.92 KiB (245.95 KiB gzip); the disabled
+  operator dry bundle is 94.81 KiB (21.63 KiB gzip) with D1, the producer-only domain-event Queue,
+  and non-secret disabled Access bindings. No remote migration, resource, Access application/
+  policy, membership, deployment, provider action, payment action, customer message, secret access,
+  customer-data access, or production operation occurred.

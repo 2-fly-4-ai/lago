@@ -29,7 +29,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -455,6 +456,10 @@ main {
   scroll-margin-top: 28px;
 }
 
+#invoice-sections {
+  padding-top: 8px;
+}
+
 .section-heading {
   display: flex;
   align-items: flex-end;
@@ -632,6 +637,26 @@ tbody tr:hover {
   font-size: 0.75rem;
 }
 
+.code-chip {
+  display: inline-flex;
+  padding: 5px 8px;
+  border: 1px solid #dce3dc;
+  border-radius: 7px;
+  color: #446053;
+  background: #f3f6f3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+}
+
+.section-details {
+  display: block;
+  max-width: 270px;
+  overflow: hidden;
+  color: #65736b;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .muted {
   color: #87938c;
 }
@@ -714,7 +739,8 @@ tbody tr:hover {
   font-weight: 720;
 }
 
-.modal input {
+.modal input,
+.modal textarea {
   width: 100%;
   padding: 11px 12px;
   border: 1px solid #cad3ca;
@@ -724,9 +750,34 @@ tbody tr:hover {
   background: #fff;
 }
 
-.modal input:focus {
+.modal textarea {
+  min-height: 76px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.modal label:not(:first-child) {
+  margin-top: 16px;
+}
+
+.modal input:focus,
+.modal textarea:focus {
   border-color: #317953;
   box-shadow: 0 0 0 3px rgb(49 121 83 / 13%);
+}
+
+.section-modal {
+  width: min(620px, calc(100% - 32px));
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.field-grid label {
+  margin-top: 0 !important;
 }
 
 .field-hint,
@@ -887,6 +938,10 @@ tbody tr:hover {
 
   .secret-value {
     flex-direction: column;
+  }
+
+  .field-grid {
+    grid-template-columns: 1fr;
   }
 }
 

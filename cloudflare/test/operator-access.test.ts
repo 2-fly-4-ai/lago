@@ -20,6 +20,7 @@ function operatorEnv(overrides: Partial<OperatorEnv> = {}): OperatorEnv {
   return {
     APP_ENV: "test",
     BILLING_DB: env.BILLING_DB,
+    DOMAIN_EVENTS: env.DOMAIN_EVENTS,
     OPERATOR_ACCESS_ENABLED: "1",
     ACCESS_TEAM_DOMAIN: issuer,
     ACCESS_AUD: audience,
@@ -68,6 +69,9 @@ beforeEach(async () => {
     ),
     env.BILLING_DB.prepare(
       "DELETE FROM outbox_events WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM invoice_custom_sections WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare("DELETE FROM api_keys WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare("DELETE FROM organizations WHERE id = 'org-operator-access'"),
@@ -400,6 +404,65 @@ describe("operator Worker disabled boundary", () => {
       api_key: { id: rotatedBody.api_key.id, revoked_at: expect.any(String) },
     });
   });
+
+  it("maps invoice custom-section reads for viewers and lifecycle mutations for admins", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/invoice-custom-sections", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    expect(viewerList.status).toBe(200);
+    await expect(viewerList.json()).resolves.toMatchObject({
+      invoice_custom_sections: [],
+      meta: { total_count: 0 },
+    });
+
+    const viewerCreate = await operatorMutation("POST", "/invoice-custom-sections", {
+      invoice_custom_section: { code: "terms", name: "Terms" },
+    });
+    expect(viewerCreate.status).toBe(403);
+    await expect(viewerCreate.json()).resolves.toMatchObject({ code: "operator_admin_required" });
+
+    await promoteOperatorAdmin();
+    const created = await operatorMutation("POST", "/invoice-custom-sections", {
+      invoice_custom_section: {
+        code: "terms",
+        name: "Payment terms",
+        description: "Shown on invoices",
+        details: "Due on receipt",
+        display_name: "Terms",
+      },
+    });
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      invoice_custom_section: {
+        code: "terms",
+        name: "Payment terms",
+        details: "Due on receipt",
+      },
+    });
+
+    const updated = await operatorMutation("PUT", "/invoice-custom-sections/terms", {
+      invoice_custom_section: { name: "Updated terms", details: "Net 15" },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      invoice_custom_section: { code: "terms", name: "Updated terms", details: "Net 15" },
+    });
+
+    const terminated = await operatorMutation("DELETE", "/invoice-custom-sections/terms");
+    expect(terminated.status).toBe(200);
+    const empty = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/invoice-custom-sections", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(empty.json()).resolves.toMatchObject({ meta: { total_count: 0 } });
+  });
 });
 
 async function promoteOperatorAdmin(): Promise<void> {
@@ -415,6 +478,10 @@ async function operatorApiKeyRequest(
   path: string,
   body?: unknown,
 ): Promise<Response> {
+  return operatorMutation(method, path, body);
+}
+
+async function operatorMutation(method: string, path: string, body?: unknown): Promise<Response> {
   return handleOperatorRequest(
     new Request(`https://operator.test/api/operator/v1${path}`, {
       method,

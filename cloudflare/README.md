@@ -302,6 +302,10 @@ remaining Lago feature inventory is dispositioned and ported.
   `/api/operator/v1/api-keys` and its member/rotate routes reuse the secret-safe API-key control
   plane: viewers receive sanitized metadata, while same-origin/CSRF-checked admins can create,
   rename, rotate, and revoke. Raw values appear only in create/rotate responses.
+  `/api/operator/v1/invoice-custom-sections` similarly reuses the canonical tenant-scoped custom-
+  section handler: viewers can read active manual invoice content, and admins can create, edit, and
+  terminate it. Its D1 mutation and transactional outbox continue to publish through the existing
+  internal domain-event Queue; the operator Worker is a producer only.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

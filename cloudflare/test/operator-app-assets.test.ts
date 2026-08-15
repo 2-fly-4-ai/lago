@@ -40,6 +40,7 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/session",
       "/api/operator/v1/organization",
       "/api/operator/v1/api-keys",
+      "/api/operator/v1/invoice-custom-sections",
     ]) {
       expect(operatorScript).toContain(endpoint);
     }
@@ -54,6 +55,8 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("Operator Access not configured");
     expect(operatorIndex).toContain("No API-key login");
     expect(operatorIndex).toContain("This secret is shown once");
+    expect(operatorIndex).toContain("Custom sections");
+    expect(operatorIndex).toContain("Create section");
     expect(operatorScript).toContain("state.oneTimeSecret = null");
     expect(operatorScript).toContain('elements.secretValue.textContent = "—"');
   });

@@ -25,9 +25,11 @@ type SectionRow = {
   terminated_at: string | null;
 };
 
+type InvoiceCustomSectionEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">;
+
 export async function handleInvoiceCustomSectionRequest(
   request: Request,
-  env: Env,
+  env: InvoiceCustomSectionEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
@@ -83,7 +85,7 @@ async function showDefaultSections(database: D1Database, auth: AuthContext, requ
 
 async function updateDefaultSections(
   request: Request,
-  env: Env,
+  env: InvoiceCustomSectionEnv,
   auth: AuthContext,
   requestId: string,
 ) {
@@ -143,7 +145,12 @@ async function updateDefaultSections(
   return showDefaultSections(env.BILLING_DB, auth, requestId);
 }
 
-async function createSection(request: Request, env: Env, auth: AuthContext, requestId: string) {
+async function createSection(
+  request: Request,
+  env: InvoiceCustomSectionEnv,
+  auth: AuthContext,
+  requestId: string,
+) {
   const input = objectAt(await parseJsonObject(request), "invoice_custom_section");
   rejectUnsupported(input, ["code", "name", "description", "details", "display_name"]);
   const normalized = {
@@ -252,7 +259,7 @@ async function showSection(
 async function updateSection(
   code: string,
   request: Request,
-  env: Env,
+  env: InvoiceCustomSectionEnv,
   auth: AuthContext,
   requestId: string,
 ) {
@@ -331,7 +338,12 @@ async function updateSection(
   return json({ invoice_custom_section: serializeSection(updated) }, { requestId });
 }
 
-async function terminateSection(code: string, env: Env, auth: AuthContext, requestId: string) {
+async function terminateSection(
+  code: string,
+  env: InvoiceCustomSectionEnv,
+  auth: AuthContext,
+  requestId: string,
+) {
   const section = await findActive(env.BILLING_DB, auth.organizationId, code);
   if (!section)
     throw new ApiError(

@@ -107,7 +107,10 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    are locally implemented and tested; remote Access proof remains pending. The screen uses no
    browser credential storage and clears one-time create/rotate values when its dialog closes.
 5. Add the retained catalog and billing screens in bounded families, each with complete operation
-   mapping and rollback to the migration shell.
+   mapping and rollback to the migration shell. The first catalog family, manual invoice custom-
+   section viewer reads plus admin create/edit/terminate, is implemented locally through the
+   canonical REST handler and existing internal domain-event Queue; remote Access proof remains
+   pending.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

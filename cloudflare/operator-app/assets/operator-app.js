@@ -2,6 +2,7 @@ const endpoints = {
   session: "/api/operator/v1/session",
   organization: "/api/operator/v1/organization",
   apiKeys: "/api/operator/v1/api-keys",
+  invoiceSections: "/api/operator/v1/invoice-custom-sections",
 };
 
 const elements = {
@@ -29,6 +30,12 @@ const elements = {
   keysEmptyCopy: document.querySelector("#keys-empty-copy"),
   keysTableShell: document.querySelector("#keys-table-shell"),
   keysTableBody: document.querySelector("#keys-table-body"),
+  openCreateSection: document.querySelector("#open-create-section"),
+  sectionsLoading: document.querySelector("#sections-loading"),
+  sectionsEmpty: document.querySelector("#sections-empty"),
+  sectionsEmptyCopy: document.querySelector("#sections-empty-copy"),
+  sectionsTableShell: document.querySelector("#sections-table-shell"),
+  sectionsTableBody: document.querySelector("#sections-table-body"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -48,6 +55,17 @@ const elements = {
   copyStatus: document.querySelector("#copy-status"),
   closeSecret: document.querySelector("#close-secret"),
   closeSecretTop: document.querySelector("#close-secret-top"),
+  sectionFormDialog: document.querySelector("#section-form-dialog"),
+  sectionForm: document.querySelector("#section-form"),
+  sectionTitle: document.querySelector("#section-title"),
+  sectionFormCopy: document.querySelector("#section-form-copy"),
+  sectionName: document.querySelector("#section-name"),
+  sectionCode: document.querySelector("#section-code"),
+  sectionDisplayName: document.querySelector("#section-display-name"),
+  sectionDescription: document.querySelector("#section-description"),
+  sectionDetails: document.querySelector("#section-details"),
+  sectionFormError: document.querySelector("#section-form-error"),
+  submitSectionForm: document.querySelector("#submit-section-form"),
 };
 
 const state = {
@@ -57,6 +75,9 @@ const state = {
   selectedKeyId: null,
   confirmMode: null,
   oneTimeSecret: null,
+  sections: [],
+  sectionFormMode: "create",
+  selectedSectionCode: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -69,6 +90,9 @@ elements.closeSecret.addEventListener("click", closeSecretDialog);
 elements.closeSecretTop.addEventListener("click", closeSecretDialog);
 elements.secretDialog.addEventListener("cancel", clearOneTimeSecret);
 elements.secretDialog.addEventListener("close", clearOneTimeSecret);
+elements.openCreateSection.addEventListener("click", openCreateSectionDialog);
+elements.sectionsTableBody.addEventListener("click", handleSectionAction);
+elements.sectionForm.addEventListener("submit", submitSectionForm);
 
 void initialize();
 
@@ -77,13 +101,15 @@ async function initialize() {
     const session = await requestJson(endpoints.session);
     const operator = session.operator;
     state.role = operator.role === "admin" ? "admin" : "viewer";
-    const [organizationPayload, keyPayload] = await Promise.all([
+    const [organizationPayload, keyPayload, sectionsPayload] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.apiKeys),
+      requestJson(endpoints.invoiceSections),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
     renderKeys(keyPayload.api_keys);
+    renderSections(sectionsPayload.invoice_custom_sections);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -98,9 +124,13 @@ function renderOperator(operator) {
   elements.rolePill.textContent = isAdmin ? "Admin access" : "Viewer access";
   elements.rolePill.classList.toggle("admin", isAdmin);
   elements.openCreateKey.hidden = !isAdmin;
+  elements.openCreateSection.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
+  elements.sectionsEmptyCopy.textContent = isAdmin
+    ? "Create a reusable section when invoices need organization-specific content."
+    : "This organization has no manual invoice sections. Admin access is required to create one.";
   if (operator.organization_external_id) {
     elements.workspaceName.textContent = operator.organization_external_id;
   }
@@ -174,6 +204,76 @@ function createKeyRow(key) {
   return row;
 }
 
+function renderSections(sections) {
+  state.sections = Array.isArray(sections) ? sections : [];
+  elements.sectionsTableBody.replaceChildren();
+  elements.sectionsLoading.hidden = true;
+  elements.sectionsEmpty.hidden = state.sections.length !== 0;
+  elements.sectionsTableShell.hidden = state.sections.length === 0;
+
+  for (const section of state.sections) {
+    elements.sectionsTableBody.append(createSectionRow(section));
+  }
+}
+
+function createSectionRow(section) {
+  const row = document.createElement("tr");
+  const nameCell = document.createElement("td");
+  const name = document.createElement("span");
+  name.className = "key-name";
+  name.textContent = safeText(section.name, "Unnamed section");
+  const description = document.createElement("span");
+  description.className = "key-id";
+  description.textContent = safeText(section.description, "No description");
+  nameCell.append(name, description);
+
+  const codeCell = document.createElement("td");
+  const code = document.createElement("span");
+  code.className = "code-chip";
+  code.textContent = safeText(section.code, "—");
+  codeCell.append(code);
+
+  const displayCell = document.createElement("td");
+  displayCell.textContent = safeText(section.display_name, "—");
+  if (!section.display_name) displayCell.className = "muted";
+
+  const detailsCell = document.createElement("td");
+  const details = document.createElement("span");
+  details.className = section.details ? "section-details" : "section-details muted";
+  details.textContent = safeText(section.details, "No details");
+  detailsCell.append(details);
+
+  const actionCell = document.createElement("td");
+  actionCell.className = "actions-column";
+  if (state.role === "admin") {
+    const actions = document.createElement("div");
+    actions.className = "row-actions";
+    actions.append(
+      sectionActionButton("Edit", "edit-section", section.code),
+      sectionActionButton("Terminate", "terminate-section", section.code, true),
+    );
+    actionCell.append(actions);
+  } else {
+    const readOnly = document.createElement("span");
+    readOnly.className = "muted";
+    readOnly.textContent = "Read only";
+    actionCell.append(readOnly);
+  }
+
+  row.append(nameCell, codeCell, displayCell, detailsCell, actionCell);
+  return row;
+}
+
+function sectionActionButton(label, action, code, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = danger ? "row-action danger" : "row-action";
+  button.dataset.action = action;
+  button.dataset.sectionCode = code;
+  button.textContent = label;
+  return button;
+}
+
 function actionButton(label, action, keyId, danger = false) {
   const button = document.createElement("button");
   button.type = "button";
@@ -196,6 +296,19 @@ function handleKeyAction(event) {
     openConfirmation("rotate", key);
   } else if (button.dataset.action === "revoke") {
     openConfirmation("revoke", key);
+  }
+}
+
+function handleSectionAction(event) {
+  const button = event.target.closest("button[data-action]");
+  if (!button || state.role !== "admin") return;
+  const section = state.sections.find((candidate) => candidate.code === button.dataset.sectionCode);
+  if (!section) return;
+
+  if (button.dataset.action === "edit-section") {
+    openEditSectionDialog(section);
+  } else if (button.dataset.action === "terminate-section") {
+    openSectionTermination(section);
   }
 }
 
@@ -257,6 +370,82 @@ async function submitKeyForm(event) {
   }
 }
 
+function openCreateSectionDialog() {
+  state.sectionFormMode = "create";
+  state.selectedSectionCode = null;
+  elements.sectionTitle.textContent = "Create custom section";
+  elements.sectionFormCopy.textContent =
+    "Create a reusable manual text block for organization invoices.";
+  elements.submitSectionForm.textContent = "Create section";
+  elements.sectionForm.reset();
+  elements.sectionFormError.hidden = true;
+  elements.sectionFormDialog.showModal();
+  elements.sectionName.focus();
+}
+
+function openEditSectionDialog(section) {
+  state.sectionFormMode = "edit";
+  state.selectedSectionCode = section.code;
+  elements.sectionTitle.textContent = "Edit custom section";
+  elements.sectionFormCopy.textContent =
+    "Update this reusable invoice text block. Existing finalized invoices remain immutable.";
+  elements.submitSectionForm.textContent = "Save section";
+  elements.sectionName.value = safeText(section.name, "");
+  elements.sectionCode.value = safeText(section.code, "");
+  elements.sectionDisplayName.value = safeText(section.display_name, "");
+  elements.sectionDescription.value = safeText(section.description, "");
+  elements.sectionDetails.value = safeText(section.details, "");
+  elements.sectionFormError.hidden = true;
+  elements.sectionFormDialog.showModal();
+  elements.sectionName.focus();
+  elements.sectionName.select();
+}
+
+async function submitSectionForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    elements.sectionFormDialog.close();
+    return;
+  }
+  if (!elements.sectionForm.reportValidity()) return;
+
+  const isCreate = state.sectionFormMode === "create";
+  const payload = {
+    invoice_custom_section: {
+      name: elements.sectionName.value.trim(),
+      code: elements.sectionCode.value.trim(),
+      display_name: optionalFormValue(elements.sectionDisplayName.value),
+      description: optionalFormValue(elements.sectionDescription.value),
+      details: optionalFormValue(elements.sectionDetails.value),
+    },
+  };
+  setBusy(elements.submitSectionForm, true, isCreate ? "Creating…" : "Saving…");
+  elements.sectionFormError.hidden = true;
+  try {
+    await requestJson(
+      isCreate ? endpoints.invoiceSections : sectionEndpoint(state.selectedSectionCode),
+      { method: isCreate ? "POST" : "PUT", body: payload },
+    );
+    elements.sectionFormDialog.close();
+    await refreshSections();
+  } catch (error) {
+    elements.sectionFormError.textContent = errorMessage(error);
+    elements.sectionFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitSectionForm, false, isCreate ? "Create section" : "Save section");
+  }
+}
+
+function openSectionTermination(section) {
+  state.confirmMode = "terminate-section";
+  state.selectedSectionCode = section.code;
+  elements.confirmError.hidden = true;
+  elements.confirmTitle.textContent = "Terminate custom section?";
+  elements.confirmCopy.textContent = `Terminating “${safeText(section.name, "Unnamed section")}” removes it from the active catalog and future invoice selections. Finalized invoices remain unchanged.`;
+  elements.confirmAction.textContent = "Terminate section";
+  elements.confirmDialog.showModal();
+}
+
 function openConfirmation(mode, key) {
   state.confirmMode = mode;
   state.selectedKeyId = key.id;
@@ -281,6 +470,29 @@ async function submitConfirmedAction(event) {
   }
 
   const mode = state.confirmMode;
+  if (mode === "terminate-section") {
+    const section = state.sections.find(
+      (candidate) => candidate.code === state.selectedSectionCode,
+    );
+    if (!section) {
+      elements.confirmDialog.close();
+      return;
+    }
+    setBusy(elements.confirmAction, true, "Terminating…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(sectionEndpoint(section.code), { method: "DELETE" });
+      elements.confirmDialog.close();
+      await refreshSections();
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(elements.confirmAction, false, "Terminate section");
+    }
+    return;
+  }
+
   const key = state.keys.find((candidate) => candidate.id === state.selectedKeyId);
   if (!key || (mode !== "rotate" && mode !== "revoke")) {
     elements.confirmDialog.close();
@@ -314,6 +526,16 @@ async function refreshKeys() {
   try {
     const payload = await requestJson(endpoints.apiKeys);
     renderKeys(payload.api_keys);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+async function refreshSections() {
+  try {
+    const payload = await requestJson(endpoints.invoiceSections);
+    renderSections(payload.invoice_custom_sections);
     hidePageError();
   } catch (error) {
     showPageError(errorMessage(error));
@@ -422,6 +644,10 @@ function keyEndpoint(keyId) {
   return `${endpoints.apiKeys}/${encodeURIComponent(keyId)}`;
 }
 
+function sectionEndpoint(code) {
+  return `${endpoints.invoiceSections}/${encodeURIComponent(code)}`;
+}
+
 function showPageError(message) {
   elements.pageErrorMessage.textContent = message;
   elements.pageError.hidden = false;
@@ -443,6 +669,11 @@ function setBusy(button, busy, label) {
 
 function safeText(value, fallback) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function optionalFormValue(value) {
+  const normalized = value.trim();
+  return normalized || null;
 }
 
 function initials(value) {

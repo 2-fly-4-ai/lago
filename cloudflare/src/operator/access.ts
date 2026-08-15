@@ -8,6 +8,7 @@ export type OperatorRole = "viewer" | "admin";
 export type OperatorEnv = {
   APP_ENV: string;
   BILLING_DB: D1Database;
+  DOMAIN_EVENTS: Queue;
   OPERATOR_ACCESS_ENABLED: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;

@@ -36,6 +36,10 @@
             <span class="nav-icon" aria-hidden="true">⌁</span>
             API keys
           </a>
+          <a class="nav-item" href="#invoice-sections">
+            <span class="nav-icon" aria-hidden="true">≡</span>
+            Invoice sections
+          </a>
         </nav>
 
         <div class="sidebar-note">
@@ -167,6 +171,49 @@
                 </div>
               </div>
             </section>
+
+            <section
+              class="keys-section"
+              id="invoice-sections"
+              aria-labelledby="invoice-sections-title"
+            >
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Invoice presentation</p>
+                  <h2 id="invoice-sections-title">Custom sections</h2>
+                  <p>Add reusable manual text blocks to the organization’s invoice catalog.</p>
+                </div>
+                <button class="primary-button" id="open-create-section" type="button" hidden>
+                  <span aria-hidden="true">+</span>
+                  Create section
+                </button>
+              </div>
+
+              <div class="table-shell">
+                <div class="table-loading" id="sections-loading" aria-live="polite">
+                  Loading invoice sections…
+                </div>
+                <div class="empty-state" id="sections-empty" hidden>
+                  <span aria-hidden="true">≡</span>
+                  <h3>No custom sections</h3>
+                  <p id="sections-empty-copy">This organization has no manual invoice sections.</p>
+                </div>
+                <div class="table-scroll" id="sections-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Name</th>
+                        <th scope="col">Code</th>
+                        <th scope="col">Display name</th>
+                        <th scope="col">Details</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="sections-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
           </div>
         </main>
       </div>
@@ -192,6 +239,45 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button>
           <button class="primary-button" id="submit-key-form" value="default" type="submit">
             Create key
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal section-modal" id="section-form-dialog" aria-labelledby="section-title">
+      <form method="dialog" id="section-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Invoice presentation</p>
+            <h2 id="section-title">Create custom section</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy" id="section-form-copy">
+          Create a reusable manual text block for organization invoices.
+        </p>
+        <div class="field-grid">
+          <div>
+            <label for="section-name">Internal name</label>
+            <input id="section-name" name="name" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="section-code">Code</label>
+            <input id="section-code" name="code" maxlength="255" autocomplete="off" required />
+          </div>
+        </div>
+        <label for="section-display-name">Invoice display name</label>
+        <input id="section-display-name" name="display_name" maxlength="255" autocomplete="off" />
+        <label for="section-description">Description</label>
+        <textarea id="section-description" name="description" rows="2"></textarea>
+        <label for="section-details">Invoice details</label>
+        <textarea id="section-details" name="details" rows="5"></textarea>
+        <p class="field-hint">Only the configured display content belongs on generated invoices.</p>
+        <p class="form-error" id="section-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-section-form" value="default" type="submit">
+            Create section
           </button>
         </div>
       </form>

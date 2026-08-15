@@ -27,4 +27,12 @@
       "migrations_dir": "migrations",
     },
   ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "DOMAIN_EVENTS",
+        "queue": "serp-dev-lago-domain-events",
+      },
+    ],
+  },
 }
