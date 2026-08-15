@@ -103,7 +103,8 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    membership only. The membership-scoped organization BFF read contract is implemented locally;
    interactive assets and remote Access/membership proof remain pending.
 4. Add API-key metadata management, keeping one-time create/rotate values ephemeral and never
-   offering existing-key reveal.
+   offering existing-key reveal. The complete viewer-read/admin-mutation BFF contract is locally
+   implemented and tested; its interactive screen and remote Access proof remain pending.
 5. Add the retained catalog and billing screens in bounded families, each with complete operation
    mapping and rollback to the migration shell.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts

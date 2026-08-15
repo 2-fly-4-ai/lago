@@ -627,7 +627,9 @@ Acceptance:
       remain disabled without an approved Access application and allow policy; it has not been
       remotely provisioned or deployed. `GET /api/operator/v1/organization` is the first bounded
       BFF read contract: it authorizes through the membership tenant and reuses the canonical
-      organization REST serializer, with no browser-specific duplicate projection.
+      organization REST serializer, with no browser-specific duplicate projection. The API-key
+      BFF now maps sanitized list/show for viewers and create/name-update/rotate/revoke for admins,
+      reusing the canonical secret-safe control plane behind operator origin/CSRF checks.
 - [ ] Serve the operator application with Workers Static Assets. The direct-delivery foundation is
       complete: Wrangler serves a script-free migration shell, stylesheet, SPA fallback, and
       `_headers` policy from Static Assets while `/api/*`, health/readiness, hosted-payment, and
@@ -3164,3 +3166,16 @@ resource and mutation described.
   static migration shell remains non-interactive; migration 0070, the operator Worker, and Access
   application/policy remain unapplied or unprovisioned remotely. No provider action, payment
   action, customer message, secret access, customer-data access, or production operation occurred.
+- 2026-08-16: Completed the local operator API-key BFF contract behind the disabled Access gate.
+  Membership-scoped viewers can list/show only sanitized key metadata; same-origin/CSRF-checked
+  admins can create, rename, rotate, and revoke through the existing tenant-safe API-key handler.
+  Raw key material is returned only once from create/rotate and never appears in later list/show
+  responses or stored audit payloads. Viewer mutation refusal, admin promotion, the complete
+  mutation lifecycle, masking, role/origin/CSRF enforcement, and the canonical API-key invariants
+  pass 15/15 focused tests. Strict formatting, lint, inventory, both binding checks, and TypeScript
+  pass; the authoritative serial suite passes all 311 tests across 60 files in 202.15 seconds. The
+  API dry bundle remains 1406.92 KiB (245.95 KiB gzip), and the disabled operator dry bundle is
+  70.25 KiB (17.92 KiB gzip) with only D1 and non-secret environment bindings. The shell remains
+  non-interactive; migration 0070, the operator Worker, and its Access application/policy remain
+  unapplied or unprovisioned remotely. No provider action, payment action, customer message, secret
+  access, customer-data access, or production operation occurred.

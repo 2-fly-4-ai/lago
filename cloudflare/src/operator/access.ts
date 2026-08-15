@@ -126,6 +126,12 @@ export function assertOperatorMutationRequest(request: Request): void {
   }
 }
 
+export function assertOperatorAdmin(operator: OperatorContext): void {
+  if (operator.role !== "admin") {
+    throw new ApiError(403, "operator_admin_required", "This operator action requires admin role");
+  }
+}
+
 function accessIssuer(value: string | undefined): string {
   const candidate = value?.trim().replace(/\/$/, "");
   if (!candidate) {

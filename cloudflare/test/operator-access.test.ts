@@ -66,6 +66,10 @@ beforeEach(async () => {
     env.BILLING_DB.prepare(
       "DELETE FROM operator_memberships WHERE organization_id = 'org-operator-access'",
     ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM outbox_events WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare("DELETE FROM api_keys WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare("DELETE FROM organizations WHERE id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
       `INSERT INTO organizations (id, external_id, name, created_at, updated_at)
@@ -288,4 +292,142 @@ describe("operator Worker disabled boundary", () => {
       },
     });
   });
+
+  it("allows sanitized key reads for viewers and gates key mutations to same-origin admins", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/api-keys", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    expect(viewerList.status).toBe(200);
+    await expect(viewerList.json()).resolves.toMatchObject({
+      api_keys: [],
+      meta: { total_count: 0 },
+    });
+
+    const viewerCreate = await operatorApiKeyRequest("POST", "/api-keys", {
+      api_key: { name: "Operator-created" },
+    });
+    expect(viewerCreate.status).toBe(403);
+    await expect(viewerCreate.json()).resolves.toMatchObject({ code: "operator_admin_required" });
+
+    await env.BILLING_DB.prepare(
+      `UPDATE operator_memberships SET role = 'admin', version = version + 1,
+         updated_at = '2026-08-16T00:01:00.000Z'
+       WHERE id = 'membership-operator-access'`,
+    ).run();
+    const created = await operatorApiKeyRequest("POST", "/api-keys", {
+      api_key: { name: "Operator-created" },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{
+      api_key: { id: string; name: string; value: string };
+    }>();
+    expect(createdBody.api_key).toMatchObject({ name: "Operator-created" });
+    expect(createdBody.api_key.value).toMatch(/^lago_[0-9a-f]{64}$/);
+
+    const listed = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/api-keys", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    const listedBody = await listed.json<{
+      api_keys: Array<{ id: string; value: string }>;
+    }>();
+    expect(listedBody.api_keys.find((key) => key.id === createdBody.api_key.id)).toEqual({
+      id: createdBody.api_key.id,
+      value: `••••••••${createdBody.api_key.value.slice(-3)}`,
+      name: "Operator-created",
+      permissions: {},
+      created_at: expect.any(String),
+      expires_at: null,
+      revoked_at: null,
+      last_used_at: null,
+      version: 1,
+    });
+    expect(JSON.stringify(listedBody)).not.toContain(createdBody.api_key.value);
+  });
+
+  it("maps admin rename, rotate, show, and revoke without revealing an existing secret", async () => {
+    await promoteOperatorAdmin();
+    const backup = await operatorApiKeyRequest("POST", "/api-keys", {
+      api_key: { name: "Backup" },
+    });
+    expect(backup.status).toBe(200);
+
+    const created = await operatorApiKeyRequest("POST", "/api-keys", {
+      api_key: { name: "Before" },
+    });
+    const createdBody = await created.json<{ api_key: { id: string; value: string } }>();
+
+    const updated = await operatorApiKeyRequest("PUT", `/api-keys/${createdBody.api_key.id}`, {
+      api_key: { name: "After" },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      api_key: { id: createdBody.api_key.id, name: "After", version: 2 },
+    });
+
+    const rotated = await operatorApiKeyRequest(
+      "POST",
+      `/api-keys/${createdBody.api_key.id}/rotate`,
+      { api_key: { name: "Rotated" } },
+    );
+    expect(rotated.status).toBe(200);
+    const rotatedBody = await rotated.json<{ api_key: { id: string; value: string } }>();
+    expect(rotatedBody.api_key.id).not.toBe(createdBody.api_key.id);
+    expect(rotatedBody.api_key.value).toMatch(/^lago_[0-9a-f]{64}$/);
+
+    const shown = await handleOperatorRequest(
+      new Request(`https://operator.test/api/operator/v1/api-keys/${createdBody.api_key.id}`, {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    expect(shown.status).toBe(200);
+    const shownText = await shown.text();
+    expect(shownText).toContain(`••••••••${createdBody.api_key.value.slice(-3)}`);
+    expect(shownText).not.toContain(createdBody.api_key.value);
+
+    const revoked = await operatorApiKeyRequest("DELETE", `/api-keys/${rotatedBody.api_key.id}`);
+    expect(revoked.status).toBe(200);
+    await expect(revoked.json()).resolves.toMatchObject({
+      api_key: { id: rotatedBody.api_key.id, revoked_at: expect.any(String) },
+    });
+  });
 });
+
+async function promoteOperatorAdmin(): Promise<void> {
+  await env.BILLING_DB.prepare(
+    `UPDATE operator_memberships SET role = 'admin', version = version + 1,
+       updated_at = '2026-08-16T00:01:00.000Z'
+     WHERE id = 'membership-operator-access'`,
+  ).run();
+}
+
+async function operatorApiKeyRequest(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<Response> {
+  return handleOperatorRequest(
+    new Request(`https://operator.test/api/operator/v1${path}`, {
+      method,
+      headers: {
+        "Cf-Access-Jwt-Assertion": await accessToken(),
+        "Content-Type": "application/json",
+        Origin: "https://operator.test",
+        "Sec-Fetch-Site": "same-origin",
+        "X-Operator-Request": "1",
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }),
+    operatorEnv(),
+    keySet,
+  );
+}

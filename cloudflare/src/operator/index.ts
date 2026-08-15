@@ -1,8 +1,15 @@
 import type { JWTVerifyGetKey } from "jose";
 
+import { handleApiKeysApi } from "../api/api-keys";
 import { showOrganization } from "../api/organizations";
+import type { AuthContext } from "../auth/api-key";
 import { ApiError, apiErrorResponse, json } from "../http";
-import { authenticateOperatorAccess, type OperatorEnv } from "./access";
+import {
+  assertOperatorAdmin,
+  assertOperatorMutationRequest,
+  authenticateOperatorAccess,
+  type OperatorEnv,
+} from "./access";
 
 export function createOperatorHandler(keySet?: JWTVerifyGetKey): ExportedHandler<OperatorEnv> {
   return {
@@ -62,6 +69,31 @@ export async function handleOperatorRequest(
         },
         { requestId },
       );
+    }
+
+    if (/^\/api\/operator\/v1\/api-keys(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/api-keys",
+        "/api/v1/api_keys",
+      );
+      const response = await handleApiKeysApi(
+        new Request(forwardedUrl, request),
+        env,
+        auth,
+        requestId,
+      );
+      if (response) return response;
     }
 
     throw new ApiError(404, "not_found", "The requested operator route was not found");

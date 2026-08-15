@@ -296,6 +296,9 @@ remaining Lago feature inventory is dispositioned and ported.
   before an approved Access allow policy exists. Its first read-only BFF route,
   `GET /api/operator/v1/organization`, resolves the membership tenant and reuses the canonical
   organization REST serializer rather than creating a second browser-specific projection.
+  `/api/operator/v1/api-keys` and its member/rotate routes reuse the secret-safe API-key control
+  plane: viewers receive sanitized metadata, while same-origin/CSRF-checked admins can create,
+  rename, rotate, and revoke. Raw values appear only in create/rotate responses.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
