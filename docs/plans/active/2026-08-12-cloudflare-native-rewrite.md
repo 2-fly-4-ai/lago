@@ -2437,6 +2437,20 @@ resource and mutation described.
   lint, inventory, Wrangler binding types, and TypeScript pass; all 241 tests across 46 files pass
   serially in 155.72 seconds. The dry-run bundle is 1186.95 KiB (206.42 KiB gzip). This is a local
   pre-deployment checkpoint; no remote resource or data was changed by this entry.
+- 2026-08-15: Remote preflight found exactly `0058_dunning_campaigns.sql` pending and zero
+  organizations, customers, subscriptions, invoices, payment attempts, payment requests, invoice
+  links, and outbox rows, with zero foreign-key violations and 468 schedule audits. Version
+  inspection confirmed the previously deployed Worker still had all three external-action flags at
+  `0`. Applied only migration 0058, then verified 58 migrations, three dunning tables, ten related
+  indexes, seven triggers, all expected organization/customer/payment-request columns, empty
+  dunning ledgers, zero foreign-key violations, and no pending migration. Deployed only
+  `serp-dev-lago-native` as version `04e1efea-8ca6-4b7b-b8a9-cfa72816326d` with a 6 ms startup and
+  unchanged one-minute Cron/resource bindings. Health/readiness returned `200`/`200`,
+  unauthenticated dunning access returned `401`, and post-deploy aggregate verification remained
+  empty apart from 469 schedule audits. The deployed version exposes only the expected fetch,
+  scheduled, and queue handlers and all three external-action flags remain `0`; no production
+  route/domain, secret, customer message, provider action, customer data, payment action, or
+  billing row changed.
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.

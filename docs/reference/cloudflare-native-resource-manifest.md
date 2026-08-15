@@ -30,7 +30,7 @@ It is not a production inventory and contains no secrets or customer data.
 | Workflow          | `serp-dev-lago-checkout`                                           | `CHECKOUT_WORKFLOW`       | Checkout orchestration target                                      |
 | Workflow          | `serp-dev-lago-reconciliation`                                     | `RECONCILIATION_WORKFLOW` | Provider and outbox reconciliation                                 |
 | Workflow          | `serp-dev-lago-documents`                                          | `DOCUMENT_WORKFLOW`       | Retryable invoice PDF generation and R2 archival                   |
-| Workflow          | `serp-dev-lago-plan-deletion`                                      | `PLAN_DELETION_WORKFLOW`  | Durable subscription-bearing plan retirement                      |
+| Workflow          | `serp-dev-lago-plan-deletion`                                      | `PLAN_DELETION_WORKFLOW`  | Durable subscription-bearing plan retirement                       |
 | Cron              | `* * * * *`                                                        | Worker scheduled handler  | Deterministic legacy-schedule dispatch and activity fanout         |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 
@@ -531,6 +531,19 @@ Applied D1 migrations: `0001_foundation.sql` through
   payment requests, invoice links, and outbox rows plus 436 schedule runs. All three external-
   action flags remain `0`; no production route/domain, secret, provider action, customer data,
   payment action, or billing row changed.
+- The dunning-foundation deployment applied only `0058_dunning_campaigns.sql`. Remote verification
+  found 58 migrations, three dunning tables, ten related indexes, seven triggers, all expected
+  organization/customer/payment-request columns, empty dunning ledgers, zero foreign-key
+  violations, and no remaining migration. Worker version
+  `04e1efea-8ca6-4b7b-b8a9-cfa72816326d` retained the existing workers.dev URL, one-minute Cron,
+  D1, R2, Queue/DLQ, Durable Object, Browser, and four Workflow bindings. The deployed bundle was
+  1186.95 KiB (206.42 KiB gzip) with a 6 ms startup. Health/readiness returned `200`/`200`,
+  unauthenticated dunning access returned `401`, and aggregate-only verification found zero
+  organizations, customers, subscriptions, invoices, payment attempts, payment requests, invoice
+  links, dunning campaigns/thresholds/guards, and outbox rows plus 469 schedule audits. Version
+  inspection confirmed only the expected fetch, scheduled, and queue handlers and all three
+  external-action flags at `0`; no production route/domain, secret, customer message, provider
+  action, customer data, payment action, or billing row changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 
