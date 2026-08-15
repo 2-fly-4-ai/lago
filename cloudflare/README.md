@@ -233,6 +233,11 @@ remaining Lago feature inventory is dispositioned and ported.
   a positive delta against all current-period advance lines, and retain deterministic invoice IDs
   for replay and repair; fixed-charge-specific tax targeting remains an explicit unsupported
   boundary.
+- Payment requests: authenticated create/list/show and customer-nested list routes persist one
+  tenant-scoped request plus its overdue finalized invoices and `payment_request.created` outbox
+  event in a guarded D1 batch. The amount is the exact remaining balance across one currency.
+  Creating this internal ledger does not call a provider or send email; later dunning/payment
+  execution remains subject to the existing external-action gates.
 
 No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or
 OS command is required by this package.

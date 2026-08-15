@@ -71,7 +71,7 @@ import {
   usageThresholdInsertStatements,
 } from "../usage/thresholds";
 
-type CustomerRow = {
+export type CustomerRow = {
   id: string;
   external_id: string;
   email: string | null;
@@ -128,7 +128,7 @@ type SubscriptionRow = {
   downgrade_plan_date: string | null;
 };
 
-type InvoiceRow = {
+export type InvoiceRow = {
   id: string;
   customer_id: string;
   customer_external_id: string;
@@ -2294,7 +2294,7 @@ async function requestInvoicePdf(
   );
 }
 
-async function findInvoice(
+export async function findInvoice(
   database: D1Database,
   organizationId: string,
   invoiceId: string,
@@ -2726,7 +2726,7 @@ function parsePaymentUrlReservation(responseJson: string): { paymentUrl: string 
   }
 }
 
-async function findCustomer(
+export async function findCustomer(
   database: D1Database,
   organizationId: string,
   externalId: string,
@@ -2819,7 +2819,7 @@ async function findSubscriptionById(
     .first<SubscriptionRow>();
 }
 
-async function serializeCustomer(
+export async function serializeCustomer(
   database: D1Database,
   customer: CustomerRow,
   organizationId: string,
@@ -3001,7 +3001,7 @@ async function serializeSubscription(
   };
 }
 
-async function serializeInvoice(
+export async function serializeInvoice(
   database: D1Database,
   invoice: InvoiceRow,
   appliedSections?: SerializedInvoiceCustomSection[],

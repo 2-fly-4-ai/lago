@@ -2395,6 +2395,18 @@ resource and mutation described.
   legacy cadence remains documented for source traceability but no longer requires its own process.
   Focused schedule and wallet-projection evidence passes all 22 tests, with strict formatting,
   lint, generated-inventory freshness, Wrangler binding types, and TypeScript also green.
+- 2026-08-15: Added the container-free payment-request foundation required by dunning. Migration
+  `0057_payment_requests.sql` owns the request and invoice-link ledgers in D1, with tenant/customer,
+  finalized-overdue state, and optimistic invoice-version triggers. Authenticated create/list/show
+  and customer-nested list routes calculate one-currency outstanding balances, persist all links
+  and `payment_request.created` evidence atomically, and return Lago-shaped customer/invoice data.
+  Creation is intentionally internal only: it does not call a payment provider or send email, and
+  the existing external-action gates remain authoritative. Evidence covers multi-invoice totals,
+  filters, tenant/customer isolation, invalid state, and late trigger
+  rollback. All 57 migrations replay independently with two request tables, nine relevant indexes,
+  two triggers, and zero foreign-key violations. Strict format/lint/inventory/bindings/TypeScript
+  pass; all 236 tests across 45 files pass serially in 146.55 seconds. The dry-run bundle is
+  1147.23 KiB (200.28 KiB gzip).
 - 2026-08-15: Consolidated the legacy hourly stuck-generating-invoice retry into the lease-aware
   billing-close executor. The Worker never persists a partially generated invoice: the complete
   graph and period transition share one D1 batch, while failed/stale `billing_cycles` are reclaimable.
