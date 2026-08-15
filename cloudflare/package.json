@@ -7,6 +7,8 @@
     "build": "wrangler deploy --dry-run --outdir dist",
     "check": "pnpm run format:check && pnpm run lint && pnpm run inventory:check && pnpm run types:check && pnpm run typecheck && pnpm run test && pnpm run build",
     "dev": "wrangler dev --local",
+    "documents:golden": "node scripts/render-document-goldens.mjs --check",
+    "documents:golden:update": "node scripts/render-document-goldens.mjs --update",
     "format": "oxfmt --write src test scripts README.md vitest.config.ts wrangler.jsonc package.json pnpm-workspace.yaml",
     "format:check": "oxfmt --check src test scripts README.md vitest.config.ts wrangler.jsonc package.json pnpm-workspace.yaml",
     "inventory": "node scripts/generate-feature-inventory.mjs",

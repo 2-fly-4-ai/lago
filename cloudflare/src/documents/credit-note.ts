@@ -142,6 +142,16 @@ export function renderCreditNoteHtml(
   note: CreditNoteDocumentRow,
   items: CreditNoteItemDocumentRow[],
 ): string {
+  return renderCreditNoteHtmlTemplate(note, items).replace(
+    "system-ui,sans-serif",
+    "Arial,sans-serif",
+  );
+}
+
+function renderCreditNoteHtmlTemplate(
+  note: CreditNoteDocumentRow,
+  items: CreditNoteItemDocumentRow[],
+): string {
   const itemRows = items
     .map(
       (item) =>

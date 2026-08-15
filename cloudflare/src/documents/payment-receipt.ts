@@ -145,6 +145,16 @@ export function renderPaymentReceiptHtml(
   receipt: PaymentReceiptDocumentRow,
   invoices: ReceiptInvoiceRow[],
 ): string {
+  return renderPaymentReceiptHtmlTemplate(receipt, invoices).replace(
+    "system-ui,sans-serif",
+    "Arial,sans-serif",
+  );
+}
+
+function renderPaymentReceiptHtmlTemplate(
+  receipt: PaymentReceiptDocumentRow,
+  invoices: ReceiptInvoiceRow[],
+): string {
   const invoiceRows = invoices
     .map(
       (invoice) =>

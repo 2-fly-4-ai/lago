@@ -477,4 +477,23 @@ sum and credit/tax equation to the invoice total, proves one invoice/cycle/final
 checks the persisted period advancement. It was extracted from the existing billing-cycle test and
 contains no production or customer data.
 
+## Document goldens
+
+`fixtures/documents/` contains synthetic invoice, payment-receipt, and credit-note PDFs, 300-DPI PNG
+pages, and a structural manifest. The fixtures exercise multi-page flow, party details, line-item
+tables, totals, immutable-version footers, and the explicit XML-disabled boundary without using
+customer data. Printable templates use an embedded CID TrueType font path; the renderer rejects
+non-portable Type 3 font output, missing expected text, non-A4 geometry, and out-of-bounds glyphs.
+
+The visual check requires Chrome or Chromium, Poppler's `pdftoppm`, and Python with `pypdf` and
+`pdfplumber`. Override discovery with `PDF_GOLDEN_CHROME`, `PDF_GOLDEN_PDFTOPPM`, or
+`PDF_GOLDEN_PYTHON` when those executables are outside `PATH`.
+
+```sh
+pnpm run documents:golden
+```
+
+When an intentional template change is approved, regenerate with
+`pnpm run documents:golden:update`, inspect every resulting PNG page, and then rerun the check.
+
 `store-new` and `serp-auth` are not modified by this branch.

@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "renderer": "Chrome headless + Poppler 300 DPI",
+  "documents": [
+    {
+      "name": "invoice",
+      "htmlSha256": "ae2d51018099332c1b30767229b0ae048eb5c37f2394b6ff83f9c944f4efc48f",
+      "pdfSha256": "c7fa98e3914a1f725b52cf6951c2e7aa8d3db71fbe84918a3c5554fd5e78c1ca",
+      "pageCount": 2,
+      "pageWidthPoints": 594.96,
+      "pageHeightPoints": 841.92,
+      "extractedTextSha256": "760144f89e1cae8ffc50e3c9bb78f87a639955d66961d68c7912c5b6cc2bf641",
+      "extractedCharacterCount": 1367,
+      "outOfBoundsCharacters": 0,
+      "expectedText": [
+        "Invoice",
+        "INV-2026-0042",
+        "Synthetic Customer & Partners",
+        "Metered API usage - region 18",
+        "Total due",
+        "$163.10",
+        "Purchase order",
+        "Generated from immutable invoice version 3"
+      ],
+      "rowCount": 18,
+      "pages": [
+        {
+          "filename": "invoice-1.png",
+          "sha256": "1af8ac65a319b6dc8585cf6be189bf91448fb169722f8d18207e18f2cc3b3189",
+          "width": 2479,
+          "height": 3508
+        },
+        {
+          "filename": "invoice-2.png",
+          "sha256": "a507ed7547e83b49ebb43da53dc888ce29d163de609366bf438f8bbddf66eef9",
+          "width": 2479,
+          "height": 3508
+        }
+      ]
+    },
+    {
+      "name": "payment-receipt",
+      "htmlSha256": "8894ea0251a6c00e48e065ce126704e300479bfdb6d6bbc19122c714c982fd5c",
+      "pdfSha256": "4345b0643d5795b4e537de197dcabc1ef8e331d386acdb6f7d3067c3cc960f44",
+      "pageCount": 1,
+      "pageWidthPoints": 594.96,
+      "pageHeightPoints": 841.92,
+      "extractedTextSha256": "98b3e7f964b1242577c3b7a209dea6fa2b0efa52dc34c45385e2826528d9030b",
+      "extractedCharacterCount": 586,
+      "outOfBoundsCharacters": 0,
+      "expectedText": [
+        "Payment receipt",
+        "RCPT-2026-0017",
+        "Synthetic SERP Billing LLC",
+        "Authorize Net · txn-synthetic-0017",
+        "$246.80",
+        "Paid invoices",
+        "INV-2026-0043",
+        "Generated from immutable payment receipt version 2"
+      ],
+      "rowCount": 2,
+      "pages": [
+        {
+          "filename": "payment-receipt-1.png",
+          "sha256": "03e81ef32165951c5fc1b7e4473e5baf93a9ff0611d345bde837f069ebf0e70f",
+          "width": 2479,
+          "height": 3508
+        }
+      ]
+    },
+    {
+      "name": "credit-note",
+      "htmlSha256": "44ef7a6ca0f6d6e8b4462e04fca8776e9dd766fa12132823d53cc41374cf0e57",
+      "pdfSha256": "68ed2631a8be8beba103df63849d8ab6c9ac5edc6c9a868a5e10c5728abde323",
+      "pageCount": 1,
+      "pageWidthPoints": 594.96,
+      "pageHeightPoints": 841.92,
+      "extractedTextSha256": "f1ab7506d9f46faf6eb48bfca8388da3918ce346bf1fd4be03c4d1be8a7ddacd",
+      "extractedCharacterCount": 747,
+      "outOfBoundsCharacters": 0,
+      "expectedText": [
+        "Credit note",
+        "CN-2026-0009",
+        "Synthetic Customer & Partners",
+        "Unused platform capacity",
+        "Customer balance credit",
+        "$52.50",
+        "Generated from immutable credit note version 1",
+        "XML e-invoicing is not enabled"
+      ],
+      "rowCount": 3,
+      "pages": [
+        {
+          "filename": "credit-note-1.png",
+          "sha256": "4e75f52cfb27116c6a8093bbcf4ffb22f9c76ccef91303673325de73d52d56ed",
+          "width": 2479,
+          "height": 3508
+        }
+      ]
+    }
+  ]
+}

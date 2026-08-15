@@ -539,7 +539,10 @@ Acceptance:
       unreachable compatibility shim.
 - [x] Store immutable, version-addressed invoice, receipt, credit-note, and data-export artifacts in
       R2 with integrity metadata, byte length, and generation metadata.
-- [ ] Add visual and structural golden-file verification.
+- [x] Add visual and structural golden-file verification. Synthetic invoice, payment-receipt, and
+      credit-note fixtures now retain inspected PDFs and 300-DPI PNG pages plus deterministic HTML,
+      extracted-text, geometry, bounds, and image hashes. Regeneration rejects missing content,
+      out-of-bounds glyphs, and non-portable Type 3 fonts.
 
 Acceptance:
 
@@ -3025,3 +3028,19 @@ resource and mutation described.
   post-runtime full suite remains 297/297. This inventory/documentation slice requires no runtime,
   schema, resource, or deployment change and performed no provider action, customer message,
   payment action, secret access, customer-data access, or production operation.
+- 2026-08-15: Closed the M6 visual/structural document-golden milestone with synthetic invoice,
+  payment-receipt, and credit-note fixtures. Checked-in PDFs and four inspected 300-DPI PNG pages
+  cover A4 geometry, a two-page 18-line invoice, party blocks, totals, custom sections, immutable-
+  version footers, and the explicit XML-disabled boundary. The deterministic renderer compares
+  HTML, extracted text, page geometry/count, out-of-bounds glyphs, and PNG hashes while tolerating
+  Chrome PDF metadata changes. Visual inspection exposed macOS `system-ui` output as malformed Type
+  3 font subsets; printable templates now select Arial and generated fixtures embed portable CID
+  TrueType fonts, with an explicit Type 3 rejection gate. All four pages are legible and unclipped,
+  the focused document suite passes 16/16, strict formatting/lint/inventory/TypeScript checks pass,
+  and the authoritative no-file-parallelism suite passes all 300 tests across 58 files in 186.61
+  seconds. Two preceding parallel attempts each had a different unrelated integration test exceed
+  the 10-second harness limit; both runs passed 299/300 and the first timed-out file passed 2/2 in
+  isolation, confirming load contention rather than a stable regression. The Wrangler 4.122.0 dry
+  bundle is 1406.76 KiB (245.92 KiB gzip) with unchanged bindings and all three external-action
+  flags at `0`. This local checkpoint performed no migration, deployment, provider action, customer
+  message, payment action, secret access, customer-data access, or production operation.
