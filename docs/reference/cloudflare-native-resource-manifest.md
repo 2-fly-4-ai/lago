@@ -459,6 +459,18 @@ Applied D1 migrations: `0001_foundation.sql` through
   outbox rows, and plan-deletion tasks plus 254 schedule audits. All three external-action flags
   remain `0`; no resource provisioning, production route/domain, secret, provider action, customer
   data, or billing row changed.
+- The lifetime-usage deployment applied only `0053_lifetime_usage_projection.sql`. Remote schema
+  verification found 53 migrations, 13 lifetime columns, 10 subscription-activity columns, four
+  lifetime indexes, the subscription event-date column, zero projection rows, zero foreign-key
+  violations, and no remaining migration. Worker version
+  `93d81d34-d6b3-4c1e-99d0-33d7d11cfa4a` retained the existing workers.dev URL, D1, R2,
+  Queue/DLQ, Durable Object, Browser, and four Workflow bindings while changing Cron from `*/5` to
+  `* * * * *`. The deployed bundle was 1053.62 KiB (182.24 KiB gzip) with a 5 ms startup.
+  Health/readiness returned `200`/`200`, and unauthenticated lifetime-usage access returned `401`.
+  Aggregate-only verification found zero organizations, customers, subscriptions, invoices, usage
+  events, lifetime usages, subscription activities, and outbox rows plus 270 schedule audits. All
+  three external-action flags remain `0`; no resource provisioning, production route/domain,
+  secret, provider action, customer data, or billing row changed.
 - No organization, API key, plan, customer, subscription, invoice, usage event, payment attempt,
   document artifact, provider secret, or customer data was seeded remotely.
 

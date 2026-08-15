@@ -2266,3 +2266,15 @@ resource and mutation described.
   213 tests across 39 files. The dry-run bundle is 1053.25 KiB (182.18 KiB gzip). Progressive
   thresholds and usage-alert delivery remain explicit follow-up scope. Feature checkpoint:
   `85c6a0e`.
+- 2026-08-15: Remote preflight found only `0053_lifetime_usage_projection.sql` pending and zero
+  organizations, customers, plans, subscriptions, invoices, usage events, advance-usage billings,
+  outbox rows, and plan-deletion tasks, with zero foreign-key violations. Applied only that
+  migration to the isolated non-production D1, then verified 53 migrations, 13 lifetime columns,
+  10 activity columns, four lifetime indexes, the subscription event-date column, zero projection
+  rows, zero foreign-key violations, and no remaining migration. Deployed only the isolated Worker
+  as version `93d81d34-d6b3-4c1e-99d0-33d7d11cfa4a` with a 5 ms startup and the retained resources;
+  its Cron changed from five-minute to one-minute dispatch. Health/readiness returned `200`/`200`,
+  unauthenticated lifetime-usage access returned `401`, and post-deploy aggregate-only verification
+  stayed empty apart from 270 schedule audits. All three external-action flags remain `0`; no
+  resource provisioning, production route/domain, secret, provider action, customer data, or
+  billing row changed.
