@@ -25,6 +25,12 @@ import { refreshWalletOngoingBalances } from "../schedules/wallet-balances";
 import { dispatchPendingPlanDeletions } from "../billing/plan-deletion";
 import { repairPendingPayInAdvanceFixedChargeInvoices } from "../billing/pay-in-advance-fixed-charges";
 import { repairPendingPayInAdvanceUsageInvoices } from "../billing/pay-in-advance-usage";
+import {
+  lifetimeUsageRefreshCandidates,
+  pendingSubscriptionActivities,
+  processSubscriptionActivity,
+  refreshLifetimeUsage,
+} from "../usage/lifetime-usage";
 
 type ReconciliationParams = {
   schedule?: {
@@ -87,6 +93,60 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
         async () => repairPendingPayInAdvanceUsageInvoices(this.env, triggeredAtIso, runId),
       );
+
+      const subscriptionActivities = await step.do("load subscription activities", async () =>
+        executors.has("process_subscription_activity")
+          ? pendingSubscriptionActivities(this.env.BILLING_DB)
+          : [],
+      );
+      let processedSubscriptionActivities = 0;
+      let failedSubscriptionActivities = 0;
+      for (const [index, activity] of subscriptionActivities.entries()) {
+        try {
+          const outcome = await step.do(
+            `process subscription activity ${index + 1}`,
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () =>
+              processSubscriptionActivity(
+                this.env.BILLING_DB,
+                activity.organizationId,
+                activity.externalSubscriptionId,
+                triggeredAtIso,
+              ),
+          );
+          if (outcome === "processed") processedSubscriptionActivities += 1;
+        } catch {
+          failedSubscriptionActivities += 1;
+        }
+      }
+
+      const lifetimeUsageCandidates = await step.do(
+        "load lifetime usage refresh candidates",
+        async () =>
+          executors.has("refresh_lifetime_usages")
+            ? lifetimeUsageRefreshCandidates(this.env.BILLING_DB)
+            : [],
+      );
+      let refreshedLifetimeUsages = 0;
+      let failedLifetimeUsageRefreshes = 0;
+      for (const [index, candidate] of lifetimeUsageCandidates.entries()) {
+        try {
+          const refreshed = await step.do(
+            `refresh lifetime usage ${index + 1}`,
+            { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+            async () =>
+              refreshLifetimeUsage(
+                this.env.BILLING_DB,
+                candidate.organizationId,
+                candidate.externalSubscriptionId,
+                triggeredAtIso,
+              ),
+          );
+          if (refreshed) refreshedLifetimeUsages += 1;
+        } catch {
+          failedLifetimeUsageRefreshes += 1;
+        }
+      }
 
       const terminatedSubscriptions = executors.has("terminate_ended_subscriptions")
         ? await step.do(
@@ -273,6 +333,12 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         activatedSubscriptions,
         repairedAdvanceFixedChargeInvoices,
         repairedAdvanceUsageInvoices,
+        pendingSubscriptionActivities: subscriptionActivities.length,
+        processedSubscriptionActivities,
+        failedSubscriptionActivities,
+        lifetimeUsageRefreshCandidates: lifetimeUsageCandidates.length,
+        refreshedLifetimeUsages,
+        failedLifetimeUsageRefreshes,
         terminatedSubscriptions,
         endedTrialSubscriptions,
         pendingReceipts: pendingReceiptIds.length,

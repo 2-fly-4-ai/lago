@@ -33,6 +33,7 @@ import { handlePaymentLedgerRequest } from "./payment-ledger";
 import { normalizeSubscriptionPaymentMethod } from "./subscription-payment-method";
 import { handleInvoiceCustomSectionRequest } from "./invoice-custom-sections";
 import { handleSubscriptionChargeFilterRequest } from "./subscription-charge-filters";
+import { handleLifetimeUsageRequest } from "./lifetime-usage";
 import {
   customSectionLinkStatements,
   normalizeCustomerCustomSections,
@@ -185,6 +186,9 @@ export async function handleLagoCompatibilityRequest(
 
   const meteredUsageResponse = await handleMeteredUsageRequest(request, env, auth, requestId);
   if (meteredUsageResponse) return meteredUsageResponse;
+
+  const lifetimeUsageResponse = await handleLifetimeUsageRequest(request, env, auth, requestId);
+  if (lifetimeUsageResponse) return lifetimeUsageResponse;
 
   const couponResponse = await handleCouponLedgerRequest(request, env, auth, requestId);
   if (couponResponse) return couponResponse;

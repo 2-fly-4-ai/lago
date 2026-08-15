@@ -464,11 +464,12 @@ Acceptance:
 - [ ] Replace enabled Active Jobs with domain commands, Queue consumers, or Workflow steps.
 - [ ] Replace enabled Clockwork entries with deterministic Cron-to-Workflow dispatch.
       All 27 legacy entries now have an exhaustive code-level ownership registry. A deterministic
-      five-minute Cron dispatches a versioned Workflow instance and records due/unimplemented
+      one-minute Cron dispatches a versioned Workflow instance and records due/unimplemented
       schedules in D1. The retained pending-subscription activation, recurring billing, draft
       refresh, Authorize.Net receipt retry, coupon expiry, wallet expiry, recurring-rule expiry,
       ongoing wallet-balance/threshold projection, provider-free interval granted-credit top-up,
-      and invoice-overdue paths run on their legacy slots; the other entries remain explicitly
+      invoice-overdue, subscription-activity, and lifetime-usage refresh paths run on their legacy
+      slots; the other entries remain explicitly
       `not_started` until their underlying feature
       families are ported. The two daily webhook-retention schedules now enforce Lago's 90-day
       boundary; inbound receipt deletion uses a transactional D1 cleanup queue so R2 failures remain
@@ -530,7 +531,12 @@ Acceptance:
       replaced by a bounded TypeScript parser/evaluator with no dynamic evaluation; the separately
       configurable Ruby custom-aggregation program remains explicitly unsupported.
 - [ ] Add usage projections and reconciliation against invoice lines. A synchronous
-      Lago-compatible current-usage projection now covers bounded billing windows.
+      Lago-compatible current-usage projection now covers bounded billing windows. The retained
+      lifetime-usage slice coalesces event activity transactionally, follows subscription
+      generations, reconciles current rated usage with draft/finalized usage lines, exposes
+      Lago-compatible GET/PUT routes, and has one-minute Queue/Workflow fanout plus five-minute
+      projection repair. Progressive thresholds, alerts, and broader analytics projections remain
+      pending.
 - [ ] Select D1, Durable Object SQL, R2/Pipelines, or Analytics Engine by verified query and volume
       requirements; do not recreate Kafka/ClickHouse by habit.
 

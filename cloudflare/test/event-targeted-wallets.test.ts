@@ -41,6 +41,12 @@ beforeEach(async () => {
       `DELETE FROM billing_cycles WHERE organization_id = 'org-target-events'`,
     ),
     env.BILLING_DB.prepare(`DELETE FROM usage_events WHERE organization_id = 'org-target-events'`),
+    env.BILLING_DB.prepare(
+      `DELETE FROM usage_subscription_activities WHERE organization_id = 'org-target-events'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM lifetime_usages WHERE organization_id = 'org-target-events'`,
+    ),
     env.BILLING_DB.prepare(`DELETE FROM subscriptions WHERE organization_id = 'org-target-events'`),
     env.BILLING_DB.prepare(`DELETE FROM charges WHERE organization_id = 'org-target-events'`),
     env.BILLING_DB.prepare(`DELETE FROM plans WHERE organization_id = 'org-target-events'`),

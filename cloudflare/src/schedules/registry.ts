@@ -8,7 +8,9 @@ export type ScheduleExecutor =
   | "expire_wallets"
   | "finalize_invoices"
   | "mark_invoices_overdue"
+  | "process_subscription_activity"
   | "refresh_draft_invoices"
+  | "refresh_lifetime_usages"
   | "refresh_wallet_balances"
   | "reconcile_provider_receipts"
   | "terminate_recurring_wallet_rules"
@@ -59,23 +61,26 @@ export const LEGACY_SCHEDULES: readonly LegacySchedule[] = [
   {
     key: "schedule:process_subscription_activity",
     legacyJob: "Clock::ProcessAllSubscriptionActivitiesJob",
-    cadence: dynamic("LAGO_SUBSCRIPTION_ACTIVITY_PROCESSING_INTERVAL_SECONDS, default 60 seconds"),
+    cadence: everyMinutes(1),
     owner: "usage projection queue",
-    parity: "not_started",
+    parity: "implemented",
+    executor: "process_subscription_activity",
   },
   {
     key: "schedule:process_dedicated_orgs_subscription_activities",
     legacyJob: "Clock::ProcessDedicatedOrgsSubscriptionActivitiesJob",
-    cadence: dynamic("Utils::DedicatedWorkerConfig.refresh_interval"),
-    owner: "usage projection queue",
-    parity: "not_started",
+    cadence: everyMinutes(1),
+    owner: "consolidated usage projection queue",
+    parity: "implemented",
+    executor: "process_subscription_activity",
   },
   {
     key: "schedule:refresh_lifetime_usages",
     legacyJob: "Clock::RefreshLifetimeUsagesJob",
-    cadence: dynamic("LAGO_LIFETIME_USAGE_REFRESH_INTERVAL_SECONDS, default 5 minutes"),
+    cadence: everyMinutes(5),
     owner: "usage projection workflow",
-    parity: "not_started",
+    parity: "implemented",
+    executor: "refresh_lifetime_usages",
   },
   {
     key: "schedule:refresh_wallets_ongoing_balance",

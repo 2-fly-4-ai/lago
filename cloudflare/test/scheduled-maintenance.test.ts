@@ -86,6 +86,9 @@ describe("legacy schedule ownership", () => {
     ).toEqual([
       "schedule:activate_subscriptions",
       "schedule:refresh_draft_invoices",
+      "schedule:process_subscription_activity",
+      "schedule:process_dedicated_orgs_subscription_activities",
+      "schedule:refresh_lifetime_usages",
       "schedule:refresh_wallets_ongoing_balance",
       "schedule:terminate_ended_subscriptions",
       "schedule:bill_customers",
@@ -108,6 +111,9 @@ describe("legacy schedule ownership", () => {
     expect(due).toEqual([
       "schedule:activate_subscriptions",
       "schedule:refresh_draft_invoices",
+      "schedule:process_subscription_activity",
+      "schedule:process_dedicated_orgs_subscription_activities",
+      "schedule:refresh_lifetime_usages",
       "schedule:refresh_wallets_ongoing_balance",
       "schedule:retry_generating_subscription_invoices",
       "schedule:terminate_coupons",

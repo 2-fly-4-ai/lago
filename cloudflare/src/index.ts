@@ -8,6 +8,7 @@ import { reconcileAuthorizeNetReceipt } from "./reconciliation/authorize-net";
 import { deliverOutboundWebhooks } from "./webhooks/outbound";
 import { scheduleInstanceId } from "./schedules/registry";
 import { processPayInAdvanceUsageEvent } from "./billing/pay-in-advance-usage";
+import { processUsageEventSubscriptionActivity } from "./usage/lifetime-usage";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -118,6 +119,17 @@ export default {
       try {
         if (event.type === "usage_event.ingested") {
           await processPayInAdvanceUsageEvent(env, event.aggregateId, event.correlationId);
+          try {
+            await processUsageEventSubscriptionActivity(env.BILLING_DB, event.aggregateId);
+          } catch {
+            console.warn(
+              JSON.stringify({
+                level: "warn",
+                event: "lifetime_usage_projection_deferred",
+                usageEventId: event.aggregateId,
+              }),
+            );
+          }
         }
 
         if (event.type === "authorize_net.webhook.received") {

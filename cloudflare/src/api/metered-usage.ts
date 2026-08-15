@@ -30,6 +30,7 @@ import {
 } from "../usage/expression";
 import { billingPeriodDurationDays, type BillingTime } from "../billing/periods";
 import { validatePayInAdvanceUsageConfiguration } from "../usage/pay-in-advance-validation";
+import { subscriptionActivityStatements } from "../usage/subscription-activity";
 
 type MetricRow = {
   id: string;
@@ -64,7 +65,7 @@ type EventRow = {
   created_at: string;
 };
 
-type SubscriptionUsageRow = {
+export type SubscriptionUsageRow = {
   id: string;
   organization_id: string;
   customer_id: string;
@@ -2602,6 +2603,14 @@ function batchEventStatements(
         stableJson(event.domainEvent.payload),
         event.row.created_at,
       ),
+    ...subscriptionActivityStatements(
+      database,
+      auth.organizationId,
+      event.context.subscription_id,
+      event.input.externalSubscriptionId,
+      event.input.timestamp,
+      event.row.created_at,
+    ),
   ];
   if (event.targetWalletError)
     statements.push(eventOutboxStatement(database, auth.organizationId, event.targetWalletError));
@@ -2739,6 +2748,14 @@ async function createUsageEvent(
       ...(targetWalletError
         ? [eventOutboxStatement(env.BILLING_DB, auth.organizationId, targetWalletError)]
         : []),
+      ...subscriptionActivityStatements(
+        env.BILLING_DB,
+        auth.organizationId,
+        context.subscription_id,
+        input.externalSubscriptionId,
+        input.timestamp,
+        createdAt,
+      ),
       env.BILLING_DB.prepare(
         `UPDATE invoices SET ready_to_be_refreshed = 1, updated_at = ?
          WHERE status = 'draft' AND organization_id = ? AND subscription_id = ?
@@ -2878,6 +2895,29 @@ async function currentUsage(
   if (!subscription)
     throw new ApiError(404, "subscription_not_found", "Subscription was not found");
 
+  const projection = await calculateCurrentUsageProjection(database, subscription);
+  return json(
+    {
+      customer_usage: {
+        from_datetime: subscription.current_period_start,
+        to_datetime: subscription.current_period_end,
+        issuing_date: subscription.current_period_end.slice(0, 10),
+        currency: subscription.currency,
+        amount_cents: jsonDecimal(projection.total),
+        total_amount_cents: jsonDecimal(projection.total),
+        taxes_amount_cents: 0,
+        lago_invoice_id: null,
+        charges_usage: projection.chargeUsage,
+      },
+    },
+    { requestId },
+  );
+}
+
+export async function calculateCurrentUsageProjection(
+  database: D1Database,
+  subscription: SubscriptionUsageRow,
+): Promise<{ total: Decimal; chargeUsage: Array<Record<string, unknown>> }> {
   const charges = await database
     .prepare(
       `SELECT ch.id, ch.code, ch.invoice_display_name, ch.charge_model,
@@ -2892,7 +2932,7 @@ async function currentUsage(
          AND ch.invoiceable = 1 AND ch.pay_in_advance = 0
        ORDER BY ch.created_at, ch.id`,
     )
-    .bind(auth.organizationId, subscription.plan_id)
+    .bind(subscription.organization_id, subscription.plan_id)
     .all<ChargeUsageRow>();
 
   let total = Decimal.zero();
@@ -3038,22 +3078,7 @@ async function currentUsage(
     });
   }
 
-  return json(
-    {
-      customer_usage: {
-        from_datetime: subscription.current_period_start,
-        to_datetime: subscription.current_period_end,
-        issuing_date: subscription.current_period_end.slice(0, 10),
-        currency: subscription.currency,
-        amount_cents: jsonDecimal(total),
-        total_amount_cents: jsonDecimal(total),
-        taxes_amount_cents: 0,
-        lago_invoice_id: null,
-        charges_usage: chargeUsage,
-      },
-    },
-    { requestId },
-  );
+  return { total, chargeUsage };
 }
 
 async function usageEventsForPeriod(

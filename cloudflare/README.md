@@ -160,11 +160,21 @@ remaining Lago feature inventory is dispositioned and ported.
   idempotent, and the five-minute reconciliation owner repairs persisted events whose delivery was
   missed. Non-invoiceable or prorated advance usage, volume pricing, custom aggregation, positive
   minimums, and grouped pricing remain explicit unsupported boundaries.
-- Workflows and Cron: a deterministic five-minute dispatcher preserves an exhaustive ownership map
+  Each persisted event also coalesces one D1 subscription-activity row and advances the
+  subscription's last-received event date in the same transaction. Queue delivery refreshes a
+  lineage-scoped lifetime-usage projection from current rated usage plus draft/finalized usage
+  invoice lines; a guarded activity version preserves arrivals concurrent with calculation.
+  `GET` and `PUT /api/v1/subscriptions/:external_id/lifetime_usage` expose the Lago-compatible
+  projection and external historical amount. The Cron Workflow drains missed activity every minute
+  and rotates through retained lifetime projections every five minutes, replacing the legacy
+  Clockwork and Sidekiq fanout without Redis or a dedicated queue process. Progressive-billing
+  thresholds and usage-alert delivery remain outside this retained slice.
+- Workflows and Cron: a deterministic one-minute dispatcher preserves an exhaustive ownership map
   of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
   flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,
   coupon-expiration, wallet-expiration, ongoing wallet projection/threshold-grant, and interval
-  wallet top-up paths on their original slots, performs 90-day
+  wallet top-up paths on their original slots, drains subscription activity every minute, refreshes
+  lifetime usage every five minutes, performs 90-day
   inbound/outbound webhook retention, records each run in D1, publishes the outbox, and reports due
   schedules whose behavior is not yet ported. Each run also drains retired billable-metric events
   in bounded D1/R2 batches, repairs pending pay-in-advance fixed and usage invoices, and repairs
