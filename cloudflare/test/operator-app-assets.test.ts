@@ -45,6 +45,7 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/payment-receipts",
       "/api/operator/v1/taxes",
       "/api/operator/v1/add-ons",
+      "/api/operator/v1/customers",
     ]) {
       expect(operatorScript).toContain(endpoint);
     }
@@ -65,6 +66,8 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("Payment receipts");
     expect(operatorIndex).toContain("Manual taxes");
     expect(operatorIndex).toContain("Add-ons");
+    expect(operatorIndex).toContain("Customers");
+    expect(operatorIndex).toContain("Provider settings, dunning, metadata, custom sections");
     expect(operatorIndex).toContain("E-invoicing, tax assignment, and additional billing entities");
     expect(operatorScript).toContain("state.oneTimeSecret = null");
     expect(operatorScript).toContain('elements.secretValue.textContent = "—"');

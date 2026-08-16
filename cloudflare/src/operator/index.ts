@@ -4,11 +4,12 @@ import { handleAddOnLedgerRequest } from "../api/add-on-ledger";
 import { handleApiKeysApi } from "../api/api-keys";
 import { handleBillingEntitiesApi } from "../api/billing-entities";
 import { handleInvoiceCustomSectionRequest } from "../api/invoice-custom-sections";
+import { handleCustomerCompatibilityRequest } from "../api/lago-compatibility";
 import { showOrganization } from "../api/organizations";
 import { handlePaymentReceiptReadsApi } from "../api/payment-receipts";
 import { handleTaxLedgerRequest } from "../api/tax-ledger";
 import type { AuthContext } from "../auth/api-key";
-import { ApiError, apiErrorResponse, json } from "../http";
+import { ApiError, apiErrorResponse, json, objectAt, parseJsonObject } from "../http";
 import {
   assertOperatorAdmin,
   assertOperatorMutationRequest,
@@ -230,6 +231,32 @@ export async function handleOperatorRequest(
       if (response) return response;
     }
 
+    if (/^\/api\/operator\/v1\/customers(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+        await assertOperatorCustomerMutationPayload(request);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/customers",
+        "/api/v1/customers",
+      );
+      const response = await handleCustomerCompatibilityRequest(
+        new Request(forwardedUrl, request),
+        env,
+        auth,
+        requestId,
+      );
+      if (response) return response;
+    }
+
     throw new ApiError(404, "not_found", "The requested operator route was not found");
   } catch (error) {
     if (error instanceof ApiError) return apiErrorResponse(error, requestId);
@@ -244,3 +271,25 @@ export async function handleOperatorRequest(
 }
 
 export default createOperatorHandler();
+
+async function assertOperatorCustomerMutationPayload(request: Request): Promise<void> {
+  if (request.method !== "POST" && request.method !== "PUT") return;
+  const input = objectAt(await parseJsonObject(request.clone()), "customer");
+  const supported = new Set([
+    "external_id",
+    "name",
+    "email",
+    "currency",
+    "net_payment_term",
+    "invoice_grace_period",
+    "timezone",
+  ]);
+  const unsupported = Object.keys(input).find((key) => !supported.has(key));
+  if (unsupported) {
+    throw new ApiError(
+      422,
+      "unsupported_operator_customer_field",
+      `${unsupported} is not admitted to the operator customer workflow`,
+    );
+  }
+}

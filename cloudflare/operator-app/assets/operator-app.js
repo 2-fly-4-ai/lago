@@ -7,6 +7,7 @@ const endpoints = {
   paymentReceipts: "/api/operator/v1/payment-receipts",
   taxes: "/api/operator/v1/taxes",
   addOns: "/api/operator/v1/add-ons",
+  customers: "/api/operator/v1/customers",
 };
 
 const elements = {
@@ -117,6 +118,25 @@ const elements = {
   addOnDescription: document.querySelector("#add-on-description"),
   addOnFormError: document.querySelector("#add-on-form-error"),
   submitAddOnForm: document.querySelector("#submit-add-on-form"),
+  openCreateCustomer: document.querySelector("#open-create-customer"),
+  customersLoading: document.querySelector("#customers-loading"),
+  customersEmpty: document.querySelector("#customers-empty"),
+  customersEmptyCopy: document.querySelector("#customers-empty-copy"),
+  customersTableShell: document.querySelector("#customers-table-shell"),
+  customersTableBody: document.querySelector("#customers-table-body"),
+  customerFormDialog: document.querySelector("#customer-form-dialog"),
+  customerForm: document.querySelector("#customer-form"),
+  customerFormTitle: document.querySelector("#customer-form-title"),
+  customerFormCopy: document.querySelector("#customer-form-copy"),
+  customerExternalId: document.querySelector("#customer-external-id"),
+  customerName: document.querySelector("#customer-name"),
+  customerEmail: document.querySelector("#customer-email"),
+  customerCurrency: document.querySelector("#customer-currency"),
+  customerTimezone: document.querySelector("#customer-timezone"),
+  customerNetTerm: document.querySelector("#customer-net-term"),
+  customerGracePeriod: document.querySelector("#customer-grace-period"),
+  customerFormError: document.querySelector("#customer-form-error"),
+  submitCustomerForm: document.querySelector("#submit-customer-form"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -167,6 +187,9 @@ const state = {
   addOns: [],
   addOnFormMode: "create",
   selectedAddOnCode: null,
+  customers: [],
+  customerFormMode: "create",
+  selectedCustomerExternalId: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -190,6 +213,9 @@ elements.taxForm.addEventListener("submit", submitTaxForm);
 elements.openCreateAddOn.addEventListener("click", openCreateAddOnDialog);
 elements.addOnsTableBody.addEventListener("click", handleAddOnAction);
 elements.addOnForm.addEventListener("submit", submitAddOnForm);
+elements.openCreateCustomer.addEventListener("click", openCreateCustomerDialog);
+elements.customersTableBody.addEventListener("click", handleCustomerAction);
+elements.customerForm.addEventListener("submit", submitCustomerForm);
 
 void initialize();
 
@@ -206,6 +232,7 @@ async function initialize() {
       receiptsPayload,
       taxesPayload,
       addOnsPayload,
+      customersPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -214,6 +241,7 @@ async function initialize() {
       requestJson(endpoints.paymentReceipts),
       requestJson(endpoints.taxes),
       requestJson(endpoints.addOns),
+      requestJson(endpoints.customers),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -223,6 +251,7 @@ async function initialize() {
     renderReceipts(receiptsPayload.payment_receipts);
     renderTaxes(taxesPayload.taxes);
     renderAddOns(addOnsPayload.add_ons);
+    renderCustomers(customersPayload.customers);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -241,6 +270,7 @@ function renderOperator(operator) {
   elements.openEditBilling.hidden = !isAdmin;
   elements.openCreateTax.hidden = !isAdmin;
   elements.openCreateAddOn.hidden = !isAdmin;
+  elements.openCreateCustomer.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -253,6 +283,9 @@ function renderOperator(operator) {
   elements.addOnsEmptyCopy.textContent = isAdmin
     ? "Create an add-on for a supported fixed-charge workflow."
     : "This organization has no active add-ons. Admin access is required to create one.";
+  elements.customersEmptyCopy.textContent = isAdmin
+    ? "Create the first retained billing customer for this organization."
+    : "This organization has no customers. Admin access is required to create one.";
   if (operator.organization_external_id) {
     elements.workspaceName.textContent = operator.organization_external_id;
   }
@@ -816,6 +849,140 @@ function openAddOnTermination(addOn) {
   elements.confirmDialog.showModal();
 }
 
+function renderCustomers(customers) {
+  state.customers = Array.isArray(customers) ? customers : [];
+  elements.customersTableBody.replaceChildren();
+  elements.customersLoading.hidden = true;
+  elements.customersEmpty.hidden = state.customers.length !== 0;
+  elements.customersTableShell.hidden = state.customers.length === 0;
+  for (const customer of state.customers) {
+    elements.customersTableBody.append(createCustomerRow(customer));
+  }
+}
+
+function createCustomerRow(customer) {
+  const row = document.createElement("tr");
+  const customerCell = document.createElement("td");
+  const name = document.createElement("span");
+  name.className = "key-name";
+  name.textContent = safeText(customer.name, "Unnamed customer");
+  const externalId = document.createElement("span");
+  externalId.className = "key-id";
+  externalId.textContent = safeText(customer.external_id, "—");
+  customerCell.append(name, externalId);
+  const emailCell = document.createElement("td");
+  emailCell.textContent = safeText(customer.email, "—");
+  const currencyCell = document.createElement("td");
+  currencyCell.textContent = safeText(customer.currency, "—");
+  const timezoneCell = document.createElement("td");
+  timezoneCell.textContent = safeText(customer.timezone, "—");
+  const termCell = document.createElement("td");
+  termCell.textContent =
+    customer.net_payment_term === null
+      ? "Default"
+      : `${nonNegativeNumber(customer.net_payment_term)} days`;
+  const actionCell = document.createElement("td");
+  actionCell.className = "actions-column";
+  if (state.role === "admin") {
+    actionCell.append(customerActionButton("Edit", customer.external_id));
+  } else {
+    actionCell.textContent = "Read only";
+    actionCell.classList.add("muted");
+  }
+  row.append(customerCell, emailCell, currencyCell, timezoneCell, termCell, actionCell);
+  return row;
+}
+
+function customerActionButton(label, externalId) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "row-action";
+  button.dataset.customerExternalId = externalId;
+  button.textContent = label;
+  return button;
+}
+
+function handleCustomerAction(event) {
+  const button = event.target.closest("button[data-customer-external-id]");
+  if (!button || state.role !== "admin") return;
+  const customer = state.customers.find(
+    (candidate) => candidate.external_id === button.dataset.customerExternalId,
+  );
+  if (customer) openEditCustomerDialog(customer);
+}
+
+function openCreateCustomerDialog() {
+  state.customerFormMode = "create";
+  state.selectedCustomerExternalId = null;
+  elements.customerFormTitle.textContent = "Create customer";
+  elements.customerFormCopy.textContent = "Create a tenant-scoped billing customer.";
+  elements.submitCustomerForm.textContent = "Create customer";
+  elements.customerForm.reset();
+  elements.customerExternalId.disabled = false;
+  elements.customerFormError.hidden = true;
+  elements.customerFormDialog.showModal();
+  elements.customerExternalId.focus();
+}
+
+function openEditCustomerDialog(customer) {
+  state.customerFormMode = "edit";
+  state.selectedCustomerExternalId = customer.external_id;
+  elements.customerFormTitle.textContent = "Edit customer";
+  elements.customerFormCopy.textContent = "Update the retained core billing fields.";
+  elements.submitCustomerForm.textContent = "Save customer";
+  elements.customerExternalId.value = formValue(customer.external_id);
+  elements.customerExternalId.disabled = true;
+  elements.customerName.value = formValue(customer.name);
+  elements.customerEmail.value = formValue(customer.email);
+  elements.customerCurrency.value = formValue(customer.currency);
+  elements.customerTimezone.value = formValue(customer.timezone);
+  elements.customerNetTerm.value = nullableNumberFormValue(customer.net_payment_term);
+  elements.customerGracePeriod.value = nullableNumberFormValue(
+    customer.billing_configuration?.invoice_grace_period,
+  );
+  elements.customerFormError.hidden = true;
+  elements.customerFormDialog.showModal();
+  elements.customerName.focus();
+}
+
+async function submitCustomerForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    elements.customerFormDialog.close();
+    return;
+  }
+  if (!elements.customerForm.reportValidity()) return;
+  const isCreate = state.customerFormMode === "create";
+  const externalId = isCreate
+    ? elements.customerExternalId.value.trim()
+    : state.selectedCustomerExternalId;
+  setBusy(elements.submitCustomerForm, true, isCreate ? "Creating…" : "Saving…");
+  elements.customerFormError.hidden = true;
+  try {
+    await requestJson(isCreate ? endpoints.customers : customerEndpoint(externalId), {
+      method: isCreate ? "POST" : "PUT",
+      body: {
+        customer: {
+          ...(isCreate ? { external_id: externalId } : {}),
+          name: optionalFormValue(elements.customerName.value),
+          email: optionalFormValue(elements.customerEmail.value),
+          currency: optionalFormValue(elements.customerCurrency.value),
+          timezone: optionalFormValue(elements.customerTimezone.value),
+          net_payment_term: optionalNumberFormValue(elements.customerNetTerm.value),
+          invoice_grace_period: optionalNumberFormValue(elements.customerGracePeriod.value),
+        },
+      },
+    });
+    elements.customerFormDialog.close();
+    await refreshCustomers();
+  } catch (error) {
+    elements.customerFormError.textContent = errorMessage(error);
+    elements.customerFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitCustomerForm, false, isCreate ? "Create customer" : "Save customer");
+  }
+}
+
 function sectionActionButton(label, action, code, danger = false) {
   const button = document.createElement("button");
   button.type = "button";
@@ -1156,6 +1323,16 @@ async function refreshAddOns() {
   }
 }
 
+async function refreshCustomers() {
+  try {
+    const payload = await requestJson(endpoints.customers);
+    renderCustomers(payload.customers);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
 function revealOneTimeSecret(secret) {
   if (typeof secret !== "string" || !secret.startsWith("lago_")) {
     showPageError("The operation completed, but the one-time credential was not returned.");
@@ -1270,6 +1447,10 @@ function addOnEndpoint(code) {
   return `${endpoints.addOns}/${encodeURIComponent(code)}`;
 }
 
+function customerEndpoint(externalId) {
+  return `${endpoints.customers}/${encodeURIComponent(externalId)}`;
+}
+
 function showPageError(message) {
   elements.pageErrorMessage.textContent = message;
   elements.pageError.hidden = false;
@@ -1296,6 +1477,15 @@ function safeText(value, fallback) {
 function optionalFormValue(value) {
   const normalized = value.trim();
   return normalized || null;
+}
+
+function optionalNumberFormValue(value) {
+  const normalized = value.trim();
+  return normalized === "" ? null : Number(normalized);
+}
+
+function nullableNumberFormValue(value) {
+  return value === null || value === undefined ? "" : String(nonNegativeNumber(value));
 }
 
 function formValue(value) {

@@ -757,6 +757,75 @@ describe("operator Worker disabled boundary", () => {
     );
     await expect(empty.json()).resolves.toMatchObject({ add_ons: [], meta: { total_count: 0 } });
   });
+
+  it("maps customer reads for viewers and upserts for admins while keeping deletion unavailable", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/customers", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerList.json()).resolves.toMatchObject({
+      customers: [],
+      meta: { total_count: 0 },
+    });
+
+    const viewerCreate = await operatorMutation("POST", "/customers", {
+      customer: { external_id: "operator-customer", name: "Operator Customer" },
+    });
+    expect(viewerCreate.status).toBe(403);
+
+    await promoteOperatorAdmin();
+    const created = await operatorMutation("POST", "/customers", {
+      customer: {
+        external_id: "operator-customer",
+        name: "Operator Customer",
+        email: "CUSTOMER@EXAMPLE.INVALID",
+        currency: "nzd",
+        timezone: "Pacific/Auckland",
+      },
+    });
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      customer: {
+        external_id: "operator-customer",
+        name: "Operator Customer",
+        email: "customer@example.invalid",
+        currency: "NZD",
+        timezone: "Pacific/Auckland",
+      },
+    });
+
+    const updated = await operatorMutation("PUT", "/customers/operator-customer", {
+      customer: { name: "Updated Customer", net_payment_term: 14 },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      customer: {
+        external_id: "operator-customer",
+        name: "Updated Customer",
+        net_payment_term: 14,
+      },
+    });
+
+    const blockedProvider = await operatorMutation("PUT", "/customers/operator-customer", {
+      customer: {
+        billing_configuration: {
+          payment_provider: "authorize_net",
+          payment_provider_code: "authorize-net-default",
+        },
+      },
+    });
+    expect(blockedProvider.status).toBe(422);
+    await expect(blockedProvider.json()).resolves.toMatchObject({
+      code: "unsupported_operator_customer_field",
+    });
+
+    const deleted = await operatorMutation("DELETE", "/customers/operator-customer");
+    expect(deleted.status).toBe(422);
+    await expect(deleted.json()).resolves.toMatchObject({ code: "unsupported_customer_deletion" });
+  });
 });
 
 async function promoteOperatorAdmin(): Promise<void> {

@@ -119,6 +119,10 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    next bounded catalog family, reusing the canonical D1 transaction, value-free outbox evidence,
    and producer-only Queue publication. Add-on list/show plus admin create/edit/terminate follows the
    same boundary while preserving canonical currency/in-use guards and rejecting tax-code targeting.
+   Core customer list/show plus admin create/edit is implemented through the canonical D1 and Queue
+   handler. Its BFF allowlist admits only identity, email, currency, timezone, and payment-term
+   fields; provider, dunning, metadata, custom-section, tax-target, and deletion operations are
+   rejected until their separate mappings are complete.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

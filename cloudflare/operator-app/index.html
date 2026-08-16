@@ -32,6 +32,10 @@
             <span class="nav-icon" aria-hidden="true">⌂</span>
             Overview
           </a>
+          <a class="nav-item" href="#customers">
+            <span class="nav-icon" aria-hidden="true">◎</span>
+            Customers
+          </a>
           <a class="nav-item" href="#billing-profile">
             <span class="nav-icon" aria-hidden="true">▤</span>
             Billing profile
@@ -203,6 +207,45 @@
                     <dd id="billing-section-count">—</dd>
                   </div>
                 </dl>
+              </div>
+            </section>
+
+            <section class="keys-section" id="customers" aria-labelledby="customers-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Billing accounts</p>
+                  <h2 id="customers-title">Customers</h2>
+                  <p>Review and update the retained core customer billing fields.</p>
+                </div>
+                <button class="primary-button" id="open-create-customer" type="button" hidden>
+                  <span aria-hidden="true">+</span>
+                  Create customer
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="customers-loading" aria-live="polite">
+                  Loading customers…
+                </div>
+                <div class="empty-state" id="customers-empty" hidden>
+                  <span aria-hidden="true">◎</span>
+                  <h3>No customers</h3>
+                  <p id="customers-empty-copy">This organization has no customers.</p>
+                </div>
+                <div class="table-scroll" id="customers-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Email</th>
+                        <th scope="col">Currency</th>
+                        <th scope="col">Timezone</th>
+                        <th scope="col">Payment term</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="customers-table-body"></tbody>
+                  </table>
+                </div>
               </div>
             </section>
 
@@ -784,6 +827,88 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button>
           <button class="primary-button" id="submit-add-on-form" value="default" type="submit">
             Create add-on
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="customer-form-dialog"
+      aria-labelledby="customer-form-title"
+    >
+      <form method="dialog" id="customer-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Billing account</p>
+            <h2 id="customer-form-title">Create customer</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy" id="customer-form-copy">Create a tenant-scoped billing customer.</p>
+        <div class="field-grid">
+          <div>
+            <label for="customer-external-id">External ID</label>
+            <input
+              id="customer-external-id"
+              name="external_id"
+              maxlength="255"
+              autocomplete="off"
+              required
+            />
+          </div>
+          <div>
+            <label for="customer-name">Name</label>
+            <input id="customer-name" name="name" maxlength="255" autocomplete="name" />
+          </div>
+          <div>
+            <label for="customer-email">Email</label>
+            <input
+              id="customer-email"
+              name="email"
+              type="email"
+              maxlength="320"
+              autocomplete="email"
+            />
+          </div>
+          <div>
+            <label for="customer-currency">Currency</label>
+            <input
+              id="customer-currency"
+              name="currency"
+              minlength="3"
+              maxlength="3"
+              autocomplete="off"
+            />
+          </div>
+          <div>
+            <label for="customer-timezone">Timezone</label>
+            <input id="customer-timezone" name="timezone" maxlength="255" autocomplete="off" />
+          </div>
+          <div>
+            <label for="customer-net-term">Net payment term (days)</label>
+            <input id="customer-net-term" name="net_payment_term" type="number" min="0" step="1" />
+          </div>
+          <div>
+            <label for="customer-grace-period">Invoice grace period (days)</label>
+            <input
+              id="customer-grace-period"
+              name="invoice_grace_period"
+              type="number"
+              min="0"
+              step="1"
+            />
+          </div>
+        </div>
+        <p class="field-hint">
+          Provider settings, dunning, metadata, custom sections, tax targeting, and deletion remain
+          unavailable.
+        </p>
+        <p class="form-error" id="customer-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-customer-form" value="default" type="submit">
+            Create customer
           </button>
         </div>
       </form>

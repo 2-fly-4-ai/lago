@@ -231,28 +231,8 @@ export async function handleLagoCompatibilityRequest(
   );
   if (paymentRetryResponse) return paymentRetryResponse;
 
-  if (request.method === "POST" && url.pathname === "/api/v1/customers") {
-    return upsertCustomer(request, null, env, auth, requestId);
-  }
-
-  if (request.method === "GET" && url.pathname === "/api/v1/customers") {
-    return listCustomers(url, env.BILLING_DB, auth, requestId);
-  }
-
-  const customerMatch = url.pathname.match(/^\/api\/v1\/customers\/([^/]+)$/);
-  if (request.method === "GET" && customerMatch?.[1]) {
-    return showCustomer(decodeURIComponent(customerMatch[1]), env.BILLING_DB, auth, requestId);
-  }
-  if (request.method === "PUT" && customerMatch?.[1]) {
-    return upsertCustomer(request, decodeURIComponent(customerMatch[1]), env, auth, requestId);
-  }
-  if (request.method === "DELETE" && customerMatch?.[1]) {
-    throw new ApiError(
-      422,
-      "unsupported_customer_deletion",
-      "Customer deletion is not implemented until anonymization and dependency cleanup are ported",
-    );
-  }
+  const customerResponse = await handleCustomerCompatibilityRequest(request, env, auth, requestId);
+  if (customerResponse) return customerResponse;
 
   if (request.method === "POST" && url.pathname === "/api/v1/subscriptions") {
     return createSubscription(request, env, auth, requestId);
@@ -301,10 +281,40 @@ export async function handleLagoCompatibilityRequest(
   return null;
 }
 
+export async function handleCustomerCompatibilityRequest(
+  request: Request,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response | null> {
+  const url = new URL(request.url);
+  if (request.method === "POST" && url.pathname === "/api/v1/customers") {
+    return upsertCustomer(request, null, env, auth, requestId);
+  }
+  if (request.method === "GET" && url.pathname === "/api/v1/customers") {
+    return listCustomers(url, env.BILLING_DB, auth, requestId);
+  }
+  const customerMatch = url.pathname.match(/^\/api\/v1\/customers\/([^/]+)$/);
+  if (request.method === "GET" && customerMatch?.[1]) {
+    return showCustomer(decodeURIComponent(customerMatch[1]), env.BILLING_DB, auth, requestId);
+  }
+  if (request.method === "PUT" && customerMatch?.[1]) {
+    return upsertCustomer(request, decodeURIComponent(customerMatch[1]), env, auth, requestId);
+  }
+  if (request.method === "DELETE" && customerMatch?.[1]) {
+    throw new ApiError(
+      422,
+      "unsupported_customer_deletion",
+      "Customer deletion is not implemented until anonymization and dependency cleanup are ported",
+    );
+  }
+  return null;
+}
+
 async function upsertCustomer(
   request: Request,
   pathExternalId: string | null,
-  env: Env,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -521,7 +531,7 @@ type NormalizedCustomer = {
 async function updateCustomer(
   customer: CustomerRow,
   normalized: NormalizedCustomer,
-  env: Env,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {

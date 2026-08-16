@@ -318,6 +318,10 @@ remaining Lago feature inventory is dispositioned and ported.
   list/show active taxes, while same-origin/CSRF-checked admins can create, edit, and terminate them.
   `/api/operator/v1/add-ons` does the same for retained fixed-price add-ons while preserving
   currency/in-use guards and keeping unsupported tax-code assignment unavailable.
+  `/api/operator/v1/customers` reuses the canonical core customer list/show/upsert handler. Viewers
+  receive tenant-scoped rows and admins can create/edit identity, email, currency, timezone, and
+  payment-term fields. The BFF itself rejects provider, dunning, metadata, custom-section,
+  tax-target, and deletion operations until those advanced workflows are separately admitted.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

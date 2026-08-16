@@ -641,6 +641,10 @@ Acceptance:
       D1 and internal domain-event Queue handler.
       Add-on list/show plus admin create/edit/terminate is implemented through the canonical handler
       with its currency, in-use, and unsupported tax-target boundaries unchanged.
+      Core customer list/show plus admin create/edit is implemented through an extracted canonical
+      D1 and Queue handler. The operator BFF admits only identity, email, currency, timezone, and
+      payment-term fields; provider, dunning, metadata, custom-section, tax-target, and deletion
+      operations remain explicit later mappings.
 - [x] Serve the operator application with Workers Static Assets. The deployed API Worker retains
       its script-free `operator-ui` rollback shell. The separate, undeployed operator Worker now
       serves `operator-app`: a same-origin native-ES-module organization/API-key workspace with a
@@ -3287,3 +3291,17 @@ resource and mutation described.
   disabled operator bundle is 158.20 KiB (32.03 KiB gzip) with no new binding. No remote migration,
   resource, Access application/policy, membership, deployment, provider action, payment action,
   customer message, secret access, customer-data access, or production operation occurred.
+- 2026-08-16: Added the bounded core-customer operator workflow. Customer list/show/upsert routing is
+  extracted from the compatibility router into a canonical D1 and Queue handler, leaving the service
+  API behavior unchanged. `/api/operator/v1/customers` permits tenant-scoped viewer reads and
+  same-origin/CSRF-checked admin create/edit. A BFF payload allowlist admits external identity, name,
+  email, currency, timezone, net payment term, and invoice grace period only; provider, dunning,
+  metadata, custom-section, tax-target, and deletion operations are rejected even if the browser
+  calls the BFF directly. The operator app adds viewer rows and admin create/edit controls without a
+  deletion action. Focused operator/static tests pass 19/19; the authoritative serial suite passes
+  all 321 tests across 61 files in 62.79 seconds. Formatting, lint, TypeScript, JavaScript syntax,
+  generated inventory, binding checks, and dry builds pass. Tree-shaking keeps the API dry bundle at
+  1407.72 KiB (246.08 KiB gzip) and the disabled operator bundle at 194.14 KiB (38.16 KiB gzip) with
+  no new binding. No remote migration, resource, Access application/policy, membership, deployment,
+  provider action, payment action, customer message, secret access, live customer-data access, or
+  production operation occurred.
