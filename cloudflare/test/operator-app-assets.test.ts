@@ -55,6 +55,7 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/invoices",
       "/api/operator/v1/wallets",
       "/api/operator/v1/wallet-transactions",
+      "/api/operator/v1/credit-notes",
     ]) {
       expect(operatorScript).toContain(endpoint);
     }
@@ -85,6 +86,7 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain(
       "Recurring rules, fee targeting, custom sections, paid credits",
     );
+    expect(operatorIndex).toContain("Refunds, offsets, provider actions, PDF");
     expect(operatorIndex).toContain("Provider settings, dunning, metadata, custom sections");
     expect(operatorIndex).toContain("E-invoicing, tax assignment, and additional billing entities");
     expect(operatorScript).toContain("state.oneTimeSecret = null");

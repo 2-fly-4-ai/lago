@@ -102,6 +102,24 @@ beforeEach(async () => {
     ),
     env.BILLING_DB.prepare("DELETE FROM wallets WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
+      "DELETE FROM credit_note_recredits WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM credit_note_applications WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM termination_credit_note_contexts WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM credit_note_document_artifacts WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM credit_note_items WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM credit_notes WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
       "DELETE FROM plan_change_invoice_contexts WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare(
@@ -1301,6 +1319,80 @@ describe("operator Worker disabled boundary", () => {
     );
     expect(terminated.status).toBe(200);
     await expect(terminated.json()).resolves.toMatchObject({ wallet: { status: "terminated" } });
+  });
+
+  it("maps internal credit note reads, creation, and unconsumed voiding", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/credit-notes", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerList.json()).resolves.toMatchObject({
+      credit_notes: [],
+      meta: { total_count: 0 },
+    });
+    await promoteOperatorAdmin();
+    await operatorMutation("POST", "/customers", {
+      customer: { external_id: "credit-customer", name: "Credit Customer", currency: "USD" },
+    });
+    await operatorMutation("POST", "/add-ons", {
+      add_on: {
+        code: "credit-source",
+        name: "Credit source",
+        amount_cents: 900,
+        amount_currency: "USD",
+      },
+    });
+    const invoice = await operatorMutation("POST", "/invoices", {
+      invoice: {
+        external_customer_id: "credit-customer",
+        currency: "USD",
+        skip_psp: true,
+        fees: [{ add_on_code: "credit-source" }],
+      },
+    }).then((response) =>
+      response.json<{ invoice: { lago_id: string; fees: Array<{ lago_id: string }> } }>(),
+    );
+    const blockedRefund = await operatorMutation(
+      "POST",
+      "/credit-notes",
+      { credit_note: { refund_amount_cents: 100 } },
+      { "Idempotency-Key": "blocked-credit-refund" },
+    );
+    expect(blockedRefund.status).toBe(422);
+    await expect(blockedRefund.json()).resolves.toMatchObject({
+      code: "unsupported_operator_credit_note_field",
+    });
+
+    const created = await operatorMutation(
+      "POST",
+      "/credit-notes",
+      {
+        credit_note: {
+          invoice_id: invoice.invoice.lago_id,
+          reason: "order_change",
+          description: "Synthetic operator credit",
+          credit_amount_cents: 400,
+          items: [{ fee_id: invoice.invoice.fees[0]!.lago_id, amount_cents: 400 }],
+        },
+      },
+      { "Idempotency-Key": "operator-credit-note" },
+    );
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ credit_note: { lago_id: string } }>();
+    await expect(createdBody).toMatchObject({
+      credit_note: { credit_status: "available", total_amount_cents: 400 },
+    });
+    const voided = await operatorMutation(
+      "PUT",
+      `/credit-notes/${encodeURIComponent(createdBody.credit_note.lago_id)}/void`,
+    );
+    expect(voided.status).toBe(200);
+    await expect(voided.json()).resolves.toMatchObject({
+      credit_note: { credit_status: "voided", balance_amount_cents: 0 },
+    });
   });
 
   it("maps customer reads for viewers and upserts for admins while keeping deletion unavailable", async () => {

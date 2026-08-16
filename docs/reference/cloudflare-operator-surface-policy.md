@@ -148,6 +148,10 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    is implemented through the canonical D1 and Queue ledger. Top-ups keep the canonical idempotency
    key requirement. Recurring grants, fee/metric targeting, invoice custom sections, paid credits,
    and provider funding are rejected until their separate operation mappings and safety gates exist.
+   Core credit-note list/show plus admin itemized internal-credit create and fully-unconsumed void is
+   implemented through the canonical D1 and Queue ledger, including creation idempotency and
+   invoice-line remaining-amount guards. Refunds, offsets, provider actions, document generation or
+   download, and email remain outside this operator family.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

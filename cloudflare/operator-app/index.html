@@ -76,6 +76,10 @@
             <span class="nav-icon" aria-hidden="true">◉</span>
             Wallets
           </a>
+          <a class="nav-item" href="#credit-notes">
+            <span class="nav-icon" aria-hidden="true">↩</span>
+            Credit notes
+          </a>
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -717,6 +721,45 @@
                       </tr>
                     </thead>
                     <tbody id="wallets-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="credit-notes" aria-labelledby="credit-notes-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Internal credits</p>
+                  <h2 id="credit-notes-title">Credit notes</h2>
+                  <p>Create itemized internal credits against finalized invoices.</p>
+                </div>
+                <button class="primary-button" id="open-create-credit-note" type="button" hidden>
+                  <span aria-hidden="true">+</span>Create credit note
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="credit-notes-loading" aria-live="polite">
+                  Loading credit notes…
+                </div>
+                <div class="empty-state" id="credit-notes-empty" hidden>
+                  <span aria-hidden="true">↩</span>
+                  <h3>No credit notes</h3>
+                  <p id="credit-notes-empty-copy">This organization has no credit notes.</p>
+                </div>
+                <div class="table-scroll" id="credit-notes-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Credit note</th>
+                        <th scope="col">Invoice</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Reason</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Balance</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="credit-notes-table-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -1666,6 +1709,62 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button
           ><button class="primary-button" id="submit-wallet-top-up" value="default" type="submit">
             Grant credits
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="credit-note-form-dialog"
+      aria-labelledby="credit-note-form-title"
+    >
+      <form method="dialog" id="credit-note-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Internal invoice credit</p>
+            <h2 id="credit-note-form-title">Create credit note</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <label for="credit-note-invoice">Finalized invoice</label
+        ><select id="credit-note-invoice" required></select>
+        <div class="field-grid">
+          <div>
+            <label for="credit-note-reason">Reason</label
+            ><select id="credit-note-reason">
+              <option value="order_change">Order change</option>
+              <option value="order_cancellation">Order cancellation</option>
+              <option value="duplicated_charge">Duplicated charge</option>
+              <option value="product_unsatisfactory">Product unsatisfactory</option>
+              <option value="fraudulent_charge">Fraudulent charge</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label for="credit-note-amount">Credit amount (minor units)</label
+            ><input id="credit-note-amount" type="number" min="1" step="1" required />
+          </div>
+        </div>
+        <label for="credit-note-description">Description (optional)</label
+        ><input id="credit-note-description" maxlength="255" />
+        <label for="credit-note-items">Items (JSON array)</label
+        ><textarea id="credit-note-items" rows="7" required>
+[{"fee_id":"","amount_cents":1}]</textarea>
+        <p class="field-hint">
+          Items accept fee_id and amount_cents only. Refunds, offsets, provider actions, PDF
+          generation/download, and email are unavailable.
+        </p>
+        <p class="form-error" id="credit-note-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button
+            class="primary-button"
+            id="submit-credit-note-form"
+            value="default"
+            type="submit"
+          >
+            Create credit note
           </button>
         </div>
       </form>

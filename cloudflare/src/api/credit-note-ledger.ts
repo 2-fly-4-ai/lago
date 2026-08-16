@@ -37,6 +37,7 @@ type CreditNoteRow = {
 };
 
 type InputItem = { lineId: string; amountMinor: number };
+type CreditNoteMutationEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">;
 const REASONS = new Set([
   "duplicated_charge",
   "product_unsatisfactory",
@@ -86,9 +87,9 @@ export async function handleCreditNoteLedgerRequest(
   return null;
 }
 
-async function createCreditNote(
+export async function createCreditNote(
   request: Request,
-  env: Env,
+  env: CreditNoteMutationEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -265,7 +266,7 @@ async function createCreditNote(
   );
 }
 
-async function listCreditNotes(
+export async function listCreditNotes(
   url: URL,
   db: D1Database,
   auth: AuthContext,
@@ -293,7 +294,7 @@ async function listCreditNotes(
   );
 }
 
-async function showCreditNote(
+export async function showCreditNote(
   id: string,
   db: D1Database,
   auth: AuthContext,
@@ -305,9 +306,9 @@ async function showCreditNote(
   return json({ credit_note: await serializeCreditNote(db, note, origin) }, { requestId });
 }
 
-async function voidCreditNote(
+export async function voidCreditNote(
   id: string,
-  env: Env,
+  env: CreditNoteMutationEnv,
   auth: AuthContext,
   requestId: string,
   origin: string,

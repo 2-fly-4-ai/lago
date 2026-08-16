@@ -4,6 +4,12 @@ import { handleAddOnLedgerRequest } from "../api/add-on-ledger";
 import { handleApiKeysApi } from "../api/api-keys";
 import { handleBillingEntitiesApi } from "../api/billing-entities";
 import { handleCouponLedgerRequest } from "../api/coupon-ledger";
+import {
+  createCreditNote,
+  listCreditNotes,
+  showCreditNote,
+  voidCreditNote,
+} from "../api/credit-note-ledger";
 import { handleInvoiceCustomSectionRequest } from "../api/invoice-custom-sections";
 import {
   createOneOffInvoice,
@@ -400,6 +406,55 @@ export async function handleOperatorRequest(
       if (response) return response;
     }
 
+    if (/^\/api\/operator\/v1\/credit-notes(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+        await assertOperatorCreditNoteMutationPayload(request, url.pathname);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/credit-notes",
+        "/api/v1/credit_notes",
+      );
+      if (request.method === "GET" && forwardedUrl.pathname === "/api/v1/credit_notes") {
+        return listCreditNotes(forwardedUrl, env.BILLING_DB, auth, requestId);
+      }
+      const match = forwardedUrl.pathname.match(/^\/api\/v1\/credit_notes\/([^/]+)(?:\/(void))?$/);
+      if (request.method === "GET" && match?.[1] && !match[2]) {
+        return showCreditNote(
+          decodeURIComponent(match[1]),
+          env.BILLING_DB,
+          auth,
+          requestId,
+          forwardedUrl.origin,
+        );
+      }
+      if (request.method === "POST" && forwardedUrl.pathname === "/api/v1/credit_notes") {
+        return createCreditNote(new Request(forwardedUrl, request), env, auth, requestId);
+      }
+      if (request.method === "PUT" && match?.[1] && match[2] === "void") {
+        return voidCreditNote(
+          decodeURIComponent(match[1]),
+          env,
+          auth,
+          requestId,
+          forwardedUrl.origin,
+        );
+      }
+      throw new ApiError(
+        422,
+        "unsupported_operator_credit_note_action",
+        "Credit note documents, email, and provider refunds are not admitted to the operator workflow",
+      );
+    }
+
     if (/^\/api\/operator\/v1\/customers(?:\/|$)/.test(url.pathname)) {
       const operator = await authenticateOperatorAccess(request, env, keySet);
       if (request.method !== "GET") {
@@ -613,5 +668,49 @@ async function assertOperatorWalletMutationPayload(
       "unsupported_operator_wallet_field",
       `${unsupported} is not admitted to the operator wallet workflow`,
     );
+  }
+}
+
+async function assertOperatorCreditNoteMutationPayload(
+  request: Request,
+  pathname: string,
+): Promise<void> {
+  if (request.method === "PUT" && pathname.endsWith("/void")) return;
+  if (request.method !== "POST" || pathname !== "/api/operator/v1/credit-notes") {
+    throw new ApiError(
+      422,
+      "unsupported_operator_credit_note_action",
+      "Only credit note creation and voiding are admitted to the operator workflow",
+    );
+  }
+  const input = objectAt(await parseJsonObject(request.clone()), "credit_note");
+  const supported = new Set([
+    "invoice_id",
+    "reason",
+    "description",
+    "credit_amount_cents",
+    "items",
+  ]);
+  const unsupported = Object.keys(input).find((key) => !supported.has(key));
+  if (unsupported) {
+    throw new ApiError(
+      422,
+      "unsupported_operator_credit_note_field",
+      `${unsupported} is not admitted to the operator credit note workflow`,
+    );
+  }
+  if (!Array.isArray(input.items)) return;
+  for (const item of input.items) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const unsupportedItem = Object.keys(item).find(
+      (key) => key !== "fee_id" && key !== "amount_cents",
+    );
+    if (unsupportedItem) {
+      throw new ApiError(
+        422,
+        "unsupported_operator_credit_note_item_field",
+        `${unsupportedItem} is not admitted to the operator credit note workflow`,
+      );
+    }
   }
 }

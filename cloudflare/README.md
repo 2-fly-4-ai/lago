@@ -357,6 +357,10 @@ remaining Lago feature inventory is dispositioned and ported.
   create a wallet, grant additional credits with an idempotency key, and terminate it. Recurring
   grants, fee/metric targeting, invoice custom sections, paid credits, and provider funding remain
   unavailable at this boundary.
+  `/api/operator/v1/credit-notes` exposes list/show plus admin itemized internal-credit creation and
+  fully-unconsumed voiding. Creation preserves the canonical idempotency-key and invoice-line
+  validation contract. Refunds, offsets, provider actions, document generation/download, and email
+  remain unavailable in the operator family.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

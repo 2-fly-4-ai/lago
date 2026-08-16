@@ -15,6 +15,7 @@ const endpoints = {
   invoices: "/api/operator/v1/invoices",
   wallets: "/api/operator/v1/wallets",
   walletTransactions: "/api/operator/v1/wallet-transactions",
+  creditNotes: "/api/operator/v1/credit-notes",
 };
 
 const elements = {
@@ -282,6 +283,21 @@ const elements = {
   walletTopUpName: document.querySelector("#wallet-top-up-name"),
   walletTopUpError: document.querySelector("#wallet-top-up-error"),
   submitWalletTopUp: document.querySelector("#submit-wallet-top-up"),
+  openCreateCreditNote: document.querySelector("#open-create-credit-note"),
+  creditNotesLoading: document.querySelector("#credit-notes-loading"),
+  creditNotesEmpty: document.querySelector("#credit-notes-empty"),
+  creditNotesEmptyCopy: document.querySelector("#credit-notes-empty-copy"),
+  creditNotesTableShell: document.querySelector("#credit-notes-table-shell"),
+  creditNotesTableBody: document.querySelector("#credit-notes-table-body"),
+  creditNoteFormDialog: document.querySelector("#credit-note-form-dialog"),
+  creditNoteForm: document.querySelector("#credit-note-form"),
+  creditNoteInvoice: document.querySelector("#credit-note-invoice"),
+  creditNoteReason: document.querySelector("#credit-note-reason"),
+  creditNoteAmount: document.querySelector("#credit-note-amount"),
+  creditNoteDescription: document.querySelector("#credit-note-description"),
+  creditNoteItems: document.querySelector("#credit-note-items"),
+  creditNoteFormError: document.querySelector("#credit-note-form-error"),
+  submitCreditNoteForm: document.querySelector("#submit-credit-note-form"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -350,6 +366,8 @@ const state = {
   selectedInvoiceId: null,
   wallets: [],
   selectedWalletId: null,
+  creditNotes: [],
+  selectedCreditNoteId: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -398,6 +416,9 @@ elements.openCreateWallet.addEventListener("click", openCreateWalletDialog);
 elements.walletsTableBody.addEventListener("click", handleWalletAction);
 elements.walletForm.addEventListener("submit", submitWalletForm);
 elements.walletTopUpForm.addEventListener("submit", submitWalletTopUp);
+elements.openCreateCreditNote.addEventListener("click", openCreateCreditNoteDialog);
+elements.creditNotesTableBody.addEventListener("click", handleCreditNoteAction);
+elements.creditNoteForm.addEventListener("submit", submitCreditNoteForm);
 
 void initialize();
 
@@ -421,6 +442,7 @@ async function initialize() {
       subscriptionsPayload,
       invoicesPayload,
       walletsPayload,
+      creditNotesPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -436,6 +458,7 @@ async function initialize() {
       requestJson(endpoints.subscriptions),
       requestJson(endpoints.invoices),
       requestJson(endpoints.wallets),
+      requestJson(endpoints.creditNotes),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -452,6 +475,7 @@ async function initialize() {
     renderSubscriptions(subscriptionsPayload.subscriptions);
     renderInvoices(invoicesPayload.invoices);
     renderWallets(walletsPayload.wallets);
+    renderCreditNotes(creditNotesPayload.credit_notes);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -478,6 +502,7 @@ function renderOperator(operator) {
   elements.openCreateSubscription.hidden = !isAdmin;
   elements.openCreateInvoice.hidden = !isAdmin;
   elements.openCreateWallet.hidden = !isAdmin;
+  elements.openCreateCreditNote.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -502,6 +527,9 @@ function renderOperator(operator) {
   elements.walletsEmptyCopy.textContent = isAdmin
     ? "Create a manual granted-credit wallet for a retained billing customer."
     : "This organization has no wallets. Admin access is required to create one.";
+  elements.creditNotesEmptyCopy.textContent = isAdmin
+    ? "Create an itemized internal credit against a finalized invoice."
+    : "This organization has no credit notes. Admin access is required to create one.";
   elements.subscriptionsEmptyCopy.textContent = isAdmin
     ? "Create a customer subscription from an active plan."
     : "This organization has no subscriptions. Admin access is required to create one.";
@@ -2277,6 +2305,124 @@ async function submitWalletTopUp(event) {
   }
 }
 
+function renderCreditNotes(notes) {
+  state.creditNotes = Array.isArray(notes) ? notes : [];
+  elements.creditNotesTableBody.replaceChildren();
+  elements.creditNotesLoading.hidden = true;
+  elements.creditNotesEmpty.hidden = state.creditNotes.length !== 0;
+  elements.creditNotesTableShell.hidden = state.creditNotes.length === 0;
+  for (const note of state.creditNotes) {
+    const row = document.createElement("tr");
+    const identity = document.createElement("td");
+    const number = document.createElement("span");
+    number.className = "key-name";
+    number.textContent = safeText(note.number, "Unnumbered credit note");
+    const id = document.createElement("span");
+    id.className = "key-id";
+    id.textContent = safeText(note.lago_id, "—");
+    identity.append(number, id);
+    row.append(identity);
+    const values = [
+      note.invoice_number,
+      note.external_customer_id,
+      note.reason,
+      `${safeText(note.status, "—")} / ${safeText(note.credit_status, "—")}`,
+      formatMoney(note.balance_amount_cents, note.currency),
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = safeText(value, "—");
+      row.append(cell);
+    }
+    const actions = document.createElement("td");
+    actions.className = "actions-column";
+    if (state.role === "admin" && note.credit_status === "available") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "row-action danger";
+      button.dataset.creditNoteId = note.lago_id;
+      button.textContent = "Void";
+      actions.append(button);
+    } else actions.textContent = state.role === "admin" ? "No action" : "Read only";
+    row.append(actions);
+    elements.creditNotesTableBody.append(row);
+  }
+}
+
+function handleCreditNoteAction(event) {
+  const button = event.target.closest("button[data-credit-note-id]");
+  if (!button || state.role !== "admin") return;
+  state.selectedCreditNoteId = button.dataset.creditNoteId;
+  state.confirmMode = "void-credit-note";
+  elements.confirmTitle.textContent = "Void credit note?";
+  elements.confirmCopy.textContent =
+    "Only a fully unconsumed internal credit can be voided. Ledger history remains auditable.";
+  elements.confirmAction.textContent = "Void credit note";
+  elements.confirmError.hidden = true;
+  elements.confirmDialog.showModal();
+}
+
+function openCreateCreditNoteDialog() {
+  const invoices = state.invoices.filter((invoice) => invoice.status === "finalized");
+  if (invoices.length === 0) {
+    showPageError("A finalized invoice is required before creating a credit note.");
+    return;
+  }
+  elements.creditNoteForm.reset();
+  replaceSelectOptions(
+    elements.creditNoteInvoice,
+    invoices,
+    (item) => item.lago_id,
+    (item) => `${safeText(item.number, "Unnumbered")} · ${item.external_customer_id}`,
+  );
+  elements.creditNoteItems.value = JSON.stringify(
+    [{ fee_id: invoices[0]?.fees?.[0]?.lago_id ?? "", amount_cents: 1 }],
+    null,
+    2,
+  );
+  elements.creditNoteAmount.value = "1";
+  elements.creditNoteFormError.hidden = true;
+  elements.creditNoteFormDialog.showModal();
+}
+
+async function submitCreditNoteForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.creditNoteFormDialog.close();
+  if (!elements.creditNoteForm.reportValidity()) return;
+  let items;
+  try {
+    items = JSON.parse(elements.creditNoteItems.value);
+    if (!Array.isArray(items) || items.length === 0) throw new Error("invalid_items");
+  } catch {
+    elements.creditNoteFormError.textContent = "Items must be a non-empty JSON array.";
+    elements.creditNoteFormError.hidden = false;
+    return;
+  }
+  setBusy(elements.submitCreditNoteForm, true, "Creating…");
+  try {
+    await requestJson(endpoints.creditNotes, {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: {
+        credit_note: {
+          invoice_id: elements.creditNoteInvoice.value,
+          reason: elements.creditNoteReason.value,
+          description: optionalFormValue(elements.creditNoteDescription.value),
+          credit_amount_cents: Number(elements.creditNoteAmount.value),
+          items,
+        },
+      },
+    });
+    elements.creditNoteFormDialog.close();
+    await refreshCreditNotes();
+  } catch (error) {
+    elements.creditNoteFormError.textContent = errorMessage(error);
+    elements.creditNoteFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitCreditNoteForm, false, "Create credit note");
+  }
+}
+
 function sectionActionButton(label, action, code, danger = false) {
   const button = document.createElement("button");
   button.type = "button";
@@ -2633,6 +2779,25 @@ async function submitConfirmedAction(event) {
     return;
   }
 
+  if (mode === "void-credit-note") {
+    if (!state.selectedCreditNoteId) return elements.confirmDialog.close();
+    setBusy(elements.confirmAction, true, "Voiding…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(`${creditNoteEndpoint(state.selectedCreditNoteId)}/void`, {
+        method: "PUT",
+      });
+      elements.confirmDialog.close();
+      await refreshCreditNotes();
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(elements.confirmAction, false, "Void credit note");
+    }
+    return;
+  }
+
   const key = state.keys.find((candidate) => candidate.id === state.selectedKeyId);
   if (!key || (mode !== "rotate" && mode !== "revoke")) {
     elements.confirmDialog.close();
@@ -2766,6 +2931,16 @@ async function refreshWallets() {
   try {
     const payload = await requestJson(endpoints.wallets);
     renderWallets(payload.wallets);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+async function refreshCreditNotes() {
+  try {
+    const payload = await requestJson(endpoints.creditNotes);
+    renderCreditNotes(payload.credit_notes);
     hidePageError();
   } catch (error) {
     showPageError(errorMessage(error));
@@ -2917,6 +3092,10 @@ function invoiceEndpoint(invoiceId) {
 
 function walletEndpoint(walletId) {
   return `${endpoints.wallets}/${encodeURIComponent(walletId)}`;
+}
+
+function creditNoteEndpoint(creditNoteId) {
+  return `${endpoints.creditNotes}/${encodeURIComponent(creditNoteId)}`;
 }
 
 function showPageError(message) {
