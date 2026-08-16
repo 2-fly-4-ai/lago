@@ -48,6 +48,10 @@
             <span class="nav-icon" aria-hidden="true">%</span>
             Taxes
           </a>
+          <a class="nav-item" href="#add-ons">
+            <span class="nav-icon" aria-hidden="true">＋</span>
+            Add-ons
+          </a>
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -353,6 +357,44 @@
                       </tr>
                     </thead>
                     <tbody id="taxes-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="add-ons" aria-labelledby="add-ons-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Billing catalog</p>
+                  <h2 id="add-ons-title">Add-ons</h2>
+                  <p>Manage reusable fixed-price items for supported plan charges.</p>
+                </div>
+                <button class="primary-button" id="open-create-add-on" type="button" hidden>
+                  <span aria-hidden="true">+</span>
+                  Create add-on
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="add-ons-loading" aria-live="polite">
+                  Loading add-ons…
+                </div>
+                <div class="empty-state" id="add-ons-empty" hidden>
+                  <span aria-hidden="true">＋</span>
+                  <h3>No active add-ons</h3>
+                  <p id="add-ons-empty-copy">This organization has no active add-ons.</p>
+                </div>
+                <div class="table-scroll" id="add-ons-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Name</th>
+                        <th scope="col">Code</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Invoice label</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="add-ons-table-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -687,6 +729,61 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button>
           <button class="primary-button" id="submit-tax-form" value="default" type="submit">
             Create tax
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="add-on-form-dialog" aria-labelledby="add-on-form-title">
+      <form method="dialog" id="add-on-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Billing catalog</p>
+            <h2 id="add-on-form-title">Create add-on</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy" id="add-on-form-copy">Create a reusable fixed-price item.</p>
+        <div class="field-grid">
+          <div>
+            <label for="add-on-name">Name</label>
+            <input id="add-on-name" name="name" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="add-on-code">Code</label>
+            <input id="add-on-code" name="code" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="add-on-amount">Amount (minor units)</label>
+            <input id="add-on-amount" name="amount_cents" type="number" min="1" step="1" required />
+          </div>
+          <div>
+            <label for="add-on-currency">Currency</label>
+            <input
+              id="add-on-currency"
+              name="amount_currency"
+              minlength="3"
+              maxlength="3"
+              autocomplete="off"
+              required
+            />
+          </div>
+        </div>
+        <label for="add-on-invoice-name">Invoice display name</label>
+        <input
+          id="add-on-invoice-name"
+          name="invoice_display_name"
+          maxlength="255"
+          autocomplete="off"
+        />
+        <label for="add-on-description">Description</label>
+        <textarea id="add-on-description" name="description" rows="3"></textarea>
+        <p class="field-hint">Tax-code assignment remains unavailable in this retained subset.</p>
+        <p class="form-error" id="add-on-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-add-on-form" value="default" type="submit">
+            Create add-on
           </button>
         </div>
       </form>

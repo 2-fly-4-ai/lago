@@ -22,7 +22,7 @@ type AddOnRow = {
 
 export async function handleAddOnLedgerRequest(
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
@@ -40,7 +40,12 @@ export async function handleAddOnLedgerRequest(
   return null;
 }
 
-async function createAddOn(request: Request, env: Env, auth: AuthContext, requestId: string) {
+async function createAddOn(
+  request: Request,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
+  auth: AuthContext,
+  requestId: string,
+) {
   const input = objectAt(await parseJsonObject(request), "add_on");
   rejectTaxCodes(input);
   const normalized = {
@@ -141,7 +146,7 @@ async function showAddOn(code: string, database: D1Database, auth: AuthContext, 
 async function updateAddOn(
   code: string,
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
   auth: AuthContext,
   requestId: string,
 ) {
@@ -228,7 +233,12 @@ async function updateAddOn(
   return json({ add_on: serializeAddOn(updated) }, { requestId });
 }
 
-async function terminateAddOn(code: string, env: Env, auth: AuthContext, requestId: string) {
+async function terminateAddOn(
+  code: string,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
+  auth: AuthContext,
+  requestId: string,
+) {
   const addOn = await findActive(env.BILLING_DB, auth.organizationId, code);
   if (!addOn) throw new ApiError(404, "add_on_not_found", "Add-on was not found");
   const used = await env.BILLING_DB.prepare(

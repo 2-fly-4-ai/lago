@@ -639,6 +639,8 @@ Acceptance:
       suppresses document URLs and rejects document generation/download, email, and all mutations.
       Manual-tax list/show plus admin create/edit/terminate is also implemented through the canonical
       D1 and internal domain-event Queue handler.
+      Add-on list/show plus admin create/edit/terminate is implemented through the canonical handler
+      with its currency, in-use, and unsupported tax-target boundaries unchanged.
 - [x] Serve the operator application with Workers Static Assets. The deployed API Worker retains
       its script-free `operator-ui` rollback shell. The separate, undeployed operator Worker now
       serves `operator-app`: a same-origin native-ES-module organization/API-key workspace with a
@@ -3272,3 +3274,16 @@ resource and mutation described.
   (29.92 KiB gzip) with no new binding. No remote migration, resource, Access application/policy,
   membership, deployment, provider action, payment action, customer message, secret access,
   customer-data access, or production operation occurred.
+- 2026-08-16: Added the bounded add-on operator catalog. `/api/operator/v1/add-ons` authenticates the
+  Access identity and membership tenant, permits viewers to list/show active add-ons, and requires
+  admin role plus same-origin/CSRF checks for create/edit/terminate. The canonical handler now
+  declares only its actual D1 and producer-only Queue bindings; currency compatibility, in-use
+  termination protection, tax-target rejection, optimistic versions, transactional outbox evidence,
+  and awaited Queue publication remain unchanged. The operator app adds viewer rows plus admin
+  lifecycle controls with text-only DOM construction and the existing mutation helper. Focused
+  operator/add-on/static tests pass 21/21; the authoritative serial suite passes all 320 tests across
+  61 files in 62.38 seconds. Formatting, lint, TypeScript, JavaScript syntax, generated inventory,
+  binding checks, and dry builds pass. The API dry bundle remains 1407.36 KiB (246.05 KiB gzip); the
+  disabled operator bundle is 158.20 KiB (32.03 KiB gzip) with no new binding. No remote migration,
+  resource, Access application/policy, membership, deployment, provider action, payment action,
+  customer message, secret access, customer-data access, or production operation occurred.

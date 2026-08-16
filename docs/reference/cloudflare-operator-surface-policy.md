@@ -117,7 +117,8 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    as the next read-only family, with document URLs, generation/download, email, and every mutation
    suppressed at the operator boundary. Manual-tax list/show plus admin create/edit/terminate is the
    next bounded catalog family, reusing the canonical D1 transaction, value-free outbox evidence,
-   and producer-only Queue publication.
+   and producer-only Queue publication. Add-on list/show plus admin create/edit/terminate follows the
+   same boundary while preserving canonical currency/in-use guards and rejecting tax-code targeting.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

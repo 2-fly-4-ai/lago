@@ -74,6 +74,7 @@ beforeEach(async () => {
       "DELETE FROM invoice_custom_sections WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare("DELETE FROM taxes WHERE organization_id = 'org-operator-access'"),
+    env.BILLING_DB.prepare("DELETE FROM add_ons WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
       "DELETE FROM payment_receipts WHERE organization_id = 'org-operator-access'",
     ),
@@ -690,6 +691,71 @@ describe("operator Worker disabled boundary", () => {
       keySet,
     );
     await expect(empty.json()).resolves.toMatchObject({ taxes: [], meta: { total_count: 0 } });
+  });
+
+  it("maps add-on reads for viewers and lifecycle mutations for admins", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/add-ons", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerList.json()).resolves.toMatchObject({
+      add_ons: [],
+      meta: { total_count: 0 },
+    });
+
+    const viewerCreate = await operatorMutation("POST", "/add-ons", {
+      add_on: { code: "support", name: "Support", amount_cents: 2500, amount_currency: "USD" },
+    });
+    expect(viewerCreate.status).toBe(403);
+
+    await promoteOperatorAdmin();
+    const created = await operatorMutation("POST", "/add-ons", {
+      add_on: {
+        code: "support",
+        name: "Support",
+        invoice_display_name: "Priority support",
+        description: "Synthetic operator add-on",
+        amount_cents: 2500,
+        amount_currency: "usd",
+      },
+    });
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      add_on: {
+        code: "support",
+        name: "Support",
+        amount_cents: 2500,
+        amount_currency: "USD",
+      },
+    });
+
+    const updated = await operatorMutation("PUT", "/add-ons/support", {
+      add_on: { code: "priority", name: "Priority support", amount_cents: 3000 },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      add_on: { code: "priority", name: "Priority support", amount_cents: 3000 },
+    });
+
+    const unsupported = await operatorMutation("PUT", "/add-ons/priority", {
+      add_on: { tax_codes: ["vat"] },
+    });
+    expect(unsupported.status).toBe(422);
+    await expect(unsupported.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
+
+    const terminated = await operatorMutation("DELETE", "/add-ons/priority");
+    expect(terminated.status).toBe(200);
+    const empty = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/add-ons", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(empty.json()).resolves.toMatchObject({ add_ons: [], meta: { total_count: 0 } });
   });
 });
 

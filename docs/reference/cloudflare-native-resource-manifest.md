@@ -56,7 +56,9 @@ Applied D1 migrations: `0001_foundation.sql` through
   app also provides tenant-scoped payment-receipt list/show metadata while suppressing file URLs and
   rejecting document/email actions. Its manual-tax catalog gives viewers list/show access and admins
   same-origin create/edit/terminate controls through the existing D1 and producer-only Queue
-  bindings. The deployed API Worker still serves
+  bindings. The add-on catalog uses those same bindings for viewer reads and admin lifecycle
+  controls, retaining currency/in-use guards and excluding tax-code targeting. The deployed API
+  Worker still serves
   `operator-ui`, the non-interactive migration shell. Local desktop/mobile browser QA proved the
   operator bundle renders only the fail-closed state while Access is disabled, with no browser
   warnings or errors.

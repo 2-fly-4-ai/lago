@@ -316,6 +316,8 @@ remaining Lago feature inventory is dispositioned and ported.
   of the operator Worker until those actions receive a separate approved contract.
   `/api/operator/v1/taxes` reuses the canonical D1 and Queue-backed manual-tax catalog: viewers can
   list/show active taxes, while same-origin/CSRF-checked admins can create, edit, and terminate them.
+  `/api/operator/v1/add-ons` does the same for retained fixed-price add-ons while preserving
+  currency/in-use guards and keeping unsupported tax-code assignment unavailable.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

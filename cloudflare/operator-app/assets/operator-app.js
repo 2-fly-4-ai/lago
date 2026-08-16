@@ -6,6 +6,7 @@ const endpoints = {
   invoiceSections: "/api/operator/v1/invoice-custom-sections",
   paymentReceipts: "/api/operator/v1/payment-receipts",
   taxes: "/api/operator/v1/taxes",
+  addOns: "/api/operator/v1/add-ons",
 };
 
 const elements = {
@@ -98,6 +99,24 @@ const elements = {
   taxApplied: document.querySelector("#tax-applied-to-organization"),
   taxFormError: document.querySelector("#tax-form-error"),
   submitTaxForm: document.querySelector("#submit-tax-form"),
+  openCreateAddOn: document.querySelector("#open-create-add-on"),
+  addOnsLoading: document.querySelector("#add-ons-loading"),
+  addOnsEmpty: document.querySelector("#add-ons-empty"),
+  addOnsEmptyCopy: document.querySelector("#add-ons-empty-copy"),
+  addOnsTableShell: document.querySelector("#add-ons-table-shell"),
+  addOnsTableBody: document.querySelector("#add-ons-table-body"),
+  addOnFormDialog: document.querySelector("#add-on-form-dialog"),
+  addOnForm: document.querySelector("#add-on-form"),
+  addOnFormTitle: document.querySelector("#add-on-form-title"),
+  addOnFormCopy: document.querySelector("#add-on-form-copy"),
+  addOnName: document.querySelector("#add-on-name"),
+  addOnCode: document.querySelector("#add-on-code"),
+  addOnAmount: document.querySelector("#add-on-amount"),
+  addOnCurrency: document.querySelector("#add-on-currency"),
+  addOnInvoiceName: document.querySelector("#add-on-invoice-name"),
+  addOnDescription: document.querySelector("#add-on-description"),
+  addOnFormError: document.querySelector("#add-on-form-error"),
+  submitAddOnForm: document.querySelector("#submit-add-on-form"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -145,6 +164,9 @@ const state = {
   taxes: [],
   taxFormMode: "create",
   selectedTaxCode: null,
+  addOns: [],
+  addOnFormMode: "create",
+  selectedAddOnCode: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -165,6 +187,9 @@ elements.billingForm.addEventListener("submit", submitBillingForm);
 elements.openCreateTax.addEventListener("click", openCreateTaxDialog);
 elements.taxesTableBody.addEventListener("click", handleTaxAction);
 elements.taxForm.addEventListener("submit", submitTaxForm);
+elements.openCreateAddOn.addEventListener("click", openCreateAddOnDialog);
+elements.addOnsTableBody.addEventListener("click", handleAddOnAction);
+elements.addOnForm.addEventListener("submit", submitAddOnForm);
 
 void initialize();
 
@@ -180,6 +205,7 @@ async function initialize() {
       sectionsPayload,
       receiptsPayload,
       taxesPayload,
+      addOnsPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -187,6 +213,7 @@ async function initialize() {
       requestJson(endpoints.invoiceSections),
       requestJson(endpoints.paymentReceipts),
       requestJson(endpoints.taxes),
+      requestJson(endpoints.addOns),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -195,6 +222,7 @@ async function initialize() {
     renderSections(sectionsPayload.invoice_custom_sections);
     renderReceipts(receiptsPayload.payment_receipts);
     renderTaxes(taxesPayload.taxes);
+    renderAddOns(addOnsPayload.add_ons);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -212,6 +240,7 @@ function renderOperator(operator) {
   elements.openCreateSection.hidden = !isAdmin;
   elements.openEditBilling.hidden = !isAdmin;
   elements.openCreateTax.hidden = !isAdmin;
+  elements.openCreateAddOn.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -221,6 +250,9 @@ function renderOperator(operator) {
   elements.taxesEmptyCopy.textContent = isAdmin
     ? "Create a manual percentage tax for supported billing resources."
     : "This organization has no active manual taxes. Admin access is required to create one.";
+  elements.addOnsEmptyCopy.textContent = isAdmin
+    ? "Create an add-on for a supported fixed-charge workflow."
+    : "This organization has no active add-ons. Admin access is required to create one.";
   if (operator.organization_external_id) {
     elements.workspaceName.textContent = operator.organization_external_id;
   }
@@ -646,6 +678,144 @@ function openTaxTermination(tax) {
   elements.confirmDialog.showModal();
 }
 
+function renderAddOns(addOns) {
+  state.addOns = Array.isArray(addOns) ? addOns : [];
+  elements.addOnsTableBody.replaceChildren();
+  elements.addOnsLoading.hidden = true;
+  elements.addOnsEmpty.hidden = state.addOns.length !== 0;
+  elements.addOnsTableShell.hidden = state.addOns.length === 0;
+  for (const addOn of state.addOns) elements.addOnsTableBody.append(createAddOnRow(addOn));
+}
+
+function createAddOnRow(addOn) {
+  const row = document.createElement("tr");
+  const nameCell = document.createElement("td");
+  const name = document.createElement("span");
+  name.className = "key-name";
+  name.textContent = safeText(addOn.name, "Unnamed add-on");
+  const description = document.createElement("span");
+  description.className = "key-id";
+  description.textContent = safeText(addOn.description, "No description");
+  nameCell.append(name, description);
+  const codeCell = document.createElement("td");
+  const code = document.createElement("span");
+  code.className = "code-chip";
+  code.textContent = safeText(addOn.code, "—");
+  codeCell.append(code);
+  const amountCell = document.createElement("td");
+  amountCell.textContent = formatMoney(addOn.amount_cents, addOn.amount_currency);
+  const invoiceCell = document.createElement("td");
+  invoiceCell.textContent = safeText(addOn.invoice_display_name, "—");
+  const actionCell = document.createElement("td");
+  actionCell.className = "actions-column";
+  if (state.role === "admin") {
+    const actions = document.createElement("div");
+    actions.className = "row-actions";
+    actions.append(
+      addOnActionButton("Edit", "edit-add-on", addOn.code),
+      addOnActionButton("Terminate", "terminate-add-on", addOn.code, true),
+    );
+    actionCell.append(actions);
+  } else {
+    actionCell.textContent = "Read only";
+    actionCell.classList.add("muted");
+  }
+  row.append(nameCell, codeCell, amountCell, invoiceCell, actionCell);
+  return row;
+}
+
+function addOnActionButton(label, action, code, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = danger ? "row-action danger" : "row-action";
+  button.dataset.action = action;
+  button.dataset.addOnCode = code;
+  button.textContent = label;
+  return button;
+}
+
+function handleAddOnAction(event) {
+  const button = event.target.closest("button[data-add-on-code]");
+  if (!button || state.role !== "admin") return;
+  const addOn = state.addOns.find((candidate) => candidate.code === button.dataset.addOnCode);
+  if (!addOn) return;
+  if (button.dataset.action === "edit-add-on") openEditAddOnDialog(addOn);
+  if (button.dataset.action === "terminate-add-on") openAddOnTermination(addOn);
+}
+
+function openCreateAddOnDialog() {
+  state.addOnFormMode = "create";
+  state.selectedAddOnCode = null;
+  elements.addOnFormTitle.textContent = "Create add-on";
+  elements.addOnFormCopy.textContent = "Create a reusable fixed-price item.";
+  elements.submitAddOnForm.textContent = "Create add-on";
+  elements.addOnForm.reset();
+  elements.addOnFormError.hidden = true;
+  elements.addOnFormDialog.showModal();
+  elements.addOnName.focus();
+}
+
+function openEditAddOnDialog(addOn) {
+  state.addOnFormMode = "edit";
+  state.selectedAddOnCode = addOn.code;
+  elements.addOnFormTitle.textContent = "Edit add-on";
+  elements.addOnFormCopy.textContent = "Update this item for future supported fixed charges.";
+  elements.submitAddOnForm.textContent = "Save add-on";
+  elements.addOnName.value = formValue(addOn.name);
+  elements.addOnCode.value = formValue(addOn.code);
+  elements.addOnAmount.value = String(nonNegativeNumber(addOn.amount_cents));
+  elements.addOnCurrency.value = formValue(addOn.amount_currency);
+  elements.addOnInvoiceName.value = formValue(addOn.invoice_display_name);
+  elements.addOnDescription.value = formValue(addOn.description);
+  elements.addOnFormError.hidden = true;
+  elements.addOnFormDialog.showModal();
+  elements.addOnName.focus();
+}
+
+async function submitAddOnForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    elements.addOnFormDialog.close();
+    return;
+  }
+  if (!elements.addOnForm.reportValidity()) return;
+  const isCreate = state.addOnFormMode === "create";
+  setBusy(elements.submitAddOnForm, true, isCreate ? "Creating…" : "Saving…");
+  elements.addOnFormError.hidden = true;
+  try {
+    await requestJson(isCreate ? endpoints.addOns : addOnEndpoint(state.selectedAddOnCode), {
+      method: isCreate ? "POST" : "PUT",
+      body: {
+        add_on: {
+          name: elements.addOnName.value.trim(),
+          code: elements.addOnCode.value.trim(),
+          amount_cents: Number(elements.addOnAmount.value),
+          amount_currency: elements.addOnCurrency.value.trim(),
+          invoice_display_name: optionalFormValue(elements.addOnInvoiceName.value),
+          description: optionalFormValue(elements.addOnDescription.value),
+        },
+      },
+    });
+    elements.addOnFormDialog.close();
+    await refreshAddOns();
+  } catch (error) {
+    elements.addOnFormError.textContent = errorMessage(error);
+    elements.addOnFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitAddOnForm, false, isCreate ? "Create add-on" : "Save add-on");
+  }
+}
+
+function openAddOnTermination(addOn) {
+  state.confirmMode = "terminate-add-on";
+  state.selectedAddOnCode = addOn.code;
+  elements.confirmError.hidden = true;
+  elements.confirmTitle.textContent = "Terminate add-on?";
+  elements.confirmCopy.textContent = `Terminating “${safeText(addOn.name, "Unnamed add-on")}” removes it from the active catalog. In-use add-ons are protected by the billing service.`;
+  elements.confirmAction.textContent = "Terminate add-on";
+  elements.confirmDialog.showModal();
+}
+
 function sectionActionButton(label, action, code, danger = false) {
   const button = document.createElement("button");
   button.type = "button";
@@ -896,6 +1066,27 @@ async function submitConfirmedAction(event) {
     return;
   }
 
+  if (mode === "terminate-add-on") {
+    const addOn = state.addOns.find((candidate) => candidate.code === state.selectedAddOnCode);
+    if (!addOn) {
+      elements.confirmDialog.close();
+      return;
+    }
+    setBusy(elements.confirmAction, true, "Terminating…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(addOnEndpoint(addOn.code), { method: "DELETE" });
+      elements.confirmDialog.close();
+      await refreshAddOns();
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(elements.confirmAction, false, "Terminate add-on");
+    }
+    return;
+  }
+
   const key = state.keys.find((candidate) => candidate.id === state.selectedKeyId);
   if (!key || (mode !== "rotate" && mode !== "revoke")) {
     elements.confirmDialog.close();
@@ -949,6 +1140,16 @@ async function refreshTaxes() {
   try {
     const payload = await requestJson(endpoints.taxes);
     renderTaxes(payload.taxes);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+async function refreshAddOns() {
+  try {
+    const payload = await requestJson(endpoints.addOns);
+    renderAddOns(payload.add_ons);
     hidePageError();
   } catch (error) {
     showPageError(errorMessage(error));
@@ -1063,6 +1264,10 @@ function sectionEndpoint(code) {
 
 function taxEndpoint(code) {
   return `${endpoints.taxes}/${encodeURIComponent(code)}`;
+}
+
+function addOnEndpoint(code) {
+  return `${endpoints.addOns}/${encodeURIComponent(code)}`;
 }
 
 function showPageError(message) {
