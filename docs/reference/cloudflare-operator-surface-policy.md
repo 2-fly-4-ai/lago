@@ -115,7 +115,9 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    payment-term, numbering, locale, and document defaults; multi-entity, e-invoicing, tax-assignment,
    and external-action paths remain unavailable. Payment-receipt list/show metadata is implemented
    as the next read-only family, with document URLs, generation/download, email, and every mutation
-   suppressed at the operator boundary.
+   suppressed at the operator boundary. Manual-tax list/show plus admin create/edit/terminate is the
+   next bounded catalog family, reusing the canonical D1 transaction, value-free outbox evidence,
+   and producer-only Queue publication.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

@@ -637,6 +637,8 @@ Acceptance:
       e-invoicing, tax assignment, and other explicit side-effecting boundaries remain unavailable.
       Payment-receipt list/show is the next read-only BFF: it reuses the canonical D1 projection but
       suppresses document URLs and rejects document generation/download, email, and all mutations.
+      Manual-tax list/show plus admin create/edit/terminate is also implemented through the canonical
+      D1 and internal domain-event Queue handler.
 - [x] Serve the operator application with Workers Static Assets. The deployed API Worker retains
       its script-free `operator-ui` rollback shell. The separate, undeployed operator Worker now
       serves `operator-app`: a same-origin native-ES-module organization/API-key workspace with a
@@ -3255,3 +3257,18 @@ resource and mutation described.
   migration, resource, Access application/policy, membership, deployment, document generation,
   email, provider action, payment action, customer message, secret access, customer-data access, or
   production operation occurred.
+- 2026-08-16: Added the bounded manual-tax operator catalog. `/api/operator/v1/taxes` authenticates
+  the Access identity and membership tenant, permits viewers to list/show active taxes, and requires
+  admin role plus same-origin/CSRF checks for create/edit/terminate. It reuses the canonical handler
+  after narrowing that handler's environment type to its actual D1 and producer-only Queue bindings;
+  optimistic versions, transactional value-free outbox evidence, and awaited Queue publication are
+  unchanged. The operator app adds viewer rows plus admin create/edit/terminate controls using
+  text-only DOM construction and the existing mutation helper. Focused operator/tax/static and quote
+  regression tests pass 25/25. A pre-existing quote filter test that hard-coded August 15 failed when
+  UTC crossed midnight; it now derives the filter date from the created quote timestamp. The
+  authoritative serial suite passes all 319 tests across 61 files in 63.12 seconds. Formatting,
+  lint, TypeScript, JavaScript syntax, generated inventory, binding checks, and dry builds pass. The
+  API dry bundle remains 1407.36 KiB (246.05 KiB gzip); the disabled operator bundle is 144.34 KiB
+  (29.92 KiB gzip) with no new binding. No remote migration, resource, Access application/policy,
+  membership, deployment, provider action, payment action, customer message, secret access,
+  customer-data access, or production operation occurred.

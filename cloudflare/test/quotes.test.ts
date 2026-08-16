@@ -234,6 +234,7 @@ describe("quote REST replacement", () => {
 
   it("lists with lifecycle filters and synchronizes active owners optimistically", async () => {
     const first = await quoteFrom(await createQuote("filters-one"));
+    const createdDate = first.created_at.slice(0, 10);
     await createQuote("filters-two", {
       ...quoteBody().quote,
       order_type: "subscription_creation",
@@ -241,7 +242,7 @@ describe("quote REST replacement", () => {
     });
 
     const filtered = await request(
-      `/api/v1/quotes?statuses[]=draft&order_types[]=one_off&owner_ids[]=${ownerId}&quote_number=0001&from_date=2026-08-15&to_date=2026-08-15`,
+      `/api/v1/quotes?statuses[]=draft&order_types[]=one_off&owner_ids[]=${ownerId}&quote_number=0001&from_date=${createdDate}&to_date=${createdDate}`,
     );
     expect(filtered.status).toBe(200);
     await expect(filtered.json()).resolves.toMatchObject({
@@ -438,12 +439,14 @@ function createQuote(
 
 async function quoteFrom(response: Response): Promise<{
   lago_id: string;
+  created_at: string;
   current_version: { lago_id: string; lock_version: number };
 }> {
   expect(response.status).toBe(200);
   const body = await response.json<{
     quote: {
       lago_id: string;
+      created_at: string;
       current_version: { lago_id: string; lock_version: number };
     };
   }>();

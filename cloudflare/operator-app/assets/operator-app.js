@@ -5,6 +5,7 @@ const endpoints = {
   apiKeys: "/api/operator/v1/api-keys",
   invoiceSections: "/api/operator/v1/invoice-custom-sections",
   paymentReceipts: "/api/operator/v1/payment-receipts",
+  taxes: "/api/operator/v1/taxes",
 };
 
 const elements = {
@@ -80,6 +81,23 @@ const elements = {
   receiptsEmpty: document.querySelector("#receipts-empty"),
   receiptsTableShell: document.querySelector("#receipts-table-shell"),
   receiptsTableBody: document.querySelector("#receipts-table-body"),
+  openCreateTax: document.querySelector("#open-create-tax"),
+  taxesLoading: document.querySelector("#taxes-loading"),
+  taxesEmpty: document.querySelector("#taxes-empty"),
+  taxesEmptyCopy: document.querySelector("#taxes-empty-copy"),
+  taxesTableShell: document.querySelector("#taxes-table-shell"),
+  taxesTableBody: document.querySelector("#taxes-table-body"),
+  taxFormDialog: document.querySelector("#tax-form-dialog"),
+  taxForm: document.querySelector("#tax-form"),
+  taxFormTitle: document.querySelector("#tax-form-title"),
+  taxFormCopy: document.querySelector("#tax-form-copy"),
+  taxName: document.querySelector("#tax-name"),
+  taxCode: document.querySelector("#tax-code"),
+  taxRate: document.querySelector("#tax-rate"),
+  taxDescription: document.querySelector("#tax-description"),
+  taxApplied: document.querySelector("#tax-applied-to-organization"),
+  taxFormError: document.querySelector("#tax-form-error"),
+  submitTaxForm: document.querySelector("#submit-tax-form"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -124,6 +142,9 @@ const state = {
   selectedSectionCode: null,
   billingEntity: null,
   receipts: [],
+  taxes: [],
+  taxFormMode: "create",
+  selectedTaxCode: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -141,6 +162,9 @@ elements.sectionsTableBody.addEventListener("click", handleSectionAction);
 elements.sectionForm.addEventListener("submit", submitSectionForm);
 elements.openEditBilling.addEventListener("click", openBillingDialog);
 elements.billingForm.addEventListener("submit", submitBillingForm);
+elements.openCreateTax.addEventListener("click", openCreateTaxDialog);
+elements.taxesTableBody.addEventListener("click", handleTaxAction);
+elements.taxForm.addEventListener("submit", submitTaxForm);
 
 void initialize();
 
@@ -149,20 +173,28 @@ async function initialize() {
     const session = await requestJson(endpoints.session);
     const operator = session.operator;
     state.role = operator.role === "admin" ? "admin" : "viewer";
-    const [organizationPayload, billingPayload, keyPayload, sectionsPayload, receiptsPayload] =
-      await Promise.all([
-        requestJson(endpoints.organization),
-        requestJson(endpoints.billingEntity),
-        requestJson(endpoints.apiKeys),
-        requestJson(endpoints.invoiceSections),
-        requestJson(endpoints.paymentReceipts),
-      ]);
+    const [
+      organizationPayload,
+      billingPayload,
+      keyPayload,
+      sectionsPayload,
+      receiptsPayload,
+      taxesPayload,
+    ] = await Promise.all([
+      requestJson(endpoints.organization),
+      requestJson(endpoints.billingEntity),
+      requestJson(endpoints.apiKeys),
+      requestJson(endpoints.invoiceSections),
+      requestJson(endpoints.paymentReceipts),
+      requestJson(endpoints.taxes),
+    ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
     renderBillingEntity(billingPayload.billing_entity);
     renderKeys(keyPayload.api_keys);
     renderSections(sectionsPayload.invoice_custom_sections);
     renderReceipts(receiptsPayload.payment_receipts);
+    renderTaxes(taxesPayload.taxes);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -179,12 +211,16 @@ function renderOperator(operator) {
   elements.openCreateKey.hidden = !isAdmin;
   elements.openCreateSection.hidden = !isAdmin;
   elements.openEditBilling.hidden = !isAdmin;
+  elements.openCreateTax.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
   elements.sectionsEmptyCopy.textContent = isAdmin
     ? "Create a reusable section when invoices need organization-specific content."
     : "This organization has no manual invoice sections. Admin access is required to create one.";
+  elements.taxesEmptyCopy.textContent = isAdmin
+    ? "Create a manual percentage tax for supported billing resources."
+    : "This organization has no active manual taxes. Admin access is required to create one.";
   if (operator.organization_external_id) {
     elements.workspaceName.textContent = operator.organization_external_id;
   }
@@ -474,6 +510,142 @@ function createReceiptRow(receipt) {
   return row;
 }
 
+function renderTaxes(taxes) {
+  state.taxes = Array.isArray(taxes) ? taxes : [];
+  elements.taxesTableBody.replaceChildren();
+  elements.taxesLoading.hidden = true;
+  elements.taxesEmpty.hidden = state.taxes.length !== 0;
+  elements.taxesTableShell.hidden = state.taxes.length === 0;
+  for (const tax of state.taxes) elements.taxesTableBody.append(createTaxRow(tax));
+}
+
+function createTaxRow(tax) {
+  const row = document.createElement("tr");
+  const nameCell = document.createElement("td");
+  const name = document.createElement("span");
+  name.className = "key-name";
+  name.textContent = safeText(tax.name, "Unnamed tax");
+  const description = document.createElement("span");
+  description.className = "key-id";
+  description.textContent = safeText(tax.description, "No description");
+  nameCell.append(name, description);
+  const codeCell = document.createElement("td");
+  const code = document.createElement("span");
+  code.className = "code-chip";
+  code.textContent = safeText(tax.code, "—");
+  codeCell.append(code);
+  const rateCell = document.createElement("td");
+  rateCell.textContent = `${Number(tax.rate) || 0}%`;
+  const defaultCell = document.createElement("td");
+  defaultCell.textContent = tax.applied_to_organization ? "Yes" : "No";
+  const actionCell = document.createElement("td");
+  actionCell.className = "actions-column";
+  if (state.role === "admin") {
+    const actions = document.createElement("div");
+    actions.className = "row-actions";
+    actions.append(
+      taxActionButton("Edit", "edit-tax", tax.code),
+      taxActionButton("Terminate", "terminate-tax", tax.code, true),
+    );
+    actionCell.append(actions);
+  } else {
+    actionCell.textContent = "Read only";
+    actionCell.classList.add("muted");
+  }
+  row.append(nameCell, codeCell, rateCell, defaultCell, actionCell);
+  return row;
+}
+
+function taxActionButton(label, action, code, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = danger ? "row-action danger" : "row-action";
+  button.dataset.action = action;
+  button.dataset.taxCode = code;
+  button.textContent = label;
+  return button;
+}
+
+function handleTaxAction(event) {
+  const button = event.target.closest("button[data-tax-code]");
+  if (!button || state.role !== "admin") return;
+  const tax = state.taxes.find((candidate) => candidate.code === button.dataset.taxCode);
+  if (!tax) return;
+  if (button.dataset.action === "edit-tax") openEditTaxDialog(tax);
+  if (button.dataset.action === "terminate-tax") openTaxTermination(tax);
+}
+
+function openCreateTaxDialog() {
+  state.taxFormMode = "create";
+  state.selectedTaxCode = null;
+  elements.taxFormTitle.textContent = "Create manual tax";
+  elements.taxFormCopy.textContent = "Create a percentage tax for this organization.";
+  elements.submitTaxForm.textContent = "Create tax";
+  elements.taxForm.reset();
+  elements.taxFormError.hidden = true;
+  elements.taxFormDialog.showModal();
+  elements.taxName.focus();
+}
+
+function openEditTaxDialog(tax) {
+  state.taxFormMode = "edit";
+  state.selectedTaxCode = tax.code;
+  elements.taxFormTitle.textContent = "Edit manual tax";
+  elements.taxFormCopy.textContent = "Update this tax for future supported billing operations.";
+  elements.submitTaxForm.textContent = "Save tax";
+  elements.taxName.value = formValue(tax.name);
+  elements.taxCode.value = formValue(tax.code);
+  elements.taxRate.value = String(Number(tax.rate) || 0);
+  elements.taxDescription.value = formValue(tax.description);
+  elements.taxApplied.checked = tax.applied_to_organization === true;
+  elements.taxFormError.hidden = true;
+  elements.taxFormDialog.showModal();
+  elements.taxName.focus();
+}
+
+async function submitTaxForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    elements.taxFormDialog.close();
+    return;
+  }
+  if (!elements.taxForm.reportValidity()) return;
+  const isCreate = state.taxFormMode === "create";
+  setBusy(elements.submitTaxForm, true, isCreate ? "Creating…" : "Saving…");
+  elements.taxFormError.hidden = true;
+  try {
+    await requestJson(isCreate ? endpoints.taxes : taxEndpoint(state.selectedTaxCode), {
+      method: isCreate ? "POST" : "PUT",
+      body: {
+        tax: {
+          name: elements.taxName.value.trim(),
+          code: elements.taxCode.value.trim(),
+          rate: elements.taxRate.value,
+          description: optionalFormValue(elements.taxDescription.value),
+          applied_to_organization: elements.taxApplied.checked,
+        },
+      },
+    });
+    elements.taxFormDialog.close();
+    await refreshTaxes();
+  } catch (error) {
+    elements.taxFormError.textContent = errorMessage(error);
+    elements.taxFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitTaxForm, false, isCreate ? "Create tax" : "Save tax");
+  }
+}
+
+function openTaxTermination(tax) {
+  state.confirmMode = "terminate-tax";
+  state.selectedTaxCode = tax.code;
+  elements.confirmError.hidden = true;
+  elements.confirmTitle.textContent = "Terminate manual tax?";
+  elements.confirmCopy.textContent = `Terminating “${safeText(tax.name, "Unnamed tax")}” removes it from the active tax catalog and organization defaults.`;
+  elements.confirmAction.textContent = "Terminate tax";
+  elements.confirmDialog.showModal();
+}
+
 function sectionActionButton(label, action, code, danger = false) {
   const button = document.createElement("button");
   button.type = "button";
@@ -703,6 +875,27 @@ async function submitConfirmedAction(event) {
     return;
   }
 
+  if (mode === "terminate-tax") {
+    const tax = state.taxes.find((candidate) => candidate.code === state.selectedTaxCode);
+    if (!tax) {
+      elements.confirmDialog.close();
+      return;
+    }
+    setBusy(elements.confirmAction, true, "Terminating…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(taxEndpoint(tax.code), { method: "DELETE" });
+      elements.confirmDialog.close();
+      await refreshTaxes();
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(elements.confirmAction, false, "Terminate tax");
+    }
+    return;
+  }
+
   const key = state.keys.find((candidate) => candidate.id === state.selectedKeyId);
   if (!key || (mode !== "rotate" && mode !== "revoke")) {
     elements.confirmDialog.close();
@@ -746,6 +939,16 @@ async function refreshSections() {
   try {
     const payload = await requestJson(endpoints.invoiceSections);
     renderSections(payload.invoice_custom_sections);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+async function refreshTaxes() {
+  try {
+    const payload = await requestJson(endpoints.taxes);
+    renderTaxes(payload.taxes);
     hidePageError();
   } catch (error) {
     showPageError(errorMessage(error));
@@ -856,6 +1059,10 @@ function keyEndpoint(keyId) {
 
 function sectionEndpoint(code) {
   return `${endpoints.invoiceSections}/${encodeURIComponent(code)}`;
+}
+
+function taxEndpoint(code) {
+  return `${endpoints.taxes}/${encodeURIComponent(code)}`;
 }
 
 function showPageError(message) {

@@ -54,7 +54,9 @@ Applied D1 migrations: `0001_foundation.sql` through
   update only the supported D1-backed fields through same-origin/CSRF checks. Additional entities,
   e-invoicing, tax assignment, and side-effecting configuration remain unavailable. The deployed
   app also provides tenant-scoped payment-receipt list/show metadata while suppressing file URLs and
-  rejecting document/email actions. The deployed API Worker still serves
+  rejecting document/email actions. Its manual-tax catalog gives viewers list/show access and admins
+  same-origin create/edit/terminate controls through the existing D1 and producer-only Queue
+  bindings. The deployed API Worker still serves
   `operator-ui`, the non-interactive migration shell. Local desktop/mobile browser QA proved the
   operator bundle renders only the fail-closed state while Access is disabled, with no browser
   warnings or errors.

@@ -314,6 +314,8 @@ remaining Lago feature inventory is dispositioned and ported.
   `/api/operator/v1/payment-receipts` exposes tenant-scoped list/show metadata only. It suppresses
   document URLs and rejects every mutation, keeping PDF generation/download and email delivery out
   of the operator Worker until those actions receive a separate approved contract.
+  `/api/operator/v1/taxes` reuses the canonical D1 and Queue-backed manual-tax catalog: viewers can
+  list/show active taxes, while same-origin/CSRF-checked admins can create, edit, and terminate them.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

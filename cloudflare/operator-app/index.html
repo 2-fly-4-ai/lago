@@ -44,6 +44,10 @@
             <span class="nav-icon" aria-hidden="true">≡</span>
             Invoice sections
           </a>
+          <a class="nav-item" href="#taxes">
+            <span class="nav-icon" aria-hidden="true">%</span>
+            Taxes
+          </a>
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -311,6 +315,44 @@
                       </tr>
                     </thead>
                     <tbody id="receipts-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="taxes" aria-labelledby="taxes-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Billing catalog</p>
+                  <h2 id="taxes-title">Manual taxes</h2>
+                  <p>Manage tenant-scoped percentage taxes used by supported billing resources.</p>
+                </div>
+                <button class="primary-button" id="open-create-tax" type="button" hidden>
+                  <span aria-hidden="true">+</span>
+                  Create tax
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="taxes-loading" aria-live="polite">
+                  Loading taxes…
+                </div>
+                <div class="empty-state" id="taxes-empty" hidden>
+                  <span aria-hidden="true">%</span>
+                  <h3>No manual taxes</h3>
+                  <p id="taxes-empty-copy">This organization has no active manual taxes.</p>
+                </div>
+                <div class="table-scroll" id="taxes-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Name</th>
+                        <th scope="col">Code</th>
+                        <th scope="col">Rate</th>
+                        <th scope="col">Default</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="taxes-table-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -597,6 +639,54 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button>
           <button class="primary-button" id="submit-billing-form" value="default" type="submit">
             Save billing profile
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="tax-form-dialog" aria-labelledby="tax-form-title">
+      <form method="dialog" id="tax-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Billing catalog</p>
+            <h2 id="tax-form-title">Create manual tax</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy" id="tax-form-copy">Create a percentage tax for this organization.</p>
+        <div class="field-grid">
+          <div>
+            <label for="tax-name">Tax name</label>
+            <input id="tax-name" name="name" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="tax-code">Code</label>
+            <input id="tax-code" name="code" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="tax-rate">Rate (%)</label>
+            <input
+              id="tax-rate"
+              name="rate"
+              type="number"
+              min="0"
+              max="100"
+              step="0.000001"
+              required
+            />
+          </div>
+        </div>
+        <label for="tax-description">Description</label>
+        <textarea id="tax-description" name="description" rows="3"></textarea>
+        <label class="checkbox-field" for="tax-applied-to-organization">
+          <input id="tax-applied-to-organization" name="applied_to_organization" type="checkbox" />
+          <span>Apply by default to the organization</span>
+        </label>
+        <p class="form-error" id="tax-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-tax-form" value="default" type="submit">
+            Create tax
           </button>
         </div>
       </form>

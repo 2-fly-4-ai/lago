@@ -5,6 +5,7 @@ import { handleBillingEntitiesApi } from "../api/billing-entities";
 import { handleInvoiceCustomSectionRequest } from "../api/invoice-custom-sections";
 import { showOrganization } from "../api/organizations";
 import { handlePaymentReceiptReadsApi } from "../api/payment-receipts";
+import { handleTaxLedgerRequest } from "../api/tax-ledger";
 import type { AuthContext } from "../auth/api-key";
 import { ApiError, apiErrorResponse, json } from "../http";
 import {
@@ -174,6 +175,31 @@ export async function handleOperatorRequest(
         auth,
         requestId,
         { includeFileUrls: false },
+      );
+      if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/taxes(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/taxes",
+        "/api/v1/taxes",
+      );
+      const response = await handleTaxLedgerRequest(
+        new Request(forwardedUrl, request),
+        env,
+        auth,
+        requestId,
       );
       if (response) return response;
     }

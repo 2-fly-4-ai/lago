@@ -22,7 +22,7 @@ type TaxRow = {
 
 export async function handleTaxLedgerRequest(
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
@@ -40,7 +40,12 @@ export async function handleTaxLedgerRequest(
   return null;
 }
 
-async function createTax(request: Request, env: Env, auth: AuthContext, requestId: string) {
+async function createTax(
+  request: Request,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
+  auth: AuthContext,
+  requestId: string,
+) {
   const input = objectAt(await parseJsonObject(request), "tax");
   const normalized = {
     code: requiredString(input, "code"),
@@ -128,7 +133,7 @@ async function showTax(code: string, database: D1Database, auth: AuthContext, re
 async function updateTax(
   code: string,
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
   auth: AuthContext,
   requestId: string,
 ) {
@@ -194,7 +199,12 @@ async function updateTax(
   return json({ tax: serializeTax(updated) }, { requestId });
 }
 
-async function terminateTax(code: string, env: Env, auth: AuthContext, requestId: string) {
+async function terminateTax(
+  code: string,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
+  auth: AuthContext,
+  requestId: string,
+) {
   let tax = await findTax(env.BILLING_DB, auth.organizationId, code);
   if (!tax) throw new ApiError(404, "tax_not_found", "Tax was not found");
   if (tax.status === "terminated") return json({ tax: serializeTax(tax) }, { requestId });

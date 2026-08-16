@@ -73,6 +73,7 @@ beforeEach(async () => {
     env.BILLING_DB.prepare(
       "DELETE FROM invoice_custom_sections WHERE organization_id = 'org-operator-access'",
     ),
+    env.BILLING_DB.prepare("DELETE FROM taxes WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
       "DELETE FROM payment_receipts WHERE organization_id = 'org-operator-access'",
     ),
@@ -639,6 +640,56 @@ describe("operator Worker disabled boundary", () => {
     await expect(blocked.json()).resolves.toMatchObject({
       code: "operator_payment_receipts_read_only",
     });
+  });
+
+  it("maps manual-tax reads for viewers and lifecycle mutations for admins", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/taxes", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerList.json()).resolves.toMatchObject({ taxes: [], meta: { total_count: 0 } });
+
+    const viewerCreate = await operatorMutation("POST", "/taxes", {
+      tax: { code: "vat", name: "VAT", rate: 15 },
+    });
+    expect(viewerCreate.status).toBe(403);
+
+    await promoteOperatorAdmin();
+    const created = await operatorMutation("POST", "/taxes", {
+      tax: {
+        code: "vat",
+        name: "VAT",
+        description: "Synthetic operator tax",
+        rate: 15,
+        applied_to_organization: true,
+      },
+    });
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      tax: { code: "vat", name: "VAT", rate: 15, applied_to_organization: true },
+    });
+
+    const updated = await operatorMutation("PUT", "/taxes/vat", {
+      tax: { code: "gst", name: "GST", rate: "12.5" },
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      tax: { code: "gst", name: "GST", rate: 12.5, applied_to_organization: true },
+    });
+
+    const terminated = await operatorMutation("DELETE", "/taxes/gst");
+    expect(terminated.status).toBe(200);
+    const empty = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/taxes", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(empty.json()).resolves.toMatchObject({ taxes: [], meta: { total_count: 0 } });
   });
 });
 
