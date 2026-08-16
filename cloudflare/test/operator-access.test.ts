@@ -98,6 +98,10 @@ beforeEach(async () => {
       "DELETE FROM payment_attempts WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare(
+      "DELETE FROM wallet_transactions WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare("DELETE FROM wallets WHERE organization_id = 'org-operator-access'"),
+    env.BILLING_DB.prepare(
       "DELETE FROM plan_change_invoice_contexts WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare(
@@ -1212,6 +1216,93 @@ describe("operator Worker disabled boundary", () => {
     await expect(voided.json()).resolves.toMatchObject({ invoice: { status: "voided" } });
   });
 
+  it("maps core granted-credit wallet reads, creation, top-up, and termination", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/wallets", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerList.json()).resolves.toMatchObject({
+      wallets: [],
+      meta: { total_count: 0 },
+    });
+    expect(
+      (
+        await operatorMutation("POST", "/wallets", {
+          wallet: {
+            external_customer_id: "wallet-customer",
+            code: "operator-wallet",
+            currency: "USD",
+            rate_amount: "1",
+            granted_credits: "10",
+          },
+        })
+      ).status,
+    ).toBe(403);
+
+    await promoteOperatorAdmin();
+    await operatorMutation("POST", "/customers", {
+      customer: { external_id: "wallet-customer", name: "Wallet Customer", currency: "USD" },
+    });
+    const blockedRecurring = await operatorMutation("POST", "/wallets", {
+      wallet: {
+        external_customer_id: "wallet-customer",
+        code: "blocked-wallet",
+        currency: "USD",
+        rate_amount: "1",
+        recurring_transaction_rules: [{ interval: "monthly", granted_credits: "10" }],
+      },
+    });
+    expect(blockedRecurring.status).toBe(422);
+    await expect(blockedRecurring.json()).resolves.toMatchObject({
+      code: "unsupported_operator_wallet_field",
+    });
+
+    const created = await operatorMutation("POST", "/wallets", {
+      wallet: {
+        external_customer_id: "wallet-customer",
+        name: "Operator wallet",
+        code: "operator-wallet",
+        currency: "USD",
+        rate_amount: "1",
+        granted_credits: "10",
+        priority: 20,
+      },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ wallet: { lago_id: string } }>();
+    await expect(
+      handleOperatorRequest(
+        new Request(
+          `https://operator.test/api/operator/v1/wallets/${encodeURIComponent(createdBody.wallet.lago_id)}/wallet_transactions`,
+          { headers: { "Cf-Access-Jwt-Assertion": await accessToken() } },
+        ),
+        operatorEnv(),
+        keySet,
+      ).then((response) => response.json()),
+    ).resolves.toMatchObject({ wallet_transactions: [{ credit_amount: "10" }] });
+
+    const toppedUp = await operatorMutation(
+      "POST",
+      "/wallet-transactions",
+      { wallet_transaction: { wallet_id: createdBody.wallet.lago_id, granted_credits: "5" } },
+      { "Idempotency-Key": "operator-wallet-top-up" },
+    );
+    expect(toppedUp.status).toBe(200);
+    await expect(toppedUp.json()).resolves.toMatchObject({
+      wallet_transactions: [{ credit_amount: "5", transaction_status: "granted" }],
+    });
+
+    const terminated = await operatorMutation(
+      "DELETE",
+      `/wallets/${encodeURIComponent(createdBody.wallet.lago_id)}`,
+    );
+    expect(terminated.status).toBe(200);
+    await expect(terminated.json()).resolves.toMatchObject({ wallet: { status: "terminated" } });
+  });
+
   it("maps customer reads for viewers and upserts for admins while keeping deletion unavailable", async () => {
     const viewerList = await handleOperatorRequest(
       new Request("https://operator.test/api/operator/v1/customers", {
@@ -1298,7 +1389,12 @@ async function operatorApiKeyRequest(
   return operatorMutation(method, path, body);
 }
 
-async function operatorMutation(method: string, path: string, body?: unknown): Promise<Response> {
+async function operatorMutation(
+  method: string,
+  path: string,
+  body?: unknown,
+  extraHeaders: Record<string, string> = {},
+): Promise<Response> {
   return handleOperatorRequest(
     new Request(`https://operator.test/api/operator/v1${path}`, {
       method,
@@ -1308,6 +1404,7 @@ async function operatorMutation(method: string, path: string, body?: unknown): P
         Origin: "https://operator.test",
         "Sec-Fetch-Site": "same-origin",
         "X-Operator-Request": "1",
+        ...extraHeaders,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }),

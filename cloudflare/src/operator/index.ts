@@ -20,6 +20,7 @@ import { handlePaymentReceiptReadsApi } from "../api/payment-receipts";
 import { handlePlanCatalogRequest } from "../api/plan-catalog";
 import { handleTaxLedgerRequest } from "../api/tax-ledger";
 import { handleSubscriptionLifecycleRequest } from "../api/subscription-lifecycle";
+import { handleWalletLedgerRequest } from "../api/wallet-ledger";
 import type { AuthContext } from "../auth/api-key";
 import { ApiError, apiErrorResponse, json, objectAt, parseJsonObject } from "../http";
 import {
@@ -371,6 +372,34 @@ export async function handleOperatorRequest(
       }
     }
 
+    if (
+      /^\/api\/operator\/v1\/wallets(?:\/|$)/.test(url.pathname) ||
+      /^\/api\/operator\/v1\/wallet-transactions(?:\/|$)/.test(url.pathname)
+    ) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+        await assertOperatorWalletMutationPayload(request, url.pathname);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname
+        .replace("/api/operator/v1/wallets", "/api/v1/wallets")
+        .replace("/api/operator/v1/wallet-transactions", "/api/v1/wallet_transactions");
+      const response = await handleWalletLedgerRequest(
+        new Request(forwardedUrl, request),
+        env,
+        auth,
+        requestId,
+      );
+      if (response) return response;
+    }
+
     if (/^\/api\/operator\/v1\/customers(?:\/|$)/.test(url.pathname)) {
       const operator = await authenticateOperatorAccess(request, env, keySet);
       if (request.method !== "GET") {
@@ -544,5 +573,45 @@ async function assertOperatorInvoiceMutationPayload(
         `${unsupportedFee} is not admitted to the operator one-off invoice workflow`,
       );
     }
+  }
+}
+
+async function assertOperatorWalletMutationPayload(
+  request: Request,
+  pathname: string,
+): Promise<void> {
+  if (request.method === "DELETE") return;
+  if (request.method !== "POST") {
+    throw new ApiError(
+      422,
+      "unsupported_operator_wallet_mutation",
+      "Wallet updates are not admitted to the operator wallet workflow",
+    );
+  }
+  const transaction = pathname.startsWith("/api/operator/v1/wallet-transactions");
+  const input = objectAt(
+    await parseJsonObject(request.clone()),
+    transaction ? "wallet_transaction" : "wallet",
+  );
+  const supported = transaction
+    ? new Set(["wallet_id", "granted_credits", "name", "priority"])
+    : new Set([
+        "external_customer_id",
+        "name",
+        "code",
+        "currency",
+        "rate_amount",
+        "granted_credits",
+        "priority",
+        "expiration_at",
+        "transaction_name",
+      ]);
+  const unsupported = Object.keys(input).find((key) => !supported.has(key));
+  if (unsupported) {
+    throw new ApiError(
+      422,
+      "unsupported_operator_wallet_field",
+      `${unsupported} is not admitted to the operator wallet workflow`,
+    );
   }
 }

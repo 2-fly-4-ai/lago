@@ -108,9 +108,11 @@ type RecurringRuleMutation =
       skipSections: boolean;
     };
 
+type WalletLedgerEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">;
+
 export async function handleWalletLedgerRequest(
   request: Request,
-  env: Env,
+  env: WalletLedgerEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
@@ -152,7 +154,7 @@ export async function handleWalletLedgerRequest(
 
 async function createWallet(
   request: Request,
-  env: Env,
+  env: WalletLedgerEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -379,7 +381,7 @@ async function createWallet(
 
 async function createTransaction(
   request: Request,
-  env: Env,
+  env: WalletLedgerEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -576,7 +578,7 @@ async function showWallet(
 async function updateWallet(
   id: string,
   request: Request,
-  env: Env,
+  env: WalletLedgerEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -843,7 +845,7 @@ async function updateWallet(
 
 async function terminateWallet(
   id: string,
-  env: Env,
+  env: WalletLedgerEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {

@@ -144,6 +144,10 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    creation is manual-only (`skip_psp: true`) and fee tax targeting is rejected. Document generation
    and download, payment URLs, provider payment retry, and email delivery remain separate actions
    and are not exposed by this family.
+   Core wallet list/show/transaction reads plus admin manual granted-credit create/top-up/terminate
+   is implemented through the canonical D1 and Queue ledger. Top-ups keep the canonical idempotency
+   key requirement. Recurring grants, fee/metric targeting, invoice custom sections, paid credits,
+   and provider funding are rejected until their separate operation mappings and safety gates exist.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

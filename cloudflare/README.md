@@ -352,6 +352,11 @@ remaining Lago feature inventory is dispositioned and ported.
   provider collection and rejects fee tax targeting. PDF generation/download, payment URLs,
   provider payment retry, and email delivery remain outside this family and unavailable until each
   receives its own bounded operator contract.
+  `/api/operator/v1/wallets` and `/api/operator/v1/wallet-transactions` expose the core manual
+  granted-credit wallet family. Viewers can inspect wallets and their transaction ledger; admins can
+  create a wallet, grant additional credits with an idempotency key, and terminate it. Recurring
+  grants, fee/metric targeting, invoice custom sections, paid credits, and provider funding remain
+  unavailable at this boundary.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

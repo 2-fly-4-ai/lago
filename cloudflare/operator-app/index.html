@@ -72,6 +72,10 @@
             <span class="nav-icon" aria-hidden="true">▤</span>
             Invoices
           </a>
+          <a class="nav-item" href="#wallets">
+            <span class="nav-icon" aria-hidden="true">◉</span>
+            Wallets
+          </a>
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -674,6 +678,45 @@
                       </tr>
                     </thead>
                     <tbody id="invoices-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="wallets" aria-labelledby="wallets-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Granted credits</p>
+                  <h2 id="wallets-title">Wallets</h2>
+                  <p>Review balances and manage manual granted-credit wallets.</p>
+                </div>
+                <button class="primary-button" id="open-create-wallet" type="button" hidden>
+                  <span aria-hidden="true">+</span>Create wallet
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="wallets-loading" aria-live="polite">
+                  Loading wallets…
+                </div>
+                <div class="empty-state" id="wallets-empty" hidden>
+                  <span aria-hidden="true">◉</span>
+                  <h3>No wallets</h3>
+                  <p id="wallets-empty-copy">This organization has no granted-credit wallets.</p>
+                </div>
+                <div class="table-scroll" id="wallets-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Wallet</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Balance</th>
+                        <th scope="col">Rate</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Expires</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="wallets-table-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -1545,6 +1588,84 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button
           ><button class="primary-button" id="submit-invoice-form" value="default" type="submit">
             Create finalized invoice
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal section-modal" id="wallet-form-dialog" aria-labelledby="wallet-form-title">
+      <form method="dialog" id="wallet-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Granted credits</p>
+            <h2 id="wallet-form-title">Create wallet</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="wallet-customer">Customer</label
+            ><select id="wallet-customer" required></select>
+          </div>
+          <div>
+            <label for="wallet-name">Name</label><input id="wallet-name" maxlength="255" required />
+          </div>
+          <div>
+            <label for="wallet-code">Code</label><input id="wallet-code" maxlength="100" required />
+          </div>
+          <div>
+            <label for="wallet-currency">Currency</label
+            ><input id="wallet-currency" minlength="3" maxlength="3" required />
+          </div>
+          <div>
+            <label for="wallet-rate">Rate amount</label
+            ><input id="wallet-rate" type="number" min="0.000001" step="any" value="1" required />
+          </div>
+          <div>
+            <label for="wallet-credits">Initial granted credits</label
+            ><input id="wallet-credits" type="number" min="0" step="any" value="0" required />
+          </div>
+          <div>
+            <label for="wallet-priority">Priority</label
+            ><input id="wallet-priority" type="number" min="1" max="50" value="50" required />
+          </div>
+          <div>
+            <label for="wallet-expiration">Expiration (optional)</label
+            ><input id="wallet-expiration" type="datetime-local" />
+          </div>
+        </div>
+        <p class="field-hint">
+          Recurring rules, fee targeting, custom sections, paid credits, and provider funding are
+          unavailable.
+        </p>
+        <p class="form-error" id="wallet-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-wallet-form" value="default" type="submit">
+            Create wallet
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="wallet-top-up-dialog" aria-labelledby="wallet-top-up-title">
+      <form method="dialog" id="wallet-top-up-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Manual grant</p>
+            <h2 id="wallet-top-up-title">Top up wallet</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <label for="wallet-top-up-credits">Granted credits</label
+        ><input id="wallet-top-up-credits" type="number" min="0.000001" step="any" required />
+        <label for="wallet-top-up-name">Transaction name (optional)</label
+        ><input id="wallet-top-up-name" maxlength="255" />
+        <p class="form-error" id="wallet-top-up-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-wallet-top-up" value="default" type="submit">
+            Grant credits
           </button>
         </div>
       </form>

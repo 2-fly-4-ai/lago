@@ -13,6 +13,8 @@ const endpoints = {
   plans: "/api/operator/v1/plans",
   subscriptions: "/api/operator/v1/subscriptions",
   invoices: "/api/operator/v1/invoices",
+  wallets: "/api/operator/v1/wallets",
+  walletTransactions: "/api/operator/v1/wallet-transactions",
 };
 
 const elements = {
@@ -256,6 +258,30 @@ const elements = {
   invoiceFees: document.querySelector("#invoice-fees"),
   invoiceFormError: document.querySelector("#invoice-form-error"),
   submitInvoiceForm: document.querySelector("#submit-invoice-form"),
+  openCreateWallet: document.querySelector("#open-create-wallet"),
+  walletsLoading: document.querySelector("#wallets-loading"),
+  walletsEmpty: document.querySelector("#wallets-empty"),
+  walletsEmptyCopy: document.querySelector("#wallets-empty-copy"),
+  walletsTableShell: document.querySelector("#wallets-table-shell"),
+  walletsTableBody: document.querySelector("#wallets-table-body"),
+  walletFormDialog: document.querySelector("#wallet-form-dialog"),
+  walletForm: document.querySelector("#wallet-form"),
+  walletCustomer: document.querySelector("#wallet-customer"),
+  walletName: document.querySelector("#wallet-name"),
+  walletCode: document.querySelector("#wallet-code"),
+  walletCurrency: document.querySelector("#wallet-currency"),
+  walletRate: document.querySelector("#wallet-rate"),
+  walletCredits: document.querySelector("#wallet-credits"),
+  walletPriority: document.querySelector("#wallet-priority"),
+  walletExpiration: document.querySelector("#wallet-expiration"),
+  walletFormError: document.querySelector("#wallet-form-error"),
+  submitWalletForm: document.querySelector("#submit-wallet-form"),
+  walletTopUpDialog: document.querySelector("#wallet-top-up-dialog"),
+  walletTopUpForm: document.querySelector("#wallet-top-up-form"),
+  walletTopUpCredits: document.querySelector("#wallet-top-up-credits"),
+  walletTopUpName: document.querySelector("#wallet-top-up-name"),
+  walletTopUpError: document.querySelector("#wallet-top-up-error"),
+  submitWalletTopUp: document.querySelector("#submit-wallet-top-up"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -322,6 +348,8 @@ const state = {
   selectedSubscriptionExternalId: null,
   invoices: [],
   selectedInvoiceId: null,
+  wallets: [],
+  selectedWalletId: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -366,6 +394,10 @@ elements.terminateSubscriptionForm.addEventListener("submit", submitTerminateSub
 elements.openCreateInvoice.addEventListener("click", openCreateInvoiceDialog);
 elements.invoicesTableBody.addEventListener("click", handleInvoiceAction);
 elements.invoiceForm.addEventListener("submit", submitInvoiceForm);
+elements.openCreateWallet.addEventListener("click", openCreateWalletDialog);
+elements.walletsTableBody.addEventListener("click", handleWalletAction);
+elements.walletForm.addEventListener("submit", submitWalletForm);
+elements.walletTopUpForm.addEventListener("submit", submitWalletTopUp);
 
 void initialize();
 
@@ -388,6 +420,7 @@ async function initialize() {
       plansPayload,
       subscriptionsPayload,
       invoicesPayload,
+      walletsPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -402,6 +435,7 @@ async function initialize() {
       requestJson(endpoints.plans),
       requestJson(endpoints.subscriptions),
       requestJson(endpoints.invoices),
+      requestJson(endpoints.wallets),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -417,6 +451,7 @@ async function initialize() {
     renderPlans(plansPayload.plans);
     renderSubscriptions(subscriptionsPayload.subscriptions);
     renderInvoices(invoicesPayload.invoices);
+    renderWallets(walletsPayload.wallets);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -442,6 +477,7 @@ function renderOperator(operator) {
   elements.openCreateFixedCharge.hidden = !isAdmin;
   elements.openCreateSubscription.hidden = !isAdmin;
   elements.openCreateInvoice.hidden = !isAdmin;
+  elements.openCreateWallet.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -463,6 +499,9 @@ function renderOperator(operator) {
   elements.plansEmptyCopy.textContent = isAdmin
     ? "Create a recurring plan for this organization."
     : "This organization has no active plans. Admin access is required to create one.";
+  elements.walletsEmptyCopy.textContent = isAdmin
+    ? "Create a manual granted-credit wallet for a retained billing customer."
+    : "This organization has no wallets. Admin access is required to create one.";
   elements.subscriptionsEmptyCopy.textContent = isAdmin
     ? "Create a customer subscription from an active plan."
     : "This organization has no subscriptions. Admin access is required to create one.";
@@ -2084,6 +2123,160 @@ async function submitInvoiceForm(event) {
   }
 }
 
+function renderWallets(wallets) {
+  state.wallets = Array.isArray(wallets) ? wallets : [];
+  elements.walletsTableBody.replaceChildren();
+  elements.walletsLoading.hidden = true;
+  elements.walletsEmpty.hidden = state.wallets.length !== 0;
+  elements.walletsTableShell.hidden = state.wallets.length === 0;
+  for (const wallet of state.wallets) {
+    const row = document.createElement("tr");
+    const identity = document.createElement("td");
+    const name = document.createElement("span");
+    name.className = "key-name";
+    name.textContent = safeText(wallet.name, safeText(wallet.code, "Unnamed wallet"));
+    const code = document.createElement("span");
+    code.className = "key-id";
+    code.textContent = safeText(wallet.code, "—");
+    identity.append(name, code);
+    row.append(identity);
+    const values = [
+      wallet.external_customer_id,
+      `${safeText(String(wallet.credits_balance ?? "0"), "0")} credits (${formatMoney(wallet.balance_cents, wallet.currency)})`,
+      safeText(String(wallet.rate_amount ?? "—"), "—"),
+      wallet.status,
+      wallet.expiration_at ? formatDate(wallet.expiration_at) : "Never",
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = safeText(value, "—");
+      row.append(cell);
+    }
+    const actions = document.createElement("td");
+    actions.className = "actions-column";
+    if (state.role === "admin" && wallet.status === "active") {
+      const group = document.createElement("div");
+      group.className = "row-actions";
+      group.append(
+        walletActionButton("Grant credits", "top-up-wallet", wallet.lago_id),
+        walletActionButton("Terminate", "terminate-wallet", wallet.lago_id, true),
+      );
+      actions.append(group);
+    } else actions.textContent = state.role === "admin" ? "No action" : "Read only";
+    row.append(actions);
+    elements.walletsTableBody.append(row);
+  }
+}
+
+function walletActionButton(label, action, walletId, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = danger ? "row-action danger" : "row-action";
+  button.dataset.action = action;
+  button.dataset.walletId = walletId;
+  button.textContent = label;
+  return button;
+}
+
+function handleWalletAction(event) {
+  const button = event.target.closest("button[data-wallet-id]");
+  if (!button || state.role !== "admin") return;
+  const wallet = state.wallets.find((item) => item.lago_id === button.dataset.walletId);
+  if (!wallet) return;
+  state.selectedWalletId = wallet.lago_id;
+  if (button.dataset.action === "top-up-wallet") {
+    elements.walletTopUpForm.reset();
+    elements.walletTopUpError.hidden = true;
+    elements.walletTopUpDialog.showModal();
+    return;
+  }
+  state.confirmMode = "terminate-wallet";
+  elements.confirmTitle.textContent = "Terminate wallet?";
+  elements.confirmCopy.textContent =
+    "The wallet will stop applying to new invoices. Its ledger history remains auditable.";
+  elements.confirmAction.textContent = "Terminate wallet";
+  elements.confirmError.hidden = true;
+  elements.confirmDialog.showModal();
+}
+
+function openCreateWalletDialog() {
+  if (state.customers.length === 0) {
+    showPageError("Create a customer before creating a granted-credit wallet.");
+    return;
+  }
+  elements.walletForm.reset();
+  replaceSelectOptions(
+    elements.walletCustomer,
+    state.customers,
+    (item) => item.external_id,
+    (item) => `${safeText(item.name, "Unnamed customer")} (${item.external_id})`,
+  );
+  elements.walletCurrency.value = state.customers[0]?.currency ?? "";
+  elements.walletRate.value = "1";
+  elements.walletCredits.value = "0";
+  elements.walletPriority.value = "50";
+  elements.walletFormError.hidden = true;
+  elements.walletFormDialog.showModal();
+}
+
+async function submitWalletForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.walletFormDialog.close();
+  if (!elements.walletForm.reportValidity()) return;
+  setBusy(elements.submitWalletForm, true, "Creating…");
+  try {
+    await requestJson(endpoints.wallets, {
+      method: "POST",
+      body: {
+        wallet: {
+          external_customer_id: elements.walletCustomer.value,
+          name: elements.walletName.value.trim(),
+          code: elements.walletCode.value.trim(),
+          currency: elements.walletCurrency.value.trim(),
+          rate_amount: elements.walletRate.value,
+          granted_credits: elements.walletCredits.value,
+          priority: Number(elements.walletPriority.value),
+          expiration_at: isoFormValue(elements.walletExpiration.value),
+        },
+      },
+    });
+    elements.walletFormDialog.close();
+    await refreshWallets();
+  } catch (error) {
+    elements.walletFormError.textContent = errorMessage(error);
+    elements.walletFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitWalletForm, false, "Create wallet");
+  }
+}
+
+async function submitWalletTopUp(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.walletTopUpDialog.close();
+  if (!state.selectedWalletId || !elements.walletTopUpForm.reportValidity()) return;
+  setBusy(elements.submitWalletTopUp, true, "Granting…");
+  try {
+    await requestJson(endpoints.walletTransactions, {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: {
+        wallet_transaction: {
+          wallet_id: state.selectedWalletId,
+          granted_credits: elements.walletTopUpCredits.value,
+          name: optionalFormValue(elements.walletTopUpName.value),
+        },
+      },
+    });
+    elements.walletTopUpDialog.close();
+    await refreshWallets();
+  } catch (error) {
+    elements.walletTopUpError.textContent = errorMessage(error);
+    elements.walletTopUpError.hidden = false;
+  } finally {
+    setBusy(elements.submitWalletTopUp, false, "Grant credits");
+  }
+}
+
 function sectionActionButton(label, action, code, danger = false) {
   const button = document.createElement("button");
   button.type = "button";
@@ -2423,6 +2616,23 @@ async function submitConfirmedAction(event) {
     return;
   }
 
+  if (mode === "terminate-wallet") {
+    if (!state.selectedWalletId) return elements.confirmDialog.close();
+    setBusy(elements.confirmAction, true, "Terminating…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(walletEndpoint(state.selectedWalletId), { method: "DELETE" });
+      elements.confirmDialog.close();
+      await refreshWallets();
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(elements.confirmAction, false, "Terminate wallet");
+    }
+    return;
+  }
+
   const key = state.keys.find((candidate) => candidate.id === state.selectedKeyId);
   if (!key || (mode !== "rotate" && mode !== "revoke")) {
     elements.confirmDialog.close();
@@ -2552,6 +2762,16 @@ async function refreshInvoices() {
   }
 }
 
+async function refreshWallets() {
+  try {
+    const payload = await requestJson(endpoints.wallets);
+    renderWallets(payload.wallets);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
 function revealOneTimeSecret(secret) {
   if (typeof secret !== "string" || !secret.startsWith("lago_")) {
     showPageError("The operation completed, but the one-time credential was not returned.");
@@ -2614,6 +2834,7 @@ function showClosedState(error) {
 
 async function requestJson(path, options = {}) {
   const headers = new Headers({ Accept: "application/json" });
+  for (const [name, value] of Object.entries(options.headers ?? {})) headers.set(name, value);
   const request = { method: options.method ?? "GET", headers };
   if (options.body !== undefined) {
     headers.set("Content-Type", "application/json");
@@ -2692,6 +2913,10 @@ function subscriptionEndpoint(externalId) {
 
 function invoiceEndpoint(invoiceId) {
   return `${endpoints.invoices}/${encodeURIComponent(invoiceId)}`;
+}
+
+function walletEndpoint(walletId) {
+  return `${endpoints.wallets}/${encodeURIComponent(walletId)}`;
 }
 
 function showPageError(message) {
