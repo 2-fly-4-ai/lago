@@ -549,11 +549,13 @@ inventory, Wrangler-generated bindings, TypeScript, Workers-runtime tests, and a
 To apply migrations to a fresh local D1 directory:
 
 ```sh
-wrangler d1 migrations apply serp-dev-lago-native-d1 --local --persist-to /tmp/lago-cloudflare-d1
+wrangler d1 migrations apply serp-dev-lago-native-d1 --local \
+  --persist-to /path/on-local-disk/lago-cloudflare-d1
 ```
 
-The `/tmp` location is only local Wrangler emulator state; repository worktrees remain under the
-umbrella workspace's required `tmp/` directory.
+Keep Wrangler emulator state on a local-disk path. `workerd` 4.122.0 and 4.123.0 can crash before
+migration execution when persistence is placed on this mounted external workspace. This path is
+emulator state only; it is not another repository worktree and does not affect remote D1.
 
 ## Non-production provisioning
 
