@@ -40,7 +40,7 @@ type NormalizedCampaign = {
 
 export async function handleDunningCampaignApi(
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
@@ -60,7 +60,7 @@ export async function handleDunningCampaignApi(
 
 async function createCampaign(
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -153,7 +153,7 @@ async function createCampaign(
 async function updateCampaign(
   pathCode: string,
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -294,7 +294,7 @@ async function updateCampaign(
 
 async function deleteCampaign(
   code: string,
-  env: Env,
+  env: Pick<Env, "BILLING_DB">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {

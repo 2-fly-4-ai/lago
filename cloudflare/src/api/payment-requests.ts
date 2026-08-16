@@ -29,7 +29,7 @@ type PaymentRequestRow = {
 
 export async function handlePaymentRequestApi(
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
@@ -63,7 +63,7 @@ export async function handlePaymentRequestApi(
 
 async function createPaymentRequest(
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {

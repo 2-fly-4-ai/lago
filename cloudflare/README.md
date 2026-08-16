@@ -377,6 +377,11 @@ remaining Lago feature inventory is dispositioned and ported.
   `/api/operator/v1/webhook-endpoints` is viewer/admin read-only while
   `OUTBOUND_WEBHOOKS_ENABLED=0`. Endpoint creation, edits, deletion, signing-secret configuration,
   and delivery remain unavailable; the operator browser never accepts or stores an HMAC secret.
+  `/api/operator/v1/dunning-campaigns` exposes viewer reads plus admin create/edit/delete for the
+  canonical D1 campaign policy, including organization defaults, attempt spacing, limits, and
+  currency thresholds. `/api/operator/v1/payment-requests` is read-only evidence: the operator BFF
+  rejects manual creation, so only the guarded scheduler can produce dunning requests. Provider
+  checkout remains behind `PAYMENT_MUTATIONS_ENABLED=0`, and email/link delivery remains absent.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

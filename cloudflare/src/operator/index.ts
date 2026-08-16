@@ -5,6 +5,7 @@ import { handleApiKeysApi } from "../api/api-keys";
 import { handleBillingEntitiesApi } from "../api/billing-entities";
 import { handleCouponLedgerRequest } from "../api/coupon-ledger";
 import { createDataExport, listDataExports, showDataExport } from "../api/data-exports";
+import { handleDunningCampaignApi } from "../api/dunning-campaigns";
 import {
   createCreditNote,
   listCreditNotes,
@@ -25,6 +26,7 @@ import {
 import { showOrganization } from "../api/organizations";
 import { handlePaymentReceiptReadsApi } from "../api/payment-receipts";
 import { listPayments, showPayment } from "../api/payment-ledger";
+import { handlePaymentRequestApi } from "../api/payment-requests";
 import { handlePlanCatalogRequest } from "../api/plan-catalog";
 import { handleQuotesApi } from "../api/quotes";
 import { handleTaxLedgerRequest } from "../api/tax-ledger";
@@ -322,6 +324,59 @@ export async function handleOperatorRequest(
       if (match?.[1]) {
         return showEndpoint(decodeURIComponent(match[1]), env.BILLING_DB, auth, requestId);
       }
+    }
+
+    if (/^\/api\/operator\/v1\/dunning-campaigns(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/dunning-campaigns",
+        "/api/v1/dunning_campaigns",
+      );
+      const response = await handleDunningCampaignApi(
+        new Request(forwardedUrl, request),
+        env,
+        auth,
+        requestId,
+      );
+      if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/payment-requests(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        throw new ApiError(
+          405,
+          "operator_payment_requests_read_only",
+          "Payment requests are read-only in the operator workspace",
+        );
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/payment-requests",
+        "/api/v1/payment_requests",
+      );
+      const response = await handlePaymentRequestApi(
+        new Request(forwardedUrl, request),
+        env,
+        auth,
+        requestId,
+      );
+      if (response) return response;
     }
 
     if (/^\/api\/operator\/v1\/taxes(?:\/|$)/.test(url.pathname)) {

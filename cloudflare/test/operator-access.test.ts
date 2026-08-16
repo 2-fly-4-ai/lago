@@ -78,6 +78,19 @@ beforeEach(async () => {
       "DELETE FROM webhook_endpoints WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare(
+      "UPDATE organizations SET applied_dunning_campaign_id = NULL WHERE id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      `UPDATE customers SET applied_dunning_campaign_id = NULL
+       WHERE organization_id = 'org-operator-access'`,
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM dunning_campaign_thresholds WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM dunning_campaigns WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
       "DELETE FROM operator_memberships WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare(
@@ -1533,6 +1546,69 @@ describe("operator Worker disabled boundary", () => {
     expect(mutation.status).toBe(405);
     await expect(mutation.json()).resolves.toMatchObject({
       code: "operator_webhook_endpoints_read_only",
+    });
+  });
+
+  it("maps dunning campaign configuration while keeping payment requests read-only", async () => {
+    const viewerCampaigns = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/dunning-campaigns", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerCampaigns.json()).resolves.toMatchObject({
+      dunning_campaigns: [],
+      meta: { total_count: 0 },
+    });
+    const viewerCreate = await operatorMutation("POST", "/dunning-campaigns", {
+      dunning_campaign: {
+        code: "operator-dunning",
+        name: "Operator dunning",
+        days_between_attempts: 3,
+        max_attempts: 2,
+        thresholds: [{ amount_cents: 1000, currency: "USD" }],
+      },
+    });
+    expect(viewerCreate.status).toBe(403);
+
+    await promoteOperatorAdmin();
+    const created = await operatorMutation("POST", "/dunning-campaigns", {
+      dunning_campaign: {
+        code: "operator-dunning",
+        name: "Operator dunning",
+        days_between_attempts: 3,
+        max_attempts: 2,
+        applied_to_organization: true,
+        thresholds: [{ amount_cents: 1000, currency: "USD" }],
+      },
+    });
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      dunning_campaign: {
+        code: "operator-dunning",
+        applied_to_organization: true,
+        thresholds: [{ amount_cents: 1000, currency: "USD" }],
+      },
+    });
+
+    const paymentRequests = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/payment-requests", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(paymentRequests.json()).resolves.toMatchObject({
+      payment_requests: [],
+      meta: { total_count: 0 },
+    });
+    const blockedCollection = await operatorMutation("POST", "/payment-requests", {
+      payment_request: { external_customer_id: "operator-customer", lago_invoice_ids: [] },
+    });
+    expect(blockedCollection.status).toBe(405);
+    await expect(blockedCollection.json()).resolves.toMatchObject({
+      code: "operator_payment_requests_read_only",
     });
   });
 

@@ -167,6 +167,11 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    Webhook endpoint list/show is exposed read-only while outbound delivery is disabled. Endpoint
    mutation, signing-secret configuration, and delivery remain outside the operator Worker; no HMAC
    secret is accepted by or stored in the browser.
+   Dunning campaign list/show plus admin create/edit/delete is implemented through the canonical D1
+   policy handler. Payment requests are exposed read-only as scheduler evidence, and manual browser
+   creation is rejected. Provider checkout remains behind the disabled payment-mutation gate;
+   email/link delivery remains absent, and customer-specific assignment is still outside this
+   bounded screen.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

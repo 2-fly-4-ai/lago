@@ -61,6 +61,8 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/quote-versions",
       "/api/operator/v1/data-exports",
       "/api/operator/v1/webhook-endpoints",
+      "/api/operator/v1/dunning-campaigns",
+      "/api/operator/v1/payment-requests",
     ]) {
       expect(operatorScript).toContain(endpoint);
     }
@@ -98,6 +100,8 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("Artifact download and completion email remain unavailable");
     expect(operatorIndex).toContain("Outbound integrations");
     expect(operatorIndex).toContain("signing-secret");
+    expect(operatorIndex).toContain("Configure internal overdue thresholds");
+    expect(operatorIndex).toContain("Provider collection and email delivery remain disabled");
     expect(operatorIndex).toContain("Provider settings, dunning, metadata, custom sections");
     expect(operatorIndex).toContain("E-invoicing, tax assignment, and additional billing entities");
     expect(operatorScript).toContain("state.oneTimeSecret = null");

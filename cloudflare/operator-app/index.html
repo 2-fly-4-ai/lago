@@ -92,6 +92,9 @@
           <a class="nav-item" href="#webhook-endpoints"
             ><span class="nav-icon" aria-hidden="true">⌁</span>Webhooks</a
           >
+          <a class="nav-item" href="#dunning-campaigns"
+            ><span class="nav-icon" aria-hidden="true">!</span>Dunning</a
+          >
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -937,10 +940,130 @@
                 </div>
               </div>
             </section>
+
+            <section class="keys-section" id="dunning-campaigns" aria-labelledby="dunning-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Overdue policy</p>
+                  <h2 id="dunning-title">Dunning campaigns</h2>
+                  <p>
+                    Configure internal overdue thresholds and inspect generated payment requests.
+                    Provider collection and email delivery remain disabled.
+                  </p>
+                </div>
+                <button class="primary-button" id="open-create-dunning" type="button" hidden>
+                  <span aria-hidden="true">+</span>Create campaign
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="dunning-loading" aria-live="polite">
+                  Loading dunning campaigns…
+                </div>
+                <div class="empty-state" id="dunning-empty" hidden>
+                  <span aria-hidden="true">!</span>
+                  <h3>No dunning campaigns</h3>
+                  <p>No internal overdue policy is configured.</p>
+                </div>
+                <div class="table-scroll" id="dunning-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Attempts</th>
+                        <th>Thresholds</th>
+                        <th>Scope</th>
+                        <th>Customers</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dunning-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="payment-requests-loading" aria-live="polite">
+                  Loading payment requests…
+                </div>
+                <div class="empty-state" id="payment-requests-empty" hidden>
+                  <span aria-hidden="true">◎</span>
+                  <h3>No payment requests</h3>
+                  <p>No dunning attempts have produced a payment request.</p>
+                </div>
+                <div class="table-scroll" id="payment-requests-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Customer</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Invoices</th>
+                        <th>Created</th>
+                        <th>Access</th>
+                      </tr>
+                    </thead>
+                    <tbody id="payment-requests-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
           </div>
         </main>
       </div>
     </div>
+
+    <dialog
+      class="modal section-modal"
+      id="dunning-form-dialog"
+      aria-labelledby="dunning-form-title"
+    >
+      <form method="dialog" id="dunning-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Internal overdue policy</p>
+            <h2 id="dunning-form-title">Create dunning campaign</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy">
+          This configures D1 scheduling only. It does not enable payment-provider or email actions.
+        </p>
+        <div class="form-grid">
+          <div>
+            <label for="dunning-name">Name</label
+            ><input id="dunning-name" required maxlength="255" />
+          </div>
+          <div>
+            <label for="dunning-code">Code</label
+            ><input id="dunning-code" required maxlength="255" />
+          </div>
+          <div>
+            <label for="dunning-days">Days between attempts</label
+            ><input id="dunning-days" type="number" min="1" step="1" required />
+          </div>
+          <div>
+            <label for="dunning-attempts">Maximum attempts</label
+            ><input id="dunning-attempts" type="number" min="1" step="1" required />
+          </div>
+        </div>
+        <label for="dunning-description">Description</label
+        ><textarea id="dunning-description" rows="2"></textarea>
+        <label for="dunning-thresholds">Currency thresholds (JSON)</label>
+        <textarea id="dunning-thresholds" rows="4" spellcheck="false" required></textarea>
+        <p class="field-hint">Example: [{"amount_cents":1000,"currency":"USD"}]</p>
+        <label for="dunning-bcc">BCC metadata (comma-separated emails)</label
+        ><input id="dunning-bcc" type="text" autocomplete="off" />
+        <label class="checkbox-row"
+          ><input id="dunning-applied" type="checkbox" />Apply as the organization default</label
+        >
+        <p class="form-error" id="dunning-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-dunning-form" value="default" type="submit">
+            Create campaign
+          </button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog class="modal" id="key-form-dialog" aria-labelledby="key-form-title">
       <form method="dialog" id="key-form">

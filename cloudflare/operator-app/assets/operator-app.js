@@ -21,6 +21,8 @@ const endpoints = {
   quoteVersions: "/api/operator/v1/quote-versions",
   dataExports: "/api/operator/v1/data-exports",
   webhookEndpoints: "/api/operator/v1/webhook-endpoints",
+  dunningCampaigns: "/api/operator/v1/dunning-campaigns",
+  paymentRequests: "/api/operator/v1/payment-requests",
 };
 
 const elements = {
@@ -340,6 +342,28 @@ const elements = {
   webhookEndpointsEmpty: document.querySelector("#webhook-endpoints-empty"),
   webhookEndpointsTableShell: document.querySelector("#webhook-endpoints-table-shell"),
   webhookEndpointsTableBody: document.querySelector("#webhook-endpoints-table-body"),
+  openCreateDunning: document.querySelector("#open-create-dunning"),
+  dunningLoading: document.querySelector("#dunning-loading"),
+  dunningEmpty: document.querySelector("#dunning-empty"),
+  dunningTableShell: document.querySelector("#dunning-table-shell"),
+  dunningTableBody: document.querySelector("#dunning-table-body"),
+  paymentRequestsLoading: document.querySelector("#payment-requests-loading"),
+  paymentRequestsEmpty: document.querySelector("#payment-requests-empty"),
+  paymentRequestsTableShell: document.querySelector("#payment-requests-table-shell"),
+  paymentRequestsTableBody: document.querySelector("#payment-requests-table-body"),
+  dunningFormDialog: document.querySelector("#dunning-form-dialog"),
+  dunningForm: document.querySelector("#dunning-form"),
+  dunningFormTitle: document.querySelector("#dunning-form-title"),
+  dunningName: document.querySelector("#dunning-name"),
+  dunningCode: document.querySelector("#dunning-code"),
+  dunningDays: document.querySelector("#dunning-days"),
+  dunningAttempts: document.querySelector("#dunning-attempts"),
+  dunningDescription: document.querySelector("#dunning-description"),
+  dunningThresholds: document.querySelector("#dunning-thresholds"),
+  dunningBcc: document.querySelector("#dunning-bcc"),
+  dunningApplied: document.querySelector("#dunning-applied"),
+  dunningFormError: document.querySelector("#dunning-form-error"),
+  submitDunningForm: document.querySelector("#submit-dunning-form"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -417,6 +441,10 @@ const state = {
   selectedQuoteVersionId: null,
   dataExports: [],
   webhookEndpoints: [],
+  dunningCampaigns: [],
+  paymentRequests: [],
+  dunningFormMode: "create",
+  selectedDunningCode: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -473,6 +501,9 @@ elements.quotesTableBody.addEventListener("click", handleQuoteAction);
 elements.quoteForm.addEventListener("submit", submitQuoteForm);
 elements.openCreateDataExport.addEventListener("click", openCreateDataExportDialog);
 elements.dataExportForm.addEventListener("submit", submitDataExportForm);
+elements.openCreateDunning.addEventListener("click", openCreateDunningDialog);
+elements.dunningTableBody.addEventListener("click", handleDunningAction);
+elements.dunningForm.addEventListener("submit", submitDunningForm);
 
 void initialize();
 
@@ -501,6 +532,8 @@ async function initialize() {
       quotesPayload,
       dataExportsPayload,
       webhookEndpointsPayload,
+      dunningCampaignsPayload,
+      paymentRequestsPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -521,6 +554,8 @@ async function initialize() {
       requestJson(endpoints.quotes),
       requestJson(endpoints.dataExports),
       requestJson(endpoints.webhookEndpoints),
+      requestJson(endpoints.dunningCampaigns),
+      requestJson(endpoints.paymentRequests),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -542,6 +577,8 @@ async function initialize() {
     renderQuotes(quotesPayload.quotes);
     renderDataExports(dataExportsPayload.data_exports);
     renderWebhookEndpoints(webhookEndpointsPayload.webhook_endpoints);
+    renderDunningCampaigns(dunningCampaignsPayload.dunning_campaigns);
+    renderPaymentRequests(paymentRequestsPayload.payment_requests);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -571,6 +608,7 @@ function renderOperator(operator) {
   elements.openCreateCreditNote.hidden = !isAdmin;
   elements.openCreateQuote.hidden = !isAdmin;
   elements.openCreateDataExport.hidden = !isAdmin;
+  elements.openCreateDunning.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -2726,6 +2764,181 @@ function renderWebhookEndpoints(endpoints) {
   }
 }
 
+function renderDunningCampaigns(campaigns) {
+  state.dunningCampaigns = Array.isArray(campaigns) ? campaigns : [];
+  elements.dunningTableBody.replaceChildren();
+  elements.dunningLoading.hidden = true;
+  elements.dunningEmpty.hidden = state.dunningCampaigns.length !== 0;
+  elements.dunningTableShell.hidden = state.dunningCampaigns.length === 0;
+  for (const campaign of state.dunningCampaigns) {
+    const row = document.createElement("tr");
+    const values = [
+      `${safeText(campaign.name, "Unnamed")} · ${campaign.code}`,
+      `${campaign.max_attempts} every ${campaign.days_between_attempts}d`,
+      (campaign.thresholds ?? [])
+        .map((threshold) => formatMoney(threshold.amount_cents, threshold.currency))
+        .join(", "),
+      campaign.applied_to_organization ? "Organization default" : "Assigned customers",
+      String(campaign.customers_count ?? 0),
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = safeText(value, "—");
+      row.append(cell);
+    }
+    const actionCell = document.createElement("td");
+    if (state.role === "admin") {
+      const actions = document.createElement("div");
+      actions.className = "row-actions";
+      actions.append(
+        dunningActionButton("Edit", "edit-dunning", campaign.code),
+        dunningActionButton("Delete", "delete-dunning", campaign.code, true),
+      );
+      actionCell.append(actions);
+    } else {
+      actionCell.textContent = "Read only";
+      actionCell.className = "muted";
+    }
+    row.append(actionCell);
+    elements.dunningTableBody.append(row);
+  }
+}
+
+function renderPaymentRequests(requests) {
+  state.paymentRequests = Array.isArray(requests) ? requests : [];
+  elements.paymentRequestsTableBody.replaceChildren();
+  elements.paymentRequestsLoading.hidden = true;
+  elements.paymentRequestsEmpty.hidden = state.paymentRequests.length !== 0;
+  elements.paymentRequestsTableShell.hidden = state.paymentRequests.length === 0;
+  for (const request of state.paymentRequests) {
+    const row = document.createElement("tr");
+    const values = [
+      request.customer?.external_id,
+      formatMoney(request.amount_cents, request.amount_currency),
+      request.payment_status,
+      String(Array.isArray(request.invoices) ? request.invoices.length : 0),
+      formatDate(request.created_at),
+      "Read only",
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = safeText(value, "—");
+      row.append(cell);
+    }
+    elements.paymentRequestsTableBody.append(row);
+  }
+}
+
+function dunningActionButton(label, action, code, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = danger ? "row-action danger" : "row-action";
+  button.dataset.action = action;
+  button.dataset.dunningCode = code;
+  button.textContent = label;
+  return button;
+}
+
+function handleDunningAction(event) {
+  const button = event.target.closest("button[data-dunning-code]");
+  if (!button || state.role !== "admin") return;
+  const campaign = state.dunningCampaigns.find(
+    (candidate) => candidate.code === button.dataset.dunningCode,
+  );
+  if (!campaign) return;
+  if (button.dataset.action === "edit-dunning") openEditDunningDialog(campaign);
+  if (button.dataset.action === "delete-dunning") openDunningDeletion(campaign);
+}
+
+function openCreateDunningDialog() {
+  state.dunningFormMode = "create";
+  state.selectedDunningCode = null;
+  elements.dunningForm.reset();
+  elements.dunningFormTitle.textContent = "Create dunning campaign";
+  elements.dunningDays.value = "3";
+  elements.dunningAttempts.value = "3";
+  elements.dunningThresholds.value = '[{"amount_cents":1000,"currency":"USD"}]';
+  elements.dunningFormError.hidden = true;
+  elements.submitDunningForm.textContent = "Create campaign";
+  elements.dunningFormDialog.showModal();
+}
+
+function openEditDunningDialog(campaign) {
+  state.dunningFormMode = "edit";
+  state.selectedDunningCode = campaign.code;
+  elements.dunningFormTitle.textContent = "Edit dunning campaign";
+  elements.dunningName.value = formValue(campaign.name);
+  elements.dunningCode.value = formValue(campaign.code);
+  elements.dunningDays.value = String(campaign.days_between_attempts);
+  elements.dunningAttempts.value = String(campaign.max_attempts);
+  elements.dunningDescription.value = formValue(campaign.description);
+  elements.dunningThresholds.value = JSON.stringify(campaign.thresholds ?? [], null, 2);
+  elements.dunningBcc.value = Array.isArray(campaign.bcc_emails)
+    ? campaign.bcc_emails.join(", ")
+    : "";
+  elements.dunningApplied.checked = campaign.applied_to_organization === true;
+  elements.dunningFormError.hidden = true;
+  elements.submitDunningForm.textContent = "Save campaign";
+  elements.dunningFormDialog.showModal();
+}
+
+async function submitDunningForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.dunningFormDialog.close();
+  if (!elements.dunningForm.reportValidity()) return;
+  let thresholds;
+  try {
+    thresholds = JSON.parse(elements.dunningThresholds.value);
+    if (!Array.isArray(thresholds)) throw new Error();
+  } catch {
+    elements.dunningFormError.textContent = "Thresholds must be a JSON array.";
+    elements.dunningFormError.hidden = false;
+    return;
+  }
+  const create = state.dunningFormMode === "create";
+  setBusy(elements.submitDunningForm, true, create ? "Creating…" : "Saving…");
+  try {
+    await requestJson(
+      create ? endpoints.dunningCampaigns : dunningEndpoint(state.selectedDunningCode),
+      {
+        method: create ? "POST" : "PUT",
+        body: {
+          dunning_campaign: {
+            name: elements.dunningName.value.trim(),
+            code: elements.dunningCode.value.trim(),
+            description: optionalFormValue(elements.dunningDescription.value),
+            days_between_attempts: Number(elements.dunningDays.value),
+            max_attempts: Number(elements.dunningAttempts.value),
+            thresholds,
+            bcc_emails: elements.dunningBcc.value
+              .split(",")
+              .map((email) => email.trim())
+              .filter(Boolean),
+            applied_to_organization: elements.dunningApplied.checked,
+          },
+        },
+      },
+    );
+    elements.dunningFormDialog.close();
+    await refreshDunningCampaigns();
+  } catch (error) {
+    elements.dunningFormError.textContent = errorMessage(error);
+    elements.dunningFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitDunningForm, false, create ? "Create campaign" : "Save campaign");
+  }
+}
+
+function openDunningDeletion(campaign) {
+  state.confirmMode = "delete-dunning";
+  state.selectedDunningCode = campaign.code;
+  elements.confirmError.hidden = true;
+  elements.confirmTitle.textContent = "Delete dunning campaign?";
+  elements.confirmCopy.textContent = `Deleting “${safeText(campaign.name, "Unnamed campaign")}” clears its active assignments and attempt counters.`;
+  elements.confirmAction.textContent = "Delete campaign";
+  elements.confirmDialog.showModal();
+}
+
 function openCreateDataExportDialog() {
   elements.dataExportForm.reset();
   elements.dataExportFilters.value = "{}";
@@ -3221,6 +3434,23 @@ async function submitConfirmedAction(event) {
     return;
   }
 
+  if (mode === "delete-dunning") {
+    if (!state.selectedDunningCode) return elements.confirmDialog.close();
+    setBusy(elements.confirmAction, true, "Deleting…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(dunningEndpoint(state.selectedDunningCode), { method: "DELETE" });
+      elements.confirmDialog.close();
+      await refreshDunningCampaigns();
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(elements.confirmAction, false, "Delete campaign");
+    }
+    return;
+  }
+
   const key = state.keys.find((candidate) => candidate.id === state.selectedKeyId);
   if (!key || (mode !== "rotate" && mode !== "revoke")) {
     elements.confirmDialog.close();
@@ -3390,6 +3620,16 @@ async function refreshDataExports() {
   }
 }
 
+async function refreshDunningCampaigns() {
+  try {
+    const payload = await requestJson(endpoints.dunningCampaigns);
+    renderDunningCampaigns(payload.dunning_campaigns);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
 function revealOneTimeSecret(secret) {
   if (typeof secret !== "string" || !secret.startsWith("lago_")) {
     showPageError("The operation completed, but the one-time credential was not returned.");
@@ -3491,6 +3731,10 @@ class ApiRequestError extends Error {
 
 function keyEndpoint(keyId) {
   return `${endpoints.apiKeys}/${encodeURIComponent(keyId)}`;
+}
+
+function dunningEndpoint(code) {
+  return `${endpoints.dunningCampaigns}/${encodeURIComponent(code)}`;
 }
 
 function sectionEndpoint(code) {
