@@ -159,6 +159,11 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    superseding clone is implemented through the canonical D1 and Queue REST replacement. No PDF,
    template, generation, download, email, or public-delivery behavior is invented for the operator
    surface.
+   Data-export list/show plus admin idempotent CSV snapshot creation is implemented for the four
+   retained export resources. Migration 0071 records mutually exclusive API-key or active operator-
+   membership provenance, and the operator Worker dispatches the API Worker’s shared Document
+   Workflow through a cross-script binding. Artifact download and completion email remain separate
+   delivery actions and are not exposed.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

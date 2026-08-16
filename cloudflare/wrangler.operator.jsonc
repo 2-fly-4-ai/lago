@@ -43,6 +43,12 @@
       "class_name": "PlanDeletionWorkflow",
       "script_name": "serp-dev-lago-native",
     },
+    {
+      "name": "serp-dev-lago-documents",
+      "binding": "DOCUMENT_WORKFLOW",
+      "class_name": "DocumentWorkflow",
+      "script_name": "serp-dev-lago-native",
+    },
   ],
   "queues": {
     "producers": [

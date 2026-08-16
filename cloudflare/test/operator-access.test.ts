@@ -22,8 +22,10 @@ function operatorEnv(overrides: Partial<OperatorEnv> = {}): OperatorEnv {
     BILLING_ACCOUNTS: env.BILLING_ACCOUNTS,
     BILLING_DB: env.BILLING_DB,
     DOMAIN_EVENTS: env.DOMAIN_EVENTS,
+    DOCUMENT_WORKFLOW: env.DOCUMENT_WORKFLOW,
     PLAN_DELETION_WORKFLOW: env.PLAN_DELETION_WORKFLOW,
     OPERATOR_ACCESS_ENABLED: "1",
+    TEST_MIGRATIONS: env.TEST_MIGRATIONS,
     ACCESS_TEAM_DOMAIN: issuer,
     ACCESS_AUD: audience,
     ...overrides,
@@ -66,6 +68,9 @@ beforeAll(async () => {
 beforeEach(async () => {
   const subjectHash = await sha256Hex(`${issuer}\n${subject}`);
   await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      "DELETE FROM data_exports WHERE organization_id = 'org-operator-access'",
+    ),
     env.BILLING_DB.prepare(
       "DELETE FROM operator_memberships WHERE organization_id = 'org-operator-access'",
     ),
@@ -1469,6 +1474,37 @@ describe("operator Worker disabled boundary", () => {
     expect(blockedDocument.status).toBe(422);
     await expect(blockedDocument.json()).resolves.toMatchObject({
       code: "unsupported_operator_quote_action",
+    });
+  });
+
+  it("maps data-export creation and status without exposing artifact delivery", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/data-exports", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerList.json()).resolves.toMatchObject({
+      data_exports: [],
+      meta: { total_count: 0 },
+    });
+    await promoteOperatorAdmin();
+    const created = await operatorMutation(
+      "POST",
+      "/data-exports",
+      { data_export: { format: "csv", resource_type: "invoices", filters: { currency: "USD" } } },
+      { "Idempotency-Key": "operator-data-export" },
+    );
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{ data_export: { lago_id: string } }>();
+    const blockedDownload = await operatorMutation(
+      "POST",
+      `/data-exports/${encodeURIComponent(createdBody.data_export.lago_id)}/download`,
+    );
+    expect(blockedDownload.status).toBe(422);
+    await expect(blockedDownload.json()).resolves.toMatchObject({
+      code: "unsupported_operator_data_export_action",
     });
   });
 

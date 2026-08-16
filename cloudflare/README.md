@@ -368,6 +368,12 @@ remaining Lago feature inventory is dispositioned and ported.
   replacement: viewer list/show plus admin idempotent draft create, owner/version edits,
   approve/void, and superseding clone. The operator surface does not invent PDF, template,
   generation, download, email, or public-delivery behavior absent from the canonical contract.
+  `/api/operator/v1/data-exports` exposes viewer list/show plus admin idempotent CSV snapshot
+  creation for invoices, fees, credit notes, and credit-note items. Migration 0071 records exactly
+  one immutable requester principal—API key or active operator membership—without synthesizing a
+  browser credential. Creation dispatches the API Worker’s shared Document Workflow through a
+  cross-script binding; artifact download and completion email remain unavailable in the operator
+  Worker pending separate delivery contracts.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

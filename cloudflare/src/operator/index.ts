@@ -4,6 +4,7 @@ import { handleAddOnLedgerRequest } from "../api/add-on-ledger";
 import { handleApiKeysApi } from "../api/api-keys";
 import { handleBillingEntitiesApi } from "../api/billing-entities";
 import { handleCouponLedgerRequest } from "../api/coupon-ledger";
+import { createDataExport, listDataExports, showDataExport } from "../api/data-exports";
 import {
   createCreditNote,
   listCreditNotes,
@@ -256,6 +257,42 @@ export async function handleOperatorRequest(
         requestId,
       );
       if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/data-exports(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+        await assertOperatorDataExportMutationPayload(request, url.pathname);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/data-exports",
+        "/api/v1/data_exports",
+      );
+      if (request.method === "GET" && forwardedUrl.pathname === "/api/v1/data_exports") {
+        return listDataExports(forwardedUrl, env.BILLING_DB, auth, requestId);
+      }
+      const match = forwardedUrl.pathname.match(/^\/api\/v1\/data_exports\/([^/]+)$/);
+      if (request.method === "GET" && match?.[1]) {
+        return showDataExport(decodeURIComponent(match[1]), env.BILLING_DB, auth, requestId);
+      }
+      if (request.method === "POST" && forwardedUrl.pathname === "/api/v1/data_exports") {
+        return createDataExport(new Request(forwardedUrl, request), env, auth, requestId, {
+          operatorMembershipId: operator.membershipId,
+        });
+      }
+      throw new ApiError(
+        422,
+        "unsupported_operator_data_export_action",
+        "Data-export download and email actions are not admitted to the operator workflow",
+      );
     }
 
     if (/^\/api\/operator\/v1\/taxes(?:\/|$)/.test(url.pathname)) {
@@ -810,6 +847,29 @@ async function assertOperatorQuoteMutationPayload(
       422,
       "unsupported_operator_quote_field",
       `${unsupported} is not admitted to the operator quote workflow`,
+    );
+  }
+}
+
+async function assertOperatorDataExportMutationPayload(
+  request: Request,
+  pathname: string,
+): Promise<void> {
+  if (request.method !== "POST" || pathname !== "/api/operator/v1/data-exports") {
+    throw new ApiError(
+      422,
+      "unsupported_operator_data_export_action",
+      "Only data-export creation is admitted to the operator workflow",
+    );
+  }
+  const input = objectAt(await parseJsonObject(request.clone()), "data_export");
+  const supported = new Set(["format", "resource_type", "filters"]);
+  const unsupported = Object.keys(input).find((key) => !supported.has(key));
+  if (unsupported) {
+    throw new ApiError(
+      422,
+      "unsupported_operator_data_export_field",
+      `${unsupported} is not admitted to the operator data-export workflow`,
     );
   }
 }

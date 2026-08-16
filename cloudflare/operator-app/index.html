@@ -86,6 +86,9 @@
           <a class="nav-item" href="#quotes"
             ><span class="nav-icon" aria-hidden="true">“</span>Quotes</a
           >
+          <a class="nav-item" href="#data-exports"
+            ><span class="nav-icon" aria-hidden="true">⇩</span>Exports</a
+          >
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -846,6 +849,45 @@
                       </tr>
                     </thead>
                     <tbody id="quotes-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="data-exports" aria-labelledby="data-exports-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Auditable CSV jobs</p>
+                  <h2 id="data-exports-title">Data exports</h2>
+                  <p>Create bounded CSV snapshots and review generation status.</p>
+                </div>
+                <button class="primary-button" id="open-create-data-export" type="button" hidden>
+                  <span aria-hidden="true">+</span>Create export
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="data-exports-loading" aria-live="polite">
+                  Loading exports…
+                </div>
+                <div class="empty-state" id="data-exports-empty" hidden>
+                  <span aria-hidden="true">⇩</span>
+                  <h3>No exports</h3>
+                  <p id="data-exports-empty-copy">This organization has no export jobs.</p>
+                </div>
+                <div class="table-scroll" id="data-exports-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Export</th>
+                        <th scope="col">Resource</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Rows</th>
+                        <th scope="col">Size</th>
+                        <th scope="col">Created</th>
+                        <th scope="col">Delivery</th>
+                      </tr>
+                    </thead>
+                    <tbody id="data-exports-table-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -1898,6 +1940,42 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button
           ><button class="primary-button" id="submit-quote-form" value="default" type="submit">
             Create quote
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="data-export-form-dialog" aria-labelledby="data-export-form-title">
+      <form method="dialog" id="data-export-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">CSV snapshot</p>
+            <h2 id="data-export-form-title">Create data export</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <label for="data-export-resource">Resource</label
+        ><select id="data-export-resource">
+          <option value="invoices">Invoices</option>
+          <option value="invoice_fees">Invoice fees</option>
+          <option value="credit_notes">Credit notes</option>
+          <option value="credit_note_items">Credit note items</option></select
+        ><label for="data-export-filters">Filters (JSON object)</label
+        ><textarea id="data-export-filters" rows="7">{}</textarea>
+        <p class="field-hint">
+          The operator records requester provenance and starts the shared Document Workflow.
+          Artifact download and completion email remain unavailable here.
+        </p>
+        <p class="form-error" id="data-export-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button
+            class="primary-button"
+            id="submit-data-export-form"
+            value="default"
+            type="submit"
+          >
+            Create export
           </button>
         </div>
       </form>

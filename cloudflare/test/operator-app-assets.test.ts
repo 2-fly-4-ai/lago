@@ -59,6 +59,7 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/payments",
       "/api/operator/v1/quotes",
       "/api/operator/v1/quote-versions",
+      "/api/operator/v1/data-exports",
     ]) {
       expect(operatorScript).toContain(endpoint);
     }
@@ -93,6 +94,7 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("Settlement ledger");
     expect(operatorIndex).toContain("payment-link");
     expect(operatorIndex).toContain("Quotes have no PDF, template, generation, download, email");
+    expect(operatorIndex).toContain("Artifact download and completion email remain unavailable");
     expect(operatorIndex).toContain("Provider settings, dunning, metadata, custom sections");
     expect(operatorIndex).toContain("E-invoicing, tax assignment, and additional billing entities");
     expect(operatorScript).toContain("state.oneTimeSecret = null");

@@ -19,6 +19,7 @@ const endpoints = {
   payments: "/api/operator/v1/payments",
   quotes: "/api/operator/v1/quotes",
   quoteVersions: "/api/operator/v1/quote-versions",
+  dataExports: "/api/operator/v1/data-exports",
 };
 
 const elements = {
@@ -322,6 +323,18 @@ const elements = {
   quoteBillingItems: document.querySelector("#quote-billing-items"),
   quoteFormError: document.querySelector("#quote-form-error"),
   submitQuoteForm: document.querySelector("#submit-quote-form"),
+  openCreateDataExport: document.querySelector("#open-create-data-export"),
+  dataExportsLoading: document.querySelector("#data-exports-loading"),
+  dataExportsEmpty: document.querySelector("#data-exports-empty"),
+  dataExportsEmptyCopy: document.querySelector("#data-exports-empty-copy"),
+  dataExportsTableShell: document.querySelector("#data-exports-table-shell"),
+  dataExportsTableBody: document.querySelector("#data-exports-table-body"),
+  dataExportFormDialog: document.querySelector("#data-export-form-dialog"),
+  dataExportForm: document.querySelector("#data-export-form"),
+  dataExportResource: document.querySelector("#data-export-resource"),
+  dataExportFilters: document.querySelector("#data-export-filters"),
+  dataExportFormError: document.querySelector("#data-export-form-error"),
+  submitDataExportForm: document.querySelector("#submit-data-export-form"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -397,6 +410,7 @@ const state = {
   quoteFormMode: "create",
   selectedQuoteId: null,
   selectedQuoteVersionId: null,
+  dataExports: [],
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -451,6 +465,8 @@ elements.creditNoteForm.addEventListener("submit", submitCreditNoteForm);
 elements.openCreateQuote.addEventListener("click", openCreateQuoteDialog);
 elements.quotesTableBody.addEventListener("click", handleQuoteAction);
 elements.quoteForm.addEventListener("submit", submitQuoteForm);
+elements.openCreateDataExport.addEventListener("click", openCreateDataExportDialog);
+elements.dataExportForm.addEventListener("submit", submitDataExportForm);
 
 void initialize();
 
@@ -477,6 +493,7 @@ async function initialize() {
       creditNotesPayload,
       paymentsPayload,
       quotesPayload,
+      dataExportsPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -495,6 +512,7 @@ async function initialize() {
       requestJson(endpoints.creditNotes),
       requestJson(endpoints.payments),
       requestJson(endpoints.quotes),
+      requestJson(endpoints.dataExports),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -514,6 +532,7 @@ async function initialize() {
     renderCreditNotes(creditNotesPayload.credit_notes);
     renderPayments(paymentsPayload.payments);
     renderQuotes(quotesPayload.quotes);
+    renderDataExports(dataExportsPayload.data_exports);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -542,6 +561,7 @@ function renderOperator(operator) {
   elements.openCreateWallet.hidden = !isAdmin;
   elements.openCreateCreditNote.hidden = !isAdmin;
   elements.openCreateQuote.hidden = !isAdmin;
+  elements.openCreateDataExport.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -572,6 +592,9 @@ function renderOperator(operator) {
   elements.quotesEmptyCopy.textContent = isAdmin
     ? "Create a retained draft proposal for a billing customer."
     : "This organization has no quotes. Admin access is required to create one.";
+  elements.dataExportsEmptyCopy.textContent = isAdmin
+    ? "Create a bounded CSV snapshot for a retained billing resource."
+    : "This organization has no exports. Admin access is required to create one.";
   elements.subscriptionsEmptyCopy.textContent = isAdmin
     ? "Create a customer subscription from an active plan."
     : "This organization has no subscriptions. Admin access is required to create one.";
@@ -2643,6 +2666,70 @@ async function submitQuoteForm(event) {
   }
 }
 
+function renderDataExports(exports) {
+  state.dataExports = Array.isArray(exports) ? exports : [];
+  elements.dataExportsTableBody.replaceChildren();
+  elements.dataExportsLoading.hidden = true;
+  elements.dataExportsEmpty.hidden = state.dataExports.length !== 0;
+  elements.dataExportsTableShell.hidden = state.dataExports.length === 0;
+  for (const item of state.dataExports) {
+    const row = document.createElement("tr");
+    const values = [
+      item.lago_id,
+      item.resource_type,
+      item.status,
+      item.row_count === null ? "—" : String(item.row_count),
+      item.byte_size === null ? "—" : `${item.byte_size} bytes`,
+      formatDate(item.created_at),
+      "Status only",
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = safeText(value, "—");
+      row.append(cell);
+    }
+    elements.dataExportsTableBody.append(row);
+  }
+}
+
+function openCreateDataExportDialog() {
+  elements.dataExportForm.reset();
+  elements.dataExportFilters.value = "{}";
+  elements.dataExportFormError.hidden = true;
+  elements.dataExportFormDialog.showModal();
+}
+
+async function submitDataExportForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.dataExportFormDialog.close();
+  let filters;
+  try {
+    filters = JSON.parse(elements.dataExportFilters.value);
+    if (!filters || typeof filters !== "object" || Array.isArray(filters)) throw new Error();
+  } catch {
+    elements.dataExportFormError.textContent = "Filters must be a JSON object.";
+    elements.dataExportFormError.hidden = false;
+    return;
+  }
+  setBusy(elements.submitDataExportForm, true, "Creating…");
+  try {
+    await requestJson(endpoints.dataExports, {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: {
+        data_export: { format: "csv", resource_type: elements.dataExportResource.value, filters },
+      },
+    });
+    elements.dataExportFormDialog.close();
+    await refreshDataExports();
+  } catch (error) {
+    elements.dataExportFormError.textContent = errorMessage(error);
+    elements.dataExportFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitDataExportForm, false, "Create export");
+  }
+}
+
 function openCreateCreditNoteDialog() {
   const invoices = state.invoices.filter((invoice) => invoice.status === "finalized");
   if (invoices.length === 0) {
@@ -3253,6 +3340,16 @@ async function refreshQuotes() {
   try {
     const payload = await requestJson(endpoints.quotes);
     renderQuotes(payload.quotes);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+async function refreshDataExports() {
+  try {
+    const payload = await requestJson(endpoints.dataExports);
+    renderDataExports(payload.data_exports);
     hidePageError();
   } catch (error) {
     showPageError(errorMessage(error));

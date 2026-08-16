@@ -14,7 +14,7 @@ export type DataExportResourceType =
 export type DataExportRow = {
   id: string;
   organization_id: string;
-  requested_by_api_key_id: string;
+  requested_by_api_key_id: string | null;
   format: "csv";
   resource_type: DataExportResourceType;
   resource_query_json: string;
@@ -33,6 +33,10 @@ export type DataExportRow = {
   expires_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type DataExportCreateEnv = Pick<Env, "BILLING_DB" | "DOCUMENT_WORKFLOW" | "DOMAIN_EVENTS"> & {
+  TEST_MIGRATIONS?: Env["TEST_MIGRATIONS"];
 };
 
 const RESOURCE_TYPES = new Set<DataExportResourceType>([
@@ -140,11 +144,12 @@ export async function handleDataExportsApi(
   return null;
 }
 
-async function createDataExport(
+export async function createDataExport(
   request: Request,
-  env: Env,
+  env: DataExportCreateEnv,
   auth: AuthContext,
   requestId: string,
+  requester?: { operatorMembershipId: string },
 ): Promise<Response> {
   const idempotencyKey = requiredIdempotencyKey(request);
   const input = objectAt(await parseJsonObject(request), "data_export");
@@ -193,18 +198,22 @@ async function createDataExport(
     now,
     { status: "pending", resourceType },
   );
+  const requestedByApiKeyId = requester ? null : auth.apiKeyId;
+  const requestedByOperatorMembershipId = requester?.operatorMembershipId ?? null;
   try {
     await env.BILLING_DB.batch([
       env.BILLING_DB.prepare(
         `INSERT INTO data_exports
-         (id, organization_id, requested_by_api_key_id, format, resource_type,
+         (id, organization_id, requested_by_api_key_id, requested_by_operator_membership_id,
+          format, resource_type,
           resource_query_json, status, version, idempotency_key, request_sha256,
           created_at, updated_at)
-         VALUES (?, ?, ?, 'csv', ?, ?, 'pending', 1, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, 'csv', ?, ?, 'pending', 1, ?, ?, ?, ?)`,
       ).bind(
         exportId,
         auth.organizationId,
-        auth.apiKeyId,
+        requestedByApiKeyId,
+        requestedByOperatorMembershipId,
         resourceType,
         stableJson(filters),
         idempotencyKey,
@@ -238,7 +247,7 @@ async function createDataExport(
   return json({ data_export: serializeDataExport(created) }, { requestId });
 }
 
-async function listDataExports(
+export async function listDataExports(
   url: URL,
   database: D1Database,
   auth: AuthContext,
@@ -265,7 +274,7 @@ async function listDataExports(
   );
 }
 
-async function showDataExport(
+export async function showDataExport(
   exportId: string,
   database: D1Database,
   auth: AuthContext,
