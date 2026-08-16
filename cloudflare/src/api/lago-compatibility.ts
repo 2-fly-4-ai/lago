@@ -1673,7 +1673,7 @@ function rejectUnsupportedTaxTarget(input: Record<string, unknown>, target: stri
     );
 }
 
-async function listInvoices(
+export async function listInvoices(
   url: URL,
   database: D1Database,
   auth: AuthContext,
@@ -1755,7 +1755,7 @@ async function listInvoices(
   );
 }
 
-async function showInvoice(
+export async function showInvoice(
   invoiceId: string,
   database: D1Database,
   auth: AuthContext,
@@ -1777,9 +1777,9 @@ async function showInvoice(
   );
 }
 
-async function createOneOffInvoice(
+export async function createOneOffInvoice(
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -2043,10 +2043,10 @@ async function createOneOffInvoice(
   return showInvoice(invoiceId, env.BILLING_DB, auth, requestId);
 }
 
-async function voidInvoice(
+export async function voidInvoice(
   request: Request,
   invoiceId: string,
-  env: Env,
+  env: Pick<Env, "BILLING_ACCOUNTS" | "BILLING_DB" | "DOMAIN_EVENTS">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -2206,9 +2206,9 @@ async function voidInvoice(
   );
 }
 
-async function finalizeDraftInvoice(
+export async function finalizeDraftInvoice(
   invoiceId: string,
-  env: Env,
+  env: Pick<Env, "BILLING_ACCOUNTS" | "BILLING_DB" | "DOMAIN_EVENTS">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -2257,9 +2257,9 @@ async function finalizeDraftInvoice(
   return showInvoice(invoice.id, env.BILLING_DB, auth, requestId);
 }
 
-async function refreshDraftInvoice(
+export async function refreshDraftInvoice(
   invoiceId: string,
-  env: Env,
+  env: Pick<Env, "BILLING_ACCOUNTS" | "BILLING_DB" | "DOMAIN_EVENTS">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {

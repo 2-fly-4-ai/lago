@@ -139,6 +139,11 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    canonical D1, Queue, and per-customer Durable Object command boundary. Admin termination requires
    explicit final-invoice and prepaid-credit behavior. Provider payment methods, subscription custom
    sections, and usage-threshold overrides remain rejected at the BFF until separately admitted.
+   Core invoice list/show plus admin one-off create, draft refresh/finalize, and unpaid-finalized
+   void is implemented through the canonical D1, Queue, and Durable Object boundaries. One-off
+   creation is manual-only (`skip_psp: true`) and fee tax targeting is rejected. Document generation
+   and download, payment URLs, provider payment retry, and email delivery remain separate actions
+   and are not exposed by this family.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

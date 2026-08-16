@@ -1120,6 +1120,98 @@ describe("operator Worker disabled boundary", () => {
     });
   });
 
+  it("maps invoice reads and the one-off create and void lifecycle", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/invoices", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerList.json()).resolves.toMatchObject({
+      invoices: [],
+      meta: { total_count: 0 },
+    });
+    expect(
+      (
+        await operatorMutation("POST", "/invoices", {
+          invoice: {
+            external_customer_id: "invoice-customer",
+            currency: "USD",
+            skip_psp: true,
+            fees: [{ add_on_code: "support" }],
+          },
+        })
+      ).status,
+    ).toBe(403);
+
+    await promoteOperatorAdmin();
+    await operatorMutation("POST", "/customers", {
+      customer: { external_id: "invoice-customer", name: "Invoice Customer", currency: "USD" },
+    });
+    await operatorMutation("POST", "/add-ons", {
+      add_on: { code: "support", name: "Support", amount_cents: 500, amount_currency: "USD" },
+    });
+    const blockedTarget = await operatorMutation("POST", "/invoices", {
+      invoice: {
+        external_customer_id: "invoice-customer",
+        currency: "USD",
+        skip_psp: true,
+        fees: [{ add_on_code: "support", tax_codes: ["vat"] }],
+      },
+    });
+    expect(blockedTarget.status).toBe(422);
+    await expect(blockedTarget.json()).resolves.toMatchObject({
+      code: "unsupported_operator_invoice_fee_field",
+    });
+
+    const created = await operatorMutation("POST", "/invoices", {
+      invoice: {
+        external_customer_id: "invoice-customer",
+        currency: "usd",
+        skip_psp: true,
+        fees: [
+          {
+            add_on_code: "support",
+            invoice_display_name: "Priority support",
+            unit_amount_cents: 750,
+            units: 2,
+            description: "Synthetic operator fee",
+          },
+        ],
+      },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{
+      invoice: { lago_id: string; total_amount_cents: number };
+    }>();
+    expect(createdBody.invoice.total_amount_cents).toBe(1500);
+    const shown = await handleOperatorRequest(
+      new Request(
+        `https://operator.test/api/operator/v1/invoices/${encodeURIComponent(createdBody.invoice.lago_id)}`,
+        { headers: { "Cf-Access-Jwt-Assertion": await accessToken() } },
+      ),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(shown.json()).resolves.toMatchObject({
+      invoice: {
+        lago_id: createdBody.invoice.lago_id,
+        invoice_type: "one_off",
+        status: "finalized",
+        fees: [{ item: { code: "support" } }],
+      },
+    });
+
+    const voided = await operatorMutation(
+      "POST",
+      `/invoices/${encodeURIComponent(createdBody.invoice.lago_id)}/void`,
+      {},
+    );
+    expect(voided.status).toBe(200);
+    await expect(voided.json()).resolves.toMatchObject({ invoice: { status: "voided" } });
+  });
+
   it("maps customer reads for viewers and upserts for admins while keeping deletion unavailable", async () => {
     const viewerList = await handleOperatorRequest(
       new Request("https://operator.test/api/operator/v1/customers", {

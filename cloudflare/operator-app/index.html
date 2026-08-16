@@ -68,6 +68,10 @@
             <span class="nav-icon" aria-hidden="true">↻</span>
             Subscriptions
           </a>
+          <a class="nav-item" href="#invoices">
+            <span class="nav-icon" aria-hidden="true">▤</span>
+            Invoices
+          </a>
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -628,6 +632,48 @@
                       </tr>
                     </thead>
                     <tbody id="subscriptions-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="invoices" aria-labelledby="invoices-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Billing documents</p>
+                  <h2 id="invoices-title">Invoices</h2>
+                  <p>
+                    Review invoices and run retained internal draft, finalization, one-off, and void
+                    actions.
+                  </p>
+                </div>
+                <button class="primary-button" id="open-create-invoice" type="button" hidden>
+                  <span aria-hidden="true">+</span>Create one-off invoice
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="invoices-loading" aria-live="polite">
+                  Loading invoices…
+                </div>
+                <div class="empty-state" id="invoices-empty" hidden>
+                  <span aria-hidden="true">▤</span>
+                  <h3>No invoices</h3>
+                  <p id="invoices-empty-copy">This organization has no invoices.</p>
+                </div>
+                <div class="table-scroll" id="invoices-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Invoice</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Type</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Payment</th>
+                        <th scope="col">Amount</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="invoices-table-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -1460,6 +1506,45 @@
             type="submit"
           >
             Terminate subscription
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="invoice-form-dialog"
+      aria-labelledby="invoice-form-title"
+    >
+      <form method="dialog" id="invoice-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">One-off billing</p>
+            <h2 id="invoice-form-title">Create one-off invoice</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="invoice-customer">Customer</label
+            ><select id="invoice-customer" required></select>
+          </div>
+          <div>
+            <label for="invoice-currency">Currency</label
+            ><input id="invoice-currency" minlength="3" maxlength="3" required />
+          </div>
+        </div>
+        <label for="invoice-fees">Fees (JSON array)</label
+        ><textarea id="invoice-fees" rows="9" required>[{"add_on_code":"","units":1}]</textarea>
+        <p class="field-hint">
+          Each fee supports add_on_code, invoice_display_name, unit_amount_cents, units, and
+          description. Provider collection and fee tax targeting are unavailable.
+        </p>
+        <p class="form-error" id="invoice-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-invoice-form" value="default" type="submit">
+            Create finalized invoice
           </button>
         </div>
       </form>

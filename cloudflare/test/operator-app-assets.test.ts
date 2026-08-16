@@ -52,6 +52,7 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/applied-coupons",
       "/api/operator/v1/plans",
       "/api/operator/v1/subscriptions",
+      "/api/operator/v1/invoices",
     ]) {
       expect(operatorScript).toContain(endpoint);
     }
@@ -78,6 +79,7 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("Usage charges, thresholds, commitments, taxes, and metadata");
     expect(operatorIndex).toContain("Provider");
     expect(operatorIndex).toContain("payment methods, custom sections, and usage thresholds");
+    expect(operatorIndex).toContain("Provider collection and fee tax targeting are unavailable");
     expect(operatorIndex).toContain("Provider settings, dunning, metadata, custom sections");
     expect(operatorIndex).toContain("E-invoicing, tax assignment, and additional billing entities");
     expect(operatorScript).toContain("state.oneTimeSecret = null");

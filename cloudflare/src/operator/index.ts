@@ -5,7 +5,16 @@ import { handleApiKeysApi } from "../api/api-keys";
 import { handleBillingEntitiesApi } from "../api/billing-entities";
 import { handleCouponLedgerRequest } from "../api/coupon-ledger";
 import { handleInvoiceCustomSectionRequest } from "../api/invoice-custom-sections";
-import { createSubscription, handleCustomerCompatibilityRequest } from "../api/lago-compatibility";
+import {
+  createOneOffInvoice,
+  createSubscription,
+  finalizeDraftInvoice,
+  handleCustomerCompatibilityRequest,
+  listInvoices,
+  refreshDraftInvoice,
+  showInvoice,
+  voidInvoice,
+} from "../api/lago-compatibility";
 import { showOrganization } from "../api/organizations";
 import { handlePaymentReceiptReadsApi } from "../api/payment-receipts";
 import { handlePlanCatalogRequest } from "../api/plan-catalog";
@@ -318,6 +327,50 @@ export async function handleOperatorRequest(
       if (response) return response;
     }
 
+    if (/^\/api\/operator\/v1\/invoices(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+        await assertOperatorInvoiceMutationPayload(request, url.pathname);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/invoices",
+        "/api/v1/invoices",
+      );
+      if (request.method === "GET" && forwardedUrl.pathname === "/api/v1/invoices") {
+        return listInvoices(forwardedUrl, env.BILLING_DB, auth, requestId);
+      }
+      const match = forwardedUrl.pathname.match(/^\/api\/v1\/invoices\/([^/]+)(?:\/([^/]+))?$/);
+      if (request.method === "GET" && match?.[1] && !match[2]) {
+        return showInvoice(decodeURIComponent(match[1]), env.BILLING_DB, auth, requestId);
+      }
+      if (request.method === "POST" && forwardedUrl.pathname === "/api/v1/invoices") {
+        return createOneOffInvoice(new Request(forwardedUrl, request), env, auth, requestId);
+      }
+      if (match?.[1] && match[2] === "void" && request.method === "POST") {
+        return voidInvoice(
+          new Request(forwardedUrl, request),
+          decodeURIComponent(match[1]),
+          env,
+          auth,
+          requestId,
+        );
+      }
+      if (match?.[1] && match[2] === "finalize" && request.method === "PUT") {
+        return finalizeDraftInvoice(decodeURIComponent(match[1]), env, auth, requestId);
+      }
+      if (match?.[1] && match[2] === "refresh" && request.method === "PUT") {
+        return refreshDraftInvoice(decodeURIComponent(match[1]), env, auth, requestId);
+      }
+    }
+
     if (/^\/api\/operator\/v1\/customers(?:\/|$)/.test(url.pathname)) {
       const operator = await authenticateOperatorAccess(request, env, keySet);
       if (request.method !== "GET") {
@@ -455,5 +508,41 @@ async function assertOperatorSubscriptionMutationPayload(request: Request): Prom
       "unsupported_operator_subscription_field",
       `${unsupported} is not admitted to the operator subscription workflow`,
     );
+  }
+}
+
+async function assertOperatorInvoiceMutationPayload(
+  request: Request,
+  pathname: string,
+): Promise<void> {
+  if (request.method !== "POST" || pathname !== "/api/operator/v1/invoices") return;
+  const input = objectAt(await parseJsonObject(request.clone()), "invoice");
+  const supported = new Set(["external_customer_id", "currency", "skip_psp", "fees"]);
+  const unsupported = Object.keys(input).find((key) => !supported.has(key));
+  if (unsupported) {
+    throw new ApiError(
+      422,
+      "unsupported_operator_invoice_field",
+      `${unsupported} is not admitted to the operator one-off invoice workflow`,
+    );
+  }
+  if (!Array.isArray(input.fees)) return;
+  const feeFields = new Set([
+    "add_on_code",
+    "invoice_display_name",
+    "unit_amount_cents",
+    "units",
+    "description",
+  ]);
+  for (const fee of input.fees) {
+    if (!fee || typeof fee !== "object" || Array.isArray(fee)) continue;
+    const unsupportedFee = Object.keys(fee).find((key) => !feeFields.has(key));
+    if (unsupportedFee) {
+      throw new ApiError(
+        422,
+        "unsupported_operator_invoice_fee_field",
+        `${unsupportedFee} is not admitted to the operator one-off invoice workflow`,
+      );
+    }
   }
 }

@@ -12,6 +12,7 @@ const endpoints = {
   appliedCoupons: "/api/operator/v1/applied-coupons",
   plans: "/api/operator/v1/plans",
   subscriptions: "/api/operator/v1/subscriptions",
+  invoices: "/api/operator/v1/invoices",
 };
 
 const elements = {
@@ -242,6 +243,19 @@ const elements = {
   terminateSubscriptionCredit: document.querySelector("#terminate-subscription-credit"),
   terminateSubscriptionError: document.querySelector("#terminate-subscription-error"),
   submitTerminateSubscription: document.querySelector("#submit-terminate-subscription"),
+  openCreateInvoice: document.querySelector("#open-create-invoice"),
+  invoicesLoading: document.querySelector("#invoices-loading"),
+  invoicesEmpty: document.querySelector("#invoices-empty"),
+  invoicesEmptyCopy: document.querySelector("#invoices-empty-copy"),
+  invoicesTableShell: document.querySelector("#invoices-table-shell"),
+  invoicesTableBody: document.querySelector("#invoices-table-body"),
+  invoiceFormDialog: document.querySelector("#invoice-form-dialog"),
+  invoiceForm: document.querySelector("#invoice-form"),
+  invoiceCustomer: document.querySelector("#invoice-customer"),
+  invoiceCurrency: document.querySelector("#invoice-currency"),
+  invoiceFees: document.querySelector("#invoice-fees"),
+  invoiceFormError: document.querySelector("#invoice-form-error"),
+  submitInvoiceForm: document.querySelector("#submit-invoice-form"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -306,6 +320,8 @@ const state = {
   subscriptions: [],
   subscriptionFormMode: "create",
   selectedSubscriptionExternalId: null,
+  invoices: [],
+  selectedInvoiceId: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -347,6 +363,9 @@ elements.openCreateSubscription.addEventListener("click", openCreateSubscription
 elements.subscriptionsTableBody.addEventListener("click", handleSubscriptionAction);
 elements.subscriptionForm.addEventListener("submit", submitSubscriptionForm);
 elements.terminateSubscriptionForm.addEventListener("submit", submitTerminateSubscription);
+elements.openCreateInvoice.addEventListener("click", openCreateInvoiceDialog);
+elements.invoicesTableBody.addEventListener("click", handleInvoiceAction);
+elements.invoiceForm.addEventListener("submit", submitInvoiceForm);
 
 void initialize();
 
@@ -368,6 +387,7 @@ async function initialize() {
       appliedCouponsPayload,
       plansPayload,
       subscriptionsPayload,
+      invoicesPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -381,6 +401,7 @@ async function initialize() {
       requestJson(endpoints.appliedCoupons),
       requestJson(endpoints.plans),
       requestJson(endpoints.subscriptions),
+      requestJson(endpoints.invoices),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -395,6 +416,7 @@ async function initialize() {
     renderAppliedCoupons(appliedCouponsPayload.applied_coupons);
     renderPlans(plansPayload.plans);
     renderSubscriptions(subscriptionsPayload.subscriptions);
+    renderInvoices(invoicesPayload.invoices);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -419,6 +441,7 @@ function renderOperator(operator) {
   elements.openCreatePlan.hidden = !isAdmin;
   elements.openCreateFixedCharge.hidden = !isAdmin;
   elements.openCreateSubscription.hidden = !isAdmin;
+  elements.openCreateInvoice.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -443,6 +466,9 @@ function renderOperator(operator) {
   elements.subscriptionsEmptyCopy.textContent = isAdmin
     ? "Create a customer subscription from an active plan."
     : "This organization has no subscriptions. Admin access is required to create one.";
+  elements.invoicesEmptyCopy.textContent = isAdmin
+    ? "Create a finalized one-off invoice or wait for subscription billing."
+    : "This organization has no invoices. Admin access is required to create one.";
   if (operator.organization_external_id) {
     elements.workspaceName.textContent = operator.organization_external_id;
   }
@@ -1906,6 +1932,158 @@ async function submitTerminateSubscription(event) {
   }
 }
 
+function renderInvoices(invoices) {
+  state.invoices = Array.isArray(invoices) ? invoices : [];
+  elements.invoicesTableBody.replaceChildren();
+  elements.invoicesLoading.hidden = true;
+  elements.invoicesEmpty.hidden = state.invoices.length !== 0;
+  elements.invoicesTableShell.hidden = state.invoices.length === 0;
+  for (const invoice of state.invoices) {
+    const row = document.createElement("tr");
+    const identity = document.createElement("td");
+    const number = document.createElement("span");
+    number.className = "key-name";
+    number.textContent = safeText(invoice.number, "Unnumbered invoice");
+    const id = document.createElement("span");
+    id.className = "key-id";
+    id.textContent = safeText(invoice.lago_id, "—");
+    identity.append(number, id);
+    const values = [
+      invoice.external_customer_id,
+      invoice.invoice_type,
+      invoice.status,
+      invoice.payment_status,
+      formatMoney(invoice.total_amount_cents, invoice.currency),
+    ];
+    row.append(identity);
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = safeText(value, "—");
+      row.append(cell);
+    }
+    const actions = document.createElement("td");
+    actions.className = "actions-column";
+    if (state.role === "admin") {
+      const group = document.createElement("div");
+      group.className = "row-actions";
+      if (invoice.status === "draft") {
+        group.append(
+          invoiceActionButton("Refresh", "refresh-invoice", invoice.lago_id),
+          invoiceActionButton("Finalize", "finalize-invoice", invoice.lago_id),
+        );
+      } else if (invoice.status === "finalized" && invoice.payment_status !== "succeeded") {
+        group.append(invoiceActionButton("Void", "void-invoice", invoice.lago_id, true));
+      }
+      if (group.childNodes.length > 0) actions.append(group);
+      else actions.textContent = "No action";
+    } else actions.textContent = "Read only";
+    row.append(actions);
+    elements.invoicesTableBody.append(row);
+  }
+}
+
+function invoiceActionButton(label, action, invoiceId, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = danger ? "row-action danger" : "row-action";
+  button.dataset.action = action;
+  button.dataset.invoiceId = invoiceId;
+  button.textContent = label;
+  return button;
+}
+
+async function handleInvoiceAction(event) {
+  const button = event.target.closest("button[data-invoice-id]");
+  if (!button || state.role !== "admin") return;
+  const invoice = state.invoices.find((item) => item.lago_id === button.dataset.invoiceId);
+  if (!invoice) return;
+  if (button.dataset.action === "refresh-invoice") {
+    button.disabled = true;
+    try {
+      await requestJson(`${invoiceEndpoint(invoice.lago_id)}/refresh`, { method: "PUT" });
+      await refreshInvoices();
+    } catch (error) {
+      showPageError(errorMessage(error));
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+  state.selectedInvoiceId = invoice.lago_id;
+  state.confirmMode = button.dataset.action;
+  elements.confirmError.hidden = true;
+  if (button.dataset.action === "finalize-invoice") {
+    elements.confirmTitle.textContent = "Finalize invoice?";
+    elements.confirmCopy.textContent =
+      "Finalization freezes the refreshed billing snapshot and payment due date.";
+    elements.confirmAction.textContent = "Finalize invoice";
+  } else {
+    elements.confirmTitle.textContent = "Void invoice?";
+    elements.confirmCopy.textContent =
+      "Voiding reverses retained wallet, coupon, and credit-note allocations. Paid invoices remain protected.";
+    elements.confirmAction.textContent = "Void invoice";
+  }
+  elements.confirmDialog.showModal();
+}
+
+function openCreateInvoiceDialog() {
+  if (state.customers.length === 0 || state.addOns.length === 0) {
+    showPageError("Create a customer and add-on before creating a one-off invoice.");
+    return;
+  }
+  elements.invoiceForm.reset();
+  replaceSelectOptions(
+    elements.invoiceCustomer,
+    state.customers,
+    (item) => item.external_id,
+    (item) => `${safeText(item.name, "Unnamed customer")} (${item.external_id})`,
+  );
+  elements.invoiceCurrency.value = state.customers[0]?.currency ?? "";
+  elements.invoiceFees.value = JSON.stringify(
+    [{ add_on_code: state.addOns[0]?.code ?? "", units: 1 }],
+    null,
+    2,
+  );
+  elements.invoiceFormError.hidden = true;
+  elements.invoiceFormDialog.showModal();
+}
+
+async function submitInvoiceForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.invoiceFormDialog.close();
+  if (!elements.invoiceForm.reportValidity()) return;
+  let fees;
+  try {
+    fees = JSON.parse(elements.invoiceFees.value);
+    if (!Array.isArray(fees) || fees.length === 0) throw new Error("invalid_fees");
+  } catch {
+    elements.invoiceFormError.textContent = "Fees must be a non-empty JSON array.";
+    elements.invoiceFormError.hidden = false;
+    return;
+  }
+  setBusy(elements.submitInvoiceForm, true, "Creating…");
+  try {
+    await requestJson(endpoints.invoices, {
+      method: "POST",
+      body: {
+        invoice: {
+          external_customer_id: elements.invoiceCustomer.value,
+          currency: elements.invoiceCurrency.value.trim(),
+          skip_psp: true,
+          fees,
+        },
+      },
+    });
+    elements.invoiceFormDialog.close();
+    await refreshInvoices();
+  } catch (error) {
+    elements.invoiceFormError.textContent = errorMessage(error);
+    elements.invoiceFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitInvoiceForm, false, "Create finalized invoice");
+  }
+}
+
 function sectionActionButton(label, action, code, danger = false) {
   const button = document.createElement("button");
   button.type = "button";
@@ -2224,6 +2402,27 @@ async function submitConfirmedAction(event) {
     return;
   }
 
+  if (mode === "finalize-invoice" || mode === "void-invoice") {
+    if (!state.selectedInvoiceId) return elements.confirmDialog.close();
+    const finalizing = mode === "finalize-invoice";
+    setBusy(elements.confirmAction, true, finalizing ? "Finalizing…" : "Voiding…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(
+        `${invoiceEndpoint(state.selectedInvoiceId)}/${finalizing ? "finalize" : "void"}`,
+        { method: finalizing ? "PUT" : "POST", ...(finalizing ? {} : { body: {} }) },
+      );
+      elements.confirmDialog.close();
+      await refreshInvoices();
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(elements.confirmAction, false, finalizing ? "Finalize invoice" : "Void invoice");
+    }
+    return;
+  }
+
   const key = state.keys.find((candidate) => candidate.id === state.selectedKeyId);
   if (!key || (mode !== "rotate" && mode !== "revoke")) {
     elements.confirmDialog.close();
@@ -2337,6 +2536,16 @@ async function refreshSubscriptions() {
   try {
     const payload = await requestJson(endpoints.subscriptions);
     renderSubscriptions(payload.subscriptions);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+async function refreshInvoices() {
+  try {
+    const payload = await requestJson(endpoints.invoices);
+    renderInvoices(payload.invoices);
     hidePageError();
   } catch (error) {
     showPageError(errorMessage(error));
@@ -2479,6 +2688,10 @@ function fixedChargeEndpoint(planCode, chargeCode) {
 
 function subscriptionEndpoint(externalId) {
   return `${endpoints.subscriptions}/${encodeURIComponent(externalId)}`;
+}
+
+function invoiceEndpoint(invoiceId) {
+  return `${endpoints.invoices}/${encodeURIComponent(invoiceId)}`;
 }
 
 function showPageError(message) {

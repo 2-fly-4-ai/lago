@@ -346,6 +346,12 @@ remaining Lago feature inventory is dispositioned and ported.
   Object reservation for termination. The BFF rejects provider payment methods, invoice custom-
   section assignment, and usage-threshold overrides until those advanced workflows are separately
   admitted.
+  `/api/operator/v1/invoices` provides the core invoice family. Viewers can list/show tenant-scoped
+  invoices; admins can create a finalized manual one-off invoice from retained add-ons, refresh or
+  finalize a draft, and void an unpaid finalized invoice. The BFF requires one-off creation to skip
+  provider collection and rejects fee tax targeting. PDF generation/download, payment URLs,
+  provider payment retry, and email delivery remain outside this family and unavailable until each
+  receives its own bounded operator contract.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
