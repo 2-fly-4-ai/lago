@@ -576,6 +576,25 @@ Protect that Worker destination with the approved Cloudflare Access application 
 applying the operator migrations or deploying `wrangler.operator.jsonc`. The bootstrap has no
 bindings or static assets, so it exposes neither the operator UI nor D1 while Access is being set up.
 
+The Access reconciler is read-only unless `--apply` is passed. It requires a narrowly scoped API
+token with Workers Scripts Read, Access Apps and Policies Write, and Access Organizations, Identity
+Providers, and Groups Read. Keep the token out of files and shell history:
+
+```sh
+OPERATOR_ACCESS_EMAIL=approved@example.com \
+  CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
+  node scripts/provision-operator-access.mjs --check
+
+OPERATOR_ACCESS_EMAIL=approved@example.com \
+  CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
+  node scripts/provision-operator-access.mjs --apply
+```
+
+The reconciler resolves the immutable Worker ID, preflights every required read permission before
+writing, creates only the named Worker application and its single-email 24-hour allow policy, and
+refuses configuration drift or additional policies. Its output contains the non-secret team domain
+and audience needed by `wrangler.operator.jsonc`; it never prints the API token.
+
 Do not add production routes, production provider credentials, production data, or enable payment
 mutations without the separate approval gates in the active rewrite plan.
 

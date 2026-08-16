@@ -99,9 +99,10 @@ operator bundle omits the route and code until a verified SERP consumer changes 
 
 1. Implement and test Access JWT validation, operator membership, role checks, origin/CSRF checks,
    and value-free audit evidence with configuration absent by default.
-2. Obtain explicit approval for the isolated Access allow policy, then provision the dedicated
-   operator Worker and Worker-name application and record its non-secret issuer/audience
-   configuration. Do not deploy the operator Worker publicly before Access protects it.
+2. Obtain explicit approval for the isolated Access allow policy. Deploy only the binding-free
+   bootstrap that returns `503` for every route to obtain the immutable Worker ID, then provision the
+   Worker-name application and record its non-secret issuer/audience configuration. Do not deploy
+   the functional operator Worker, Static Assets, or data bindings before Access protects that ID.
 3. Ship a read-only organization/status shell and prove tenant isolation remotely with synthetic
    membership only. The membership-scoped organization BFF and its interactive read-only screen
    are implemented locally; remote Access/membership proof remains pending.

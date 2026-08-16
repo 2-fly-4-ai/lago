@@ -3312,3 +3312,19 @@ resource and mutation described.
   no new binding. No remote migration, resource, Access application/policy, membership, deployment,
   provider action, payment action, customer message, secret access, live customer-data access, or
   production operation occurred.
+- 2026-08-16: Created the isolated operator Worker ID without exposing the functional operator
+  surface. `wrangler.operator-bootstrap.jsonc` deploys a 0.43 KiB binding-free Worker with preview
+  URLs disabled; version `87907c2c-1ff2-4678-9f9c-832a64820f2f` returns JSON `503` and
+  `Cache-Control: no-store` for every tested route and has no Static Assets, D1, Durable Object,
+  Workflow, or Queue access. This resolves Cloudflare Access's requirement for an immutable Worker
+  ID while keeping the real BFF and UI undeployed. Added an idempotent Access reconciler with five
+  Node tests: it preflights all reads before its first write, creates only the exact Worker
+  application and single-email 24-hour allow policy, refuses drift/additional policies, bounds API
+  responses, and never prints its token. The complete package check still passes all 333 Workers
+  tests across 61 files plus the five reconciler tests, generated types, inventory, lint,
+  TypeScript, and both dry bundles. Remote migrations `0070` and `0071` remain pending. The current
+  Wrangler OAuth token has Workers/D1 write but not Access Apps and Policies Write, and managed
+  browser navigation to both Cloudflare dashboard domains remains blocked despite the connected
+  Tailscale VPN, so no Access application/policy, migration, membership, functional operator
+  deployment, provider action, payment action, customer message, secret, or customer-data access
+  occurred.

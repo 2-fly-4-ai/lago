@@ -35,43 +35,42 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `* * * * *`                                                        | Worker scheduled handler  | Deterministic legacy-schedule dispatch and activity fanout         |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 | Static Assets     | `operator-ui`                                                      | direct asset delivery     | Script-free operator migration shell and security headers          |
+| Worker            | `serp-dev-lago-operator` / `87907c2c-1ff2-4678-9f9c-832a64820f2f`  | none                      | Binding-free fail-closed bootstrap for Access registration         |
 
 Applied D1 migrations: `0001_foundation.sql` through
 `0069_data_exports.sql`.
 
-## Planned but not provisioned
+## Operator bootstrap provisioned; Access pending
 
-- `serp-dev-lago-operator` exists only as the checked-in `wrangler.operator.jsonc` dry-run target.
-  It has not been created or deployed remotely. Its Access flag is `0`, issuer/audience are absent,
-  preview URLs are disabled, and no Access application or allow policy exists. Its local BFF
-  currently exposes session metadata, the membership-scoped canonical organization read
-  projection, and viewer-read/admin-mutation API-key management with one-time create/rotate values;
-  it also maps viewer reads and admin create/edit/terminate actions for the canonical invoice custom-
-  section catalog. Its planned bindings are D1 and producer-only access to the existing internal
-  domain-event Queue. The separate `operator-app` Static Assets bundle implements those
-  organization, API-key, and invoice-section screens. It also implements the retained single
-  default billing-entity profile: viewers receive the canonical detailed projection and admins can
-  update only the supported D1-backed fields through same-origin/CSRF checks. Additional entities,
-  e-invoicing, tax assignment, and side-effecting configuration remain unavailable. The deployed
-  app also provides tenant-scoped payment-receipt list/show metadata while suppressing file URLs and
-  rejecting document/email actions. Its manual-tax catalog gives viewers list/show access and admins
-  same-origin create/edit/terminate controls through the existing D1 and producer-only Queue
-  bindings. The add-on catalog uses those same bindings for viewer reads and admin lifecycle
-  controls, retaining currency/in-use guards and excluding tax-code targeting. The core customer
-  screen uses the canonical D1 and Queue handler for viewer list/show and admin create/edit, with a
-  BFF allowlist that rejects provider, dunning, metadata, custom-section, tax-target, and deletion
-  fields. The deployed API Worker still serves
-  `operator-ui`, the non-interactive migration shell. Local desktop/mobile browser QA proved the
-  operator bundle renders only the fail-closed state while Access is disabled, with no browser
-  warnings or errors.
-- `0070_operator_access.sql` is locally replayed and tested but remains unapplied remotely. The
-  isolated D1 therefore has no operator-membership table or membership data yet.
+- `serp-dev-lago-operator` now exists remotely only as version
+  `87907c2c-1ff2-4678-9f9c-832a64820f2f`, deployed from
+  `wrangler.operator-bootstrap.jsonc`. It has no bindings or Static Assets and returns JSON `503`
+  plus `Cache-Control: no-store` for every route. Preview URLs are disabled. This creates the
+  immutable Worker ID required by a Worker-destination Access application without exposing the real
+  BFF, UI, D1, Durable Object, Workflow, or Queue bindings. The functional `wrangler.operator.jsonc`
+  deployment remains disabled and undeployed.
+- `0070_operator_access.sql` and `0071_operator_data_export_requesters.sql` are locally replayed and
+  tested but remain unapplied remotely. The isolated D1 therefore has no operator-membership table
+  or membership data yet.
 - Provisioning requires an approved Access identity/group allow policy, session duration, team
   issuer, and application audience. The API Worker must remain outside that human Access policy so
   existing service clients and provider webhooks are not intercepted.
+- `scripts/provision-operator-access.mjs` is an idempotent, fail-closed reconciler for the approved
+  isolated application. It preflights Worker, Zero Trust organization, and application reads before
+  writing; resolves the immutable Worker ID; creates only the named Worker application and its one-
+  email 24-hour allow policy; and refuses drift or additional policies. The current Wrangler OAuth
+  token lacks Access Apps and Policies Write, so the Access application and policy are not yet
+  provisioned.
 
 ## Verified behavior
 
+- Operator bootstrap version `87907c2c-1ff2-4678-9f9c-832a64820f2f` created only the isolated
+  `serp-dev-lago-operator` Worker resource. Remote `/`, `/health`, `/ready`,
+  `/api/operator/v1/session`, and `/index.html` checks returned the same binding-free `503` response
+  with `Cache-Control: no-store`; the real operator assets and data bindings were absent. The two
+  pending migrations remained `0070` and `0071`, and the API Worker continued to return health
+  `200`. No Access policy, D1 mutation, membership, production route/domain, provider action,
+  payment action, customer message, secret, or customer-data access occurred.
 - Version `75370a2a-ca89-4244-ad51-f514e1dece1d` added the M8 Static Assets foundation without a
   migration or resource change. Cloudflare directly serves the script-free migration shell,
   stylesheet, navigation fallback, and restrictive headers, while API, health/readiness,
