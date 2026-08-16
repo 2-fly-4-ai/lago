@@ -81,7 +81,12 @@ async function createEndpoint(request: Request, env: Env, auth: AuthContext, req
   return json({ webhook_endpoint: serializeEndpoint(endpoint) }, { requestId });
 }
 
-async function listEndpoints(url: URL, database: D1Database, auth: AuthContext, requestId: string) {
+export async function listEndpoints(
+  url: URL,
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+) {
   const page = positivePage(url.searchParams.get("page"));
   const perPage = Math.min(positivePage(url.searchParams.get("per_page"), 20), 100);
   const offset = (page - 1) * perPage;
@@ -115,7 +120,7 @@ async function listEndpoints(url: URL, database: D1Database, auth: AuthContext, 
   );
 }
 
-async function showEndpoint(
+export async function showEndpoint(
   id: string,
   database: D1Database,
   auth: AuthContext,

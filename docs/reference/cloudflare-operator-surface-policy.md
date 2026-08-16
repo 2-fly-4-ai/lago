@@ -164,6 +164,9 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    membership provenance, and the operator Worker dispatches the API Worker’s shared Document
    Workflow through a cross-script binding. Artifact download and completion email remain separate
    delivery actions and are not exposed.
+   Webhook endpoint list/show is exposed read-only while outbound delivery is disabled. Endpoint
+   mutation, signing-secret configuration, and delivery remain outside the operator Worker; no HMAC
+   secret is accepted by or stored in the browser.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

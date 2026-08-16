@@ -72,6 +72,12 @@ beforeEach(async () => {
       "DELETE FROM data_exports WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare(
+      "DELETE FROM outbound_webhook_deliveries WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM webhook_endpoints WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
       "DELETE FROM operator_memberships WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare(
@@ -1505,6 +1511,28 @@ describe("operator Worker disabled boundary", () => {
     expect(blockedDownload.status).toBe(422);
     await expect(blockedDownload.json()).resolves.toMatchObject({
       code: "unsupported_operator_data_export_action",
+    });
+  });
+
+  it("keeps webhook endpoint inspection read-only while outbound delivery is disabled", async () => {
+    const list = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/webhook-endpoints", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(list.json()).resolves.toMatchObject({
+      webhook_endpoints: [],
+      meta: { total_count: 0 },
+    });
+    await promoteOperatorAdmin();
+    const mutation = await operatorMutation("POST", "/webhook-endpoints", {
+      webhook_endpoint: { webhook_url: "https://hooks.example.test/operator" },
+    });
+    expect(mutation.status).toBe(405);
+    await expect(mutation.json()).resolves.toMatchObject({
+      code: "operator_webhook_endpoints_read_only",
     });
   });
 

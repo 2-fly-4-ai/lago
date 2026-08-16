@@ -89,6 +89,9 @@
           <a class="nav-item" href="#data-exports"
             ><span class="nav-icon" aria-hidden="true">⇩</span>Exports</a
           >
+          <a class="nav-item" href="#webhook-endpoints"
+            ><span class="nav-icon" aria-hidden="true">⌁</span>Webhooks</a
+          >
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -888,6 +891,48 @@
                       </tr>
                     </thead>
                     <tbody id="data-exports-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section
+              class="keys-section"
+              id="webhook-endpoints"
+              aria-labelledby="webhook-endpoints-title"
+            >
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Outbound integrations</p>
+                  <h2 id="webhook-endpoints-title">Webhook endpoints</h2>
+                  <p>
+                    Read-only endpoint inventory while outbound delivery and signing-secret
+                    configuration remain disabled.
+                  </p>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="webhook-endpoints-loading" aria-live="polite">
+                  Loading webhook endpoints…
+                </div>
+                <div class="empty-state" id="webhook-endpoints-empty" hidden>
+                  <span aria-hidden="true">⌁</span>
+                  <h3>No webhook endpoints</h3>
+                  <p>No active outbound endpoints are configured.</p>
+                </div>
+                <div class="table-scroll" id="webhook-endpoints-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Endpoint</th>
+                        <th scope="col">URL</th>
+                        <th scope="col">Signature</th>
+                        <th scope="col">Events</th>
+                        <th scope="col">Created</th>
+                        <th scope="col">Access</th>
+                      </tr>
+                    </thead>
+                    <tbody id="webhook-endpoints-table-body"></tbody>
                   </table>
                 </div>
               </div>

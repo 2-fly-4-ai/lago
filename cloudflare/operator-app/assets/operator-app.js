@@ -20,6 +20,7 @@ const endpoints = {
   quotes: "/api/operator/v1/quotes",
   quoteVersions: "/api/operator/v1/quote-versions",
   dataExports: "/api/operator/v1/data-exports",
+  webhookEndpoints: "/api/operator/v1/webhook-endpoints",
 };
 
 const elements = {
@@ -335,6 +336,10 @@ const elements = {
   dataExportFilters: document.querySelector("#data-export-filters"),
   dataExportFormError: document.querySelector("#data-export-form-error"),
   submitDataExportForm: document.querySelector("#submit-data-export-form"),
+  webhookEndpointsLoading: document.querySelector("#webhook-endpoints-loading"),
+  webhookEndpointsEmpty: document.querySelector("#webhook-endpoints-empty"),
+  webhookEndpointsTableShell: document.querySelector("#webhook-endpoints-table-shell"),
+  webhookEndpointsTableBody: document.querySelector("#webhook-endpoints-table-body"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -411,6 +416,7 @@ const state = {
   selectedQuoteId: null,
   selectedQuoteVersionId: null,
   dataExports: [],
+  webhookEndpoints: [],
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -494,6 +500,7 @@ async function initialize() {
       paymentsPayload,
       quotesPayload,
       dataExportsPayload,
+      webhookEndpointsPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -513,6 +520,7 @@ async function initialize() {
       requestJson(endpoints.payments),
       requestJson(endpoints.quotes),
       requestJson(endpoints.dataExports),
+      requestJson(endpoints.webhookEndpoints),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -533,6 +541,7 @@ async function initialize() {
     renderPayments(paymentsPayload.payments);
     renderQuotes(quotesPayload.quotes);
     renderDataExports(dataExportsPayload.data_exports);
+    renderWebhookEndpoints(webhookEndpointsPayload.webhook_endpoints);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -2689,6 +2698,31 @@ function renderDataExports(exports) {
       row.append(cell);
     }
     elements.dataExportsTableBody.append(row);
+  }
+}
+
+function renderWebhookEndpoints(endpoints) {
+  state.webhookEndpoints = Array.isArray(endpoints) ? endpoints : [];
+  elements.webhookEndpointsTableBody.replaceChildren();
+  elements.webhookEndpointsLoading.hidden = true;
+  elements.webhookEndpointsEmpty.hidden = state.webhookEndpoints.length !== 0;
+  elements.webhookEndpointsTableShell.hidden = state.webhookEndpoints.length === 0;
+  for (const endpoint of state.webhookEndpoints) {
+    const row = document.createElement("tr");
+    const values = [
+      endpoint.name ?? endpoint.lago_id,
+      endpoint.webhook_url,
+      endpoint.signature_algo,
+      Array.isArray(endpoint.event_types) ? endpoint.event_types.join(", ") : "All events",
+      formatDate(endpoint.created_at),
+      "Read only",
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = safeText(value, "—");
+      row.append(cell);
+    }
+    elements.webhookEndpointsTableBody.append(row);
   }
 }
 

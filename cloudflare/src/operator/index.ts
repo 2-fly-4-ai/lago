@@ -30,6 +30,7 @@ import { handleQuotesApi } from "../api/quotes";
 import { handleTaxLedgerRequest } from "../api/tax-ledger";
 import { handleSubscriptionLifecycleRequest } from "../api/subscription-lifecycle";
 import { handleWalletLedgerRequest } from "../api/wallet-ledger";
+import { listEndpoints, showEndpoint } from "../api/webhook-endpoints";
 import type { AuthContext } from "../auth/api-key";
 import { ApiError, apiErrorResponse, json, objectAt, parseJsonObject } from "../http";
 import {
@@ -293,6 +294,34 @@ export async function handleOperatorRequest(
         "unsupported_operator_data_export_action",
         "Data-export download and email actions are not admitted to the operator workflow",
       );
+    }
+
+    if (/^\/api\/operator\/v1\/webhook-endpoints(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        throw new ApiError(
+          405,
+          "operator_webhook_endpoints_read_only",
+          "Webhook endpoints are read-only while outbound delivery is disabled",
+        );
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/webhook-endpoints",
+        "/api/v1/webhook_endpoints",
+      );
+      if (forwardedUrl.pathname === "/api/v1/webhook_endpoints") {
+        return listEndpoints(forwardedUrl, env.BILLING_DB, auth, requestId);
+      }
+      const match = forwardedUrl.pathname.match(/^\/api\/v1\/webhook_endpoints\/([^/]+)$/);
+      if (match?.[1]) {
+        return showEndpoint(decodeURIComponent(match[1]), env.BILLING_DB, auth, requestId);
+      }
     }
 
     if (/^\/api\/operator\/v1\/taxes(?:\/|$)/.test(url.pathname)) {

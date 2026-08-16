@@ -374,6 +374,9 @@ remaining Lago feature inventory is dispositioned and ported.
   browser credential. Creation dispatches the API Worker’s shared Document Workflow through a
   cross-script binding; artifact download and completion email remain unavailable in the operator
   Worker pending separate delivery contracts.
+  `/api/operator/v1/webhook-endpoints` is viewer/admin read-only while
+  `OUTBOUND_WEBHOOKS_ENABLED=0`. Endpoint creation, edits, deletion, signing-secret configuration,
+  and delivery remain unavailable; the operator browser never accepts or stores an HMAC secret.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
