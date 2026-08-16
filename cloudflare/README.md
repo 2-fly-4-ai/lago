@@ -361,6 +361,9 @@ remaining Lago feature inventory is dispositioned and ported.
   fully-unconsumed voiding. Creation preserves the canonical idempotency-key and invoice-line
   validation contract. Refunds, offsets, provider actions, document generation/download, and email
   remain unavailable in the operator family.
+  `/api/operator/v1/payments` is a read-only settlement ledger for provider and manual payment
+  evidence. The operator BFF rejects every payment mutation; payment links, retries, and manual
+  settlement writes remain behind their existing disabled external-action gates.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

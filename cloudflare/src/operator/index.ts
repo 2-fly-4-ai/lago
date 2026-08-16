@@ -23,6 +23,7 @@ import {
 } from "../api/lago-compatibility";
 import { showOrganization } from "../api/organizations";
 import { handlePaymentReceiptReadsApi } from "../api/payment-receipts";
+import { listPayments, showPayment } from "../api/payment-ledger";
 import { handlePlanCatalogRequest } from "../api/plan-catalog";
 import { handleTaxLedgerRequest } from "../api/tax-ledger";
 import { handleSubscriptionLifecycleRequest } from "../api/subscription-lifecycle";
@@ -198,6 +199,34 @@ export async function handleOperatorRequest(
         { includeFileUrls: false },
       );
       if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/payments(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        throw new ApiError(
+          405,
+          "operator_payments_read_only",
+          "Payments are read-only in the operator workspace",
+        );
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/payments",
+        "/api/v1/payments",
+      );
+      if (forwardedUrl.pathname === "/api/v1/payments") {
+        return listPayments(forwardedUrl, env.BILLING_DB, auth, requestId);
+      }
+      const match = forwardedUrl.pathname.match(/^\/api\/v1\/payments\/([^/]+)$/);
+      if (match?.[1]) {
+        return showPayment(decodeURIComponent(match[1]), env.BILLING_DB, auth, requestId);
+      }
     }
 
     if (/^\/api\/operator\/v1\/taxes(?:\/|$)/.test(url.pathname)) {

@@ -152,6 +152,9 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    implemented through the canonical D1 and Queue ledger, including creation idempotency and
    invoice-line remaining-amount guards. Refunds, offsets, provider actions, document generation or
    download, and email remain outside this operator family.
+   Payment list/show is exposed as a read-only settlement ledger. Payment recording, payment-link
+   creation, provider retry, and every other mutation remain unavailable in the operator Worker and
+   retain their existing disabled external-action gates.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

@@ -80,6 +80,9 @@
             <span class="nav-icon" aria-hidden="true">↩</span>
             Credit notes
           </a>
+          <a class="nav-item" href="#payments"
+            ><span class="nav-icon" aria-hidden="true">$</span>Payments</a
+          >
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -760,6 +763,45 @@
                       </tr>
                     </thead>
                     <tbody id="credit-notes-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="payments" aria-labelledby="payments-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Settlement ledger</p>
+                  <h2 id="payments-title">Payments</h2>
+                  <p>
+                    Read-only provider and manual settlement evidence. Retry and payment-link
+                    actions remain unavailable.
+                  </p>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="payments-loading" aria-live="polite">
+                  Loading payments…
+                </div>
+                <div class="empty-state" id="payments-empty" hidden>
+                  <span aria-hidden="true">$</span>
+                  <h3>No payments</h3>
+                  <p>No settlement records are available.</p>
+                </div>
+                <div class="table-scroll" id="payments-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Payment</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Invoices</th>
+                        <th scope="col">Provider</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Created</th>
+                      </tr>
+                    </thead>
+                    <tbody id="payments-table-body"></tbody>
                   </table>
                 </div>
               </div>

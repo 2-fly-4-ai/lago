@@ -68,7 +68,7 @@ export async function handlePaymentLedgerRequest(
   return null;
 }
 
-async function listPayments(
+export async function listPayments(
   url: URL,
   database: D1Database,
   auth: AuthContext,
@@ -112,7 +112,7 @@ async function listPayments(
   );
 }
 
-async function showPayment(
+export async function showPayment(
   paymentId: string,
   database: D1Database,
   auth: AuthContext,

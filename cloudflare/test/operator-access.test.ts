@@ -1395,6 +1395,22 @@ describe("operator Worker disabled boundary", () => {
     });
   });
 
+  it("maps payment settlement reads without admitting payment mutations", async () => {
+    const empty = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/payments", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(empty.json()).resolves.toMatchObject({ payments: [], meta: { total_count: 0 } });
+    const mutation = await operatorMutation("POST", "/payments", {
+      payment: { invoice_id: "unsafe", amount_cents: 1 },
+    });
+    expect(mutation.status).toBe(405);
+    await expect(mutation.json()).resolves.toMatchObject({ code: "operator_payments_read_only" });
+  });
+
   it("maps customer reads for viewers and upserts for admins while keeping deletion unavailable", async () => {
     const viewerList = await handleOperatorRequest(
       new Request("https://operator.test/api/operator/v1/customers", {

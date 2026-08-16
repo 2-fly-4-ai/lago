@@ -16,6 +16,7 @@ const endpoints = {
   wallets: "/api/operator/v1/wallets",
   walletTransactions: "/api/operator/v1/wallet-transactions",
   creditNotes: "/api/operator/v1/credit-notes",
+  payments: "/api/operator/v1/payments",
 };
 
 const elements = {
@@ -298,6 +299,10 @@ const elements = {
   creditNoteItems: document.querySelector("#credit-note-items"),
   creditNoteFormError: document.querySelector("#credit-note-form-error"),
   submitCreditNoteForm: document.querySelector("#submit-credit-note-form"),
+  paymentsLoading: document.querySelector("#payments-loading"),
+  paymentsEmpty: document.querySelector("#payments-empty"),
+  paymentsTableShell: document.querySelector("#payments-table-shell"),
+  paymentsTableBody: document.querySelector("#payments-table-body"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -368,6 +373,7 @@ const state = {
   selectedWalletId: null,
   creditNotes: [],
   selectedCreditNoteId: null,
+  payments: [],
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -443,6 +449,7 @@ async function initialize() {
       invoicesPayload,
       walletsPayload,
       creditNotesPayload,
+      paymentsPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -459,6 +466,7 @@ async function initialize() {
       requestJson(endpoints.invoices),
       requestJson(endpoints.wallets),
       requestJson(endpoints.creditNotes),
+      requestJson(endpoints.payments),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -476,6 +484,7 @@ async function initialize() {
     renderInvoices(invoicesPayload.invoices);
     renderWallets(walletsPayload.wallets);
     renderCreditNotes(creditNotesPayload.credit_notes);
+    renderPayments(paymentsPayload.payments);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -2360,6 +2369,42 @@ function handleCreditNoteAction(event) {
   elements.confirmAction.textContent = "Void credit note";
   elements.confirmError.hidden = true;
   elements.confirmDialog.showModal();
+}
+
+function renderPayments(payments) {
+  state.payments = Array.isArray(payments) ? payments : [];
+  elements.paymentsTableBody.replaceChildren();
+  elements.paymentsLoading.hidden = true;
+  elements.paymentsEmpty.hidden = state.payments.length !== 0;
+  elements.paymentsTableShell.hidden = state.payments.length === 0;
+  for (const payment of state.payments) {
+    const row = document.createElement("tr");
+    const identity = document.createElement("td");
+    const id = document.createElement("span");
+    id.className = "key-name";
+    id.textContent = safeText(payment.lago_id, "Unknown payment");
+    const type = document.createElement("span");
+    type.className = "key-id";
+    type.textContent = safeText(payment.type, "—");
+    identity.append(id, type);
+    row.append(identity);
+    const values = [
+      payment.external_customer_id,
+      Array.isArray(payment.invoice_numbers) && payment.invoice_numbers.length > 0
+        ? payment.invoice_numbers.join(", ")
+        : "—",
+      payment.payment_provider_code ?? "Manual",
+      payment.payment_status,
+      formatMoney(payment.amount_cents, payment.amount_currency),
+      formatDate(payment.created_at),
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = safeText(value, "—");
+      row.append(cell);
+    }
+    elements.paymentsTableBody.append(row);
+  }
 }
 
 function openCreateCreditNoteDialog() {
