@@ -56,9 +56,11 @@ const COUPON_TYPES = new Set(["fixed_amount", "percentage"]);
 const FREQUENCIES = new Set(["once", "recurring", "forever"]);
 const EXPIRATIONS = new Set(["no_expiration", "time_limit"]);
 
+type CouponLedgerEnv = Pick<Env, "BILLING_ACCOUNTS" | "BILLING_DB" | "DOMAIN_EVENTS">;
+
 export async function handleCouponLedgerRequest(
   request: Request,
-  env: Env,
+  env: CouponLedgerEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
@@ -103,7 +105,7 @@ export async function handleCouponLedgerRequest(
 
 async function createCoupon(
   request: Request,
-  env: Env,
+  env: CouponLedgerEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -247,7 +249,7 @@ async function showCoupon(
 
 async function applyCoupon(
   request: Request,
-  env: Env,
+  env: CouponLedgerEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -446,7 +448,7 @@ async function listAppliedCoupons(
 async function terminateAppliedCoupon(
   externalCustomerId: string,
   appliedCouponId: string,
-  env: Env,
+  env: CouponLedgerEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {

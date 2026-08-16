@@ -56,6 +56,10 @@
             <span class="nav-icon" aria-hidden="true">＋</span>
             Add-ons
           </a>
+          <a class="nav-item" href="#coupons">
+            <span class="nav-icon" aria-hidden="true">◇</span>
+            Coupons
+          </a>
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -438,6 +442,76 @@
                       </tr>
                     </thead>
                     <tbody id="add-ons-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="coupons" aria-labelledby="coupons-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Discount catalog</p>
+                  <h2 id="coupons-title">Coupons</h2>
+                  <p>Create tenant coupons and manage their customer applications.</p>
+                </div>
+                <div class="row-actions">
+                  <button class="secondary-button" id="open-apply-coupon" type="button" hidden>
+                    Apply coupon
+                  </button>
+                  <button class="primary-button" id="open-create-coupon" type="button" hidden>
+                    <span aria-hidden="true">+</span>
+                    Create coupon
+                  </button>
+                </div>
+              </div>
+              <h3>Catalog</h3>
+              <div class="table-shell">
+                <div class="table-loading" id="coupons-loading" aria-live="polite">
+                  Loading coupons…
+                </div>
+                <div class="empty-state" id="coupons-empty" hidden>
+                  <span aria-hidden="true">◇</span>
+                  <h3>No coupons</h3>
+                  <p id="coupons-empty-copy">This organization has no coupons.</p>
+                </div>
+                <div class="table-scroll" id="coupons-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Coupon</th>
+                        <th scope="col">Code</th>
+                        <th scope="col">Discount</th>
+                        <th scope="col">Frequency</th>
+                        <th scope="col">Expiration</th>
+                      </tr>
+                    </thead>
+                    <tbody id="coupons-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <h3>Customer applications</h3>
+              <div class="table-shell">
+                <div class="table-loading" id="applied-coupons-loading" aria-live="polite">
+                  Loading coupon applications…
+                </div>
+                <div class="empty-state" id="applied-coupons-empty" hidden>
+                  <span aria-hidden="true">◎</span>
+                  <h3>No coupon applications</h3>
+                  <p>No coupons have been applied to customers.</p>
+                </div>
+                <div class="table-scroll" id="applied-coupons-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Coupon</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Discount</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Applied</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="applied-coupons-table-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -909,6 +983,117 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button>
           <button class="primary-button" id="submit-customer-form" value="default" type="submit">
             Create customer
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal section-modal" id="coupon-form-dialog" aria-labelledby="coupon-form-title">
+      <form method="dialog" id="coupon-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Discount catalog</p>
+            <h2 id="coupon-form-title">Create coupon</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy">Coupon definitions are immutable after creation.</p>
+        <div class="field-grid">
+          <div>
+            <label for="coupon-name">Name</label
+            ><input id="coupon-name" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="coupon-code">Code</label
+            ><input id="coupon-code" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="coupon-type">Discount type</label
+            ><select id="coupon-type">
+              <option value="percentage">Percentage</option>
+              <option value="fixed_amount">Fixed amount</option>
+            </select>
+          </div>
+          <div>
+            <label for="coupon-percentage">Percentage rate</label
+            ><input id="coupon-percentage" type="number" min="0.000001" max="100" step="0.000001" />
+          </div>
+          <div>
+            <label for="coupon-amount">Amount (minor units)</label
+            ><input id="coupon-amount" type="number" min="1" step="1" />
+          </div>
+          <div>
+            <label for="coupon-currency">Currency</label
+            ><input id="coupon-currency" minlength="3" maxlength="3" autocomplete="off" />
+          </div>
+          <div>
+            <label for="coupon-frequency">Frequency</label
+            ><select id="coupon-frequency">
+              <option value="once">Once</option>
+              <option value="recurring">Recurring</option>
+              <option value="forever">Forever</option>
+            </select>
+          </div>
+          <div>
+            <label for="coupon-duration">Recurring duration</label
+            ><input id="coupon-duration" type="number" min="1" step="1" />
+          </div>
+          <div>
+            <label for="coupon-expiration">Expiration</label
+            ><select id="coupon-expiration">
+              <option value="no_expiration">No expiration</option>
+              <option value="time_limit">Time limit</option>
+            </select>
+          </div>
+          <div>
+            <label for="coupon-expiration-at">Expires at</label
+            ><input id="coupon-expiration-at" type="datetime-local" />
+          </div>
+        </div>
+        <label for="coupon-description">Description</label
+        ><textarea id="coupon-description" rows="3"></textarea>
+        <label class="checkbox-field" for="coupon-reusable"
+          ><input id="coupon-reusable" type="checkbox" checked /><span
+            >Allow repeated application to the same customer</span
+          ></label
+        >
+        <p class="field-hint">
+          Plan, billable-metric, and customer targeting are intentionally unavailable.
+        </p>
+        <p class="form-error" id="coupon-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-coupon-form" value="default" type="submit">
+            Create coupon
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="apply-coupon-dialog" aria-labelledby="apply-coupon-title">
+      <form method="dialog" id="apply-coupon-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Customer discount</p>
+            <h2 id="apply-coupon-title">Apply coupon</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="apply-coupon-customer">Customer</label
+            ><select id="apply-coupon-customer" required></select>
+          </div>
+          <div>
+            <label for="apply-coupon-code">Coupon</label
+            ><select id="apply-coupon-code" required></select>
+          </div>
+        </div>
+        <p class="form-error" id="apply-coupon-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-apply-coupon" value="default" type="submit">
+            Apply coupon
           </button>
         </div>
       </form>

@@ -123,6 +123,12 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    handler. Its BFF allowlist admits only identity, email, currency, timezone, and payment-term
    fields; provider, dunning, metadata, custom-section, tax-target, and deletion operations are
    rejected until their separate mappings are complete.
+   Coupon catalog list/show plus admin create and customer-application list/apply/terminate are
+   implemented as one bounded family. The operator Worker reuses the canonical coupon handler,
+   publishes through the existing Queue, and reaches the API Worker’s `BILLING_ACCOUNTS` Durable
+   Object through a cross-script binding for the same per-customer command reservation boundary.
+   Coupon definitions are immutable after creation, and edit/delete plus plan, billable-metric, and
+   customer targeting are not exposed.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

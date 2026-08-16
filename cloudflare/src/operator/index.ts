@@ -3,6 +3,7 @@ import type { JWTVerifyGetKey } from "jose";
 import { handleAddOnLedgerRequest } from "../api/add-on-ledger";
 import { handleApiKeysApi } from "../api/api-keys";
 import { handleBillingEntitiesApi } from "../api/billing-entities";
+import { handleCouponLedgerRequest } from "../api/coupon-ledger";
 import { handleInvoiceCustomSectionRequest } from "../api/invoice-custom-sections";
 import { handleCustomerCompatibilityRequest } from "../api/lago-compatibility";
 import { showOrganization } from "../api/organizations";
@@ -223,6 +224,35 @@ export async function handleOperatorRequest(
         "/api/v1/add_ons",
       );
       const response = await handleAddOnLedgerRequest(
+        new Request(forwardedUrl, request),
+        env,
+        auth,
+        requestId,
+      );
+      if (response) return response;
+    }
+
+    if (
+      /^\/api\/operator\/v1\/(?:coupons|applied-coupons)(?:\/|$)/.test(url.pathname) ||
+      /^\/api\/operator\/v1\/customers\/[^/]+\/applied-coupons(?:\/|$)/.test(url.pathname)
+    ) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname
+        .replace("/api/operator/v1/applied-coupons", "/api/v1/applied_coupons")
+        .replace("/api/operator/v1/coupons", "/api/v1/coupons")
+        .replace("/applied-coupons", "/applied_coupons")
+        .replace("/api/operator/v1/customers", "/api/v1/customers");
+      const response = await handleCouponLedgerRequest(
         new Request(forwardedUrl, request),
         env,
         auth,

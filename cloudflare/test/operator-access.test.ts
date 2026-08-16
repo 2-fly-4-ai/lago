@@ -19,6 +19,7 @@ let privateKey: CryptoKey;
 function operatorEnv(overrides: Partial<OperatorEnv> = {}): OperatorEnv {
   return {
     APP_ENV: "test",
+    BILLING_ACCOUNTS: env.BILLING_ACCOUNTS,
     BILLING_DB: env.BILLING_DB,
     DOMAIN_EVENTS: env.DOMAIN_EVENTS,
     OPERATOR_ACCESS_ENABLED: "1",
@@ -75,6 +76,10 @@ beforeEach(async () => {
     ),
     env.BILLING_DB.prepare("DELETE FROM taxes WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare("DELETE FROM add_ons WHERE organization_id = 'org-operator-access'"),
+    env.BILLING_DB.prepare(
+      "DELETE FROM applied_coupons WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare("DELETE FROM coupons WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
       "DELETE FROM payment_receipts WHERE organization_id = 'org-operator-access'",
     ),
@@ -756,6 +761,111 @@ describe("operator Worker disabled boundary", () => {
       keySet,
     );
     await expect(empty.json()).resolves.toMatchObject({ add_ons: [], meta: { total_count: 0 } });
+  });
+
+  it("maps the complete coupon catalog and customer-application workflow", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/coupons", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerList.json()).resolves.toMatchObject({
+      coupons: [],
+      meta: { total_count: 0 },
+    });
+
+    const viewerCreate = await operatorMutation("POST", "/coupons", {
+      coupon: {
+        code: "welcome",
+        name: "Welcome",
+        coupon_type: "percentage",
+        percentage_rate: "10",
+        frequency: "once",
+      },
+    });
+    expect(viewerCreate.status).toBe(403);
+
+    await promoteOperatorAdmin();
+    await operatorMutation("POST", "/customers", {
+      customer: {
+        external_id: "coupon-customer",
+        name: "Coupon Customer",
+        currency: "usd",
+      },
+    });
+    const created = await operatorMutation("POST", "/coupons", {
+      coupon: {
+        code: "welcome",
+        name: "Welcome",
+        description: "Synthetic operator coupon",
+        coupon_type: "percentage",
+        percentage_rate: "10",
+        frequency: "recurring",
+        frequency_duration: 2,
+        expiration: "no_expiration",
+        reusable: false,
+      },
+    });
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      coupon: {
+        code: "welcome",
+        percentage_rate: "10",
+        frequency: "recurring",
+        frequency_duration: 2,
+        reusable: false,
+      },
+    });
+
+    const targeted = await operatorMutation("POST", "/coupons", {
+      coupon: {
+        code: "targeted",
+        name: "Targeted",
+        coupon_type: "percentage",
+        percentage_rate: "10",
+        frequency: "once",
+        applies_to: { plan_codes: ["plan"] },
+      },
+    });
+    expect(targeted.status).toBe(422);
+    await expect(targeted.json()).resolves.toMatchObject({ code: "unsupported_coupon_targets" });
+
+    const applied = await operatorMutation("POST", "/applied-coupons", {
+      applied_coupon: {
+        external_customer_id: "coupon-customer",
+        coupon_code: "welcome",
+      },
+    });
+    expect(applied.status).toBe(200);
+    const appliedBody = await applied.json<{ applied_coupon: { lago_id: string } }>();
+    expect(appliedBody.applied_coupon).toMatchObject({
+      coupon_code: "welcome",
+      external_customer_id: "coupon-customer",
+      status: "active",
+    });
+
+    const listed = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/applied-coupons?status=active", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(listed.json()).resolves.toMatchObject({
+      applied_coupons: [{ lago_id: appliedBody.applied_coupon.lago_id }],
+      meta: { total_count: 1 },
+    });
+
+    const terminated = await operatorMutation(
+      "DELETE",
+      `/customers/coupon-customer/applied-coupons/${encodeURIComponent(appliedBody.applied_coupon.lago_id)}`,
+    );
+    expect(terminated.status).toBe(200);
+    await expect(terminated.json()).resolves.toMatchObject({
+      applied_coupon: { status: "terminated" },
+    });
   });
 
   it("maps customer reads for viewers and upserts for admins while keeping deletion unavailable", async () => {

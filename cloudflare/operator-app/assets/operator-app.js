@@ -8,6 +8,8 @@ const endpoints = {
   taxes: "/api/operator/v1/taxes",
   addOns: "/api/operator/v1/add-ons",
   customers: "/api/operator/v1/customers",
+  coupons: "/api/operator/v1/coupons",
+  appliedCoupons: "/api/operator/v1/applied-coupons",
 };
 
 const elements = {
@@ -137,6 +139,39 @@ const elements = {
   customerGracePeriod: document.querySelector("#customer-grace-period"),
   customerFormError: document.querySelector("#customer-form-error"),
   submitCustomerForm: document.querySelector("#submit-customer-form"),
+  openCreateCoupon: document.querySelector("#open-create-coupon"),
+  openApplyCoupon: document.querySelector("#open-apply-coupon"),
+  couponsLoading: document.querySelector("#coupons-loading"),
+  couponsEmpty: document.querySelector("#coupons-empty"),
+  couponsEmptyCopy: document.querySelector("#coupons-empty-copy"),
+  couponsTableShell: document.querySelector("#coupons-table-shell"),
+  couponsTableBody: document.querySelector("#coupons-table-body"),
+  appliedCouponsLoading: document.querySelector("#applied-coupons-loading"),
+  appliedCouponsEmpty: document.querySelector("#applied-coupons-empty"),
+  appliedCouponsTableShell: document.querySelector("#applied-coupons-table-shell"),
+  appliedCouponsTableBody: document.querySelector("#applied-coupons-table-body"),
+  couponFormDialog: document.querySelector("#coupon-form-dialog"),
+  couponForm: document.querySelector("#coupon-form"),
+  couponName: document.querySelector("#coupon-name"),
+  couponCode: document.querySelector("#coupon-code"),
+  couponType: document.querySelector("#coupon-type"),
+  couponPercentage: document.querySelector("#coupon-percentage"),
+  couponAmount: document.querySelector("#coupon-amount"),
+  couponCurrency: document.querySelector("#coupon-currency"),
+  couponFrequency: document.querySelector("#coupon-frequency"),
+  couponDuration: document.querySelector("#coupon-duration"),
+  couponExpiration: document.querySelector("#coupon-expiration"),
+  couponExpirationAt: document.querySelector("#coupon-expiration-at"),
+  couponDescription: document.querySelector("#coupon-description"),
+  couponReusable: document.querySelector("#coupon-reusable"),
+  couponFormError: document.querySelector("#coupon-form-error"),
+  submitCouponForm: document.querySelector("#submit-coupon-form"),
+  applyCouponDialog: document.querySelector("#apply-coupon-dialog"),
+  applyCouponForm: document.querySelector("#apply-coupon-form"),
+  applyCouponCustomer: document.querySelector("#apply-coupon-customer"),
+  applyCouponCode: document.querySelector("#apply-coupon-code"),
+  applyCouponError: document.querySelector("#apply-coupon-error"),
+  submitApplyCoupon: document.querySelector("#submit-apply-coupon"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -190,6 +225,9 @@ const state = {
   customers: [],
   customerFormMode: "create",
   selectedCustomerExternalId: null,
+  coupons: [],
+  appliedCoupons: [],
+  selectedAppliedCouponId: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -216,6 +254,11 @@ elements.addOnForm.addEventListener("submit", submitAddOnForm);
 elements.openCreateCustomer.addEventListener("click", openCreateCustomerDialog);
 elements.customersTableBody.addEventListener("click", handleCustomerAction);
 elements.customerForm.addEventListener("submit", submitCustomerForm);
+elements.openCreateCoupon.addEventListener("click", openCreateCouponDialog);
+elements.openApplyCoupon.addEventListener("click", openApplyCouponDialog);
+elements.couponForm.addEventListener("submit", submitCouponForm);
+elements.applyCouponForm.addEventListener("submit", submitApplyCouponForm);
+elements.appliedCouponsTableBody.addEventListener("click", handleAppliedCouponAction);
 
 void initialize();
 
@@ -233,6 +276,8 @@ async function initialize() {
       taxesPayload,
       addOnsPayload,
       customersPayload,
+      couponsPayload,
+      appliedCouponsPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -242,6 +287,8 @@ async function initialize() {
       requestJson(endpoints.taxes),
       requestJson(endpoints.addOns),
       requestJson(endpoints.customers),
+      requestJson(endpoints.coupons),
+      requestJson(endpoints.appliedCoupons),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -252,6 +299,8 @@ async function initialize() {
     renderTaxes(taxesPayload.taxes);
     renderAddOns(addOnsPayload.add_ons);
     renderCustomers(customersPayload.customers);
+    renderCoupons(couponsPayload.coupons);
+    renderAppliedCoupons(appliedCouponsPayload.applied_coupons);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -271,6 +320,8 @@ function renderOperator(operator) {
   elements.openCreateTax.hidden = !isAdmin;
   elements.openCreateAddOn.hidden = !isAdmin;
   elements.openCreateCustomer.hidden = !isAdmin;
+  elements.openCreateCoupon.hidden = !isAdmin;
+  elements.openApplyCoupon.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -286,6 +337,9 @@ function renderOperator(operator) {
   elements.customersEmptyCopy.textContent = isAdmin
     ? "Create the first retained billing customer for this organization."
     : "This organization has no customers. Admin access is required to create one.";
+  elements.couponsEmptyCopy.textContent = isAdmin
+    ? "Create a coupon for a supported customer discount."
+    : "This organization has no coupons. Admin access is required to create one.";
   if (operator.organization_external_id) {
     elements.workspaceName.textContent = operator.organization_external_id;
   }
@@ -983,6 +1037,221 @@ async function submitCustomerForm(event) {
   }
 }
 
+function renderCoupons(coupons) {
+  state.coupons = Array.isArray(coupons) ? coupons : [];
+  elements.couponsTableBody.replaceChildren();
+  elements.couponsLoading.hidden = true;
+  elements.couponsEmpty.hidden = state.coupons.length !== 0;
+  elements.couponsTableShell.hidden = state.coupons.length === 0;
+  for (const coupon of state.coupons) {
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("td");
+    const name = document.createElement("span");
+    name.className = "key-name";
+    name.textContent = safeText(coupon.name, "Unnamed coupon");
+    const description = document.createElement("span");
+    description.className = "key-id";
+    description.textContent = safeText(coupon.description, "No description");
+    nameCell.append(name, description);
+    const codeCell = document.createElement("td");
+    const code = document.createElement("span");
+    code.className = "code-chip";
+    code.textContent = safeText(coupon.code, "—");
+    codeCell.append(code);
+    const discountCell = document.createElement("td");
+    discountCell.textContent = couponDiscount(coupon);
+    const frequencyCell = document.createElement("td");
+    frequencyCell.textContent = couponFrequency(coupon);
+    const expirationCell = document.createElement("td");
+    expirationCell.textContent =
+      coupon.expiration === "time_limit" ? formatDate(coupon.expiration_at) : "No expiration";
+    row.append(nameCell, codeCell, discountCell, frequencyCell, expirationCell);
+    elements.couponsTableBody.append(row);
+  }
+}
+
+function renderAppliedCoupons(appliedCoupons) {
+  state.appliedCoupons = Array.isArray(appliedCoupons) ? appliedCoupons : [];
+  elements.appliedCouponsTableBody.replaceChildren();
+  elements.appliedCouponsLoading.hidden = true;
+  elements.appliedCouponsEmpty.hidden = state.appliedCoupons.length !== 0;
+  elements.appliedCouponsTableShell.hidden = state.appliedCoupons.length === 0;
+  for (const applied of state.appliedCoupons) {
+    const row = document.createElement("tr");
+    const couponCell = document.createElement("td");
+    couponCell.textContent = safeText(applied.coupon_code, "—");
+    const customerCell = document.createElement("td");
+    customerCell.textContent = safeText(applied.external_customer_id, "—");
+    const discountCell = document.createElement("td");
+    discountCell.textContent = couponDiscount(applied);
+    const statusCell = document.createElement("td");
+    statusCell.textContent = safeText(applied.status, "—");
+    const dateCell = document.createElement("td");
+    dateCell.textContent = formatDate(applied.created_at);
+    const actionCell = document.createElement("td");
+    actionCell.className = "actions-column";
+    if (state.role === "admin" && applied.status === "active") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "row-action danger";
+      button.dataset.appliedCouponId = applied.lago_id;
+      button.textContent = "Terminate";
+      actionCell.append(button);
+    } else {
+      actionCell.textContent = state.role === "admin" ? "Complete" : "Read only";
+      actionCell.classList.add("muted");
+    }
+    row.append(couponCell, customerCell, discountCell, statusCell, dateCell, actionCell);
+    elements.appliedCouponsTableBody.append(row);
+  }
+}
+
+function openCreateCouponDialog() {
+  elements.couponForm.reset();
+  elements.couponReusable.checked = true;
+  elements.couponFormError.hidden = true;
+  elements.couponFormDialog.showModal();
+  elements.couponName.focus();
+}
+
+async function submitCouponForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    elements.couponFormDialog.close();
+    return;
+  }
+  if (!elements.couponForm.reportValidity()) return;
+  const couponType = elements.couponType.value;
+  const frequency = elements.couponFrequency.value;
+  const expiration = elements.couponExpiration.value;
+  const coupon = {
+    code: elements.couponCode.value.trim(),
+    name: elements.couponName.value.trim(),
+    description: optionalFormValue(elements.couponDescription.value),
+    coupon_type: couponType,
+    frequency,
+    expiration,
+    reusable: elements.couponReusable.checked,
+    ...(couponType === "percentage"
+      ? { percentage_rate: elements.couponPercentage.value }
+      : {
+          amount_cents: Number(elements.couponAmount.value),
+          amount_currency: elements.couponCurrency.value.trim(),
+        }),
+    ...(frequency === "recurring"
+      ? { frequency_duration: Number(elements.couponDuration.value) }
+      : {}),
+    ...(expiration === "time_limit"
+      ? {
+          expiration_at: elements.couponExpirationAt.value
+            ? new Date(elements.couponExpirationAt.value).toISOString()
+            : "",
+        }
+      : {}),
+  };
+  setBusy(elements.submitCouponForm, true, "Creating…");
+  elements.couponFormError.hidden = true;
+  try {
+    await requestJson(endpoints.coupons, { method: "POST", body: { coupon } });
+    elements.couponFormDialog.close();
+    await refreshCoupons();
+  } catch (error) {
+    elements.couponFormError.textContent = errorMessage(error);
+    elements.couponFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitCouponForm, false, "Create coupon");
+  }
+}
+
+function openApplyCouponDialog() {
+  elements.applyCouponForm.reset();
+  elements.applyCouponError.hidden = true;
+  replaceSelectOptions(
+    elements.applyCouponCustomer,
+    state.customers,
+    (customer) => customer.external_id,
+    (customer) => `${safeText(customer.name, "Unnamed customer")} (${customer.external_id})`,
+  );
+  replaceSelectOptions(
+    elements.applyCouponCode,
+    state.coupons,
+    (coupon) => coupon.code,
+    (coupon) => `${safeText(coupon.name, "Unnamed coupon")} (${coupon.code})`,
+  );
+  if (state.customers.length === 0 || state.coupons.length === 0) {
+    showPageError("Create at least one customer and one coupon before applying a coupon.");
+    return;
+  }
+  elements.applyCouponDialog.showModal();
+  elements.applyCouponCustomer.focus();
+}
+
+async function submitApplyCouponForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    elements.applyCouponDialog.close();
+    return;
+  }
+  if (!elements.applyCouponForm.reportValidity()) return;
+  setBusy(elements.submitApplyCoupon, true, "Applying…");
+  elements.applyCouponError.hidden = true;
+  try {
+    await requestJson(endpoints.appliedCoupons, {
+      method: "POST",
+      body: {
+        applied_coupon: {
+          external_customer_id: elements.applyCouponCustomer.value,
+          coupon_code: elements.applyCouponCode.value,
+        },
+      },
+    });
+    elements.applyCouponDialog.close();
+    await refreshAppliedCoupons();
+  } catch (error) {
+    elements.applyCouponError.textContent = errorMessage(error);
+    elements.applyCouponError.hidden = false;
+  } finally {
+    setBusy(elements.submitApplyCoupon, false, "Apply coupon");
+  }
+}
+
+function handleAppliedCouponAction(event) {
+  const button = event.target.closest("button[data-applied-coupon-id]");
+  if (!button || state.role !== "admin") return;
+  const applied = state.appliedCoupons.find(
+    (candidate) => candidate.lago_id === button.dataset.appliedCouponId,
+  );
+  if (!applied) return;
+  state.confirmMode = "terminate-applied-coupon";
+  state.selectedAppliedCouponId = applied.lago_id;
+  elements.confirmError.hidden = true;
+  elements.confirmTitle.textContent = "Terminate coupon application?";
+  elements.confirmCopy.textContent = `Stop applying “${safeText(applied.coupon_code, "this coupon")}” to customer “${safeText(applied.external_customer_id, "unknown")}”?`;
+  elements.confirmAction.textContent = "Terminate application";
+  elements.confirmDialog.showModal();
+}
+
+function replaceSelectOptions(select, items, valueFor, labelFor) {
+  select.replaceChildren();
+  for (const item of items) {
+    const option = document.createElement("option");
+    option.value = valueFor(item);
+    option.textContent = labelFor(item);
+    select.append(option);
+  }
+}
+
+function couponDiscount(coupon) {
+  return coupon.percentage_rate !== null && coupon.percentage_rate !== undefined
+    ? `${coupon.percentage_rate}%`
+    : formatMoney(coupon.amount_cents, coupon.amount_currency);
+}
+
+function couponFrequency(coupon) {
+  if (coupon.frequency !== "recurring") return safeText(coupon.frequency, "—");
+  return `${nonNegativeNumber(coupon.frequency_duration)} cycles`;
+}
+
 function sectionActionButton(label, action, code, danger = false) {
   const button = document.createElement("button");
   button.type = "button";
@@ -1254,6 +1523,29 @@ async function submitConfirmedAction(event) {
     return;
   }
 
+  if (mode === "terminate-applied-coupon") {
+    const applied = state.appliedCoupons.find(
+      (candidate) => candidate.lago_id === state.selectedAppliedCouponId,
+    );
+    if (!applied) {
+      elements.confirmDialog.close();
+      return;
+    }
+    setBusy(elements.confirmAction, true, "Terminating…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(appliedCouponEndpoint(applied), { method: "DELETE" });
+      elements.confirmDialog.close();
+      await refreshAppliedCoupons();
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(elements.confirmAction, false, "Terminate application");
+    }
+    return;
+  }
+
   const key = state.keys.find((candidate) => candidate.id === state.selectedKeyId);
   if (!key || (mode !== "rotate" && mode !== "revoke")) {
     elements.confirmDialog.close();
@@ -1327,6 +1619,26 @@ async function refreshCustomers() {
   try {
     const payload = await requestJson(endpoints.customers);
     renderCustomers(payload.customers);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+async function refreshCoupons() {
+  try {
+    const payload = await requestJson(endpoints.coupons);
+    renderCoupons(payload.coupons);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+async function refreshAppliedCoupons() {
+  try {
+    const payload = await requestJson(endpoints.appliedCoupons);
+    renderAppliedCoupons(payload.applied_coupons);
     hidePageError();
   } catch (error) {
     showPageError(errorMessage(error));
@@ -1449,6 +1761,10 @@ function addOnEndpoint(code) {
 
 function customerEndpoint(externalId) {
   return `${endpoints.customers}/${encodeURIComponent(externalId)}`;
+}
+
+function appliedCouponEndpoint(applied) {
+  return `${endpoints.customers}/${encodeURIComponent(applied.external_customer_id)}/applied-coupons/${encodeURIComponent(applied.lago_id)}`;
 }
 
 function showPageError(message) {

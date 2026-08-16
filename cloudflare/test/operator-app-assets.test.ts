@@ -12,6 +12,8 @@ describe("isolated operator app assets", () => {
     expect(operatorConfig).toContain('"directory": "operator-app"');
     expect(operatorConfig).not.toContain('"directory": "operator-ui"');
     expect(operatorConfig).toContain('"OPERATOR_ACCESS_ENABLED": "0"');
+    expect(operatorConfig).toContain('"name": "BILLING_ACCOUNTS"');
+    expect(operatorConfig).toContain('"script_name": "serp-dev-lago-native"');
   });
 
   it("loads only same-origin static code under a restrictive browser policy", () => {
@@ -46,6 +48,8 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/taxes",
       "/api/operator/v1/add-ons",
       "/api/operator/v1/customers",
+      "/api/operator/v1/coupons",
+      "/api/operator/v1/applied-coupons",
     ]) {
       expect(operatorScript).toContain(endpoint);
     }
@@ -67,6 +71,8 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("Manual taxes");
     expect(operatorIndex).toContain("Add-ons");
     expect(operatorIndex).toContain("Customers");
+    expect(operatorIndex).toContain("Customer applications");
+    expect(operatorIndex).toContain("Coupon definitions are immutable after creation");
     expect(operatorIndex).toContain("Provider settings, dunning, metadata, custom sections");
     expect(operatorIndex).toContain("E-invoicing, tax assignment, and additional billing entities");
     expect(operatorScript).toContain("state.oneTimeSecret = null");

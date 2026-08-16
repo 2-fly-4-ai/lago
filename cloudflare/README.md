@@ -280,7 +280,8 @@ remaining Lago feature inventory is dispositioned and ported.
   `../docs/reference/cloudflare-usage-storage-decision.md`.
 - Operator Static Assets: the API Worker continues to serve a script-free migration shell while the
   separate, undeployed operator Worker serves `operator-app`, a native-ES-module organization,
-  billing-profile, API-key, and invoice-section workspace. Both bundles use direct Static Assets
+  billing-profile, API-key, customer, catalog, coupon-application, and invoice-section workspace.
+  Both bundles use direct Static Assets
   delivery, restrictive CSP/framing/
   no-index headers, SPA fallback, and Worker-first `/api/*`, health, and readiness paths. The
   operator app validates its Cloudflare Access session before exposing the dashboard, renders a
@@ -322,6 +323,13 @@ remaining Lago feature inventory is dispositioned and ported.
   receive tenant-scoped rows and admins can create/edit identity, email, currency, timezone, and
   payment-term fields. The BFF itself rejects provider, dunning, metadata, custom-section,
   tax-target, and deletion operations until those advanced workflows are separately admitted.
+  `/api/operator/v1/coupons`, `/api/operator/v1/applied-coupons`, and the customer-nested applied-
+  coupon route form one complete bounded family. Viewers can inspect immutable coupon definitions
+  and customer applications; admins can create fixed or percentage coupons, apply them, and
+  terminate active applications. The canonical handler retains D1/Queue persistence and uses the
+  API Worker’s `BILLING_ACCOUNTS` Durable Object through a cross-script binding so apply/terminate
+  commands keep their existing idempotency and per-customer serialization. Coupon edit/delete and
+  plan, metric, or customer targeting remain unavailable.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

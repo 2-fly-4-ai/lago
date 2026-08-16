@@ -27,6 +27,15 @@
       "migrations_dir": "migrations",
     },
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BILLING_ACCOUNTS",
+        "class_name": "BillingAccount",
+        "script_name": "serp-dev-lago-native",
+      },
+    ],
+  },
   "queues": {
     "producers": [
       {
