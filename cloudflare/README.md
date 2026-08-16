@@ -338,6 +338,14 @@ remaining Lago feature inventory is dispositioned and ported.
   `PLAN_DELETION_WORKFLOW` through a cross-script Workflow binding; unused plans retire
   transactionally. The fixed-charge path retains canonical cascade, in-use, pricing-model, and
   immediate-unit billing guards.
+  `/api/operator/v1/subscriptions` completes the core subscription family. Viewers receive
+  tenant-scoped list/show projections; admins can create or replay a subscription, change its plan,
+  update its name/start/end and persisted termination actions, cancel a pending generation, or
+  terminate an active generation with explicit final-invoice and prepaid-credit choices. These
+  routes reuse the canonical D1/Queue implementation and the existing `BILLING_ACCOUNTS` Durable
+  Object reservation for termination. The BFF rejects provider payment methods, invoice custom-
+  section assignment, and usage-threshold overrides until those advanced workflows are separately
+  admitted.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

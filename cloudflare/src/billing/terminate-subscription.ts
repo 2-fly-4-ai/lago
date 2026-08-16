@@ -1,4 +1,6 @@
 import type { DomainEvent } from "../domain-events";
+
+type SubscriptionTerminationEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">;
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { couponCreditStatements } from "./coupon-credits";
@@ -35,7 +37,7 @@ export type TerminationActions = {
 };
 
 export async function terminateSubscriptionWithInvoice(
-  env: Env,
+  env: SubscriptionTerminationEnv,
   subscriptionId: string,
   expectedVersion: number,
   terminatedAt: string,
@@ -388,7 +390,7 @@ export async function terminateSubscriptionWithInvoice(
 }
 
 export async function terminateSubscriptionWithoutInvoice(
-  env: Env,
+  env: SubscriptionTerminationEnv,
   subscriptionId: string,
   expectedVersion: number,
   terminatedAt: string,
@@ -477,7 +479,7 @@ function shiftCalendarDate(value: string, days: number): string {
 }
 
 export async function terminateEndedSubscriptions(
-  env: Env,
+  env: SubscriptionTerminationEnv,
   cutoff: string,
   correlationId: string,
 ): Promise<number> {

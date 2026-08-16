@@ -76,9 +76,11 @@ type SubscriptionRow = {
   skip_invoice_custom_sections: number;
 };
 
+type SubscriptionLifecycleEnv = Pick<Env, "BILLING_ACCOUNTS" | "BILLING_DB" | "DOMAIN_EVENTS">;
+
 export async function handleSubscriptionLifecycleRequest(
   request: Request,
-  env: Env,
+  env: SubscriptionLifecycleEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
@@ -104,7 +106,7 @@ export async function handleSubscriptionLifecycleRequest(
 async function updateSubscription(
   externalId: string,
   request: Request,
-  env: Env,
+  env: SubscriptionLifecycleEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -454,7 +456,7 @@ async function showSubscription(
 async function terminateSubscription(
   externalId: string,
   url: URL,
-  env: Env,
+  env: SubscriptionLifecycleEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -626,7 +628,7 @@ async function terminateSubscription(
 
 async function cancelPendingSubscription(
   subscription: SubscriptionRow,
-  env: Env,
+  env: SubscriptionLifecycleEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {

@@ -1,5 +1,7 @@
 import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
+
+type PayInAdvanceTerminationEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">;
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { Decimal } from "../rating/decimal";
@@ -373,7 +375,7 @@ export async function prepareDraftTerminationCreditChanges(
 }
 
 export async function terminatePayInAdvanceWithCredit(
-  env: Env,
+  env: PayInAdvanceTerminationEnv,
   subscriptionId: string,
   expectedVersion: number,
   terminatedAt: string,

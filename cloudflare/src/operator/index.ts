@@ -5,11 +5,12 @@ import { handleApiKeysApi } from "../api/api-keys";
 import { handleBillingEntitiesApi } from "../api/billing-entities";
 import { handleCouponLedgerRequest } from "../api/coupon-ledger";
 import { handleInvoiceCustomSectionRequest } from "../api/invoice-custom-sections";
-import { handleCustomerCompatibilityRequest } from "../api/lago-compatibility";
+import { createSubscription, handleCustomerCompatibilityRequest } from "../api/lago-compatibility";
 import { showOrganization } from "../api/organizations";
 import { handlePaymentReceiptReadsApi } from "../api/payment-receipts";
 import { handlePlanCatalogRequest } from "../api/plan-catalog";
 import { handleTaxLedgerRequest } from "../api/tax-ledger";
+import { handleSubscriptionLifecycleRequest } from "../api/subscription-lifecycle";
 import type { AuthContext } from "../auth/api-key";
 import { ApiError, apiErrorResponse, json, objectAt, parseJsonObject } from "../http";
 import {
@@ -287,6 +288,36 @@ export async function handleOperatorRequest(
       if (response) return response;
     }
 
+    if (/^\/api\/operator\/v1\/subscriptions(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+        await assertOperatorSubscriptionMutationPayload(request);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/subscriptions",
+        "/api/v1/subscriptions",
+      );
+      const forwardedRequest = new Request(forwardedUrl, request);
+      if (request.method === "POST" && forwardedUrl.pathname === "/api/v1/subscriptions") {
+        return createSubscription(forwardedRequest, env, auth, requestId);
+      }
+      const response = await handleSubscriptionLifecycleRequest(
+        forwardedRequest,
+        env,
+        auth,
+        requestId,
+      );
+      if (response) return response;
+    }
+
     if (/^\/api\/operator\/v1\/customers(?:\/|$)/.test(url.pathname)) {
       const operator = await authenticateOperatorAccess(request, env, keySet);
       if (request.method !== "GET") {
@@ -390,6 +421,39 @@ async function assertOperatorPlanMutationPayload(
       422,
       fixedCharge ? "unsupported_operator_fixed_charge_field" : "unsupported_operator_plan_field",
       `${unsupported} is not admitted to this operator workflow`,
+    );
+  }
+}
+
+async function assertOperatorSubscriptionMutationPayload(request: Request): Promise<void> {
+  if (request.method !== "POST" && request.method !== "PUT") return;
+  const input = objectAt(await parseJsonObject(request.clone()), "subscription");
+  const supported =
+    request.method === "POST"
+      ? new Set([
+          "external_customer_id",
+          "external_id",
+          "plan_code",
+          "name",
+          "subscription_at",
+          "billing_time",
+          "ending_at",
+          "on_termination_credit_note",
+          "on_termination_invoice",
+        ])
+      : new Set([
+          "name",
+          "subscription_at",
+          "ending_at",
+          "on_termination_credit_note",
+          "on_termination_invoice",
+        ]);
+  const unsupported = Object.keys(input).find((key) => !supported.has(key));
+  if (unsupported) {
+    throw new ApiError(
+      422,
+      "unsupported_operator_subscription_field",
+      `${unsupported} is not admitted to the operator subscription workflow`,
     );
   }
 }

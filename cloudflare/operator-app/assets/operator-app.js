@@ -11,6 +11,7 @@ const endpoints = {
   coupons: "/api/operator/v1/coupons",
   appliedCoupons: "/api/operator/v1/applied-coupons",
   plans: "/api/operator/v1/plans",
+  subscriptions: "/api/operator/v1/subscriptions",
 };
 
 const elements = {
@@ -213,6 +214,34 @@ const elements = {
   fixedChargeApplyNow: document.querySelector("#fixed-charge-apply-now"),
   fixedChargeFormError: document.querySelector("#fixed-charge-form-error"),
   submitFixedChargeForm: document.querySelector("#submit-fixed-charge-form"),
+  openCreateSubscription: document.querySelector("#open-create-subscription"),
+  subscriptionsLoading: document.querySelector("#subscriptions-loading"),
+  subscriptionsEmpty: document.querySelector("#subscriptions-empty"),
+  subscriptionsEmptyCopy: document.querySelector("#subscriptions-empty-copy"),
+  subscriptionsTableShell: document.querySelector("#subscriptions-table-shell"),
+  subscriptionsTableBody: document.querySelector("#subscriptions-table-body"),
+  subscriptionFormDialog: document.querySelector("#subscription-form-dialog"),
+  subscriptionForm: document.querySelector("#subscription-form"),
+  subscriptionFormTitle: document.querySelector("#subscription-form-title"),
+  subscriptionFormCopy: document.querySelector("#subscription-form-copy"),
+  subscriptionExternalId: document.querySelector("#subscription-external-id"),
+  subscriptionCustomer: document.querySelector("#subscription-customer"),
+  subscriptionPlan: document.querySelector("#subscription-plan"),
+  subscriptionName: document.querySelector("#subscription-name"),
+  subscriptionAt: document.querySelector("#subscription-at"),
+  subscriptionEndingAt: document.querySelector("#subscription-ending-at"),
+  subscriptionBillingTime: document.querySelector("#subscription-billing-time"),
+  subscriptionTerminationInvoice: document.querySelector("#subscription-termination-invoice"),
+  subscriptionTerminationCredit: document.querySelector("#subscription-termination-credit"),
+  subscriptionFormError: document.querySelector("#subscription-form-error"),
+  submitSubscriptionForm: document.querySelector("#submit-subscription-form"),
+  terminateSubscriptionDialog: document.querySelector("#terminate-subscription-dialog"),
+  terminateSubscriptionForm: document.querySelector("#terminate-subscription-form"),
+  terminateSubscriptionCopy: document.querySelector("#terminate-subscription-copy"),
+  terminateSubscriptionInvoice: document.querySelector("#terminate-subscription-invoice"),
+  terminateSubscriptionCredit: document.querySelector("#terminate-subscription-credit"),
+  terminateSubscriptionError: document.querySelector("#terminate-subscription-error"),
+  submitTerminateSubscription: document.querySelector("#submit-terminate-subscription"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -274,6 +303,9 @@ const state = {
   selectedPlanCode: null,
   fixedChargeFormMode: "create",
   selectedFixedChargeCode: null,
+  subscriptions: [],
+  subscriptionFormMode: "create",
+  selectedSubscriptionExternalId: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -311,6 +343,10 @@ elements.plansTableBody.addEventListener("click", handlePlanAction);
 elements.fixedChargesTableBody.addEventListener("click", handleFixedChargeAction);
 elements.planForm.addEventListener("submit", submitPlanForm);
 elements.fixedChargeForm.addEventListener("submit", submitFixedChargeForm);
+elements.openCreateSubscription.addEventListener("click", openCreateSubscriptionDialog);
+elements.subscriptionsTableBody.addEventListener("click", handleSubscriptionAction);
+elements.subscriptionForm.addEventListener("submit", submitSubscriptionForm);
+elements.terminateSubscriptionForm.addEventListener("submit", submitTerminateSubscription);
 
 void initialize();
 
@@ -331,6 +367,7 @@ async function initialize() {
       couponsPayload,
       appliedCouponsPayload,
       plansPayload,
+      subscriptionsPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -343,6 +380,7 @@ async function initialize() {
       requestJson(endpoints.coupons),
       requestJson(endpoints.appliedCoupons),
       requestJson(endpoints.plans),
+      requestJson(endpoints.subscriptions),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -356,6 +394,7 @@ async function initialize() {
     renderCoupons(couponsPayload.coupons);
     renderAppliedCoupons(appliedCouponsPayload.applied_coupons);
     renderPlans(plansPayload.plans);
+    renderSubscriptions(subscriptionsPayload.subscriptions);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -379,6 +418,7 @@ function renderOperator(operator) {
   elements.openApplyCoupon.hidden = !isAdmin;
   elements.openCreatePlan.hidden = !isAdmin;
   elements.openCreateFixedCharge.hidden = !isAdmin;
+  elements.openCreateSubscription.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -400,6 +440,9 @@ function renderOperator(operator) {
   elements.plansEmptyCopy.textContent = isAdmin
     ? "Create a recurring plan for this organization."
     : "This organization has no active plans. Admin access is required to create one.";
+  elements.subscriptionsEmptyCopy.textContent = isAdmin
+    ? "Create a customer subscription from an active plan."
+    : "This organization has no subscriptions. Admin access is required to create one.";
   if (operator.organization_external_id) {
     elements.workspaceName.textContent = operator.organization_external_id;
   }
@@ -1631,6 +1674,238 @@ function openFixedChargeDeletion(plan, fixed) {
   elements.confirmDialog.showModal();
 }
 
+function renderSubscriptions(subscriptions) {
+  state.subscriptions = Array.isArray(subscriptions) ? subscriptions : [];
+  elements.subscriptionsTableBody.replaceChildren();
+  elements.subscriptionsLoading.hidden = true;
+  elements.subscriptionsEmpty.hidden = state.subscriptions.length !== 0;
+  elements.subscriptionsTableShell.hidden = state.subscriptions.length === 0;
+  for (const subscription of state.subscriptions) {
+    const row = document.createElement("tr");
+    const identity = document.createElement("td");
+    const name = document.createElement("span");
+    name.className = "key-name";
+    name.textContent = safeText(subscription.name, "Unnamed subscription");
+    const externalId = document.createElement("span");
+    externalId.className = "key-id";
+    externalId.textContent = safeText(subscription.external_id, "—");
+    identity.append(name, externalId);
+    const customer = document.createElement("td");
+    customer.textContent = safeText(subscription.external_customer_id, "—");
+    const plan = document.createElement("td");
+    plan.textContent = safeText(subscription.plan_code, "—");
+    const status = document.createElement("td");
+    status.textContent = safeText(subscription.status, "—");
+    const period = document.createElement("td");
+    period.textContent = subscription.current_period_start
+      ? `${formatDate(subscription.current_period_start)} – ${formatDate(subscription.current_period_end)}`
+      : subscription.subscription_at
+        ? `Starts ${formatDate(subscription.subscription_at)}`
+        : "—";
+    const actions = document.createElement("td");
+    actions.className = "actions-column";
+    if (state.role === "admin" && ["active", "past_due", "pending"].includes(subscription.status)) {
+      const group = document.createElement("div");
+      group.className = "row-actions";
+      group.append(
+        subscriptionActionButton("Edit", "edit-subscription", subscription.external_id),
+        subscriptionActionButton(
+          subscription.status === "pending" ? "Cancel" : "Terminate",
+          "terminate-subscription",
+          subscription.external_id,
+          true,
+        ),
+      );
+      actions.append(group);
+    } else {
+      actions.textContent = state.role === "admin" ? "Complete" : "Read only";
+      actions.classList.add("muted");
+    }
+    row.append(identity, customer, plan, status, period, actions);
+    elements.subscriptionsTableBody.append(row);
+  }
+}
+
+function subscriptionActionButton(label, action, externalId, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = danger ? "row-action danger" : "row-action";
+  button.dataset.action = action;
+  button.dataset.subscriptionExternalId = externalId;
+  button.textContent = label;
+  return button;
+}
+
+function handleSubscriptionAction(event) {
+  const button = event.target.closest("button[data-subscription-external-id]");
+  if (!button || state.role !== "admin") return;
+  const subscription = state.subscriptions.find(
+    (item) => item.external_id === button.dataset.subscriptionExternalId,
+  );
+  if (!subscription) return;
+  if (button.dataset.action === "edit-subscription") openEditSubscriptionDialog(subscription);
+  if (button.dataset.action === "terminate-subscription") openSubscriptionTermination(subscription);
+}
+
+function populateSubscriptionSelectors(customerId, planCode) {
+  replaceSelectOptions(
+    elements.subscriptionCustomer,
+    state.customers,
+    (item) => item.external_id,
+    (item) => `${safeText(item.name, "Unnamed customer")} (${item.external_id})`,
+  );
+  replaceSelectOptions(
+    elements.subscriptionPlan,
+    state.plans,
+    (item) => item.code,
+    (item) => `${safeText(item.name, "Unnamed plan")} (${item.code})`,
+  );
+  if (customerId) elements.subscriptionCustomer.value = customerId;
+  if (planCode) elements.subscriptionPlan.value = planCode;
+}
+
+function openCreateSubscriptionDialog() {
+  if (state.customers.length === 0 || state.plans.length === 0) {
+    showPageError("Create at least one customer and one plan before creating a subscription.");
+    return;
+  }
+  state.subscriptionFormMode = "create";
+  state.selectedSubscriptionExternalId = null;
+  elements.subscriptionForm.reset();
+  populateSubscriptionSelectors();
+  elements.subscriptionExternalId.disabled = false;
+  elements.subscriptionCustomer.disabled = false;
+  elements.subscriptionBillingTime.disabled = false;
+  elements.subscriptionFormTitle.textContent = "Create subscription";
+  elements.subscriptionFormCopy.textContent = "Create a customer subscription.";
+  elements.submitSubscriptionForm.textContent = "Create subscription";
+  elements.subscriptionFormError.hidden = true;
+  elements.subscriptionFormDialog.showModal();
+  elements.subscriptionExternalId.focus();
+}
+
+function openEditSubscriptionDialog(subscription) {
+  state.subscriptionFormMode = "edit";
+  state.selectedSubscriptionExternalId = subscription.external_id;
+  populateSubscriptionSelectors(subscription.external_customer_id, subscription.plan_code);
+  elements.subscriptionExternalId.value = subscription.external_id;
+  elements.subscriptionExternalId.disabled = true;
+  elements.subscriptionCustomer.disabled = true;
+  elements.subscriptionName.value = formValue(subscription.name);
+  elements.subscriptionAt.value = datetimeLocalValue(subscription.subscription_at);
+  elements.subscriptionEndingAt.value = datetimeLocalValue(subscription.ending_at);
+  elements.subscriptionBillingTime.value = subscription.billing_time ?? "anniversary";
+  elements.subscriptionBillingTime.disabled = true;
+  elements.subscriptionTerminationInvoice.value = subscription.on_termination_invoice ?? "generate";
+  elements.subscriptionTerminationCredit.value =
+    subscription.on_termination_credit_note ?? "credit";
+  elements.subscriptionFormTitle.textContent = "Edit subscription";
+  elements.subscriptionFormCopy.textContent = "Update scheduling or select a different plan.";
+  elements.submitSubscriptionForm.textContent = "Save subscription";
+  elements.subscriptionFormError.hidden = true;
+  elements.subscriptionFormDialog.showModal();
+}
+
+async function submitSubscriptionForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.subscriptionFormDialog.close();
+  if (!elements.subscriptionForm.reportValidity()) return;
+  const create = state.subscriptionFormMode === "create";
+  const existing = state.subscriptions.find(
+    (item) => item.external_id === state.selectedSubscriptionExternalId,
+  );
+  const planChange = !create && existing?.plan_code !== elements.subscriptionPlan.value;
+  const useCreate = create || planChange;
+  const externalId = create
+    ? elements.subscriptionExternalId.value.trim()
+    : state.selectedSubscriptionExternalId;
+  const shared = {
+    name: optionalFormValue(elements.subscriptionName.value),
+    ending_at: isoFormValue(elements.subscriptionEndingAt.value),
+    on_termination_invoice: elements.subscriptionTerminationInvoice.value,
+    on_termination_credit_note: elements.subscriptionTerminationCredit.value,
+  };
+  const body = useCreate
+    ? {
+        external_customer_id: elements.subscriptionCustomer.value,
+        external_id: externalId,
+        plan_code: elements.subscriptionPlan.value,
+        billing_time: elements.subscriptionBillingTime.value,
+        subscription_at: isoFormValue(elements.subscriptionAt.value),
+        ...shared,
+      }
+    : { subscription_at: isoFormValue(elements.subscriptionAt.value), ...shared };
+  setBusy(elements.submitSubscriptionForm, true, useCreate ? "Applying…" : "Saving…");
+  elements.subscriptionFormError.hidden = true;
+  try {
+    await requestJson(useCreate ? endpoints.subscriptions : subscriptionEndpoint(externalId), {
+      method: useCreate ? "POST" : "PUT",
+      body: { subscription: body },
+    });
+    elements.subscriptionFormDialog.close();
+    await refreshSubscriptions();
+  } catch (error) {
+    elements.subscriptionFormError.textContent = errorMessage(error);
+    elements.subscriptionFormError.hidden = false;
+  } finally {
+    setBusy(
+      elements.submitSubscriptionForm,
+      false,
+      create ? "Create subscription" : "Save subscription",
+    );
+  }
+}
+
+function openSubscriptionTermination(subscription) {
+  state.selectedSubscriptionExternalId = subscription.external_id;
+  elements.terminateSubscriptionCopy.textContent =
+    subscription.status === "pending"
+      ? `Cancel pending subscription “${subscription.external_id}”? No invoice will be created.`
+      : `Terminate “${subscription.external_id}”? The selected billing actions are persisted with the transition.`;
+  elements.terminateSubscriptionInvoice.value = subscription.on_termination_invoice ?? "generate";
+  elements.terminateSubscriptionCredit.value = subscription.on_termination_credit_note ?? "credit";
+  elements.terminateSubscriptionInvoice.disabled = subscription.status === "pending";
+  elements.terminateSubscriptionCredit.disabled = subscription.status === "pending";
+  elements.submitTerminateSubscription.textContent =
+    subscription.status === "pending" ? "Cancel subscription" : "Terminate subscription";
+  elements.terminateSubscriptionError.hidden = true;
+  elements.terminateSubscriptionDialog.showModal();
+}
+
+async function submitTerminateSubscription(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.terminateSubscriptionDialog.close();
+  const subscription = state.subscriptions.find(
+    (item) => item.external_id === state.selectedSubscriptionExternalId,
+  );
+  if (!subscription) return elements.terminateSubscriptionDialog.close();
+  setBusy(
+    elements.submitTerminateSubscription,
+    true,
+    subscription.status === "pending" ? "Canceling…" : "Terminating…",
+  );
+  try {
+    const query =
+      subscription.status === "pending"
+        ? ""
+        : `?on_termination_invoice=${encodeURIComponent(elements.terminateSubscriptionInvoice.value)}&on_termination_credit_note=${encodeURIComponent(elements.terminateSubscriptionCredit.value)}`;
+    await requestJson(`${subscriptionEndpoint(subscription.external_id)}${query}`, {
+      method: "DELETE",
+    });
+    elements.terminateSubscriptionDialog.close();
+    await refreshSubscriptions();
+  } catch (error) {
+    elements.terminateSubscriptionError.textContent = errorMessage(error);
+    elements.terminateSubscriptionError.hidden = false;
+  } finally {
+    setBusy(
+      elements.submitTerminateSubscription,
+      false,
+      subscription.status === "pending" ? "Cancel subscription" : "Terminate subscription",
+    );
+  }
+}
+
 function sectionActionButton(label, action, code, danger = false) {
   const button = document.createElement("button");
   button.type = "button";
@@ -2058,6 +2333,16 @@ async function refreshPlans() {
   }
 }
 
+async function refreshSubscriptions() {
+  try {
+    const payload = await requestJson(endpoints.subscriptions);
+    renderSubscriptions(payload.subscriptions);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
 function revealOneTimeSecret(secret) {
   if (typeof secret !== "string" || !secret.startsWith("lago_")) {
     showPageError("The operation completed, but the one-time credential was not returned.");
@@ -2192,6 +2477,10 @@ function fixedChargeEndpoint(planCode, chargeCode) {
   return `${fixedChargesEndpoint(planCode)}/${encodeURIComponent(chargeCode)}`;
 }
 
+function subscriptionEndpoint(externalId) {
+  return `${endpoints.subscriptions}/${encodeURIComponent(externalId)}`;
+}
+
 function showPageError(message) {
   elements.pageErrorMessage.textContent = message;
   elements.pageError.hidden = false;
@@ -2227,6 +2516,18 @@ function optionalNumberFormValue(value) {
 
 function nullableNumberFormValue(value) {
   return value === null || value === undefined ? "" : String(nonNegativeNumber(value));
+}
+
+function isoFormValue(value) {
+  return value ? new Date(value).toISOString() : null;
+}
+
+function datetimeLocalValue(value) {
+  if (typeof value !== "string") return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 function formValue(value) {

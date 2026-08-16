@@ -64,6 +64,10 @@
             <span class="nav-icon" aria-hidden="true">▧</span>
             Plans
           </a>
+          <a class="nav-item" href="#subscriptions">
+            <span class="nav-icon" aria-hidden="true">↻</span>
+            Subscriptions
+          </a>
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -586,6 +590,44 @@
                       </tr>
                     </thead>
                     <tbody id="fixed-charges-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="subscriptions" aria-labelledby="subscriptions-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Recurring billing</p>
+                  <h2 id="subscriptions-title">Subscriptions</h2>
+                  <p>Create, change, schedule, cancel, or terminate customer subscriptions.</p>
+                </div>
+                <button class="primary-button" id="open-create-subscription" type="button" hidden>
+                  <span aria-hidden="true">+</span>Create subscription
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="subscriptions-loading" aria-live="polite">
+                  Loading subscriptions…
+                </div>
+                <div class="empty-state" id="subscriptions-empty" hidden>
+                  <span aria-hidden="true">↻</span>
+                  <h3>No subscriptions</h3>
+                  <p id="subscriptions-empty-copy">This organization has no subscriptions.</p>
+                </div>
+                <div class="table-scroll" id="subscriptions-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Subscription</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Plan</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Current period</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="subscriptions-table-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -1299,6 +1341,125 @@
             type="submit"
           >
             Add fixed charge
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="subscription-form-dialog"
+      aria-labelledby="subscription-form-title"
+    >
+      <form method="dialog" id="subscription-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Recurring billing</p>
+            <h2 id="subscription-form-title">Create subscription</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy" id="subscription-form-copy">Create a customer subscription.</p>
+        <div class="field-grid">
+          <div>
+            <label for="subscription-external-id">External ID</label
+            ><input id="subscription-external-id" maxlength="255" required />
+          </div>
+          <div>
+            <label for="subscription-customer">Customer</label
+            ><select id="subscription-customer" required></select>
+          </div>
+          <div>
+            <label for="subscription-plan">Plan</label
+            ><select id="subscription-plan" required></select>
+          </div>
+          <div>
+            <label for="subscription-name">Name</label
+            ><input id="subscription-name" maxlength="255" />
+          </div>
+          <div>
+            <label for="subscription-at">Starts at</label
+            ><input id="subscription-at" type="datetime-local" />
+          </div>
+          <div>
+            <label for="subscription-ending-at">Ends at</label
+            ><input id="subscription-ending-at" type="datetime-local" />
+          </div>
+          <div>
+            <label for="subscription-billing-time">Billing time</label
+            ><select id="subscription-billing-time">
+              <option value="anniversary">Anniversary</option>
+              <option value="calendar">Calendar</option>
+            </select>
+          </div>
+          <div>
+            <label for="subscription-termination-invoice">Termination invoice</label
+            ><select id="subscription-termination-invoice">
+              <option value="generate">Generate</option>
+              <option value="skip">Skip</option>
+            </select>
+          </div>
+          <div>
+            <label for="subscription-termination-credit">Prepaid credit</label
+            ><select id="subscription-termination-credit">
+              <option value="credit">Credit unused base</option>
+              <option value="skip">Skip credit</option>
+            </select>
+          </div>
+        </div>
+        <p class="field-hint">
+          Changing the plan may create internal upgrade billing or schedule a downgrade. Provider
+          payment methods, custom sections, and usage thresholds remain unavailable.
+        </p>
+        <p class="form-error" id="subscription-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button
+            class="primary-button"
+            id="submit-subscription-form"
+            value="default"
+            type="submit"
+          >
+            Create subscription
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal danger-modal"
+      id="terminate-subscription-dialog"
+      aria-labelledby="terminate-subscription-title"
+    >
+      <form method="dialog" id="terminate-subscription-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Confirm billing transition</p>
+            <h2 id="terminate-subscription-title">Terminate subscription?</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy" id="terminate-subscription-copy"></p>
+        <label for="terminate-subscription-invoice">Final invoice</label
+        ><select id="terminate-subscription-invoice">
+          <option value="generate">Generate final invoice</option>
+          <option value="skip">Skip final invoice</option>
+        </select>
+        <label for="terminate-subscription-credit">Prepaid credit</label
+        ><select id="terminate-subscription-credit">
+          <option value="credit">Credit unused base</option>
+          <option value="skip">Skip credit</option>
+        </select>
+        <p class="form-error" id="terminate-subscription-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button
+            class="danger-button"
+            id="submit-terminate-subscription"
+            value="default"
+            type="submit"
+          >
+            Terminate subscription
           </button>
         </div>
       </form>

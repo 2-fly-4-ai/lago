@@ -135,6 +135,10 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    deletion task and calls the API Worker’s `PLAN_DELETION_WORKFLOW` through a cross-script binding;
    fixed-charge mutations retain their canonical cascade, pricing-model, and immediate-billing
    guards.
+   Core subscription list/show/create/plan-change/update/cancel/terminate is implemented through the
+   canonical D1, Queue, and per-customer Durable Object command boundary. Admin termination requires
+   explicit final-invoice and prepaid-credit behavior. Provider payment methods, subscription custom
+   sections, and usage-threshold overrides remain rejected at the BFF until separately admitted.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

@@ -91,14 +91,23 @@ beforeEach(async () => {
     env.BILLING_DB.prepare(
       "DELETE FROM minimum_commitments WHERE organization_id = 'org-operator-access'",
     ),
-    env.BILLING_DB.prepare("DELETE FROM plans WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
       "DELETE FROM payment_receipts WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare(
       "DELETE FROM payment_attempts WHERE organization_id = 'org-operator-access'",
     ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM plan_change_invoice_contexts WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM subscription_invoice_contexts WHERE organization_id = 'org-operator-access'",
+    ),
     env.BILLING_DB.prepare("DELETE FROM invoices WHERE organization_id = 'org-operator-access'"),
+    env.BILLING_DB.prepare(
+      "DELETE FROM subscriptions WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare("DELETE FROM plans WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare("DELETE FROM api_keys WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare("DELETE FROM customers WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare("DELETE FROM organizations WHERE id = 'org-operator-access'"),
@@ -1005,6 +1014,110 @@ describe("operator Worker disabled boundary", () => {
       keySet,
     );
     await expect(empty.json()).resolves.toMatchObject({ plans: [], meta: { total_count: 0 } });
+  });
+
+  it("maps subscription creation, plan changes, safe updates, and termination", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/subscriptions", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerList.json()).resolves.toMatchObject({
+      subscriptions: [],
+      meta: { total_count: 0 },
+    });
+    expect(
+      (
+        await operatorMutation("POST", "/subscriptions", {
+          subscription: {
+            external_customer_id: "subscriber",
+            external_id: "operator-subscription",
+            plan_code: "starter",
+          },
+        })
+      ).status,
+    ).toBe(403);
+
+    await promoteOperatorAdmin();
+    await operatorMutation("POST", "/customers", {
+      customer: { external_id: "subscriber", name: "Subscriber", currency: "USD" },
+    });
+    for (const [code, amount] of [
+      ["starter", 1000],
+      ["growth", 1500],
+    ] as const) {
+      await operatorMutation("POST", "/plans", {
+        plan: {
+          code,
+          name: code,
+          interval: "monthly",
+          amount_cents: amount,
+          amount_currency: "USD",
+        },
+      });
+    }
+    const created = await operatorMutation("POST", "/subscriptions", {
+      subscription: {
+        external_customer_id: "subscriber",
+        external_id: "operator-subscription",
+        plan_code: "starter",
+        name: "Starter subscription",
+        billing_time: "anniversary",
+        subscription_at: "2027-08-16T00:00:00.000Z",
+        on_termination_invoice: "skip",
+      },
+    });
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      subscription: {
+        external_id: "operator-subscription",
+        external_customer_id: "subscriber",
+        plan_code: "starter",
+        status: "pending",
+      },
+    });
+
+    const blockedProvider = await operatorMutation("PUT", "/subscriptions/operator-subscription", {
+      subscription: { payment_method: { type: "provider", id: "unsafe" } },
+    });
+    expect(blockedProvider.status).toBe(422);
+    await expect(blockedProvider.json()).resolves.toMatchObject({
+      code: "unsupported_operator_subscription_field",
+    });
+
+    const renamed = await operatorMutation("PUT", "/subscriptions/operator-subscription", {
+      subscription: { name: "Renamed subscription", on_termination_invoice: "skip" },
+    });
+    await expect(renamed.json()).resolves.toMatchObject({
+      subscription: { name: "Renamed subscription", plan_code: "starter" },
+    });
+
+    const changed = await operatorMutation("POST", "/subscriptions", {
+      subscription: {
+        external_customer_id: "subscriber",
+        external_id: "operator-subscription",
+        plan_code: "growth",
+        name: "Growth subscription",
+        billing_time: "anniversary",
+        subscription_at: "2027-08-16T00:00:00.000Z",
+        on_termination_invoice: "skip",
+      },
+    });
+    expect(changed.status).toBe(200);
+    await expect(changed.json()).resolves.toMatchObject({
+      subscription: { external_id: "operator-subscription", plan_code: "growth" },
+    });
+
+    const terminated = await operatorMutation(
+      "DELETE",
+      "/subscriptions/operator-subscription?on_termination_invoice=skip",
+    );
+    expect(terminated.status).toBe(200);
+    await expect(terminated.json()).resolves.toMatchObject({
+      subscription: { status: "canceled" },
+    });
   });
 
   it("maps customer reads for viewers and upserts for admins while keeping deletion unavailable", async () => {

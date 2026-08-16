@@ -1,4 +1,6 @@
 import type { DomainEvent } from "../domain-events";
+
+type SubscriptionPlanChangeEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">;
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { Decimal } from "../rating/decimal";
@@ -103,7 +105,7 @@ export type ChangeSubscriptionPlanResult = {
 };
 
 export async function changeSubscriptionPlan(
-  env: Env,
+  env: SubscriptionPlanChangeEnv,
   input: ChangeSubscriptionPlanInput,
 ): Promise<ChangeSubscriptionPlanResult> {
   const current = await findCurrentGeneration(
@@ -190,7 +192,7 @@ async function resolveConcurrentChange(
 }
 
 async function updateInitialPending(
-  env: Env,
+  env: SubscriptionPlanChangeEnv,
   current: CurrentGeneration,
   target: TargetPlan,
   input: ChangeSubscriptionPlanInput,
@@ -422,7 +424,7 @@ function newGenerationUsageThresholdStatements(
 }
 
 async function scheduleDowngrade(
-  env: Env,
+  env: SubscriptionPlanChangeEnv,
   current: CurrentGeneration,
   target: TargetPlan,
   input: ChangeSubscriptionPlanInput,
@@ -589,7 +591,7 @@ async function scheduleDowngrade(
 }
 
 async function upgradeActiveGeneration(
-  env: Env,
+  env: SubscriptionPlanChangeEnv,
   current: CurrentGeneration,
   target: TargetPlan,
   input: ChangeSubscriptionPlanInput,

@@ -735,9 +735,9 @@ async function showCustomer(
   );
 }
 
-async function createSubscription(
+export async function createSubscription(
   request: Request,
-  env: Env,
+  env: Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
