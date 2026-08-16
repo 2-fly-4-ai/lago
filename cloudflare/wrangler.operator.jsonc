@@ -36,6 +36,14 @@
       },
     ],
   },
+  "workflows": [
+    {
+      "name": "serp-dev-lago-plan-deletion",
+      "binding": "PLAN_DELETION_WORKFLOW",
+      "class_name": "PlanDeletionWorkflow",
+      "script_name": "serp-dev-lago-native",
+    },
+  ],
   "queues": {
     "producers": [
       {

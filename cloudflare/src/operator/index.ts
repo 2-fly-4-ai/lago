@@ -8,6 +8,7 @@ import { handleInvoiceCustomSectionRequest } from "../api/invoice-custom-section
 import { handleCustomerCompatibilityRequest } from "../api/lago-compatibility";
 import { showOrganization } from "../api/organizations";
 import { handlePaymentReceiptReadsApi } from "../api/payment-receipts";
+import { handlePlanCatalogRequest } from "../api/plan-catalog";
 import { handleTaxLedgerRequest } from "../api/tax-ledger";
 import type { AuthContext } from "../auth/api-key";
 import { ApiError, apiErrorResponse, json, objectAt, parseJsonObject } from "../http";
@@ -261,6 +262,31 @@ export async function handleOperatorRequest(
       if (response) return response;
     }
 
+    if (/^\/api\/operator\/v1\/plans(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+        await assertOperatorPlanMutationPayload(request, url.pathname);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname
+        .replace("/api/operator/v1/plans", "/api/v1/plans")
+        .replace("/fixed-charges", "/fixed_charges");
+      const response = await handlePlanCatalogRequest(
+        new Request(forwardedUrl, request),
+        env,
+        auth,
+        requestId,
+      );
+      if (response) return response;
+    }
+
     if (/^\/api\/operator\/v1\/customers(?:\/|$)/.test(url.pathname)) {
       const operator = await authenticateOperatorAccess(request, env, keySet);
       if (request.method !== "GET") {
@@ -320,6 +346,50 @@ async function assertOperatorCustomerMutationPayload(request: Request): Promise<
       422,
       "unsupported_operator_customer_field",
       `${unsupported} is not admitted to the operator customer workflow`,
+    );
+  }
+}
+
+async function assertOperatorPlanMutationPayload(
+  request: Request,
+  pathname: string,
+): Promise<void> {
+  if (request.method !== "POST" && request.method !== "PUT") return;
+  const fixedCharge = pathname.includes("/fixed-charges");
+  const input = objectAt(
+    await parseJsonObject(request.clone()),
+    fixedCharge ? "fixed_charge" : "plan",
+  );
+  const supported = fixedCharge
+    ? new Set([
+        "add_on_id",
+        "code",
+        "invoice_display_name",
+        "charge_model",
+        "properties",
+        "units",
+        "pay_in_advance",
+        "prorated",
+        "apply_units_immediately",
+        "cascade_updates",
+      ])
+    : new Set([
+        "code",
+        "name",
+        "invoice_display_name",
+        "description",
+        "interval",
+        "amount_cents",
+        "amount_currency",
+        "trial_period",
+        "pay_in_advance",
+      ]);
+  const unsupported = Object.keys(input).find((key) => !supported.has(key));
+  if (unsupported) {
+    throw new ApiError(
+      422,
+      fixedCharge ? "unsupported_operator_fixed_charge_field" : "unsupported_operator_plan_field",
+      `${unsupported} is not admitted to this operator workflow`,
     );
   }
 }

@@ -10,6 +10,7 @@ const endpoints = {
   customers: "/api/operator/v1/customers",
   coupons: "/api/operator/v1/coupons",
   appliedCoupons: "/api/operator/v1/applied-coupons",
+  plans: "/api/operator/v1/plans",
 };
 
 const elements = {
@@ -172,6 +173,46 @@ const elements = {
   applyCouponCode: document.querySelector("#apply-coupon-code"),
   applyCouponError: document.querySelector("#apply-coupon-error"),
   submitApplyCoupon: document.querySelector("#submit-apply-coupon"),
+  openCreatePlan: document.querySelector("#open-create-plan"),
+  openCreateFixedCharge: document.querySelector("#open-create-fixed-charge"),
+  plansLoading: document.querySelector("#plans-loading"),
+  plansEmpty: document.querySelector("#plans-empty"),
+  plansEmptyCopy: document.querySelector("#plans-empty-copy"),
+  plansTableShell: document.querySelector("#plans-table-shell"),
+  plansTableBody: document.querySelector("#plans-table-body"),
+  fixedChargesEmpty: document.querySelector("#fixed-charges-empty"),
+  fixedChargesTableShell: document.querySelector("#fixed-charges-table-shell"),
+  fixedChargesTableBody: document.querySelector("#fixed-charges-table-body"),
+  planFormDialog: document.querySelector("#plan-form-dialog"),
+  planForm: document.querySelector("#plan-form"),
+  planFormTitle: document.querySelector("#plan-form-title"),
+  planFormCopy: document.querySelector("#plan-form-copy"),
+  planName: document.querySelector("#plan-name"),
+  planCode: document.querySelector("#plan-code"),
+  planInterval: document.querySelector("#plan-interval"),
+  planAmount: document.querySelector("#plan-amount"),
+  planCurrency: document.querySelector("#plan-currency"),
+  planTrial: document.querySelector("#plan-trial"),
+  planInvoiceName: document.querySelector("#plan-invoice-name"),
+  planDescription: document.querySelector("#plan-description"),
+  planPayAdvance: document.querySelector("#plan-pay-advance"),
+  planFormError: document.querySelector("#plan-form-error"),
+  submitPlanForm: document.querySelector("#submit-plan-form"),
+  fixedChargeFormDialog: document.querySelector("#fixed-charge-form-dialog"),
+  fixedChargeForm: document.querySelector("#fixed-charge-form"),
+  fixedChargeFormTitle: document.querySelector("#fixed-charge-form-title"),
+  fixedChargePlan: document.querySelector("#fixed-charge-plan"),
+  fixedChargeAddOn: document.querySelector("#fixed-charge-add-on"),
+  fixedChargeCode: document.querySelector("#fixed-charge-code"),
+  fixedChargeModel: document.querySelector("#fixed-charge-model"),
+  fixedChargeUnits: document.querySelector("#fixed-charge-units"),
+  fixedChargeInvoiceName: document.querySelector("#fixed-charge-invoice-name"),
+  fixedChargeProperties: document.querySelector("#fixed-charge-properties"),
+  fixedChargePayAdvance: document.querySelector("#fixed-charge-pay-advance"),
+  fixedChargeProrated: document.querySelector("#fixed-charge-prorated"),
+  fixedChargeApplyNow: document.querySelector("#fixed-charge-apply-now"),
+  fixedChargeFormError: document.querySelector("#fixed-charge-form-error"),
+  submitFixedChargeForm: document.querySelector("#submit-fixed-charge-form"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -228,6 +269,11 @@ const state = {
   coupons: [],
   appliedCoupons: [],
   selectedAppliedCouponId: null,
+  plans: [],
+  planFormMode: "create",
+  selectedPlanCode: null,
+  fixedChargeFormMode: "create",
+  selectedFixedChargeCode: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -259,6 +305,12 @@ elements.openApplyCoupon.addEventListener("click", openApplyCouponDialog);
 elements.couponForm.addEventListener("submit", submitCouponForm);
 elements.applyCouponForm.addEventListener("submit", submitApplyCouponForm);
 elements.appliedCouponsTableBody.addEventListener("click", handleAppliedCouponAction);
+elements.openCreatePlan.addEventListener("click", openCreatePlanDialog);
+elements.openCreateFixedCharge.addEventListener("click", openCreateFixedChargeDialog);
+elements.plansTableBody.addEventListener("click", handlePlanAction);
+elements.fixedChargesTableBody.addEventListener("click", handleFixedChargeAction);
+elements.planForm.addEventListener("submit", submitPlanForm);
+elements.fixedChargeForm.addEventListener("submit", submitFixedChargeForm);
 
 void initialize();
 
@@ -278,6 +330,7 @@ async function initialize() {
       customersPayload,
       couponsPayload,
       appliedCouponsPayload,
+      plansPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -289,6 +342,7 @@ async function initialize() {
       requestJson(endpoints.customers),
       requestJson(endpoints.coupons),
       requestJson(endpoints.appliedCoupons),
+      requestJson(endpoints.plans),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -301,6 +355,7 @@ async function initialize() {
     renderCustomers(customersPayload.customers);
     renderCoupons(couponsPayload.coupons);
     renderAppliedCoupons(appliedCouponsPayload.applied_coupons);
+    renderPlans(plansPayload.plans);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -322,6 +377,8 @@ function renderOperator(operator) {
   elements.openCreateCustomer.hidden = !isAdmin;
   elements.openCreateCoupon.hidden = !isAdmin;
   elements.openApplyCoupon.hidden = !isAdmin;
+  elements.openCreatePlan.hidden = !isAdmin;
+  elements.openCreateFixedCharge.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -340,6 +397,9 @@ function renderOperator(operator) {
   elements.couponsEmptyCopy.textContent = isAdmin
     ? "Create a coupon for a supported customer discount."
     : "This organization has no coupons. Admin access is required to create one.";
+  elements.plansEmptyCopy.textContent = isAdmin
+    ? "Create a recurring plan for this organization."
+    : "This organization has no active plans. Admin access is required to create one.";
   if (operator.organization_external_id) {
     elements.workspaceName.textContent = operator.organization_external_id;
   }
@@ -1252,6 +1312,325 @@ function couponFrequency(coupon) {
   return `${nonNegativeNumber(coupon.frequency_duration)} cycles`;
 }
 
+function renderPlans(plans) {
+  state.plans = Array.isArray(plans) ? plans : [];
+  elements.plansTableBody.replaceChildren();
+  elements.fixedChargesTableBody.replaceChildren();
+  elements.plansLoading.hidden = true;
+  elements.plansEmpty.hidden = state.plans.length !== 0;
+  elements.plansTableShell.hidden = state.plans.length === 0;
+  const fixedCharges = [];
+  for (const plan of state.plans) {
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("td");
+    const name = document.createElement("span");
+    name.className = "key-name";
+    name.textContent = safeText(plan.name, "Unnamed plan");
+    const code = document.createElement("span");
+    code.className = "key-id";
+    code.textContent = safeText(plan.code, "—");
+    nameCell.append(name, code);
+    const interval = document.createElement("td");
+    interval.textContent = safeText(plan.interval, "—");
+    const amount = document.createElement("td");
+    amount.textContent = formatMoney(plan.amount_cents, plan.amount_currency);
+    const trial = document.createElement("td");
+    trial.textContent = plan.trial_period === null ? "None" : `${plan.trial_period} days`;
+    const fixedCount = document.createElement("td");
+    fixedCount.textContent = countLabel(plan.fixed_charges, "charge", "charges");
+    const actions = document.createElement("td");
+    actions.className = "actions-column";
+    if (state.role === "admin") {
+      const group = document.createElement("div");
+      group.className = "row-actions";
+      group.append(
+        planActionButton("Edit", "edit-plan", plan.code),
+        planActionButton("Delete", "delete-plan", plan.code, true),
+      );
+      actions.append(group);
+    } else actions.textContent = "Read only";
+    row.append(nameCell, interval, amount, trial, fixedCount, actions);
+    elements.plansTableBody.append(row);
+    for (const fixed of Array.isArray(plan.fixed_charges) ? plan.fixed_charges : []) {
+      fixedCharges.push({ ...fixed, plan_code: plan.code });
+    }
+  }
+  elements.fixedChargesEmpty.hidden = fixedCharges.length !== 0;
+  elements.fixedChargesTableShell.hidden = fixedCharges.length === 0;
+  for (const fixed of fixedCharges)
+    elements.fixedChargesTableBody.append(createFixedChargeRow(fixed));
+}
+
+function planActionButton(label, action, code, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = danger ? "row-action danger" : "row-action";
+  button.dataset.action = action;
+  button.dataset.planCode = code;
+  button.textContent = label;
+  return button;
+}
+
+function createFixedChargeRow(fixed) {
+  const row = document.createElement("tr");
+  for (const value of [
+    safeText(fixed.invoice_display_name, safeText(fixed.code, "—")),
+    fixed.plan_code,
+    fixed.add_on_code,
+    fixed.charge_model,
+    String(fixed.units),
+  ]) {
+    const cell = document.createElement("td");
+    cell.textContent = value;
+    row.append(cell);
+  }
+  const actions = document.createElement("td");
+  actions.className = "actions-column";
+  if (state.role === "admin") {
+    const group = document.createElement("div");
+    group.className = "row-actions";
+    const edit = planActionButton("Edit", "edit-fixed-charge", fixed.plan_code);
+    edit.dataset.fixedChargeCode = fixed.code;
+    const remove = planActionButton("Delete", "delete-fixed-charge", fixed.plan_code, true);
+    remove.dataset.fixedChargeCode = fixed.code;
+    group.append(edit, remove);
+    actions.append(group);
+  } else actions.textContent = "Read only";
+  row.append(actions);
+  return row;
+}
+
+function handlePlanAction(event) {
+  const button = event.target.closest("button[data-plan-code]");
+  if (!button || state.role !== "admin") return;
+  const plan = state.plans.find((item) => item.code === button.dataset.planCode);
+  if (!plan) return;
+  if (button.dataset.action === "edit-plan") openEditPlanDialog(plan);
+  if (button.dataset.action === "delete-plan") openPlanDeletion(plan);
+}
+
+function handleFixedChargeAction(event) {
+  const button = event.target.closest("button[data-fixed-charge-code]");
+  if (!button || state.role !== "admin") return;
+  const plan = state.plans.find((item) => item.code === button.dataset.planCode);
+  const fixed = plan?.fixed_charges?.find((item) => item.code === button.dataset.fixedChargeCode);
+  if (!plan || !fixed) return;
+  if (button.dataset.action === "edit-fixed-charge") openEditFixedChargeDialog(plan, fixed);
+  if (button.dataset.action === "delete-fixed-charge") openFixedChargeDeletion(plan, fixed);
+}
+
+function openCreatePlanDialog() {
+  state.planFormMode = "create";
+  state.selectedPlanCode = null;
+  elements.planForm.reset();
+  elements.planCode.disabled = false;
+  elements.planFormTitle.textContent = "Create plan";
+  elements.planFormCopy.textContent = "Create a core recurring plan.";
+  elements.submitPlanForm.textContent = "Create plan";
+  elements.planFormError.hidden = true;
+  elements.planFormDialog.showModal();
+  elements.planName.focus();
+}
+
+function openEditPlanDialog(plan) {
+  state.planFormMode = "edit";
+  state.selectedPlanCode = plan.code;
+  elements.planName.value = formValue(plan.name);
+  elements.planCode.value = formValue(plan.code);
+  elements.planCode.disabled = false;
+  elements.planInterval.value = plan.interval;
+  elements.planAmount.value = String(nonNegativeNumber(plan.amount_cents));
+  elements.planCurrency.value = formValue(plan.amount_currency);
+  elements.planTrial.value = nullableNumberFormValue(plan.trial_period);
+  elements.planInvoiceName.value = formValue(plan.invoice_display_name);
+  elements.planDescription.value = formValue(plan.description);
+  elements.planPayAdvance.checked = plan.pay_in_advance === true;
+  elements.planFormTitle.textContent = "Edit plan";
+  elements.planFormCopy.textContent = "Attached plans may accept only safe scalar changes.";
+  elements.submitPlanForm.textContent = "Save plan";
+  elements.planFormError.hidden = true;
+  elements.planFormDialog.showModal();
+}
+
+async function submitPlanForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.planFormDialog.close();
+  if (!elements.planForm.reportValidity()) return;
+  const create = state.planFormMode === "create";
+  setBusy(elements.submitPlanForm, true, create ? "Creating…" : "Saving…");
+  try {
+    await requestJson(create ? endpoints.plans : planEndpoint(state.selectedPlanCode), {
+      method: create ? "POST" : "PUT",
+      body: {
+        plan: {
+          code: elements.planCode.value.trim(),
+          name: elements.planName.value.trim(),
+          invoice_display_name: optionalFormValue(elements.planInvoiceName.value),
+          description: optionalFormValue(elements.planDescription.value),
+          interval: elements.planInterval.value,
+          amount_cents: Number(elements.planAmount.value),
+          amount_currency: elements.planCurrency.value.trim(),
+          trial_period: optionalNumberFormValue(elements.planTrial.value),
+          pay_in_advance: elements.planPayAdvance.checked,
+        },
+      },
+    });
+    elements.planFormDialog.close();
+    await refreshPlans();
+  } catch (error) {
+    elements.planFormError.textContent = errorMessage(error);
+    elements.planFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitPlanForm, false, create ? "Create plan" : "Save plan");
+  }
+}
+
+function openCreateFixedChargeDialog() {
+  if (state.plans.length === 0 || state.addOns.length === 0)
+    return showPageError("Create a plan and add-on before adding a fixed charge.");
+  state.fixedChargeFormMode = "create";
+  state.selectedFixedChargeCode = null;
+  elements.fixedChargeForm.reset();
+  elements.fixedChargeProperties.value = '{"amount":"0"}';
+  replaceSelectOptions(
+    elements.fixedChargePlan,
+    state.plans,
+    (item) => item.code,
+    (item) => `${item.name} (${item.code})`,
+  );
+  replaceSelectOptions(
+    elements.fixedChargeAddOn,
+    state.addOns,
+    (item) => item.lago_id,
+    (item) => `${item.name} (${item.code})`,
+  );
+  for (const control of [
+    elements.fixedChargePlan,
+    elements.fixedChargeAddOn,
+    elements.fixedChargeCode,
+    elements.fixedChargeModel,
+    elements.fixedChargePayAdvance,
+    elements.fixedChargeProrated,
+  ])
+    control.disabled = false;
+  elements.fixedChargeFormTitle.textContent = "Add fixed charge";
+  elements.submitFixedChargeForm.textContent = "Add fixed charge";
+  elements.fixedChargeFormError.hidden = true;
+  elements.fixedChargeFormDialog.showModal();
+}
+
+function openEditFixedChargeDialog(plan, fixed) {
+  state.fixedChargeFormMode = "edit";
+  state.selectedPlanCode = plan.code;
+  state.selectedFixedChargeCode = fixed.code;
+  replaceSelectOptions(
+    elements.fixedChargePlan,
+    [plan],
+    (item) => item.code,
+    (item) => item.name,
+  );
+  replaceSelectOptions(
+    elements.fixedChargeAddOn,
+    [{ lago_id: fixed.lago_add_on_id, name: fixed.add_on_code }],
+    (item) => item.lago_id,
+    (item) => item.name,
+  );
+  elements.fixedChargeCode.value = fixed.code;
+  elements.fixedChargeModel.value = fixed.charge_model;
+  elements.fixedChargeUnits.value = fixed.units;
+  elements.fixedChargeInvoiceName.value = formValue(fixed.invoice_display_name);
+  elements.fixedChargeProperties.value = JSON.stringify(fixed.properties ?? {}, null, 2);
+  elements.fixedChargePayAdvance.checked = fixed.pay_in_advance === true;
+  elements.fixedChargeProrated.checked = fixed.prorated === true;
+  for (const control of [
+    elements.fixedChargePlan,
+    elements.fixedChargeAddOn,
+    elements.fixedChargeModel,
+    elements.fixedChargePayAdvance,
+    elements.fixedChargeProrated,
+  ])
+    control.disabled = true;
+  elements.fixedChargeFormTitle.textContent = "Edit fixed charge";
+  elements.submitFixedChargeForm.textContent = "Save fixed charge";
+  elements.fixedChargeFormError.hidden = true;
+  elements.fixedChargeFormDialog.showModal();
+}
+
+async function submitFixedChargeForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.fixedChargeFormDialog.close();
+  if (!elements.fixedChargeForm.reportValidity()) return;
+  const create = state.fixedChargeFormMode === "create";
+  let properties;
+  try {
+    properties = JSON.parse(elements.fixedChargeProperties.value);
+  } catch {
+    elements.fixedChargeFormError.textContent = "Rating properties must be valid JSON.";
+    elements.fixedChargeFormError.hidden = false;
+    return;
+  }
+  const planCode = create ? elements.fixedChargePlan.value : state.selectedPlanCode;
+  const path = create
+    ? fixedChargesEndpoint(planCode)
+    : fixedChargeEndpoint(planCode, state.selectedFixedChargeCode);
+  setBusy(elements.submitFixedChargeForm, true, create ? "Adding…" : "Saving…");
+  try {
+    await requestJson(path, {
+      method: create ? "POST" : "PUT",
+      body: {
+        fixed_charge: {
+          ...(create
+            ? {
+                add_on_id: elements.fixedChargeAddOn.value,
+                charge_model: elements.fixedChargeModel.value,
+                pay_in_advance: elements.fixedChargePayAdvance.checked,
+                prorated: elements.fixedChargeProrated.checked,
+              }
+            : {}),
+          code: elements.fixedChargeCode.value.trim(),
+          invoice_display_name: optionalFormValue(elements.fixedChargeInvoiceName.value),
+          properties,
+          units: elements.fixedChargeUnits.value,
+          apply_units_immediately: elements.fixedChargeApplyNow.checked,
+        },
+      },
+    });
+    elements.fixedChargeFormDialog.close();
+    await refreshPlans();
+  } catch (error) {
+    elements.fixedChargeFormError.textContent = errorMessage(error);
+    elements.fixedChargeFormError.hidden = false;
+  } finally {
+    setBusy(
+      elements.submitFixedChargeForm,
+      false,
+      create ? "Add fixed charge" : "Save fixed charge",
+    );
+  }
+}
+
+function openPlanDeletion(plan) {
+  state.confirmMode = "delete-plan";
+  state.selectedPlanCode = plan.code;
+  elements.confirmTitle.textContent = "Delete plan?";
+  elements.confirmCopy.textContent =
+    "Unused plans retire immediately. Plans with subscriptions enter the durable asynchronous retirement workflow.";
+  elements.confirmAction.textContent = "Delete plan";
+  elements.confirmError.hidden = true;
+  elements.confirmDialog.showModal();
+}
+
+function openFixedChargeDeletion(plan, fixed) {
+  state.confirmMode = "delete-fixed-charge";
+  state.selectedPlanCode = plan.code;
+  state.selectedFixedChargeCode = fixed.code;
+  elements.confirmTitle.textContent = "Delete fixed charge?";
+  elements.confirmCopy.textContent = `Remove “${fixed.code}” from plan “${plan.code}”?`;
+  elements.confirmAction.textContent = "Delete fixed charge";
+  elements.confirmError.hidden = true;
+  elements.confirmDialog.showModal();
+}
+
 function sectionActionButton(label, action, code, danger = false) {
   const button = document.createElement("button");
   button.type = "button";
@@ -1546,6 +1925,30 @@ async function submitConfirmedAction(event) {
     return;
   }
 
+  if (mode === "delete-plan" || mode === "delete-fixed-charge") {
+    const path =
+      mode === "delete-plan"
+        ? planEndpoint(state.selectedPlanCode)
+        : fixedChargeEndpoint(state.selectedPlanCode, state.selectedFixedChargeCode);
+    setBusy(elements.confirmAction, true, "Deleting…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(path, { method: "DELETE" });
+      elements.confirmDialog.close();
+      await refreshPlans();
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(
+        elements.confirmAction,
+        false,
+        mode === "delete-plan" ? "Delete plan" : "Delete fixed charge",
+      );
+    }
+    return;
+  }
+
   const key = state.keys.find((candidate) => candidate.id === state.selectedKeyId);
   if (!key || (mode !== "rotate" && mode !== "revoke")) {
     elements.confirmDialog.close();
@@ -1639,6 +2042,16 @@ async function refreshAppliedCoupons() {
   try {
     const payload = await requestJson(endpoints.appliedCoupons);
     renderAppliedCoupons(payload.applied_coupons);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+async function refreshPlans() {
+  try {
+    const payload = await requestJson(endpoints.plans);
+    renderPlans(payload.plans);
     hidePageError();
   } catch (error) {
     showPageError(errorMessage(error));
@@ -1765,6 +2178,18 @@ function customerEndpoint(externalId) {
 
 function appliedCouponEndpoint(applied) {
   return `${endpoints.customers}/${encodeURIComponent(applied.external_customer_id)}/applied-coupons/${encodeURIComponent(applied.lago_id)}`;
+}
+
+function planEndpoint(code) {
+  return `${endpoints.plans}/${encodeURIComponent(code)}`;
+}
+
+function fixedChargesEndpoint(planCode) {
+  return `${planEndpoint(planCode)}/fixed-charges`;
+}
+
+function fixedChargeEndpoint(planCode, chargeCode) {
+  return `${fixedChargesEndpoint(planCode)}/${encodeURIComponent(chargeCode)}`;
 }
 
 function showPageError(message) {

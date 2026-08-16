@@ -198,9 +198,11 @@ type PreparedPlanAmountCascade = {
 
 const INTERVALS = new Set(["weekly", "monthly", "quarterly", "yearly", "one_time"]);
 
+type PlanCatalogEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS" | "PLAN_DELETION_WORKFLOW">;
+
 export async function handlePlanCatalogRequest(
   request: Request,
-  env: Env,
+  env: PlanCatalogEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
@@ -277,7 +279,7 @@ export async function handlePlanCatalogRequest(
 
 async function createPlan(
   request: Request,
-  env: Env,
+  env: PlanCatalogEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -582,7 +584,7 @@ async function listFixedCharges(
 async function createFixedCharge(
   request: Request,
   planCode: string,
-  env: Env,
+  env: PlanCatalogEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -832,7 +834,7 @@ async function updateFixedCharge(
   request: Request,
   planCode: string,
   fixedChargeCode: string,
-  env: Env,
+  env: PlanCatalogEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -1107,7 +1109,7 @@ async function deleteFixedCharge(
   request: Request,
   planCode: string,
   fixedChargeCode: string,
-  env: Env,
+  env: PlanCatalogEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -1297,7 +1299,7 @@ async function showPlan(
 async function updatePlan(
   code: string,
   request: Request,
-  env: Env,
+  env: PlanCatalogEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -1604,7 +1606,7 @@ async function updatePlan(
 
 async function deletePlan(
   code: string,
-  env: Env,
+  env: PlanCatalogEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -1918,7 +1920,7 @@ const MAX_FIXED_CHARGE_CASCADE_JSON_BYTES = 512 * 1024;
 const MAX_FIXED_CHARGE_UNIT_EVENT_SUBSCRIPTIONS = 200;
 
 async function billImmediateAdvanceFixedChargeEvents(
-  env: Env,
+  env: PlanCatalogEnv,
   events: PreparedFixedChargeUnitEvent[],
   effectiveAt: string,
   correlationId: string,

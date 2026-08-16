@@ -1,6 +1,8 @@
 import type { DomainEvent } from "../domain-events";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+
+type PayInAdvanceFixedChargeEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">;
 import { rateCharge, rateProratedFixedCharge } from "../rating/charge-models";
 import { Decimal } from "../rating/decimal";
 import { parseChargeModel } from "../usage/charge-properties";
@@ -41,7 +43,7 @@ export type PayInAdvanceFixedChargeInvoiceResult = {
 };
 
 export async function createInitialPayInAdvanceFixedChargeInvoice(
-  env: Env,
+  env: PayInAdvanceFixedChargeEnv,
   subscriptionId: string,
   effectiveAt: string,
   correlationId: string,
@@ -134,7 +136,7 @@ export async function createInitialPayInAdvanceFixedChargeInvoice(
 }
 
 export async function createPayInAdvanceFixedChargeDeltaInvoice(
-  env: Env,
+  env: PayInAdvanceFixedChargeEnv,
   subscriptionId: string,
   effectiveAt: string,
   correlationId: string,
@@ -319,7 +321,7 @@ const MAX_ADVANCE_FIXED_CHARGE_EVENTS = 200;
 const MAX_ADVANCE_FIXED_CHARGE_LINES = 1_000;
 
 export async function repairPendingPayInAdvanceFixedChargeInvoices(
-  env: Env,
+  env: PayInAdvanceFixedChargeEnv,
   dueAt: string,
   correlationId: string,
 ): Promise<number> {
@@ -382,7 +384,7 @@ export async function repairPendingPayInAdvanceFixedChargeInvoices(
 }
 
 async function persistPayInAdvanceFixedChargeInvoice(
-  env: Env,
+  env: PayInAdvanceFixedChargeEnv,
   subscription: BillableSubscription,
   invoiceId: string,
   effectiveAt: string,

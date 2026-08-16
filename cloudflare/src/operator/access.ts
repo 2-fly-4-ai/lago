@@ -10,6 +10,7 @@ export type OperatorEnv = {
   BILLING_ACCOUNTS: DurableObjectNamespace<import("../index").BillingAccount>;
   BILLING_DB: D1Database;
   DOMAIN_EVENTS: Queue;
+  PLAN_DELETION_WORKFLOW: Env["PLAN_DELETION_WORKFLOW"];
   OPERATOR_ACCESS_ENABLED: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;

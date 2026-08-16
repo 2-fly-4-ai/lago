@@ -60,6 +60,10 @@
             <span class="nav-icon" aria-hidden="true">◇</span>
             Coupons
           </a>
+          <a class="nav-item" href="#plans">
+            <span class="nav-icon" aria-hidden="true">▧</span>
+            Plans
+          </a>
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -512,6 +516,76 @@
                       </tr>
                     </thead>
                     <tbody id="applied-coupons-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="plans" aria-labelledby="plans-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Product catalog</p>
+                  <h2 id="plans-title">Plans</h2>
+                  <p>Manage core recurring plans and their add-on-backed fixed charges.</p>
+                </div>
+                <div class="row-actions">
+                  <button
+                    class="secondary-button"
+                    id="open-create-fixed-charge"
+                    type="button"
+                    hidden
+                  >
+                    Add fixed charge</button
+                  ><button class="primary-button" id="open-create-plan" type="button" hidden>
+                    <span aria-hidden="true">+</span>Create plan
+                  </button>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="plans-loading" aria-live="polite">
+                  Loading plans…
+                </div>
+                <div class="empty-state" id="plans-empty" hidden>
+                  <span aria-hidden="true">▧</span>
+                  <h3>No plans</h3>
+                  <p id="plans-empty-copy">This organization has no active plans.</p>
+                </div>
+                <div class="table-scroll" id="plans-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Plan</th>
+                        <th scope="col">Interval</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Trial</th>
+                        <th scope="col">Fixed charges</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="plans-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <h3>Fixed charges</h3>
+              <div class="table-shell">
+                <div class="empty-state" id="fixed-charges-empty" hidden>
+                  <span aria-hidden="true">＋</span>
+                  <h3>No fixed charges</h3>
+                  <p>No active plan fixed charges are configured.</p>
+                </div>
+                <div class="table-scroll" id="fixed-charges-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Charge</th>
+                        <th scope="col">Plan</th>
+                        <th scope="col">Add-on</th>
+                        <th scope="col">Model</th>
+                        <th scope="col">Units</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="fixed-charges-table-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -1094,6 +1168,137 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button
           ><button class="primary-button" id="submit-apply-coupon" value="default" type="submit">
             Apply coupon
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal section-modal" id="plan-form-dialog" aria-labelledby="plan-form-title">
+      <form method="dialog" id="plan-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Product catalog</p>
+            <h2 id="plan-form-title">Create plan</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy" id="plan-form-copy">Create a core recurring plan.</p>
+        <div class="field-grid">
+          <div>
+            <label for="plan-name">Name</label><input id="plan-name" maxlength="255" required />
+          </div>
+          <div>
+            <label for="plan-code">Code</label><input id="plan-code" maxlength="255" required />
+          </div>
+          <div>
+            <label for="plan-interval">Interval</label
+            ><select id="plan-interval">
+              <option value="weekly">Weekly</option>
+              <option value="monthly" selected>Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+          </div>
+          <div>
+            <label for="plan-amount">Amount (minor units)</label
+            ><input id="plan-amount" type="number" min="0" step="1" required />
+          </div>
+          <div>
+            <label for="plan-currency">Currency</label
+            ><input id="plan-currency" minlength="3" maxlength="3" required />
+          </div>
+          <div>
+            <label for="plan-trial">Trial period (days)</label
+            ><input id="plan-trial" type="number" min="0" step="1" />
+          </div>
+        </div>
+        <label for="plan-invoice-name">Invoice display name</label
+        ><input id="plan-invoice-name" maxlength="255" /><label for="plan-description"
+          >Description</label
+        ><textarea id="plan-description" rows="3"></textarea
+        ><label class="checkbox-field" for="plan-pay-advance"
+          ><input id="plan-pay-advance" type="checkbox" /><span
+            >Bill base amount in advance</span
+          ></label
+        >
+        <p class="field-hint">
+          Usage charges, thresholds, commitments, taxes, and metadata are separate gated workflows.
+        </p>
+        <p class="form-error" id="plan-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-plan-form" value="default" type="submit">
+            Create plan
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="fixed-charge-form-dialog"
+      aria-labelledby="fixed-charge-form-title"
+    >
+      <form method="dialog" id="fixed-charge-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Plan charge</p>
+            <h2 id="fixed-charge-form-title">Add fixed charge</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="fixed-charge-plan">Plan</label
+            ><select id="fixed-charge-plan" required></select>
+          </div>
+          <div>
+            <label for="fixed-charge-add-on">Add-on</label
+            ><select id="fixed-charge-add-on" required></select>
+          </div>
+          <div>
+            <label for="fixed-charge-code">Code</label
+            ><input id="fixed-charge-code" maxlength="255" required />
+          </div>
+          <div>
+            <label for="fixed-charge-model">Charge model</label
+            ><select id="fixed-charge-model">
+              <option value="standard">Standard</option>
+              <option value="graduated">Graduated</option>
+              <option value="volume">Volume</option>
+            </select>
+          </div>
+          <div>
+            <label for="fixed-charge-units">Units</label
+            ><input id="fixed-charge-units" type="number" min="0" step="any" required />
+          </div>
+        </div>
+        <label for="fixed-charge-invoice-name">Invoice display name</label
+        ><input id="fixed-charge-invoice-name" maxlength="255" /><label
+          for="fixed-charge-properties"
+          >Rating properties (JSON)</label
+        ><textarea id="fixed-charge-properties" rows="5" required>{"amount":"0"}</textarea
+        ><label class="checkbox-field" for="fixed-charge-pay-advance"
+          ><input id="fixed-charge-pay-advance" type="checkbox" /><span
+            >Bill in advance</span
+          ></label
+        ><label class="checkbox-field" for="fixed-charge-prorated"
+          ><input id="fixed-charge-prorated" type="checkbox" /><span>Prorate charge</span></label
+        ><label class="checkbox-field" for="fixed-charge-apply-now"
+          ><input id="fixed-charge-apply-now" type="checkbox" /><span
+            >Apply unit changes immediately</span
+          ></label
+        >
+        <p class="form-error" id="fixed-charge-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button
+            class="primary-button"
+            id="submit-fixed-charge-form"
+            value="default"
+            type="submit"
+          >
+            Add fixed charge
           </button>
         </div>
       </form>

@@ -50,6 +50,7 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/customers",
       "/api/operator/v1/coupons",
       "/api/operator/v1/applied-coupons",
+      "/api/operator/v1/plans",
     ]) {
       expect(operatorScript).toContain(endpoint);
     }
@@ -73,6 +74,7 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("Customers");
     expect(operatorIndex).toContain("Customer applications");
     expect(operatorIndex).toContain("Coupon definitions are immutable after creation");
+    expect(operatorIndex).toContain("Usage charges, thresholds, commitments, taxes, and metadata");
     expect(operatorIndex).toContain("Provider settings, dunning, metadata, custom sections");
     expect(operatorIndex).toContain("E-invoicing, tax assignment, and additional billing entities");
     expect(operatorScript).toContain("state.oneTimeSecret = null");

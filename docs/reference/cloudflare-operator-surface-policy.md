@@ -129,6 +129,12 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    Object through a cross-script binding for the same per-customer command reservation boundary.
    Coupon definitions are immutable after creation, and edit/delete plus plan, billable-metric, and
    customer targeting are not exposed.
+   Core plan list/show/create/edit/delete and nested add-on-backed fixed-charge lifecycle are also
+   implemented. The BFF rejects embedded usage-charge graphs, thresholds, commitments, taxes, and
+   metadata pending their own mapped editors. In-use plan deletion preserves the canonical durable
+   deletion task and calls the API Worker’s `PLAN_DELETION_WORKFLOW` through a cross-script binding;
+   fixed-charge mutations retain their canonical cascade, pricing-model, and immediate-billing
+   guards.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

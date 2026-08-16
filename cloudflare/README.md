@@ -330,6 +330,14 @@ remaining Lago feature inventory is dispositioned and ported.
   API Worker’s `BILLING_ACCOUNTS` Durable Object through a cross-script binding so apply/terminate
   commands keep their existing idempotency and per-customer serialization. Coupon edit/delete and
   plan, metric, or customer targeting remain unavailable.
+  `/api/operator/v1/plans` and its nested `/fixed-charges` routes provide the next bounded catalog
+  family. Viewers can inspect the active core plan/fixed-charge graph; admins can create, edit, and
+  delete core recurring plans and add-on-backed fixed charges. The BFF rejects embedded usage
+  charges, thresholds, commitments, taxes, and metadata until those editors are separately mapped.
+  Deleting an in-use plan retains the canonical durable deletion task and reaches the API Worker’s
+  `PLAN_DELETION_WORKFLOW` through a cross-script Workflow binding; unused plans retire
+  transactionally. The fixed-charge path retains canonical cascade, in-use, pricing-model, and
+  immediate-unit billing guards.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

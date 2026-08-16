@@ -22,6 +22,7 @@ function operatorEnv(overrides: Partial<OperatorEnv> = {}): OperatorEnv {
     BILLING_ACCOUNTS: env.BILLING_ACCOUNTS,
     BILLING_DB: env.BILLING_DB,
     DOMAIN_EVENTS: env.DOMAIN_EVENTS,
+    PLAN_DELETION_WORKFLOW: env.PLAN_DELETION_WORKFLOW,
     OPERATOR_ACCESS_ENABLED: "1",
     ACCESS_TEAM_DOMAIN: issuer,
     ACCESS_AUD: audience,
@@ -75,11 +76,22 @@ beforeEach(async () => {
       "DELETE FROM invoice_custom_sections WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare("DELETE FROM taxes WHERE organization_id = 'org-operator-access'"),
-    env.BILLING_DB.prepare("DELETE FROM add_ons WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
       "DELETE FROM applied_coupons WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare("DELETE FROM coupons WHERE organization_id = 'org-operator-access'"),
+    env.BILLING_DB.prepare(
+      "DELETE FROM fixed_charges WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare("DELETE FROM add_ons WHERE organization_id = 'org-operator-access'"),
+    env.BILLING_DB.prepare("DELETE FROM charges WHERE organization_id = 'org-operator-access'"),
+    env.BILLING_DB.prepare(
+      "DELETE FROM usage_thresholds WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM minimum_commitments WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare("DELETE FROM plans WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
       "DELETE FROM payment_receipts WHERE organization_id = 'org-operator-access'",
     ),
@@ -866,6 +878,133 @@ describe("operator Worker disabled boundary", () => {
     await expect(terminated.json()).resolves.toMatchObject({
       applied_coupon: { status: "terminated" },
     });
+  });
+
+  it("maps core plan lifecycle and nested fixed-charge lifecycle without admitting usage graphs", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/plans", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerList.json()).resolves.toMatchObject({
+      plans: [],
+      meta: { total_count: 0 },
+    });
+    expect(
+      (
+        await operatorMutation("POST", "/plans", {
+          plan: {
+            code: "operator-plan",
+            name: "Operator Plan",
+            interval: "monthly",
+            amount_cents: 1000,
+            amount_currency: "USD",
+          },
+        })
+      ).status,
+    ).toBe(403);
+
+    await promoteOperatorAdmin();
+    const addOn = await operatorMutation("POST", "/add-ons", {
+      add_on: {
+        code: "operator-seat",
+        name: "Operator Seat",
+        amount_cents: 250,
+        amount_currency: "USD",
+      },
+    });
+    const addOnId = (await addOn.json<{ add_on: { lago_id: string } }>()).add_on.lago_id;
+    const created = await operatorMutation("POST", "/plans", {
+      plan: {
+        code: "operator-plan",
+        name: "Operator Plan",
+        invoice_display_name: "Operator plan invoice",
+        description: "Synthetic operator plan",
+        interval: "monthly",
+        amount_cents: 1000,
+        amount_currency: "usd",
+        trial_period: 7,
+        pay_in_advance: true,
+      },
+    });
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      plan: {
+        code: "operator-plan",
+        amount_cents: 1000,
+        amount_currency: "USD",
+        trial_period: 7,
+        pay_in_advance: true,
+      },
+    });
+
+    const blockedGraph = await operatorMutation("PUT", "/plans/operator-plan", {
+      plan: { charges: [] },
+    });
+    expect(blockedGraph.status).toBe(422);
+    await expect(blockedGraph.json()).resolves.toMatchObject({
+      code: "unsupported_operator_plan_field",
+    });
+
+    const fixed = await operatorMutation("POST", "/plans/operator-plan/fixed-charges", {
+      fixed_charge: {
+        add_on_id: addOnId,
+        code: "seat-charge",
+        invoice_display_name: "Seats",
+        charge_model: "standard",
+        properties: { amount: "250" },
+        units: "2",
+      },
+    });
+    expect(fixed.status).toBe(200);
+    await expect(fixed.json()).resolves.toMatchObject({
+      fixed_charge: { code: "seat-charge", add_on_code: "operator-seat", units: "2" },
+    });
+    const fixedList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/plans/operator-plan/fixed-charges", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(fixedList.json()).resolves.toMatchObject({
+      fixed_charges: [{ code: "seat-charge" }],
+      meta: { total_count: 1 },
+    });
+    const fixedUpdated = await operatorMutation(
+      "PUT",
+      "/plans/operator-plan/fixed-charges/seat-charge",
+      { fixed_charge: { invoice_display_name: "Updated seats", units: "3" } },
+    );
+    await expect(fixedUpdated.json()).resolves.toMatchObject({
+      fixed_charge: { code: "seat-charge", invoice_display_name: "Updated seats", units: "3" },
+    });
+    expect(
+      (
+        await operatorMutation("DELETE", "/plans/operator-plan/fixed-charges/seat-charge", {
+          fixed_charge: { cascade_updates: false },
+        })
+      ).status,
+    ).toBe(200);
+
+    const updated = await operatorMutation("PUT", "/plans/operator-plan", {
+      plan: { code: "operator-plan-v2", name: "Operator Plan v2", amount_cents: 1250 },
+    });
+    await expect(updated.json()).resolves.toMatchObject({
+      plan: { code: "operator-plan-v2", name: "Operator Plan v2", amount_cents: 1250 },
+    });
+    const deleted = await operatorMutation("DELETE", "/plans/operator-plan-v2");
+    expect(deleted.status).toBe(200);
+    const empty = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/plans", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(empty.json()).resolves.toMatchObject({ plans: [], meta: { total_count: 0 } });
   });
 
   it("maps customer reads for viewers and upserts for admins while keeping deletion unavailable", async () => {
