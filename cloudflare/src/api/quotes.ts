@@ -40,6 +40,7 @@ type QuoteVersionRow = {
 };
 
 type SerializedQuote = Record<string, unknown>;
+type QuotesEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">;
 
 const ORDER_TYPES = new Set(["subscription_creation", "subscription_amendment", "one_off"]);
 const VERSION_STATUSES = new Set(["draft", "approved", "voided"]);
@@ -49,7 +50,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 export async function handleQuotesApi(
   request: Request,
-  env: Env,
+  env: QuotesEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response | null> {
@@ -86,7 +87,7 @@ export async function handleQuotesApi(
 
 async function createQuote(
   request: Request,
-  env: Env,
+  env: QuotesEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -302,7 +303,7 @@ async function showQuote(
 async function updateQuote(
   quoteId: string,
   request: Request,
-  env: Env,
+  env: QuotesEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -358,7 +359,7 @@ async function updateQuote(
 async function updateQuoteVersion(
   versionId: string,
   request: Request,
-  env: Env,
+  env: QuotesEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -417,7 +418,7 @@ async function updateQuoteVersion(
 
 async function approveQuoteVersion(
   versionId: string,
-  env: Env,
+  env: QuotesEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -461,7 +462,7 @@ async function approveQuoteVersion(
 
 async function voidQuoteVersion(
   versionId: string,
-  env: Env,
+  env: QuotesEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -508,7 +509,7 @@ async function voidQuoteVersion(
 async function cloneQuoteVersion(
   versionId: string,
   request: Request,
-  env: Env,
+  env: QuotesEnv,
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
@@ -651,7 +652,7 @@ async function cloneQuoteVersion(
 }
 
 async function guardedVersionMutation(
-  env: Env,
+  env: QuotesEnv,
   current: QuoteVersionRow,
   mutation: D1PreparedStatement,
   event: DomainEvent,

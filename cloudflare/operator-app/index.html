@@ -83,6 +83,9 @@
           <a class="nav-item" href="#payments"
             ><span class="nav-icon" aria-hidden="true">$</span>Payments</a
           >
+          <a class="nav-item" href="#quotes"
+            ><span class="nav-icon" aria-hidden="true">“</span>Quotes</a
+          >
           <a class="nav-item" href="#payment-receipts">
             <span class="nav-icon" aria-hidden="true">¤</span>
             Payment receipts
@@ -802,6 +805,47 @@
                       </tr>
                     </thead>
                     <tbody id="payments-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="quotes" aria-labelledby="quotes-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Commercial proposals</p>
+                  <h2 id="quotes-title">Quotes</h2>
+                  <p>
+                    Manage the retained draft, approval, void, and superseding-version lifecycle.
+                  </p>
+                </div>
+                <button class="primary-button" id="open-create-quote" type="button" hidden>
+                  <span aria-hidden="true">+</span>Create quote
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="quotes-loading" aria-live="polite">
+                  Loading quotes…
+                </div>
+                <div class="empty-state" id="quotes-empty" hidden>
+                  <span aria-hidden="true">“</span>
+                  <h3>No quotes</h3>
+                  <p id="quotes-empty-copy">This organization has no quotes.</p>
+                </div>
+                <div class="table-scroll" id="quotes-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Quote</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Order type</th>
+                        <th scope="col">Version</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Updated</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="quotes-table-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -1807,6 +1851,53 @@
             type="submit"
           >
             Create credit note
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal section-modal" id="quote-form-dialog" aria-labelledby="quote-form-title">
+      <form method="dialog" id="quote-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Commercial proposal</p>
+            <h2 id="quote-form-title">Create quote</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+        </div>
+        <p class="modal-copy" id="quote-form-copy">Create a new draft quote.</p>
+        <div class="field-grid">
+          <div>
+            <label for="quote-customer">Customer</label
+            ><select id="quote-customer" required></select>
+          </div>
+          <div>
+            <label for="quote-order-type">Order type</label
+            ><select id="quote-order-type">
+              <option value="one_off">One off</option>
+              <option value="subscription_creation">Subscription creation</option>
+              <option value="subscription_amendment">Subscription amendment</option>
+            </select>
+          </div>
+          <div>
+            <label for="quote-subscription">Subscription (amendments only)</label
+            ><select id="quote-subscription">
+              <option value="">None</option>
+            </select>
+          </div>
+        </div>
+        <label for="quote-content">Content</label><textarea id="quote-content" rows="5"></textarea>
+        <label for="quote-billing-items">Billing items (JSON array)</label
+        ><textarea id="quote-billing-items" rows="8">[]</textarea>
+        <p class="field-hint">
+          Quotes have no PDF, template, generation, download, email, or public delivery contract in
+          the retained API.
+        </p>
+        <p class="form-error" id="quote-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-quote-form" value="default" type="submit">
+            Create quote
           </button>
         </div>
       </form>

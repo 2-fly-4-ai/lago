@@ -120,6 +120,13 @@ beforeEach(async () => {
       "DELETE FROM credit_notes WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare(
+      "DELETE FROM quote_owners WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM quote_versions WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare("DELETE FROM quotes WHERE organization_id = 'org-operator-access'"),
+    env.BILLING_DB.prepare(
       "DELETE FROM plan_change_invoice_contexts WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare(
@@ -1409,6 +1416,60 @@ describe("operator Worker disabled boundary", () => {
     });
     expect(mutation.status).toBe(405);
     await expect(mutation.json()).resolves.toMatchObject({ code: "operator_payments_read_only" });
+  });
+
+  it("maps quote draft editing and approval without inventing document actions", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/quotes", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(viewerList.json()).resolves.toMatchObject({
+      quotes: [],
+      meta: { total_count: 0 },
+    });
+    await promoteOperatorAdmin();
+    const customer = await operatorMutation("POST", "/customers", {
+      customer: { external_id: "quote-customer", name: "Quote Customer", currency: "USD" },
+    }).then((response) => response.json<{ customer: { lago_id: string } }>());
+    const created = await operatorMutation(
+      "POST",
+      "/quotes",
+      {
+        quote: {
+          customer_id: customer.customer.lago_id,
+          order_type: "one_off",
+          owner_ids: [],
+          content: "Synthetic operator quote",
+          billing_items: [{ description: "Consulting", amount_cents: 1200 }],
+        },
+      },
+      { "Idempotency-Key": "operator-quote" },
+    );
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{
+      quote: { lago_id: string; current_version: { lago_id: string; lock_version: number } };
+    }>();
+    const versionId = createdBody.quote.current_version.lago_id;
+    const edited = await operatorMutation("PUT", `/quote-versions/${versionId}`, {
+      quote_version: {
+        lock_version: createdBody.quote.current_version.lock_version,
+        content: "Approved synthetic quote",
+      },
+    });
+    expect(edited.status).toBe(200);
+    const approved = await operatorMutation("POST", `/quote-versions/${versionId}/approve`);
+    expect(approved.status).toBe(200);
+    await expect(approved.json()).resolves.toMatchObject({
+      quote_version: { status: "approved", content: "Approved synthetic quote" },
+    });
+    const blockedDocument = await operatorMutation("POST", `/quote-versions/${versionId}/download`);
+    expect(blockedDocument.status).toBe(422);
+    await expect(blockedDocument.json()).resolves.toMatchObject({
+      code: "unsupported_operator_quote_action",
+    });
   });
 
   it("maps customer reads for viewers and upserts for admins while keeping deletion unavailable", async () => {

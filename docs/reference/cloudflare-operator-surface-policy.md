@@ -155,6 +155,10 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    Payment list/show is exposed as a read-only settlement ledger. Payment recording, payment-link
    creation, provider retry, and every other mutation remain unavailable in the operator Worker and
    retain their existing disabled external-action gates.
+   Quote list/show plus admin idempotent draft create, owner/version edit, approve/void, and
+   superseding clone is implemented through the canonical D1 and Queue REST replacement. No PDF,
+   template, generation, download, email, or public-delivery behavior is invented for the operator
+   surface.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
 7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`

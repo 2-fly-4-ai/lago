@@ -25,6 +25,7 @@ import { showOrganization } from "../api/organizations";
 import { handlePaymentReceiptReadsApi } from "../api/payment-receipts";
 import { listPayments, showPayment } from "../api/payment-ledger";
 import { handlePlanCatalogRequest } from "../api/plan-catalog";
+import { handleQuotesApi } from "../api/quotes";
 import { handleTaxLedgerRequest } from "../api/tax-ledger";
 import { handleSubscriptionLifecycleRequest } from "../api/subscription-lifecycle";
 import { handleWalletLedgerRequest } from "../api/wallet-ledger";
@@ -227,6 +228,34 @@ export async function handleOperatorRequest(
       if (match?.[1]) {
         return showPayment(decodeURIComponent(match[1]), env.BILLING_DB, auth, requestId);
       }
+    }
+
+    if (
+      /^\/api\/operator\/v1\/quotes(?:\/|$)/.test(url.pathname) ||
+      /^\/api\/operator\/v1\/quote-versions(?:\/|$)/.test(url.pathname)
+    ) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+        await assertOperatorQuoteMutationPayload(request, url.pathname);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname
+        .replace("/api/operator/v1/quotes", "/api/v1/quotes")
+        .replace("/api/operator/v1/quote-versions", "/api/v1/quote_versions");
+      const response = await handleQuotesApi(
+        new Request(forwardedUrl, request),
+        env,
+        auth,
+        requestId,
+      );
+      if (response) return response;
     }
 
     if (/^\/api\/operator\/v1\/taxes(?:\/|$)/.test(url.pathname)) {
@@ -741,5 +770,46 @@ async function assertOperatorCreditNoteMutationPayload(
         `${unsupportedItem} is not admitted to the operator credit note workflow`,
       );
     }
+  }
+}
+
+async function assertOperatorQuoteMutationPayload(
+  request: Request,
+  pathname: string,
+): Promise<void> {
+  const action = pathname.match(/\/(approve|void|clone)$/)?.[1];
+  if (request.method === "POST" && action) return;
+  const creating = request.method === "POST" && pathname === "/api/operator/v1/quotes";
+  const updatingQuote = request.method === "PUT" && pathname.startsWith("/api/operator/v1/quotes/");
+  const updatingVersion =
+    request.method === "PUT" && pathname.startsWith("/api/operator/v1/quote-versions/");
+  if (!creating && !updatingQuote && !updatingVersion) {
+    throw new ApiError(
+      422,
+      "unsupported_operator_quote_action",
+      "This quote action is not admitted to the operator workflow",
+    );
+  }
+  const wrapper = updatingVersion ? "quote_version" : "quote";
+  const input = objectAt(await parseJsonObject(request.clone()), wrapper);
+  const supported = creating
+    ? new Set([
+        "customer_id",
+        "order_type",
+        "subscription_id",
+        "owner_ids",
+        "billing_items",
+        "content",
+      ])
+    : updatingQuote
+      ? new Set(["version", "owner_ids"])
+      : new Set(["lock_version", "billing_items", "content"]);
+  const unsupported = Object.keys(input).find((key) => !supported.has(key));
+  if (unsupported) {
+    throw new ApiError(
+      422,
+      "unsupported_operator_quote_field",
+      `${unsupported} is not admitted to the operator quote workflow`,
+    );
   }
 }

@@ -364,6 +364,10 @@ remaining Lago feature inventory is dispositioned and ported.
   `/api/operator/v1/payments` is a read-only settlement ledger for provider and manual payment
   evidence. The operator BFF rejects every payment mutation; payment links, retries, and manual
   settlement writes remain behind their existing disabled external-action gates.
+  `/api/operator/v1/quotes` and `/api/operator/v1/quote-versions` expose the retained quote REST
+  replacement: viewer list/show plus admin idempotent draft create, owner/version edits,
+  approve/void, and superseding clone. The operator surface does not invent PDF, template,
+  generation, download, email, or public-delivery behavior absent from the canonical contract.
 - Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
   a retryable Document Workflow.
 - Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at

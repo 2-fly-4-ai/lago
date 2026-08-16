@@ -17,6 +17,8 @@ const endpoints = {
   walletTransactions: "/api/operator/v1/wallet-transactions",
   creditNotes: "/api/operator/v1/credit-notes",
   payments: "/api/operator/v1/payments",
+  quotes: "/api/operator/v1/quotes",
+  quoteVersions: "/api/operator/v1/quote-versions",
 };
 
 const elements = {
@@ -303,6 +305,23 @@ const elements = {
   paymentsEmpty: document.querySelector("#payments-empty"),
   paymentsTableShell: document.querySelector("#payments-table-shell"),
   paymentsTableBody: document.querySelector("#payments-table-body"),
+  openCreateQuote: document.querySelector("#open-create-quote"),
+  quotesLoading: document.querySelector("#quotes-loading"),
+  quotesEmpty: document.querySelector("#quotes-empty"),
+  quotesEmptyCopy: document.querySelector("#quotes-empty-copy"),
+  quotesTableShell: document.querySelector("#quotes-table-shell"),
+  quotesTableBody: document.querySelector("#quotes-table-body"),
+  quoteFormDialog: document.querySelector("#quote-form-dialog"),
+  quoteForm: document.querySelector("#quote-form"),
+  quoteFormTitle: document.querySelector("#quote-form-title"),
+  quoteFormCopy: document.querySelector("#quote-form-copy"),
+  quoteCustomer: document.querySelector("#quote-customer"),
+  quoteOrderType: document.querySelector("#quote-order-type"),
+  quoteSubscription: document.querySelector("#quote-subscription"),
+  quoteContent: document.querySelector("#quote-content"),
+  quoteBillingItems: document.querySelector("#quote-billing-items"),
+  quoteFormError: document.querySelector("#quote-form-error"),
+  submitQuoteForm: document.querySelector("#submit-quote-form"),
   keyFormDialog: document.querySelector("#key-form-dialog"),
   keyForm: document.querySelector("#key-form"),
   keyFormTitle: document.querySelector("#key-form-title"),
@@ -374,6 +393,10 @@ const state = {
   creditNotes: [],
   selectedCreditNoteId: null,
   payments: [],
+  quotes: [],
+  quoteFormMode: "create",
+  selectedQuoteId: null,
+  selectedQuoteVersionId: null,
 };
 
 elements.dismissError.addEventListener("click", hidePageError);
@@ -425,6 +448,9 @@ elements.walletTopUpForm.addEventListener("submit", submitWalletTopUp);
 elements.openCreateCreditNote.addEventListener("click", openCreateCreditNoteDialog);
 elements.creditNotesTableBody.addEventListener("click", handleCreditNoteAction);
 elements.creditNoteForm.addEventListener("submit", submitCreditNoteForm);
+elements.openCreateQuote.addEventListener("click", openCreateQuoteDialog);
+elements.quotesTableBody.addEventListener("click", handleQuoteAction);
+elements.quoteForm.addEventListener("submit", submitQuoteForm);
 
 void initialize();
 
@@ -450,6 +476,7 @@ async function initialize() {
       walletsPayload,
       creditNotesPayload,
       paymentsPayload,
+      quotesPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -467,6 +494,7 @@ async function initialize() {
       requestJson(endpoints.wallets),
       requestJson(endpoints.creditNotes),
       requestJson(endpoints.payments),
+      requestJson(endpoints.quotes),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -485,6 +513,7 @@ async function initialize() {
     renderWallets(walletsPayload.wallets);
     renderCreditNotes(creditNotesPayload.credit_notes);
     renderPayments(paymentsPayload.payments);
+    renderQuotes(quotesPayload.quotes);
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
@@ -512,6 +541,7 @@ function renderOperator(operator) {
   elements.openCreateInvoice.hidden = !isAdmin;
   elements.openCreateWallet.hidden = !isAdmin;
   elements.openCreateCreditNote.hidden = !isAdmin;
+  elements.openCreateQuote.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -539,6 +569,9 @@ function renderOperator(operator) {
   elements.creditNotesEmptyCopy.textContent = isAdmin
     ? "Create an itemized internal credit against a finalized invoice."
     : "This organization has no credit notes. Admin access is required to create one.";
+  elements.quotesEmptyCopy.textContent = isAdmin
+    ? "Create a retained draft proposal for a billing customer."
+    : "This organization has no quotes. Admin access is required to create one.";
   elements.subscriptionsEmptyCopy.textContent = isAdmin
     ? "Create a customer subscription from an active plan."
     : "This organization has no subscriptions. Admin access is required to create one.";
@@ -2407,6 +2440,209 @@ function renderPayments(payments) {
   }
 }
 
+function renderQuotes(quotes) {
+  state.quotes = Array.isArray(quotes) ? quotes : [];
+  elements.quotesTableBody.replaceChildren();
+  elements.quotesLoading.hidden = true;
+  elements.quotesEmpty.hidden = state.quotes.length !== 0;
+  elements.quotesTableShell.hidden = state.quotes.length === 0;
+  for (const quote of state.quotes) {
+    const current = quote.current_version ?? {};
+    const row = document.createElement("tr");
+    const identity = document.createElement("td");
+    const number = document.createElement("span");
+    number.className = "key-name";
+    number.textContent = safeText(quote.number, "Unnumbered quote");
+    const id = document.createElement("span");
+    id.className = "key-id";
+    id.textContent = safeText(quote.lago_id, "—");
+    identity.append(number, id);
+    row.append(identity);
+    const values = [
+      quote.external_customer_id,
+      quote.order_type,
+      current.version === undefined ? "—" : String(current.version),
+      current.status,
+      formatDate(current.updated_at ?? quote.updated_at),
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = safeText(value, "—");
+      row.append(cell);
+    }
+    const actions = document.createElement("td");
+    actions.className = "actions-column";
+    if (state.role === "admin" && current.lago_id) {
+      const group = document.createElement("div");
+      group.className = "row-actions";
+      if (current.status === "draft") {
+        group.append(
+          quoteActionButton("Edit", "edit-quote", quote.lago_id, current.lago_id),
+          quoteActionButton("Approve", "approve-quote", quote.lago_id, current.lago_id),
+          quoteActionButton("Void", "void-quote", quote.lago_id, current.lago_id, true),
+        );
+      } else if (current.status === "voided") {
+        group.append(
+          quoteActionButton("New version", "clone-quote", quote.lago_id, current.lago_id),
+        );
+      }
+      if (group.childNodes.length > 0) actions.append(group);
+      else actions.textContent = "No action";
+    } else actions.textContent = state.role === "admin" ? "No action" : "Read only";
+    row.append(actions);
+    elements.quotesTableBody.append(row);
+  }
+}
+
+function quoteActionButton(label, action, quoteId, versionId, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = danger ? "row-action danger" : "row-action";
+  button.dataset.action = action;
+  button.dataset.quoteId = quoteId;
+  button.dataset.quoteVersionId = versionId;
+  button.textContent = label;
+  return button;
+}
+
+async function handleQuoteAction(event) {
+  const button = event.target.closest("button[data-quote-version-id]");
+  if (!button || state.role !== "admin") return;
+  const quote = state.quotes.find((item) => item.lago_id === button.dataset.quoteId);
+  if (!quote) return;
+  state.selectedQuoteId = quote.lago_id;
+  state.selectedQuoteVersionId = button.dataset.quoteVersionId;
+  if (button.dataset.action === "edit-quote") return openEditQuoteDialog(quote);
+  if (button.dataset.action === "clone-quote") {
+    button.disabled = true;
+    try {
+      await requestJson(`${quoteVersionEndpoint(button.dataset.quoteVersionId)}/clone`, {
+        method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+      });
+      await refreshQuotes();
+    } catch (error) {
+      showPageError(errorMessage(error));
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+  state.confirmMode = button.dataset.action;
+  const approving = button.dataset.action === "approve-quote";
+  elements.confirmTitle.textContent = approving ? "Approve quote?" : "Void quote?";
+  elements.confirmCopy.textContent = approving
+    ? "Approval locks this quote version from further editing."
+    : "Voiding removes the draft share token while retaining audit history.";
+  elements.confirmAction.textContent = approving ? "Approve quote" : "Void quote";
+  elements.confirmError.hidden = true;
+  elements.confirmDialog.showModal();
+}
+
+function openCreateQuoteDialog() {
+  if (state.customers.length === 0) {
+    showPageError("Create a customer before creating a quote.");
+    return;
+  }
+  state.quoteFormMode = "create";
+  elements.quoteForm.reset();
+  populateQuoteSelectors();
+  elements.quoteFormTitle.textContent = "Create quote";
+  elements.quoteFormCopy.textContent = "Create a new draft quote.";
+  elements.quoteCustomer.disabled = false;
+  elements.quoteOrderType.disabled = false;
+  elements.quoteSubscription.disabled = false;
+  elements.quoteBillingItems.value = "[]";
+  elements.submitQuoteForm.textContent = "Create quote";
+  elements.quoteFormError.hidden = true;
+  elements.quoteFormDialog.showModal();
+}
+
+function openEditQuoteDialog(quote) {
+  state.quoteFormMode = "edit";
+  elements.quoteForm.reset();
+  populateQuoteSelectors();
+  elements.quoteCustomer.value = quote.lago_customer_id;
+  elements.quoteOrderType.value = quote.order_type;
+  elements.quoteSubscription.value = quote.lago_subscription_id ?? "";
+  elements.quoteCustomer.disabled = true;
+  elements.quoteOrderType.disabled = true;
+  elements.quoteSubscription.disabled = true;
+  elements.quoteContent.value = quote.current_version?.content ?? "";
+  elements.quoteBillingItems.value = JSON.stringify(
+    quote.current_version?.billing_items ?? [],
+    null,
+    2,
+  );
+  elements.quoteFormTitle.textContent = "Edit quote draft";
+  elements.quoteFormCopy.textContent = `Update ${quote.number}.`;
+  elements.submitQuoteForm.textContent = "Save draft";
+  elements.quoteFormError.hidden = true;
+  elements.quoteFormDialog.showModal();
+}
+
+function populateQuoteSelectors() {
+  replaceSelectOptions(
+    elements.quoteCustomer,
+    state.customers,
+    (item) => item.lago_id,
+    (item) => `${safeText(item.name, "Unnamed customer")} (${item.external_id})`,
+  );
+  elements.quoteSubscription.replaceChildren(new Option("None", ""));
+  for (const subscription of state.subscriptions) {
+    elements.quoteSubscription.append(new Option(subscription.external_id, subscription.lago_id));
+  }
+}
+
+async function submitQuoteForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.quoteFormDialog.close();
+  let billingItems;
+  try {
+    billingItems = JSON.parse(elements.quoteBillingItems.value);
+    if (!Array.isArray(billingItems)) throw new Error("invalid_items");
+  } catch {
+    elements.quoteFormError.textContent = "Billing items must be a JSON array.";
+    elements.quoteFormError.hidden = false;
+    return;
+  }
+  const create = state.quoteFormMode === "create";
+  const quote = state.quotes.find((item) => item.lago_id === state.selectedQuoteId);
+  const current = quote?.current_version;
+  setBusy(elements.submitQuoteForm, true, create ? "Creating…" : "Saving…");
+  try {
+    await requestJson(create ? endpoints.quotes : quoteVersionEndpoint(current.lago_id), {
+      method: create ? "POST" : "PUT",
+      ...(create ? { headers: { "Idempotency-Key": crypto.randomUUID() } } : {}),
+      body: create
+        ? {
+            quote: {
+              customer_id: elements.quoteCustomer.value,
+              order_type: elements.quoteOrderType.value,
+              subscription_id: optionalFormValue(elements.quoteSubscription.value),
+              owner_ids: [],
+              content: optionalFormValue(elements.quoteContent.value),
+              billing_items: billingItems,
+            },
+          }
+        : {
+            quote_version: {
+              lock_version: current.lock_version,
+              content: optionalFormValue(elements.quoteContent.value),
+              billing_items: billingItems,
+            },
+          },
+    });
+    elements.quoteFormDialog.close();
+    await refreshQuotes();
+  } catch (error) {
+    elements.quoteFormError.textContent = errorMessage(error);
+    elements.quoteFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitQuoteForm, false, create ? "Create quote" : "Save draft");
+  }
+}
+
 function openCreateCreditNoteDialog() {
   const invoices = state.invoices.filter((invoice) => invoice.status === "finalized");
   if (invoices.length === 0) {
@@ -2843,6 +3079,27 @@ async function submitConfirmedAction(event) {
     return;
   }
 
+  if (mode === "approve-quote" || mode === "void-quote") {
+    if (!state.selectedQuoteVersionId) return elements.confirmDialog.close();
+    const approving = mode === "approve-quote";
+    setBusy(elements.confirmAction, true, approving ? "Approving…" : "Voiding…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(
+        `${quoteVersionEndpoint(state.selectedQuoteVersionId)}/${approving ? "approve" : "void"}`,
+        { method: "POST" },
+      );
+      elements.confirmDialog.close();
+      await refreshQuotes();
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(elements.confirmAction, false, approving ? "Approve quote" : "Void quote");
+    }
+    return;
+  }
+
   const key = state.keys.find((candidate) => candidate.id === state.selectedKeyId);
   if (!key || (mode !== "rotate" && mode !== "revoke")) {
     elements.confirmDialog.close();
@@ -2986,6 +3243,16 @@ async function refreshCreditNotes() {
   try {
     const payload = await requestJson(endpoints.creditNotes);
     renderCreditNotes(payload.credit_notes);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+async function refreshQuotes() {
+  try {
+    const payload = await requestJson(endpoints.quotes);
+    renderQuotes(payload.quotes);
     hidePageError();
   } catch (error) {
     showPageError(errorMessage(error));
@@ -3141,6 +3408,10 @@ function walletEndpoint(walletId) {
 
 function creditNoteEndpoint(creditNoteId) {
   return `${endpoints.creditNotes}/${encodeURIComponent(creditNoteId)}`;
+}
+
+function quoteVersionEndpoint(versionId) {
+  return `${endpoints.quoteVersions}/${encodeURIComponent(versionId)}`;
 }
 
 function showPageError(message) {
