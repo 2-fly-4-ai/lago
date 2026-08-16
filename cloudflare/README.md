@@ -279,7 +279,7 @@ remaining Lago feature inventory is dispositioned and ported.
   authorities. The measured limits and sharding/fanout gates are recorded in
   `../docs/reference/cloudflare-usage-storage-decision.md`.
 - Operator Static Assets: the API Worker continues to serve a script-free migration shell while the
-  separate, undeployed operator Worker serves `operator-app`, a native-ES-module organization,
+  separate operator Worker serves `operator-app`, a native-ES-module organization,
   billing-profile, API-key, customer, catalog, coupon-application, and invoice-section workspace.
   Both bundles use direct Static Assets
   delivery, restrictive CSP/framing/
@@ -297,8 +297,11 @@ remaining Lago feature inventory is dispositioned and ported.
   Access RS256 JWT issuer, audience, signature, expiry, and subject; looks up only an issuer-scoped
   subject hash in the one-tenant D1 membership table; enforces viewer/admin roles plus same-origin/
   CSRF mutation prerequisites; and reports readiness/session `503` while Access is disabled. The
-  Worker config contains no invented issuer, audience, identity, or membership and is not deployed
-  before an approved Access allow policy exists. Its first read-only BFF route,
+  live Worker config contains no invented issuer, audience, identity, or membership. Because a
+  Worker-target Access application requires an existing Worker resource ID, the initial deployment
+  uses `wrangler.operator-bootstrap.jsonc`: a binding-free bootstrap that returns `503` and
+  `Cache-Control: no-store` for every route. The real assets and BFF are deployed only after the
+  approved Access application protects that Worker ID. Its first read-only BFF route,
   `GET /api/operator/v1/organization`, resolves the membership tenant and reuses the canonical
   organization REST serializer rather than creating a second browser-specific projection.
   `/api/operator/v1/api-keys` and its member/rotate routes reuse the secret-safe API-key control
@@ -562,6 +565,16 @@ emulator state only; it is not another repository worktree and does not affect r
 Wrangler automatic provisioning is intentionally configured for the isolated `serp-dev-*`
 resources. A deploy may create or bind D1, R2, Queue/DLQ, Workflows, the Worker, and the Durable
 Object namespace. Do not deploy until Wrangler identity and resource names have been reviewed.
+
+Before the first operator deployment, create the Worker ID with the fail-closed bootstrap:
+
+```sh
+wrangler deploy --config wrangler.operator-bootstrap.jsonc
+```
+
+Protect that Worker destination with the approved Cloudflare Access application and policy before
+applying the operator migrations or deploying `wrangler.operator.jsonc`. The bootstrap has no
+bindings or static assets, so it exposes neither the operator UI nor D1 while Access is being set up.
 
 Do not add production routes, production provider credentials, production data, or enable payment
 mutations without the separate approval gates in the active rewrite plan.
