@@ -140,6 +140,70 @@ function countBy(values, keyFor) {
   );
 }
 
+const operatorRestReplacements = [
+  ["organization", "/api/operator/v1/organization", "read"],
+  ["billing-entity", "/api/operator/v1/billing-entities", "read/admin-write"],
+  ["api-keys", "/api/operator/v1/api-keys", "read/admin-write"],
+  ["invoice-custom-sections", "/api/operator/v1/invoice-custom-sections", "read/admin-write"],
+  ["payment-receipts", "/api/operator/v1/payment-receipts", "read-only"],
+  ["taxes", "/api/operator/v1/taxes", "read/admin-write"],
+  ["add-ons", "/api/operator/v1/add-ons", "read/admin-write"],
+  ["customers", "/api/operator/v1/customers", "read/admin-write"],
+  ["coupons", "/api/operator/v1/coupons", "read/admin-write"],
+  ["applied-coupons", "/api/operator/v1/applied-coupons", "read/admin-write"],
+  ["plans", "/api/operator/v1/plans", "read/admin-write"],
+  ["subscriptions", "/api/operator/v1/subscriptions", "read/admin-write"],
+  ["invoices", "/api/operator/v1/invoices", "read/admin-write"],
+  ["wallets", "/api/operator/v1/wallets", "read/admin-write"],
+  ["wallet-transactions", "/api/operator/v1/wallet-transactions", "read/admin-write"],
+  ["credit-notes", "/api/operator/v1/credit-notes", "read/admin-write"],
+  ["payments", "/api/operator/v1/payments", "read-only"],
+  ["quotes", "/api/operator/v1/quotes", "read/admin-write"],
+  ["data-exports", "/api/operator/v1/data-exports", "read/admin-create"],
+  ["webhook-endpoints", "/api/operator/v1/webhook-endpoints", "read-only"],
+  ["dunning-campaigns", "/api/operator/v1/dunning-campaigns", "read/admin-write"],
+  ["payment-requests", "/api/operator/v1/payment-requests", "read-only"],
+].map(([family, route, access]) => ({ family, route, access, parityStatus: "tested" }));
+
+function legacyOperatorDisposition(sources) {
+  const joined = sources.join("\n").toLowerCase();
+  if (joined.includes("designsystem")) {
+    return { disposition: "retire", mappingStatus: "legacy-route-retired" };
+  }
+  if (joined.includes("customerportal")) {
+    return { disposition: "blocked", mappingStatus: "blocked-separate-public-contract" };
+  }
+  if (
+    joined.includes("/auth/") ||
+    joined.includes("invitation") ||
+    joined.includes("teamandsecurity")
+  ) {
+    return { disposition: "blocked", mappingStatus: "blocked-access-identity-lifecycle" };
+  }
+  if (joined.includes("/features/") || joined.includes("entitlement")) {
+    return { disposition: "external", mappingStatus: "external-serp-auth" };
+  }
+  if (
+    joined.includes("/integrations/") ||
+    joined.includes("aiagent") ||
+    joined.includes("paymentmethodslist")
+  ) {
+    return { disposition: "not-used", mappingStatus: "legacy-integration-not-used" };
+  }
+  if (
+    joined.includes("analytics") ||
+    joined.includes("graphs") ||
+    joined.includes("dashboards") ||
+    joined.includes("forecasts") ||
+    joined.includes("alert") ||
+    joined.includes("webhooklog") ||
+    joined.includes("apilog")
+  ) {
+    return { disposition: "blocked", mappingStatus: "deferred-bounded-read-contract" };
+  }
+  return { disposition: "port", mappingStatus: "legacy-graphql-disabled" };
+}
+
 function extractOperatorSurface(frontRoot) {
   const sourceRoot = join(frontRoot, "src");
   const generatedOperations = new Set();
@@ -209,36 +273,44 @@ function extractOperatorSurface(frontRoot) {
   }
 
   const operationList = [...operations.values()]
-    .map((operation) => ({
-      ...operation,
-      sources: operation.sources.sort(),
-      generated: generatedOperations.has(
-        `${operation.kind}:${operation.name.slice(0, 1).toUpperCase()}${operation.name.slice(1)}`,
-      ),
-      owner: "lago-operator-ui",
-      consumers: ["lago-operators"],
-      disposition: "port",
-      target: "Cloudflare REST compatibility or cloudflare/src/operator-api/",
-      parityStatus: "not-started",
-      mappingStatus: "unmapped",
-      migrationNotes:
-        "Map the complete screen contract before exposing this operation from a Cloudflare-hosted operator UI.",
-      rollbackNotes:
-        "Keep the legacy operator UI hidden until every visible screen dependency is mapped.",
-    }))
+    .map((operation) => {
+      const sources = operation.sources.sort();
+      const mapping = legacyOperatorDisposition(sources);
+      return {
+        ...operation,
+        sources,
+        generated: generatedOperations.has(
+          `${operation.kind}:${operation.name.slice(0, 1).toUpperCase()}${operation.name.slice(1)}`,
+        ),
+        owner: "lago-operator-ui",
+        consumers: ["lago-operators"],
+        disposition: mapping.disposition,
+        target: "cloudflare/operator-app plus membership-scoped REST BFF",
+        parityStatus: "explicit-boundary",
+        mappingStatus: mapping.mappingStatus,
+        migrationNotes:
+          "The legacy React/Apollo bundle is not deployed. Tested replacements are inventoried separately; every other legacy operation remains unreachable.",
+        rollbackNotes:
+          "Restore the script-free migration shell or disable the Access application; never deploy the legacy GraphQL bundle as fallback.",
+      };
+    })
     .sort(
       (left, right) => left.kind.localeCompare(right.kind) || left.name.localeCompare(right.name),
     );
   const routeList = [...routes.values()]
-    .map((route) => ({
-      ...route,
-      sources: route.sources.sort(),
-      owner: "lago-operator-ui",
-      disposition: "port",
-      target: "Cloudflare Workers Static Assets",
-      parityStatus: "not-started",
-      mappingStatus: "unmapped",
-    }))
+    .map((route) => {
+      const sources = route.sources.sort();
+      const mapping = legacyOperatorDisposition(sources);
+      return {
+        ...route,
+        sources,
+        owner: "lago-operator-ui",
+        disposition: mapping.disposition,
+        target: "Cloudflare Workers Static Assets",
+        parityStatus: "explicit-boundary",
+        mappingStatus: mapping.mappingStatus,
+      };
+    })
     .sort(
       (left, right) => left.name.localeCompare(right.name) || left.value.localeCompare(right.value),
     );
@@ -253,11 +325,13 @@ function extractOperatorSurface(frontRoot) {
       sourceOnlyOperations: operationList.filter((operation) => !operation.generated).length,
       missingGeneratedOperations: missingGeneratedOperations.length,
       literalRouteConstants: routeList.length,
+      restReplacementFamilies: operatorRestReplacements.length,
     },
     operationDomains: countBy(operationList, (operation) =>
       operatorDomain(operation.sources[0] ?? "front/src/(unknown)"),
     ),
     operations: operationList,
+    restReplacements: operatorRestReplacements,
     routes: routeList,
   };
 }

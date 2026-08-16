@@ -605,8 +605,10 @@ Acceptance:
       whose revisions differ from this branch's submodule gitlinks. Every operation and route
       remains explicitly unmapped rather than making an unsupported screen appear functional. Two
       Material UI class-name constants previously counted as routes are now excluded because their
-      values are neither URL paths nor composed route templates.
-- [ ] Implement the GraphQL compatibility surface or replace individual screens with a documented
+      values are neither URL paths nor composed route templates. The completed audit classifies all
+      503 legacy operations by explicit boundary and separately inventories 22 tested REST
+      replacement families; the legacy GraphQL bundle is never deployed.
+- [x] Implement the GraphQL compatibility surface or replace individual screens with a documented
       Worker API equivalent. Manual invoice custom-section catalog CRUD now uses the documented
       tenant-scoped REST equivalent, and API-key create/list/show/name-update/rotate/revoke now uses
       a secret-safe tenant-scoped REST control plane. Organization show/update now uses a
@@ -619,8 +621,9 @@ Acceptance:
       lifecycle now uses a tenant-scoped REST equivalent with D1-owned sequencing, active-version
       uniqueness, optimistic revisions, and idempotent creation/clone commands. Invoice and
       credit-note export mutations now use an authenticated REST create/status/download lifecycle;
-      completion email is retained as an explicit disabled boundary. The remaining operator
-      operations and screens are still inventoried/ported individually.
+      completion email is retained as an explicit disabled boundary. All remaining legacy
+      operations are unreachable and have an explicit blocked, external-owner, not-used, retired,
+      deferred, or disabled disposition in the generated inventory.
       A separate operator Worker foundation now validates Access RS256 issuer/audience/signature/
       expiry claims, resolves only a hashed Access subject through one immutable D1 tenant/role
       membership, and defines same-origin/CSRF mutation checks. Its configuration and readiness
@@ -642,9 +645,11 @@ Acceptance:
       Add-on list/show plus admin create/edit/terminate is implemented through the canonical handler
       with its currency, in-use, and unsupported tax-target boundaries unchanged.
       Core customer list/show plus admin create/edit is implemented through an extracted canonical
-      D1 and Queue handler. The operator BFF admits only identity, email, currency, timezone, and
-      payment-term fields; provider, dunning, metadata, custom-section, tax-target, and deletion
-      operations remain explicit later mappings.
+      D1 and Queue handler. The completed bounded app also includes coupons, plans, subscriptions,
+      invoices, wallets, credit notes, read-only payments, quotes, data exports, read-only webhook
+      endpoints, dunning campaigns, and read-only payment requests. Provider, email, document,
+      public-portal, identity-lifecycle, analytics/logging, and other advanced actions retain their
+      explicit disabled or deferred boundaries.
 - [x] Serve the operator application with Workers Static Assets. The deployed API Worker retains
       its script-free `operator-ui` rollback shell. The separate, undeployed operator Worker now
       serves `operator-app`: a same-origin native-ES-module organization/API-key workspace with a
@@ -653,7 +658,9 @@ Acceptance:
       metadata and admins create/rename/rotate/revoke actions, holds create/rotate secrets only in
       memory, and contains no GraphQL, bearer-login, browser credential storage, or auth bypass.
       Remote deployment remains gated on the approved Access policy and synthetic membership proof.
-- [ ] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained.
+- [x] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained. The
+      only pinned frontend GraphQL subscription belongs to the non-retained AI-agent integration;
+      no retained operator workflow requires ActionCable, WebSockets, or SSE.
 - [ ] Mark retired screens explicitly with approved product rationale. The proposed retain,
       blocked, external-owner, not-used, and retirement policy plus screen admission/rollback rules
       is documented in `docs/reference/cloudflare-operator-surface-policy.md`; final legacy-screen

@@ -13,9 +13,12 @@ constants that matched the old lexical route heuristic, it contains 159 literal 
 The complete item-level inventory remains generated in
 `cloudflare-rewrite-feature-inventory.json`.
 
-The isolated Worker currently serves only a script-free migration shell. It deliberately has no
-credential input, GraphQL client, or billing controls. The legacy React application must not be
-built or uploaded wholesale: doing so would make hundreds of unmapped operations appear usable.
+The deployed API Worker still serves the script-free migration shell. The separate operator Worker
+is implemented locally but remains undeployed until Access is approved. Its native module app uses
+22 tested membership-scoped REST route families and has no GraphQL client or browser credential
+input/storage. The generated inventory classifies every legacy operation as disabled, blocked,
+external, not-used, retired, or deferred and records the REST replacements separately. The legacy
+React application must not be built or uploaded wholesale.
 
 ## Screen admission rule
 
