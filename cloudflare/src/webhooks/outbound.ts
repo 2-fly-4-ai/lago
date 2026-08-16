@@ -16,6 +16,7 @@ type DeliveryRow = EndpointRow & {
   attempts: number;
 };
 const MAX_ATTEMPTS = 5;
+const MAX_RESPONSE_EXCERPT_BYTES = 2048;
 
 export type OutboundWebhookOutcome = "disabled" | "complete" | "retry";
 
@@ -121,7 +122,7 @@ async function deliverOne(
       redirect: "manual",
       signal: AbortSignal.timeout(10_000),
     });
-    const excerpt = (await response.text()).slice(0, 2048);
+    const excerpt = await readResponseExcerpt(response);
     const retryable = isRetryableStatus(response.status) && attempt < MAX_ATTEMPTS;
     const status = response.ok ? "succeeded" : retryable ? "retrying" : "failed";
     await updateDelivery(
@@ -150,6 +151,44 @@ async function deliverOne(
     );
     return retryable ? "retry" : "complete";
   }
+}
+
+async function readResponseExcerpt(response: Response): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  let ended = false;
+  try {
+    while (byteLength < MAX_RESPONSE_EXCERPT_BYTES) {
+      const result = await reader.read();
+      if (result.done) {
+        ended = true;
+        break;
+      }
+      const remaining = MAX_RESPONSE_EXCERPT_BYTES - byteLength;
+      const chunk = result.value.subarray(0, remaining);
+      chunks.push(chunk);
+      byteLength += chunk.byteLength;
+      if (result.value.byteLength > remaining) break;
+    }
+    if (!ended) {
+      try {
+        await reader.cancel("response_excerpt_complete");
+      } catch {
+        // The bounded excerpt is still valid if the remote stream rejects cancellation.
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const excerpt = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    excerpt.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(excerpt);
 }
 
 function updateDelivery(

@@ -790,6 +790,13 @@ describe("subscription charge-filter overrides", () => {
     });
     expect(childAsia?.lago_id).not.toBe(createdBody.filter.lago_id);
 
+    const oversizedDelete = await SELF.fetch(
+      `https://lago.test/api/v1/plans/filter-plan/charges/requests-charge/filters/${createdBody.filter.lago_id}`,
+      { method: "DELETE", headers, body: "x".repeat(16 * 1024 + 1) },
+    );
+    expect(oversizedDelete.status).toBe(413);
+    await expect(oversizedDelete.json()).resolves.toMatchObject({ code: "payload_too_large" });
+
     const deleted = await api(
       `/api/v1/plans/filter-plan/charges/requests-charge/filters/${createdBody.filter.lago_id}`,
       "DELETE",

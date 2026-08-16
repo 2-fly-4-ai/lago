@@ -1,7 +1,15 @@
 import type { AuthContext } from "../auth/api-key";
 import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
-import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
+import {
+  ApiError,
+  json,
+  objectAt,
+  optionalString,
+  parseJsonObject,
+  readBoundedText,
+  requiredString,
+} from "../http";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { rateCharge } from "../rating/charge-models";
@@ -2235,7 +2243,7 @@ function cascadeRequested(input: Record<string, unknown>): boolean {
 }
 
 async function deleteCascadeRequested(request: Request): Promise<boolean> {
-  const text = await request.text();
+  const text = await readBoundedText(request, 16 * 1024);
   if (!text.trim()) return false;
   let parsed: unknown;
   try {

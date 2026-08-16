@@ -123,6 +123,39 @@ describe("outbound webhook delivery", () => {
         .first(),
     ).resolves.toEqual({ status: "failed", attempts: 2, http_status: 400 });
   });
+
+  it("streams only a bounded response excerpt and cancels the remaining body", async () => {
+    const endpoint = await request("/api/v1/webhook_endpoints", "POST", {
+      webhook_endpoint: { webhook_url: "https://hooks.example.test/large", event_types: ["*"] },
+    }).then((response) => response.json<{ webhook_endpoint: { lago_id: string } }>());
+    let cancelled = false;
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("a".repeat(1500)));
+        controller.enqueue(encoder.encode("b".repeat(1500)));
+        controller.enqueue(encoder.encode("c".repeat(1500)));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    expect(
+      await deliverOutboundWebhooks(
+        testEnv(),
+        invoiceEvent(),
+        vi.fn<typeof fetch>(async () => new Response(body, { status: 202 })),
+      ),
+    ).toBe("complete");
+    const delivery = await env.BILLING_DB.prepare(
+      `SELECT response_excerpt FROM outbound_webhook_deliveries
+       WHERE webhook_endpoint_id = ?`,
+    )
+      .bind(endpoint.webhook_endpoint.lago_id)
+      .first<{ response_excerpt: string }>();
+    expect(delivery?.response_excerpt).toBe(`${"a".repeat(1500)}${"b".repeat(548)}`);
+    expect(cancelled).toBe(true);
+  });
 });
 
 function invoiceEvent(): DomainEvent {
