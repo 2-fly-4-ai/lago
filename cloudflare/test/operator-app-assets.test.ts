@@ -6,12 +6,19 @@ import operatorConfig from "../wrangler.operator.jsonc?raw";
 import { describe, expect, it } from "vitest";
 
 describe("isolated operator app assets", () => {
-  it("keeps the deployed API shell separate from the undeployed operator app", () => {
+  it("keeps the API shell separate from the Access-protected operator app", () => {
     expect(apiConfig).toContain('"directory": "operator-ui"');
     expect(apiConfig).not.toContain('"directory": "operator-app"');
     expect(operatorConfig).toContain('"directory": "operator-app"');
     expect(operatorConfig).not.toContain('"directory": "operator-ui"');
-    expect(operatorConfig).toContain('"OPERATOR_ACCESS_ENABLED": "0"');
+    expect(operatorConfig).toContain('"OPERATOR_ACCESS_ENABLED": "1"');
+    expect(operatorConfig).toContain(
+      '"ACCESS_TEAM_DOMAIN": "https://serpcompany.cloudflareaccess.com"',
+    );
+    expect(operatorConfig).toContain(
+      '"ACCESS_AUD": "4e2aeb75eccbd0abda500c9318a371acbeab7a244f8727904358021daea5a951"',
+    );
+    expect(operatorConfig).toContain('"database_id": "2f32f159-c269-46c6-a4dd-9e38477f5d25"');
     expect(operatorConfig).toContain('"name": "BILLING_ACCOUNTS"');
     expect(operatorConfig).toContain('"script_name": "serp-dev-lago-native"');
   });

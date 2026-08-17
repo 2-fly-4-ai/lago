@@ -1,6 +1,6 @@
 # Cloudflare-Native Lago Resource Manifest
 
-Last verified: 2026-08-16
+Last verified: 2026-08-17
 
 This manifest covers the isolated, non-production stack created for the Cloudflare-native rewrite.
 It is not a production inventory and contains no secrets or customer data.
@@ -35,35 +35,42 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `* * * * *`                                                        | Worker scheduled handler  | Deterministic legacy-schedule dispatch and activity fanout         |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 | Static Assets     | `operator-ui`                                                      | direct asset delivery     | Script-free operator migration shell and security headers          |
-| Worker            | `serp-dev-lago-operator` / `87907c2c-1ff2-4678-9f9c-832a64820f2f`  | none                      | Binding-free fail-closed bootstrap for Access registration         |
+| Worker            | `serp-dev-lago-operator` / `2787e247-b3b9-4dc8-b91b-86b36bc44251`  | D1, DO, Workflow, Queue   | Access-protected synthetic-tenant operator BFF and Static Assets   |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0069_data_exports.sql`.
+`0071_operator_data_export_requesters.sql`.
 
-## Operator bootstrap provisioned; Access pending
+## Operator Access rollout
 
-- `serp-dev-lago-operator` now exists remotely only as version
-  `87907c2c-1ff2-4678-9f9c-832a64820f2f`, deployed from
-  `wrangler.operator-bootstrap.jsonc`. It has no bindings or Static Assets and returns JSON `503`
-  plus `Cache-Control: no-store` for every route. Preview URLs are disabled. This creates the
-  immutable Worker ID required by a Worker-destination Access application without exposing the real
-  BFF, UI, D1, Durable Object, Workflow, or Queue bindings. The functional `wrangler.operator.jsonc`
-  deployment remains disabled and undeployed.
-- `0070_operator_access.sql` and `0071_operator_data_export_requesters.sql` are locally replayed and
-  tested but remain unapplied remotely. The isolated D1 therefore has no operator-membership table
-  or membership data yet.
-- Provisioning requires an approved Access identity/group allow policy, session duration, team
-  issuer, and application audience. The API Worker must remain outside that human Access policy so
-  existing service clients and provider webhooks are not intercepted.
+- `serp-dev-lago-operator` version `2787e247-b3b9-4dc8-b91b-86b36bc44251` is deployed from
+  `wrangler.operator.jsonc` with Access validation enabled, preview URLs disabled, the operator
+  Static Assets application, isolated D1, and the existing internal Durable Object, Workflow, and
+  Queue bindings. The API Worker remains outside the human Access application.
+- The self-hosted Access application targets only the immutable `serp-dev-lago-operator` Worker,
+  is hidden from the App Launcher, and uses a 24-hour application session. Its only policy is
+  `Allow Lago operator development`, an Allow policy with one exact email include and no require or
+  exclude rules. The application audience is stored as non-secret Worker configuration.
+- Migrations `0070_operator_access.sql` and `0071_operator_data_export_requesters.sql` are applied.
+  One active admin membership maps the authenticated Access identity to only the documented
+  `synthetic-e2e-20260815-001` tenant by issuer plus SHA-256 subject; no raw Access subject is stored.
 - `scripts/provision-operator-access.mjs` is an idempotent, fail-closed reconciler for the approved
   isolated application. It preflights Worker, Zero Trust organization, and application reads before
   writing; resolves the immutable Worker ID; creates only the named Worker application and its one-
   email 24-hour allow policy; and refuses drift or additional policies. The current Wrangler OAuth
-  token lacks Access Apps and Policies Write, so the Access application and policy are not yet
-  provisioned.
+  token is not required for the completed dashboard-provisioned application and policy.
 
 ## Verified behavior
 
+- Operator version `2787e247-b3b9-4dc8-b91b-86b36bc44251` is fail-closed at the edge: a fresh
+  unauthenticated request receives a Cloudflare Access `302` and no origin response. An authenticated
+  one-time-pin session loads `SERP Billing Operator`, resolves the single synthetic membership as
+  Administrator, and displays only `Synthetic E2E 20260815 001`. The deploy initially exposed a
+  pre-existing 35-character D1 UUID typo in `wrangler.operator.jsonc`; correcting it to the verified
+  36-character resource ID and adding a regression assertion allowed the live version upload. The
+  complete package check passes 333 tests across 61 files plus five Access reconciler tests, type and
+  inventory checks, formatting, lint, and both dry deployments. External-action flags remain `0`;
+  no production route, provider action, payment action, customer message, secret, or customer data
+  changed.
 - Operator bootstrap version `87907c2c-1ff2-4678-9f9c-832a64820f2f` created only the isolated
   `serp-dev-lago-operator` Worker resource. Remote `/`, `/health`, `/ready`,
   `/api/operator/v1/session`, and `/index.html` checks returned the same binding-free `503` response

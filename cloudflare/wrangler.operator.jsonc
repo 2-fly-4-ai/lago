@@ -17,13 +17,15 @@
   },
   "vars": {
     "APP_ENV": "development",
-    "OPERATOR_ACCESS_ENABLED": "0",
+    "OPERATOR_ACCESS_ENABLED": "1",
+    "ACCESS_TEAM_DOMAIN": "https://serpcompany.cloudflareaccess.com",
+    "ACCESS_AUD": "4e2aeb75eccbd0abda500c9318a371acbeab7a244f8727904358021daea5a951",
   },
   "d1_databases": [
     {
       "binding": "BILLING_DB",
       "database_name": "serp-dev-lago-native-d1",
-      "database_id": "2f32f159-c269-46c-a4dd-9e38477f5d25",
+      "database_id": "2f32f159-c269-46c6-a4dd-9e38477f5d25",
       "migrations_dir": "migrations",
     },
   ],

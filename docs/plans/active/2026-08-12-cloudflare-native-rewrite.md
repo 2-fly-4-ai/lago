@@ -3328,3 +3328,18 @@ resource and mutation described.
   Tailscale VPN, so no Access application/policy, migration, membership, functional operator
   deployment, provider action, payment action, customer message, secret, or customer-data access
   occurred.
+- 2026-08-17: Completed the isolated M8 operator Access rollout. The self-hosted Access application
+  targets only `serp-dev-lago-operator`, is hidden from the App Launcher, uses a 24-hour session,
+  and has exactly one 24-hour Allow policy for the approved development email. A fresh public request
+  returns an Access `302` without reaching the origin. Applied remote migrations `0070` and `0071`
+  to only `serp-dev-lago-native-d1`, then inserted one issuer-and-subject-hash admin membership for
+  only `synthetic-e2e-20260815-001`; no raw Access subject is stored. Enabled issuer/audience JWT
+  validation and deployed functional operator version `2787e247-b3b9-4dc8-b91b-86b36bc44251` with
+  Static Assets, D1, existing DO/Workflow, and producer-only Queue bindings. Authenticated browser
+  verification loaded `SERP Billing Operator` as Administrator for only `Synthetic E2E 20260815
+  001`. The first live upload safely failed before version creation because the operator config had
+  a pre-existing 35-character D1 UUID; correcting the verified resource ID and adding a regression
+  assertion resolved it. The authoritative check passes all 333 tests across 61 files plus five
+  Access reconciler tests, formatting, lint, generated types, inventory, TypeScript, and both dry
+  deployments. The API Worker remains outside Access and all external-action flags remain `0`; no
+  production route, provider/payment action, customer message, secret, or customer data changed.
