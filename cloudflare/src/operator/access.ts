@@ -22,6 +22,27 @@ export type OperatorContext = {
   membershipId: string;
   organizationId: string;
   organizationExternalId: string;
+  organizationName: string;
+  organizationSlug: string;
+  role: OperatorRole;
+  memberships: OperatorMembership[];
+};
+
+export type OperatorMembership = {
+  membershipId: string;
+  organizationId: string;
+  organizationExternalId: string;
+  organizationName: string;
+  organizationSlug: string;
+  role: OperatorRole;
+};
+
+type OperatorMembershipRow = {
+  membership_id: string;
+  organization_id: string;
+  organization_external_id: string;
+  organization_name: string;
+  organization_slug: string | null;
   role: OperatorRole;
 };
 
@@ -68,28 +89,25 @@ export async function authenticateOperatorAccess(
   }
 
   const subjectHash = await sha256Hex(`${issuer}\n${subject}`);
-  const membership = await env.BILLING_DB.prepare(
+  const membershipsResult = await env.BILLING_DB.prepare(
     `SELECT membership.id AS membership_id,
             membership.organization_id,
             membership.role,
-            organization.external_id AS organization_external_id
+            organization.external_id AS organization_external_id,
+            organization.name AS organization_name,
+            organization.slug AS organization_slug
      FROM operator_memberships membership
      JOIN organizations organization ON organization.id = membership.organization_id
      WHERE membership.access_issuer = ?
        AND membership.access_subject_sha256 = ?
        AND membership.active = 1
        AND membership.revoked_at IS NULL
-     LIMIT 1`,
+     ORDER BY membership.created_at, membership.id`,
   )
     .bind(issuer, subjectHash)
-    .first<{
-      membership_id: string;
-      organization_id: string;
-      organization_external_id: string;
-      role: OperatorRole;
-    }>();
+    .all<OperatorMembershipRow>();
 
-  if (!membership) {
+  if (membershipsResult.results.length === 0) {
     throw new ApiError(
       403,
       "operator_membership_required",
@@ -97,11 +115,50 @@ export async function authenticateOperatorAccess(
     );
   }
 
+  const memberships = membershipsResult.results.map(toOperatorMembership);
+  const requestedOrganization = request.headers.get("X-Operator-Organization")?.trim();
+  let membership: OperatorMembership | undefined;
+  if (requestedOrganization) {
+    membership = memberships.find(
+      (candidate) =>
+        candidate.organizationSlug === requestedOrganization ||
+        candidate.organizationExternalId === requestedOrganization,
+    );
+    if (!membership) {
+      throw new ApiError(
+        403,
+        "operator_organization_forbidden",
+        "This Access identity has no active membership for the requested organization",
+      );
+    }
+  } else if (memberships.length === 1 || new URL(request.url).pathname.endsWith("/session")) {
+    membership = memberships[0];
+  } else {
+    throw new ApiError(
+      409,
+      "operator_organization_required",
+      "Select an organization before accessing operator data",
+    );
+  }
+
+  if (!membership) {
+    throw new ApiError(403, "operator_membership_required", "No active membership is available");
+  }
+
   return {
-    membershipId: membership.membership_id,
-    organizationId: membership.organization_id,
-    organizationExternalId: membership.organization_external_id,
-    role: membership.role,
+    ...membership,
+    memberships,
+  };
+}
+
+function toOperatorMembership(row: OperatorMembershipRow): OperatorMembership {
+  return {
+    membershipId: row.membership_id,
+    organizationId: row.organization_id,
+    organizationExternalId: row.organization_external_id,
+    organizationName: row.organization_name,
+    organizationSlug: row.organization_slug ?? row.organization_external_id,
+    role: row.role,
   };
 }
 

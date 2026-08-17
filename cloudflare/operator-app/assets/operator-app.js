@@ -25,7 +25,305 @@ const endpoints = {
   paymentRequests: "/api/operator/v1/payment-requests",
 };
 
+const routeDefinitions = {
+  overview: { title: "Organization", group: "Settings" },
+  analytics: {
+    title: "Analytics",
+    group: "Reports",
+    unavailable:
+      "Usage and revenue data is retained in D1, but the bounded analytics read model is not available yet.",
+  },
+  forecasts: {
+    title: "Forecasts",
+    group: "Reports",
+    unavailable:
+      "Forecasting remains visible in the Lago navigation while its isolated Cloudflare query contract is being defined.",
+  },
+  "billable-metrics": {
+    title: "Billable metrics",
+    group: "Configuration",
+    unavailable:
+      "The Cloudflare rating engine is active, but the operator metric-catalog read and edit contract is not exposed yet.",
+  },
+  features: {
+    title: "Features",
+    group: "Configuration",
+    unavailable:
+      "Feature entitlements remain owned by serp-auth. This Lago workspace keeps the familiar page without duplicating that authority.",
+  },
+  plans: { title: "Plans", group: "Configuration" },
+  "add-ons": { title: "Add-ons", group: "Configuration" },
+  coupons: { title: "Coupons", group: "Configuration" },
+  customers: { title: "Customers", group: "Billing & operations" },
+  subscriptions: { title: "Subscriptions", group: "Billing & operations" },
+  invoices: { title: "Invoices", group: "Billing & operations" },
+  payments: { title: "Payments", group: "Billing & operations" },
+  "credit-notes": { title: "Credit notes", group: "Billing & operations" },
+  wallets: { title: "Wallets", group: "Billing & operations" },
+  quotes: { title: "Quotes", group: "Billing & operations" },
+  "billing-profile": { title: "Billing profile", group: "Settings" },
+  "invoice-sections": { title: "Invoice sections", group: "Settings" },
+  taxes: { title: "Taxes", group: "Settings" },
+  "api-keys": { title: "API keys", group: "Settings" },
+  "payment-receipts": { title: "Payment receipts", group: "Settings" },
+  "data-exports": { title: "Data exports", group: "Settings" },
+  "webhook-endpoints": { title: "Webhook endpoints", group: "Settings" },
+  "dunning-campaigns": { title: "Dunning campaigns", group: "Settings" },
+};
+
+const defaultRoute = "customers";
+const customerDetailTabs = new Set([
+  "overview",
+  "wallets",
+  "analytics",
+  "invoices",
+  "credit-notes",
+  "settings",
+]);
+
+const entityDetailDefinitions = {
+  "api-keys": {
+    collection: "keys",
+    singular: "API key",
+    id: (item) => item.id,
+    label: (item) => safeText(item.name, "Unnamed key"),
+    fields: [
+      ["Identifier", (item) => item.id],
+      ["Secret", (item) => safeText(item.value, "Masked")],
+      ["Created", (item) => formatDate(item.created_at)],
+      ["Last used", (item) => (item.last_used_at ? formatDate(item.last_used_at) : "Never")],
+    ],
+    edit: (item) => openRenameDialog(item),
+  },
+  "invoice-sections": {
+    collection: "sections",
+    singular: "Invoice section",
+    id: (item) => item.code,
+    label: (item) => safeText(item.name, "Unnamed section"),
+    fields: [
+      ["Code", (item) => item.code],
+      ["Display name", (item) => item.display_name],
+      ["Description", (item) => item.description],
+      ["Details", (item) => item.details],
+    ],
+    edit: (item) => openEditSectionDialog(item),
+  },
+  "payment-receipts": {
+    collection: "receipts",
+    singular: "Payment receipt",
+    id: (item) => item.lago_id,
+    label: (item) => safeText(item.number, "Unnamed receipt"),
+    fields: [
+      ["Identifier", (item) => item.lago_id],
+      ["Customer", (item) => item.payment?.external_customer_id],
+      ["Invoices", (item) => item.payment?.invoice_numbers],
+      ["Amount", (item) => formatMoney(item.payment?.amount_cents, item.payment?.amount_currency)],
+      ["Status", (item) => item.payment?.payment_status],
+      ["Created", (item) => formatDate(item.created_at)],
+    ],
+  },
+  taxes: {
+    collection: "taxes",
+    singular: "Tax",
+    id: (item) => item.code,
+    label: (item) => safeText(item.name, "Unnamed tax"),
+    fields: [
+      ["Code", (item) => item.code],
+      ["Rate", (item) => `${Number(item.rate) || 0}%`],
+      ["Description", (item) => item.description],
+      ["Organization default", (item) => (item.applied_to_organization ? "Yes" : "No")],
+    ],
+    edit: (item) => openEditTaxDialog(item),
+  },
+  "add-ons": {
+    collection: "addOns",
+    singular: "Add-on",
+    id: (item) => item.code,
+    label: (item) => safeText(item.name, "Unnamed add-on"),
+    fields: [
+      ["Code", (item) => item.code],
+      ["Amount", (item) => formatMoney(item.amount_cents, item.amount_currency)],
+      ["Invoice display name", (item) => item.invoice_display_name],
+      ["Description", (item) => item.description],
+    ],
+    edit: (item) => openEditAddOnDialog(item),
+  },
+  coupons: {
+    collection: "coupons",
+    singular: "Coupon",
+    id: (item) => item.code,
+    label: (item) => safeText(item.name, "Unnamed coupon"),
+    fields: [
+      ["Code", (item) => item.code],
+      ["Discount", (item) => couponDiscount(item)],
+      ["Frequency", (item) => couponFrequency(item)],
+      [
+        "Expiration",
+        (item) =>
+          item.expiration === "time_limit" ? formatDate(item.expiration_at) : "No expiration",
+      ],
+      ["Description", (item) => item.description],
+    ],
+  },
+  plans: {
+    collection: "plans",
+    singular: "Plan",
+    id: (item) => item.code,
+    label: (item) => safeText(item.name, "Unnamed plan"),
+    fields: [
+      ["Code", (item) => item.code],
+      ["Interval", (item) => item.interval],
+      ["Amount", (item) => formatMoney(item.amount_cents, item.amount_currency)],
+      ["Trial period", (item) => `${nonNegativeNumber(item.trial_period)} days`],
+      ["Fixed charges", (item) => String(item.fixed_charges?.length ?? 0)],
+      ["Description", (item) => item.description],
+    ],
+    edit: (item) => openEditPlanDialog(item),
+  },
+  subscriptions: {
+    collection: "subscriptions",
+    singular: "Subscription",
+    id: (item) => item.external_id,
+    label: (item) => safeText(item.name, item.external_id),
+    fields: [
+      ["External ID", (item) => item.external_id],
+      ["Customer", (item) => item.external_customer_id],
+      ["Plan", (item) => item.plan_code],
+      ["Status", (item) => item.status],
+      ["Billing time", (item) => item.billing_time],
+      ["Started", (item) => formatDate(item.subscription_at)],
+      ["Ends", (item) => formatDate(item.ending_at)],
+    ],
+    edit: (item) => openEditSubscriptionDialog(item),
+  },
+  invoices: {
+    collection: "invoices",
+    singular: "Invoice",
+    id: (item) => item.lago_id,
+    label: (item) => safeText(item.number, "Unnumbered invoice"),
+    fields: [
+      ["Identifier", (item) => item.lago_id],
+      ["Customer", (item) => item.external_customer_id],
+      ["Status", (item) => item.status],
+      ["Payment status", (item) => item.payment_status],
+      ["Total", (item) => formatMoney(item.total_amount_cents, item.currency)],
+      ["Issued", (item) => formatDate(item.issuing_date ?? item.created_at)],
+    ],
+  },
+  wallets: {
+    collection: "wallets",
+    singular: "Wallet",
+    id: (item) => item.lago_id,
+    label: (item) => safeText(item.name, "Unnamed wallet"),
+    fields: [
+      ["Identifier", (item) => item.lago_id],
+      ["Code", (item) => item.code],
+      ["Customer", (item) => item.external_customer_id],
+      ["Status", (item) => item.status],
+      ["Balance", (item) => formatMoney(item.balance_cents, item.currency)],
+      ["Credits", (item) => item.credits_balance],
+      ["Expires", (item) => formatDate(item.expiration_at)],
+    ],
+  },
+  "credit-notes": {
+    collection: "creditNotes",
+    singular: "Credit note",
+    id: (item) => item.lago_id,
+    label: (item) => safeText(item.number, "Unnumbered credit note"),
+    fields: [
+      ["Identifier", (item) => item.lago_id],
+      ["Invoice", (item) => item.invoice_number],
+      ["Customer", (item) => item.external_customer_id],
+      ["Reason", (item) => item.reason],
+      ["Status", (item) => item.status],
+      ["Credit status", (item) => item.credit_status],
+      ["Balance", (item) => formatMoney(item.balance_amount_cents, item.currency)],
+    ],
+  },
+  payments: {
+    collection: "payments",
+    singular: "Payment",
+    id: (item) => item.lago_id,
+    label: (item) => safeText(item.lago_id, "Unknown payment"),
+    fields: [
+      ["Customer", (item) => item.external_customer_id],
+      ["Invoices", (item) => item.invoice_numbers],
+      ["Provider", (item) => item.payment_provider_code ?? "Manual"],
+      ["Status", (item) => item.payment_status],
+      ["Amount", (item) => formatMoney(item.amount_cents, item.amount_currency)],
+      ["Created", (item) => formatDate(item.created_at)],
+    ],
+  },
+  quotes: {
+    collection: "quotes",
+    singular: "Quote",
+    id: (item) => item.lago_id,
+    label: (item) => safeText(item.number, "Unnumbered quote"),
+    fields: [
+      ["Identifier", (item) => item.lago_id],
+      ["Customer", (item) => item.external_customer_id],
+      ["Order type", (item) => item.order_type],
+      ["Version", (item) => item.current_version?.version],
+      ["Status", (item) => item.current_version?.status],
+      ["Updated", (item) => formatDate(item.current_version?.updated_at ?? item.updated_at)],
+    ],
+    edit: (item) => openEditQuoteDialog(item),
+  },
+  "data-exports": {
+    collection: "dataExports",
+    singular: "Data export",
+    id: (item) => item.lago_id,
+    label: (item) => safeText(item.lago_id, "Unknown export"),
+    fields: [
+      ["Resource", (item) => item.resource_type],
+      ["Status", (item) => item.status],
+      ["Rows", (item) => item.row_count],
+      ["Size", (item) => (item.byte_size === null ? "—" : `${item.byte_size} bytes`)],
+      ["Created", (item) => formatDate(item.created_at)],
+      ["Delivery", () => "Status only; artifact download is intentionally unavailable"],
+    ],
+  },
+  "webhook-endpoints": {
+    collection: "webhookEndpoints",
+    singular: "Webhook endpoint",
+    id: (item) => item.lago_id,
+    label: (item) => safeText(item.name, item.lago_id),
+    fields: [
+      ["Identifier", (item) => item.lago_id],
+      ["URL", (item) => item.webhook_url],
+      ["Signature", (item) => item.signature_algo],
+      ["Events", (item) => item.event_types],
+      ["Created", (item) => formatDate(item.created_at)],
+      ["Mode", () => "Read only"],
+    ],
+  },
+  "dunning-campaigns": {
+    collection: "dunningCampaigns",
+    singular: "Dunning campaign",
+    id: (item) => item.code,
+    label: (item) => safeText(item.name, "Unnamed campaign"),
+    fields: [
+      ["Code", (item) => item.code],
+      ["Attempts", (item) => item.max_attempts],
+      ["Days between attempts", (item) => item.days_between_attempts],
+      ["Customers", (item) => item.customers_count],
+      ["Organization default", (item) => (item.applied_to_organization ? "Yes" : "No")],
+      ["Description", (item) => item.description],
+    ],
+    edit: (item) => openEditDunningDialog(item),
+  },
+};
+
 const elements = {
+  sidebar: document.querySelector(".sidebar"),
+  navBurger: document.querySelector("#nav-burger"),
+  navigationLinks: Array.from(document.querySelectorAll(".nav-item[data-route]")),
+  organizationSwitcher: document.querySelector("#organization-switcher"),
+  organizationMenu: document.querySelector("#organization-menu"),
+  organizationMenuItems: document.querySelector("#organization-menu-items"),
+  switcherMonogram: document.querySelector("#switcher-monogram"),
+  switcherName: document.querySelector("#switcher-name"),
+  switcherRole: document.querySelector("#switcher-role"),
   loading: document.querySelector("#loading-state"),
   closed: document.querySelector("#closed-state"),
   closedTitle: document.querySelector("#closed-title"),
@@ -38,6 +336,11 @@ const elements = {
   pageError: document.querySelector("#page-error"),
   pageErrorMessage: document.querySelector("#page-error-message"),
   dismissError: document.querySelector("#dismiss-error"),
+  unavailableRoute: document.querySelector("#unavailable-route"),
+  unavailableBreadcrumb: document.querySelector("#unavailable-breadcrumb"),
+  unavailableTitle: document.querySelector("#unavailable-title"),
+  unavailableMessage: document.querySelector("#unavailable-message"),
+  unavailableBoundaryCopy: document.querySelector("#unavailable-boundary-copy"),
   organizationMonogram: document.querySelector("#organization-monogram"),
   organizationTitle: document.querySelector("#organization-title"),
   organizationSlug: document.querySelector("#organization-slug"),
@@ -139,6 +442,31 @@ const elements = {
   customersEmptyCopy: document.querySelector("#customers-empty-copy"),
   customersTableShell: document.querySelector("#customers-table-shell"),
   customersTableBody: document.querySelector("#customers-table-body"),
+  customerDetail: document.querySelector("#customer-detail"),
+  customerDetailBack: document.querySelector("#customer-detail-back"),
+  customerDetailEdit: document.querySelector("#customer-detail-edit"),
+  customerDetailEditAside: document.querySelector("#customer-detail-edit-aside"),
+  customerDetailAvatar: document.querySelector("#customer-detail-avatar"),
+  customerDetailName: document.querySelector("#customer-detail-name"),
+  customerDetailExternalId: document.querySelector("#customer-detail-external-id"),
+  customerDetailTabs: Array.from(document.querySelectorAll("[data-customer-tab]")),
+  customerDetailTabPanel: document.querySelector("#customer-detail-tab-panel"),
+  customerDetailFieldName: document.querySelector("#customer-detail-field-name"),
+  customerDetailFieldId: document.querySelector("#customer-detail-field-id"),
+  customerDetailFieldCurrency: document.querySelector("#customer-detail-field-currency"),
+  customerDetailFieldEmail: document.querySelector("#customer-detail-field-email"),
+  customerDetailFieldTimezone: document.querySelector("#customer-detail-field-timezone"),
+  customerDetailFieldTerm: document.querySelector("#customer-detail-field-term"),
+  entityDetail: document.querySelector("#entity-detail"),
+  entityDetailBack: document.querySelector("#entity-detail-back"),
+  entityDetailBackLabel: document.querySelector("#entity-detail-back-label"),
+  entityDetailEdit: document.querySelector("#entity-detail-edit"),
+  entityDetailAvatar: document.querySelector("#entity-detail-avatar"),
+  entityDetailType: document.querySelector("#entity-detail-type"),
+  entityDetailName: document.querySelector("#entity-detail-name"),
+  entityDetailId: document.querySelector("#entity-detail-id"),
+  entityDetailFields: document.querySelector("#entity-detail-fields"),
+  entityDetailMissing: document.querySelector("#entity-detail-missing"),
   customerFormDialog: document.querySelector("#customer-form-dialog"),
   customerForm: document.querySelector("#customer-form"),
   customerFormTitle: document.querySelector("#customer-form-title"),
@@ -397,6 +725,11 @@ const elements = {
 };
 
 const state = {
+  organizationSlug: null,
+  memberships: [],
+  route: defaultRoute,
+  detailId: null,
+  detailTab: "overview",
   role: "viewer",
   keys: [],
   keyFormMode: "create",
@@ -447,6 +780,13 @@ const state = {
   selectedDunningCode: null,
 };
 
+for (const link of elements.navigationLinks) link.addEventListener("click", handleRouteNavigation);
+elements.navBurger.addEventListener("click", toggleMobileNavigation);
+elements.organizationSwitcher.addEventListener("click", toggleOrganizationMenu);
+elements.organizationMenuItems.addEventListener("click", handleOrganizationSelection);
+window.addEventListener("popstate", handleHistoryNavigation);
+document.addEventListener("click", closeOrganizationMenuOnOutsideClick);
+document.addEventListener("keydown", handleGlobalEscape);
 elements.dismissError.addEventListener("click", hidePageError);
 elements.openCreateKey.addEventListener("click", openCreateDialog);
 elements.keysTableBody.addEventListener("click", handleKeyAction);
@@ -470,6 +810,13 @@ elements.addOnsTableBody.addEventListener("click", handleAddOnAction);
 elements.addOnForm.addEventListener("submit", submitAddOnForm);
 elements.openCreateCustomer.addEventListener("click", openCreateCustomerDialog);
 elements.customersTableBody.addEventListener("click", handleCustomerAction);
+elements.customerDetailBack.addEventListener("click", () => navigateToRoute("customers"));
+elements.customerDetailEdit.addEventListener("click", openSelectedCustomerEditor);
+elements.customerDetailEditAside.addEventListener("click", openSelectedCustomerEditor);
+for (const tab of elements.customerDetailTabs) tab.addEventListener("click", handleCustomerTab);
+elements.entityDetailBack.addEventListener("click", () => navigateToRoute(state.route));
+elements.entityDetailEdit.addEventListener("click", openSelectedEntityEditor);
+elements.dashboard.addEventListener("click", handleEntityDetailNavigation);
 elements.customerForm.addEventListener("submit", submitCustomerForm);
 elements.openCreateCoupon.addEventListener("click", openCreateCouponDialog);
 elements.openApplyCoupon.addEventListener("click", openApplyCouponDialog);
@@ -508,9 +855,28 @@ elements.dunningForm.addEventListener("submit", submitDunningForm);
 void initialize();
 
 async function initialize() {
+  const locationState = routeFromLocation();
+  state.route = locationState.route;
+  state.organizationSlug = locationState.organizationSlug;
+  state.detailId = locationState.detailId;
+  state.detailTab = locationState.detailTab;
+  await loadWorkspace({ replaceHistory: true });
+}
+
+async function loadWorkspace({ replaceHistory = false } = {}) {
+  elements.closed.hidden = true;
+  elements.dashboard.hidden = true;
+  elements.loading.hidden = false;
+  closeOrganizationMenu();
+  clearOneTimeSecret();
   try {
     const session = await requestJson(endpoints.session);
     const operator = session.operator;
+    state.organizationSlug = safeText(
+      operator.organization_slug,
+      operator.organization_external_id,
+    );
+    state.memberships = Array.isArray(operator.memberships) ? operator.memberships : [];
     state.role = operator.role === "admin" ? "admin" : "viewer";
     const [
       organizationPayload,
@@ -579,11 +945,256 @@ async function initialize() {
     renderWebhookEndpoints(webhookEndpointsPayload.webhook_endpoints);
     renderDunningCampaigns(dunningCampaignsPayload.dunning_campaigns);
     renderPaymentRequests(paymentRequestsPayload.payment_requests);
+    renderOrganizationMenu();
+    renderRoute({ replaceHistory });
     elements.loading.hidden = true;
     elements.dashboard.hidden = false;
   } catch (error) {
     showClosedState(error);
   }
+}
+
+function routeFromLocation() {
+  const segments = window.location.pathname.split("/").filter(Boolean).map(decodePathSegment);
+  const legacyHash = window.location.hash.replace(/^#/, "");
+  let organizationSlug = null;
+  let route = defaultRoute;
+  let detailId = null;
+  let detailTab = "overview";
+
+  if (segments.length >= 2) {
+    [organizationSlug, route] = segments;
+    if ((route === "customers" || entityDetailDefinitions[route]) && segments[2]) {
+      detailId = segments[2];
+    }
+    if (route === "customers" && customerDetailTabs.has(segments[3])) detailTab = segments[3];
+  } else if (segments.length === 1) {
+    if (routeDefinitions[segments[0]]) route = segments[0];
+    else organizationSlug = segments[0];
+  }
+  if (routeDefinitions[legacyHash]) route = legacyHash;
+
+  return {
+    organizationSlug,
+    route: routeDefinitions[route] ? route : "not-found",
+    detailId,
+    detailTab,
+  };
+}
+
+function decodePathSegment(segment) {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return "";
+  }
+}
+
+function routePath(organizationSlug, route, detailId = null, detailTab = null) {
+  const base = `/${encodeURIComponent(organizationSlug)}/${encodeURIComponent(route)}`;
+  if (!detailId) return base;
+  const detail = `${base}/${encodeURIComponent(detailId)}`;
+  return detailTab && detailTab !== "overview"
+    ? `${detail}/${encodeURIComponent(detailTab)}`
+    : detail;
+}
+
+function handleRouteNavigation(event) {
+  event.preventDefault();
+  const link = event.currentTarget;
+  navigateToRoute(link.dataset.route);
+}
+
+function navigateToRoute(route, { replace = false, focus = true } = {}) {
+  if (!routeDefinitions[route]) route = "not-found";
+  state.route = route;
+  state.detailId = null;
+  state.detailTab = "overview";
+  const path = routePath(state.organizationSlug, route);
+  if (replace) window.history.replaceState({ route }, "", path);
+  else window.history.pushState({ route }, "", path);
+  renderRoute();
+  closeMobileNavigation();
+  if (focus) elements.dashboard.focus?.({ preventScroll: true });
+}
+
+async function handleHistoryNavigation() {
+  const next = routeFromLocation();
+  state.route = next.route;
+  state.detailId = next.detailId;
+  state.detailTab = next.detailTab;
+  if (next.organizationSlug && next.organizationSlug !== state.organizationSlug) {
+    state.organizationSlug = next.organizationSlug;
+    await loadWorkspace();
+    return;
+  }
+  renderRoute();
+}
+
+function renderRoute({ replaceHistory = false } = {}) {
+  const definition = routeDefinitions[state.route];
+  const routePanels = document.querySelectorAll(
+    "#dashboard > .keys-section, #dashboard > [data-route-panel]",
+  );
+  for (const panel of routePanels) panel.hidden = true;
+
+  let activePanel = null;
+  if (state.route === "customers" && state.detailId) {
+    activePanel = elements.customerDetail;
+    activePanel.hidden = false;
+    renderCustomerDetail();
+  } else if (entityDetailDefinitions[state.route] && state.detailId) {
+    activePanel = elements.entityDetail;
+    activePanel.hidden = false;
+    renderEntityDetail();
+  } else if (!definition || definition.unavailable) {
+    activePanel = elements.unavailableRoute;
+    elements.unavailableBreadcrumb.textContent = definition
+      ? `${definition.group} / ${definition.title}`
+      : "Lago / Not found";
+    elements.unavailableTitle.textContent = definition?.title ?? "Page not found";
+    elements.unavailableMessage.textContent =
+      definition?.unavailable ?? "This organization route does not exist in the Lago workspace.";
+    elements.unavailableBoundaryCopy.textContent = definition
+      ? "The page stays in the original Lago information architecture without enabling an unscoped or external action."
+      : "Use the Lago navigation to return to a retained organization page.";
+    activePanel.hidden = false;
+  } else if (state.route === "overview") {
+    const overviewPanels = document.querySelectorAll('[data-route-panel="overview"]');
+    for (const panel of overviewPanels) panel.hidden = false;
+    activePanel = document.querySelector("#overview");
+  } else {
+    activePanel = document.getElementById(state.route);
+    if (activePanel) {
+      activePanel.hidden = false;
+      configureRouteHeading(activePanel, definition);
+    }
+  }
+
+  for (const link of elements.navigationLinks) {
+    const active = link.dataset.route === state.route;
+    link.classList.toggle("active", active);
+    if (active) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+    link.href = routePath(state.organizationSlug, link.dataset.route);
+  }
+
+  const selectedCustomer =
+    state.route === "customers" && state.detailId
+      ? state.customers.find((customer) => customer.external_id === state.detailId)
+      : null;
+  const detailDefinition = entityDetailDefinitions[state.route];
+  const selectedEntity = detailDefinition
+    ? findDetailEntity(detailDefinition, state.detailId)
+    : null;
+  const title =
+    selectedCustomer?.name ??
+    (selectedEntity ? detailDefinition.label(selectedEntity) : null) ??
+    definition?.title ??
+    "Page not found";
+  document.title = `${title} · Lago`;
+  if (replaceHistory || window.location.hash) {
+    window.history.replaceState(
+      { route: state.route },
+      "",
+      routePath(state.organizationSlug, state.route, state.detailId, state.detailTab),
+    );
+  }
+  activePanel?.scrollIntoView({ block: "start" });
+}
+
+function configureRouteHeading(panel, definition) {
+  const headingCopy = panel.querySelector(".section-heading > div");
+  const heading = headingCopy?.querySelector("h2");
+  if (!headingCopy || !heading) return;
+  let breadcrumb = headingCopy.querySelector(".route-breadcrumb");
+  if (!breadcrumb) {
+    breadcrumb = document.createElement("p");
+    breadcrumb.className = "route-breadcrumb";
+    headingCopy.prepend(breadcrumb);
+  }
+  breadcrumb.textContent = `${definition.group} / ${definition.title}`;
+  heading.setAttribute("role", "heading");
+  heading.setAttribute("aria-level", "1");
+}
+
+function toggleOrganizationMenu(event) {
+  event.stopPropagation();
+  const willOpen = elements.organizationMenu.hidden;
+  elements.organizationMenu.hidden = !willOpen;
+  elements.organizationSwitcher.setAttribute("aria-expanded", String(willOpen));
+}
+
+function closeOrganizationMenu() {
+  elements.organizationMenu.hidden = true;
+  elements.organizationSwitcher.setAttribute("aria-expanded", "false");
+}
+
+function closeOrganizationMenuOnOutsideClick(event) {
+  if (!event.target.closest(".organization-switcher-shell")) closeOrganizationMenu();
+}
+
+function handleGlobalEscape(event) {
+  if (event.key !== "Escape") return;
+  const openDialog = document.querySelector("dialog[open]");
+  if (openDialog) {
+    event.preventDefault();
+    openDialog.close();
+    return;
+  }
+  closeOrganizationMenu();
+  closeMobileNavigation();
+}
+
+function renderOrganizationMenu() {
+  elements.organizationMenuItems.replaceChildren();
+  for (const membership of state.memberships) {
+    const organization = membership.organization ?? {};
+    const slug = safeText(organization.slug, organization.external_id);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "organization-menu-item";
+    button.dataset.organizationSlug = slug;
+    button.setAttribute("role", "menuitem");
+    if (slug === state.organizationSlug) button.setAttribute("aria-current", "true");
+
+    const avatar = document.createElement("span");
+    avatar.className = "organization-menu-avatar";
+    avatar.textContent = initials(organization.name);
+    avatar.setAttribute("aria-hidden", "true");
+    const copy = document.createElement("span");
+    const name = document.createElement("strong");
+    name.textContent = safeText(organization.name, slug);
+    const role = document.createElement("small");
+    role.textContent = membership.role === "admin" ? "Administrator" : "Read-only viewer";
+    copy.append(name, role);
+    button.append(avatar, copy);
+    elements.organizationMenuItems.append(button);
+  }
+}
+
+async function handleOrganizationSelection(event) {
+  const button = event.target.closest("button[data-organization-slug]");
+  if (!button) return;
+  const nextSlug = button.dataset.organizationSlug;
+  closeOrganizationMenu();
+  if (!nextSlug || nextSlug === state.organizationSlug) return;
+  state.organizationSlug = nextSlug;
+  state.route = defaultRoute;
+  state.detailId = null;
+  state.detailTab = "overview";
+  window.history.pushState({ route: state.route }, "", routePath(nextSlug, state.route));
+  await loadWorkspace();
+}
+
+function toggleMobileNavigation() {
+  const open = elements.sidebar.classList.toggle("open");
+  elements.navBurger.setAttribute("aria-expanded", String(open));
+}
+
+function closeMobileNavigation() {
+  elements.sidebar.classList.remove("open");
+  elements.navBurger.setAttribute("aria-expanded", "false");
 }
 
 function renderOperator(operator) {
@@ -592,6 +1203,7 @@ function renderOperator(operator) {
   elements.operatorBadge.hidden = false;
   elements.rolePill.textContent = isAdmin ? "Admin access" : "Viewer access";
   elements.rolePill.classList.toggle("admin", isAdmin);
+  elements.switcherRole.textContent = isAdmin ? "Administrator" : "Read-only viewer";
   elements.openCreateKey.hidden = !isAdmin;
   elements.openCreateSection.hidden = !isAdmin;
   elements.openEditBilling.hidden = !isAdmin;
@@ -661,6 +1273,8 @@ function renderOrganization(organization) {
   elements.organizationTimezone.textContent = safeText(organization.timezone, "—");
   elements.organizationVersion.textContent = `v${Number(organization.version) || 1}`;
   elements.organizationMonogram.textContent = initials(name);
+  elements.switcherMonogram.textContent = initials(name);
+  elements.switcherName.textContent = name;
   elements.workspaceName.textContent = name;
 }
 
@@ -789,6 +1403,7 @@ function renderKeys(keys) {
   for (const key of state.keys) {
     elements.keysTableBody.append(createKeyRow(key));
   }
+  decorateEntityRows(elements.keysTableBody, state.keys, "api-keys");
 }
 
 function createKeyRow(key) {
@@ -846,6 +1461,7 @@ function renderSections(sections) {
   for (const section of state.sections) {
     elements.sectionsTableBody.append(createSectionRow(section));
   }
+  decorateEntityRows(elements.sectionsTableBody, state.sections, "invoice-sections");
 }
 
 function createSectionRow(section) {
@@ -904,6 +1520,7 @@ function renderReceipts(receipts) {
   elements.receiptsTableShell.hidden = state.receipts.length === 0;
   for (const receipt of state.receipts)
     elements.receiptsTableBody.append(createReceiptRow(receipt));
+  decorateEntityRows(elements.receiptsTableBody, state.receipts, "payment-receipts");
 }
 
 function createReceiptRow(receipt) {
@@ -944,6 +1561,7 @@ function renderTaxes(taxes) {
   elements.taxesEmpty.hidden = state.taxes.length !== 0;
   elements.taxesTableShell.hidden = state.taxes.length === 0;
   for (const tax of state.taxes) elements.taxesTableBody.append(createTaxRow(tax));
+  decorateEntityRows(elements.taxesTableBody, state.taxes, "taxes");
 }
 
 function createTaxRow(tax) {
@@ -1080,6 +1698,7 @@ function renderAddOns(addOns) {
   elements.addOnsEmpty.hidden = state.addOns.length !== 0;
   elements.addOnsTableShell.hidden = state.addOns.length === 0;
   for (const addOn of state.addOns) elements.addOnsTableBody.append(createAddOnRow(addOn));
+  decorateEntityRows(elements.addOnsTableBody, state.addOns, "add-ons");
 }
 
 function createAddOnRow(addOn) {
@@ -1225,8 +1844,10 @@ function renderCustomers(customers) {
 function createCustomerRow(customer) {
   const row = document.createElement("tr");
   const customerCell = document.createElement("td");
-  const name = document.createElement("span");
-  name.className = "key-name";
+  const name = document.createElement("a");
+  name.className = "key-name entity-link";
+  name.href = routePath(state.organizationSlug, "customers", customer.external_id);
+  name.dataset.customerRoute = customer.external_id;
   name.textContent = safeText(customer.name, "Unnamed customer");
   const externalId = document.createElement("span");
   externalId.className = "key-id";
@@ -1265,12 +1886,340 @@ function customerActionButton(label, externalId) {
 }
 
 function handleCustomerAction(event) {
+  const routeLink = event.target.closest("a[data-customer-route]");
+  if (routeLink) {
+    event.preventDefault();
+    navigateToCustomer(routeLink.dataset.customerRoute);
+    return;
+  }
   const button = event.target.closest("button[data-customer-external-id]");
   if (!button || state.role !== "admin") return;
   const customer = state.customers.find(
     (candidate) => candidate.external_id === button.dataset.customerExternalId,
   );
   if (customer) openEditCustomerDialog(customer);
+}
+
+function navigateToCustomer(externalId, tab = "overview", { replace = false } = {}) {
+  state.route = "customers";
+  state.detailId = externalId;
+  state.detailTab = tab;
+  const path = routePath(state.organizationSlug, state.route, externalId, tab);
+  if (replace) window.history.replaceState({ route: state.route, externalId, tab }, "", path);
+  else window.history.pushState({ route: state.route, externalId, tab }, "", path);
+  renderRoute();
+  closeMobileNavigation();
+}
+
+function openSelectedCustomerEditor() {
+  if (state.role !== "admin") return;
+  const customer = state.customers.find((candidate) => candidate.external_id === state.detailId);
+  if (customer) openEditCustomerDialog(customer);
+}
+
+function handleCustomerTab(event) {
+  if (!state.detailId) return;
+  navigateToCustomer(state.detailId, event.currentTarget.dataset.customerTab);
+}
+
+function renderCustomerDetail() {
+  const customer = state.customers.find((candidate) => candidate.external_id === state.detailId);
+  elements.customerDetailTabPanel.replaceChildren();
+  if (!customer) {
+    const missing = document.createElement("div");
+    missing.className = "detail-empty";
+    const title = document.createElement("h2");
+    title.textContent = "Customer not found";
+    const copy = document.createElement("p");
+    copy.textContent =
+      "This customer is not available in the selected organization. No other tenant was queried.";
+    missing.append(title, copy);
+    elements.customerDetailTabPanel.append(missing);
+    elements.customerDetailEdit.hidden = true;
+    elements.customerDetailEditAside.hidden = true;
+    return;
+  }
+
+  const name = safeText(customer.name, "Unnamed customer");
+  elements.customerDetailAvatar.textContent = initials(name);
+  elements.customerDetailName.textContent = name;
+  elements.customerDetailExternalId.textContent = safeText(customer.external_id, "—");
+  elements.customerDetailFieldName.textContent = name;
+  elements.customerDetailFieldId.textContent = safeText(customer.external_id, "—");
+  elements.customerDetailFieldCurrency.textContent = safeText(customer.currency, "—");
+  elements.customerDetailFieldEmail.textContent = safeText(customer.email, "—");
+  elements.customerDetailFieldTimezone.textContent = safeText(customer.timezone, "—");
+  elements.customerDetailFieldTerm.textContent =
+    customer.net_payment_term === null
+      ? "Organization default"
+      : `${nonNegativeNumber(customer.net_payment_term)} days`;
+  elements.customerDetailEdit.hidden = state.role !== "admin";
+  elements.customerDetailEditAside.hidden = state.role !== "admin";
+
+  for (const tab of elements.customerDetailTabs) {
+    const selected = tab.dataset.customerTab === state.detailTab;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+  }
+
+  if (state.detailTab === "analytics") {
+    renderCustomerUnavailableTab(
+      "Analytics",
+      "Customer usage and revenue analytics stay in the original detail hierarchy while the bounded D1 read model is completed.",
+    );
+    return;
+  }
+  if (state.detailTab === "wallets") {
+    renderCustomerCollectionTab(
+      "Wallets",
+      state.wallets.filter((wallet) => wallet.external_customer_id === customer.external_id),
+      "No wallets are attached to this customer.",
+    );
+    return;
+  }
+  if (state.detailTab === "invoices") {
+    renderCustomerCollectionTab(
+      "Invoices",
+      state.invoices.filter((invoice) => invoice.external_customer_id === customer.external_id),
+      "No invoices are available for this customer.",
+    );
+    return;
+  }
+  if (state.detailTab === "credit-notes") {
+    renderCustomerCollectionTab(
+      "Credit notes",
+      state.creditNotes.filter(
+        (creditNote) => creditNote.external_customer_id === customer.external_id,
+      ),
+      "No credit notes are available for this customer.",
+    );
+    return;
+  }
+  if (state.detailTab === "settings") {
+    renderCustomerSettingsTab(customer);
+    return;
+  }
+  renderCustomerOverview(customer);
+}
+
+function handleEntityDetailNavigation(event) {
+  const link = event.target.closest("a[data-entity-detail-route]");
+  if (!link) return;
+  event.preventDefault();
+  const route = link.dataset.entityDetailRoute;
+  const identifier = link.dataset.entityDetailId;
+  if (!entityDetailDefinitions[route] || !identifier) return;
+  state.route = route;
+  state.detailId = identifier;
+  state.detailTab = "overview";
+  window.history.pushState(
+    { route, identifier },
+    "",
+    routePath(state.organizationSlug, route, identifier),
+  );
+  renderRoute();
+  closeMobileNavigation();
+}
+
+function findDetailEntity(definition, identifier) {
+  if (!definition || !identifier) return null;
+  const collection = state[definition.collection];
+  if (!Array.isArray(collection)) return null;
+  return collection.find((item) => String(definition.id(item)) === String(identifier)) ?? null;
+}
+
+function renderEntityDetail() {
+  const definition = entityDetailDefinitions[state.route];
+  const item = findDetailEntity(definition, state.detailId);
+  const routeDefinition = routeDefinitions[state.route];
+  elements.entityDetailBackLabel.textContent = routeDefinition?.title ?? "Back";
+  elements.entityDetailFields.replaceChildren();
+  elements.entityDetailMissing.hidden = Boolean(item);
+  elements.entityDetailEdit.hidden = true;
+
+  if (!item) {
+    elements.entityDetailAvatar.textContent = "—";
+    elements.entityDetailType.textContent = definition?.singular ?? "Billing object";
+    elements.entityDetailName.textContent = "Billing object not found";
+    elements.entityDetailId.textContent = safeText(state.detailId, "—");
+    return;
+  }
+
+  const label = definition.label(item);
+  elements.entityDetailAvatar.textContent = initials(label);
+  elements.entityDetailType.textContent = definition.singular;
+  elements.entityDetailName.textContent = label;
+  elements.entityDetailId.textContent = safeText(definition.id(item), "—");
+  elements.entityDetailEdit.hidden =
+    state.role !== "admin" || typeof definition.edit !== "function";
+
+  for (const [fieldLabel, valueReader] of definition.fields) {
+    const group = document.createElement("div");
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    term.textContent = fieldLabel;
+    description.textContent = detailValue(valueReader(item));
+    group.append(term, description);
+    elements.entityDetailFields.append(group);
+  }
+}
+
+function openSelectedEntityEditor() {
+  if (state.role !== "admin") return;
+  const definition = entityDetailDefinitions[state.route];
+  const item = findDetailEntity(definition, state.detailId);
+  if (item && typeof definition.edit === "function") definition.edit(item);
+}
+
+function detailValue(value) {
+  if (Array.isArray(value)) return value.length > 0 ? value.join(", ") : "—";
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
+}
+
+function decorateEntityRows(tableBody, items, route) {
+  const definition = entityDetailDefinitions[route];
+  if (!definition) return;
+  const rows = Array.from(tableBody.querySelectorAll("tr"));
+  rows.forEach((row, index) => {
+    const item = items[index];
+    if (!item) return;
+    const identifier = definition.id(item);
+    if (identifier === null || identifier === undefined || identifier === "") return;
+    const currentLabel = row.querySelector(".key-name");
+    const link = document.createElement("a");
+    link.className = currentLabel
+      ? `${currentLabel.className} entity-link`
+      : "key-name entity-link";
+    link.href = routePath(state.organizationSlug, route, identifier);
+    link.dataset.entityDetailRoute = route;
+    link.dataset.entityDetailId = String(identifier);
+    link.textContent = currentLabel?.textContent ?? definition.label(item);
+    if (currentLabel) currentLabel.replaceWith(link);
+    else row.cells[0]?.replaceChildren(link);
+  });
+}
+
+function renderCustomerOverview(customer) {
+  const subscriptions = state.subscriptions.filter(
+    (subscription) => subscription.external_customer_id === customer.external_id,
+  );
+  const invoices = state.invoices.filter(
+    (invoice) => invoice.external_customer_id === customer.external_id,
+  );
+  const heading = document.createElement("div");
+  heading.className = "detail-panel-heading";
+  const title = document.createElement("h2");
+  title.textContent = "Billing overview";
+  heading.append(title);
+
+  const summaries = document.createElement("div");
+  summaries.className = "detail-summary-grid";
+  summaries.append(
+    createDetailSummary("Invoices", String(invoices.length), "Retained billing documents"),
+    createDetailSummary(
+      "Subscriptions",
+      String(subscriptions.length),
+      "Active and historical subscriptions",
+    ),
+  );
+
+  const subscriptionHeading = document.createElement("div");
+  subscriptionHeading.className = "detail-panel-heading detail-panel-heading-spaced";
+  const subscriptionTitle = document.createElement("h2");
+  subscriptionTitle.textContent = "Subscriptions";
+  subscriptionHeading.append(subscriptionTitle);
+  elements.customerDetailTabPanel.append(heading, summaries, subscriptionHeading);
+  renderCustomerCollection(subscriptions, "No subscriptions are assigned to this customer.");
+}
+
+function createDetailSummary(label, value, metadata) {
+  const card = document.createElement("div");
+  card.className = "detail-summary-card";
+  const title = document.createElement("p");
+  title.textContent = label;
+  const amount = document.createElement("strong");
+  amount.textContent = value;
+  const detail = document.createElement("small");
+  detail.textContent = metadata;
+  card.append(title, amount, detail);
+  return card;
+}
+
+function renderCustomerCollectionTab(titleText, items, emptyText) {
+  const heading = document.createElement("div");
+  heading.className = "detail-panel-heading";
+  const title = document.createElement("h2");
+  title.textContent = titleText;
+  heading.append(title);
+  elements.customerDetailTabPanel.append(heading);
+  renderCustomerCollection(items, emptyText);
+}
+
+function renderCustomerCollection(items, emptyText) {
+  if (items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "detail-empty";
+    const copy = document.createElement("p");
+    copy.textContent = emptyText;
+    empty.append(copy);
+    elements.customerDetailTabPanel.append(empty);
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = "detail-record-list";
+  for (const item of items) {
+    const record = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = safeText(
+      item.name,
+      safeText(item.external_id, safeText(item.number, "Record")),
+    );
+    const status = document.createElement("span");
+    status.className = "code-chip";
+    status.textContent = safeText(item.status, "available");
+    record.append(name, status);
+    list.append(record);
+  }
+  elements.customerDetailTabPanel.append(list);
+}
+
+function renderCustomerUnavailableTab(titleText, copyText) {
+  const boundary = document.createElement("div");
+  boundary.className = "detail-empty detail-boundary";
+  const title = document.createElement("h2");
+  title.textContent = titleText;
+  const copy = document.createElement("p");
+  copy.textContent = copyText;
+  const safety = document.createElement("small");
+  safety.textContent = "No provider or external action is enabled from this state.";
+  boundary.append(title, copy, safety);
+  elements.customerDetailTabPanel.append(boundary);
+}
+
+function renderCustomerSettingsTab(customer) {
+  const heading = document.createElement("div");
+  heading.className = "detail-panel-heading";
+  const title = document.createElement("h2");
+  title.textContent = "Customer settings";
+  heading.append(title);
+  const settings = document.createElement("dl");
+  settings.className = "detail-settings-list";
+  for (const [label, value] of [
+    ["Timezone", safeText(customer.timezone, "Organization default")],
+    ["Currency", safeText(customer.currency, "Organization default")],
+    ["Payment term", elements.customerDetailFieldTerm.textContent],
+    ["Invoice grace period", `${nonNegativeNumber(customer.invoice_grace_period)} days`],
+  ]) {
+    const row = document.createElement("div");
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = value;
+    row.append(term, detail);
+    settings.append(row);
+  }
+  elements.customerDetailTabPanel.append(heading, settings);
 }
 
 function openCreateCustomerDialog() {
@@ -1376,6 +2325,7 @@ function renderCoupons(coupons) {
     row.append(nameCell, codeCell, discountCell, frequencyCell, expirationCell);
     elements.couponsTableBody.append(row);
   }
+  decorateEntityRows(elements.couponsTableBody, state.coupons, "coupons");
 }
 
 function renderAppliedCoupons(appliedCoupons) {
@@ -1607,6 +2557,7 @@ function renderPlans(plans) {
   elements.fixedChargesTableShell.hidden = fixedCharges.length === 0;
   for (const fixed of fixedCharges)
     elements.fixedChargesTableBody.append(createFixedChargeRow(fixed));
+  decorateEntityRows(elements.plansTableBody, state.plans, "plans");
 }
 
 function planActionButton(label, action, code, danger = false) {
@@ -1929,6 +2880,7 @@ function renderSubscriptions(subscriptions) {
     row.append(identity, customer, plan, status, period, actions);
     elements.subscriptionsTableBody.append(row);
   }
+  decorateEntityRows(elements.subscriptionsTableBody, state.subscriptions, "subscriptions");
 }
 
 function subscriptionActionButton(label, action, externalId, danger = false) {
@@ -2159,6 +3111,7 @@ function renderInvoices(invoices) {
     row.append(actions);
     elements.invoicesTableBody.append(row);
   }
+  decorateEntityRows(elements.invoicesTableBody, state.invoices, "invoices");
 }
 
 function invoiceActionButton(label, action, invoiceId, danger = false) {
@@ -2306,6 +3259,7 @@ function renderWallets(wallets) {
     row.append(actions);
     elements.walletsTableBody.append(row);
   }
+  decorateEntityRows(elements.walletsTableBody, state.wallets, "wallets");
 }
 
 function walletActionButton(label, action, walletId, danger = false) {
@@ -2459,6 +3413,7 @@ function renderCreditNotes(notes) {
     row.append(actions);
     elements.creditNotesTableBody.append(row);
   }
+  decorateEntityRows(elements.creditNotesTableBody, state.creditNotes, "credit-notes");
 }
 
 function handleCreditNoteAction(event) {
@@ -2508,6 +3463,7 @@ function renderPayments(payments) {
     }
     elements.paymentsTableBody.append(row);
   }
+  decorateEntityRows(elements.paymentsTableBody, state.payments, "payments");
 }
 
 function renderQuotes(quotes) {
@@ -2562,6 +3518,7 @@ function renderQuotes(quotes) {
     row.append(actions);
     elements.quotesTableBody.append(row);
   }
+  decorateEntityRows(elements.quotesTableBody, state.quotes, "quotes");
 }
 
 function quoteActionButton(label, action, quoteId, versionId, danger = false) {
@@ -2737,6 +3694,7 @@ function renderDataExports(exports) {
     }
     elements.dataExportsTableBody.append(row);
   }
+  decorateEntityRows(elements.dataExportsTableBody, state.dataExports, "data-exports");
 }
 
 function renderWebhookEndpoints(endpoints) {
@@ -2762,6 +3720,11 @@ function renderWebhookEndpoints(endpoints) {
     }
     elements.webhookEndpointsTableBody.append(row);
   }
+  decorateEntityRows(
+    elements.webhookEndpointsTableBody,
+    state.webhookEndpoints,
+    "webhook-endpoints",
+  );
 }
 
 function renderDunningCampaigns(campaigns) {
@@ -2802,6 +3765,7 @@ function renderDunningCampaigns(campaigns) {
     row.append(actionCell);
     elements.dunningTableBody.append(row);
   }
+  decorateEntityRows(elements.dunningTableBody, state.dunningCampaigns, "dunning-campaigns");
 }
 
 function renderPaymentRequests(requests) {
@@ -3692,6 +4656,7 @@ function showClosedState(error) {
 
 async function requestJson(path, options = {}) {
   const headers = new Headers({ Accept: "application/json" });
+  if (state.organizationSlug) headers.set("X-Operator-Organization", state.organizationSlug);
   for (const [name, value] of Object.entries(options.headers ?? {})) headers.set(name, value);
   const request = { method: options.method ?? "GET", headers };
   if (options.body !== undefined) {

@@ -1,6 +1,6 @@
 # Cloudflare-Native Lago Resource Manifest
 
-Last verified: 2026-08-17
+Last verified: 2026-08-18
 
 This manifest covers the isolated, non-production stack created for the Cloudflare-native rewrite.
 It is not a production inventory and contains no secrets or customer data.
@@ -35,14 +35,14 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `* * * * *`                                                        | Worker scheduled handler  | Deterministic legacy-schedule dispatch and activity fanout         |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 | Static Assets     | `operator-ui`                                                      | direct asset delivery     | Script-free operator migration shell and security headers          |
-| Worker            | `serp-dev-lago-operator` / `2787e247-b3b9-4dc8-b91b-86b36bc44251`  | D1, DO, Workflow, Queue   | Access-protected synthetic-tenant operator BFF and Static Assets   |
+| Worker            | `serp-dev-lago-operator` / `5666a5f4-4502-4d71-b2dc-0ac656048393`  | D1, DO, Workflow, Queue   | Access-protected synthetic-tenant operator BFF and Static Assets   |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0071_operator_data_export_requesters.sql`.
+`0072_operator_multi_organization_memberships.sql`.
 
 ## Operator Access rollout
 
-- `serp-dev-lago-operator` version `2787e247-b3b9-4dc8-b91b-86b36bc44251` is deployed from
+- `serp-dev-lago-operator` version `5666a5f4-4502-4d71-b2dc-0ac656048393` is deployed from
   `wrangler.operator.jsonc` with Access validation enabled, preview URLs disabled, the operator
   Static Assets application, isolated D1, and the existing internal Durable Object, Workflow, and
   Queue bindings. The API Worker remains outside the human Access application.
@@ -50,9 +50,11 @@ Applied D1 migrations: `0001_foundation.sql` through
   is hidden from the App Launcher, and uses a 24-hour application session. Its only policy is
   `Allow Lago operator development`, an Allow policy with one exact email include and no require or
   exclude rules. The application audience is stored as non-secret Worker configuration.
-- Migrations `0070_operator_access.sql` and `0071_operator_data_export_requesters.sql` are applied.
-  One active admin membership maps the authenticated Access identity to only the documented
-  `synthetic-e2e-20260815-001` tenant by issuer plus SHA-256 subject; no raw Access subject is stored.
+- Migrations `0070_operator_access.sql` through
+  `0072_operator_multi_organization_memberships.sql` are applied. The authenticated Access identity
+  has one admin membership for the documented `synthetic-e2e-20260815-001` tenant and one viewer
+  membership for the empty `serp-labs` synthetic organization. Memberships remain keyed by issuer
+  plus SHA-256 subject and organization; no raw Access subject is stored.
 - `scripts/provision-operator-access.mjs` is an idempotent, fail-closed reconciler for the approved
   isolated application. It preflights Worker, Zero Trust organization, and application reads before
   writing; resolves the immutable Worker ID; creates only the named Worker application and its one-
@@ -61,15 +63,18 @@ Applied D1 migrations: `0001_foundation.sql` through
 
 ## Verified behavior
 
-- Operator version `2787e247-b3b9-4dc8-b91b-86b36bc44251` is fail-closed at the edge: a fresh
+- Operator version `5666a5f4-4502-4d71-b2dc-0ac656048393` is fail-closed at the edge: a fresh
   unauthenticated request receives a Cloudflare Access `302` and no origin response. An authenticated
-  one-time-pin session loads `SERP Billing Operator`, resolves the single synthetic membership as
-  Administrator, and displays only `Synthetic E2E 20260815 001`. The deploy initially exposed a
-  pre-existing 35-character D1 UUID typo in `wrangler.operator.jsonc`; correcting it to the verified
-  36-character resource ID and adding a regression assertion allowed the live version upload. The
-  complete package check passes 333 tests across 61 files plus five Access reconciler tests, type and
-  inventory checks, formatting, lint, and both dry deployments. External-action flags remain `0`;
-  no production route, provider action, payment action, customer message, secret, or customer data
+  one-time-pin session loads the original-Lago-aligned operator shell and resolves both synthetic
+  memberships. Browser verification switched from the admin tenant to the empty `serp-labs` viewer
+  tenant at `/serp-labs/customers`, hid create/edit controls, showed no customer rows, and used browser
+  Back to restore the admin organization. A deployed customer row opened the real organization-slug
+  customer detail route with its Lago entity header, tabs, billing summary, and details rail. The
+  complete package check passes 337 tests across 61 files plus five Access reconciler tests, type and
+  inventory checks, formatting, lint, and both dry deployments. Remote migration inventory is empty,
+  `PRAGMA foreign_key_check` returns no rows, and version inspection confirms
+  `PAYMENT_MUTATIONS_ENABLED`, `PROVIDER_READS_ENABLED`, and `OUTBOUND_WEBHOOKS_ENABLED` remain `0`.
+  No production route, provider action, payment action, customer message, secret, or customer data
   changed.
 - Operator bootstrap version `87907c2c-1ff2-4678-9f9c-832a64820f2f` created only the isolated
   `serp-dev-lago-operator` Worker resource. Remote `/`, `/health`, `/ready`,

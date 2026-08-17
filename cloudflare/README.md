@@ -292,10 +292,14 @@ remaining Lago feature inventory is dispositioned and ported.
   not deployed while its operations remain unmapped.
   `../docs/reference/cloudflare-operator-surface-policy.md` defines screen admission, route-family
   disposition, and the Access/JWT plus D1 membership boundary required before remote deployment.
+  `../docs/reference/cloudflare-operator-parity-matrix.md` records the original Lago navigation,
+  organization-scoped list/detail routes, responsive behavior, and explicit unavailable states
+  preserved by the Cloudflare port.
 - Operator authentication: a separately configured `serp-dev-lago-operator` Worker keeps human
   Cloudflare Access policy away from service API clients and provider webhooks. It validates the
   Access RS256 JWT issuer, audience, signature, expiry, and subject; looks up only an issuer-scoped
-  subject hash in the one-tenant D1 membership table; enforces viewer/admin roles plus same-origin/
+  subject hash in the D1 membership table; allows one Access identity to select among its active
+  organization memberships; enforces viewer/admin roles plus same-origin/
   CSRF mutation prerequisites; and reports readiness/session `503` while Access is disabled. The
   live Worker config contains no invented issuer, audience, identity, or membership. Because a
   Worker-target Access application requires an existing Worker resource ID, the initial deployment

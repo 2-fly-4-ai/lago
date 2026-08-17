@@ -1,6 +1,7 @@
 import operatorScript from "../operator-app/assets/operator-app.js?raw";
 import operatorHeaders from "../operator-app/_headers?raw";
 import operatorIndex from "../operator-app/index.html?raw";
+import operatorPreview from "../scripts/operator-preview-server.mjs?raw";
 import apiConfig from "../wrangler.jsonc?raw";
 import operatorConfig from "../wrangler.operator.jsonc?raw";
 import { describe, expect, it } from "vitest";
@@ -74,10 +75,64 @@ describe("isolated operator app assets", () => {
       expect(operatorScript).toContain(endpoint);
     }
     expect(operatorScript).toContain('headers.set("X-Operator-Request", "1")');
+    expect(operatorScript).toContain('headers.set("X-Operator-Organization"');
     expect(operatorScript).toContain('headers.set("Content-Type", "application/json")');
     expect(operatorScript).not.toMatch(
       /localStorage|sessionStorage|indexedDB|document\.cookie|Authorization|\/graphql\b|innerHTML/i,
     );
+  });
+
+  it("uses organization-slug routes, real history, and the retained Lago navigation hierarchy", () => {
+    expect(operatorScript).toContain("window.history.pushState");
+    expect(operatorScript).toContain('window.addEventListener("popstate"');
+    expect(operatorScript).toContain("operator.organization_slug");
+    expect(operatorScript).toContain("operator.memberships");
+    expect(operatorIndex).toContain("Reports");
+    expect(operatorIndex).toContain("Configuration");
+    expect(operatorIndex).toContain("Billing &amp; operations");
+    expect(operatorIndex).toContain("organization-switcher");
+    expect(operatorIndex).toContain('data-route="customers"');
+    expect(operatorIndex).not.toMatch(/href="#(?:overview|customers|plans|invoices)/);
+    expect(operatorPreview).toContain('"serp-billing"');
+    expect(operatorPreview).toContain('"serp-labs"');
+  });
+
+  it("keeps admitted REST families in focused Lago list and detail routes", () => {
+    expect(operatorIndex).toContain('id="customer-detail"');
+    expect(operatorIndex).toContain('id="entity-detail"');
+    expect(operatorScript).toContain("entityDetailDefinitions");
+    expect(operatorScript).toContain("decorateEntityRows");
+    expect(operatorScript).toContain("findDetailEntity");
+    expect(operatorScript).toContain("routePath(state.organizationSlug, route, identifier)");
+    expect(operatorScript).toContain("No other tenant was queried");
+    for (const route of [
+      "api-keys",
+      "invoice-sections",
+      "payment-receipts",
+      "taxes",
+      "add-ons",
+      "coupons",
+      "plans",
+      "subscriptions",
+      "invoices",
+      "wallets",
+      "credit-notes",
+      "payments",
+      "quotes",
+      "data-exports",
+      "webhook-endpoints",
+      "dunning-campaigns",
+    ]) {
+      expect(operatorIndex).toContain(`data-route="${route}"`);
+    }
+  });
+
+  it("reuses original Lago icon assets instead of text-glyph UI icons", () => {
+    expect(operatorIndex).toContain("/assets/icons/user-multiple.svg");
+    expect(operatorIndex).toContain("/assets/icons/chart-bar.svg");
+    expect(operatorIndex).toContain("/assets/icons/close.svg");
+    expect(operatorIndex).toContain("/assets/lago-logo-grey.svg");
+    expect(operatorIndex).not.toMatch(/aria-hidden="true">\s*[×+!$⌁⇩“”↩◉◇▧↻▤≡◎⌂¤＋%]\s*</);
   });
 
   it("renders explicit fail-closed and one-time secret states", () => {

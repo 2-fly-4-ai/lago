@@ -718,6 +718,30 @@ Acceptance:
 - A separate production plan is reviewed and explicitly approved.
 - This branch alone cannot route production traffic or mutate production billing state.
 
+## Operator parity correction checkpoint — 2026-08-18
+
+- [x] Replaced the custom giant anchor document with the original Lago grouped navigation, focused
+      organization-slug routes, headers, breadcrumbs, tables, dialogs, responsive navigation,
+      original SVG assets, and self-hosted Inter.
+- [x] Added forward migration `0072_operator_multi_organization_memberships.sql`, membership-list
+      session output, explicit organization selection, safe organization switching, admin/viewer
+      enforcement, and cross-tenant missing-object behavior.
+- [x] Added original-style customer detail routes and generic focused detail routes for every
+      admitted operator list/show family. Retained-but-unavailable product areas remain in the
+      original hierarchy with explicit bounded states.
+- [x] Added a minimum empty `serp-labs` synthetic organization and viewer membership to the isolated
+      development D1 database. No provider, payment, email, production, or customer-data action was
+      enabled.
+- [x] Compared original and ported desktop customer states at 1502 × 888 and checked responsive
+      navigation, detail, and table overflow at 390 × 844. The evidence and final QA result live in
+      `docs/evidence/cloudflare-operator-2026-08-18/` and `design-qa.md`.
+- [x] Passed 337 tests across 61 files, five Access reconciler tests, formatting, lint, type checks,
+      inventory verification, both Worker dry builds, authenticated remote browser QA, and
+      unauthenticated Access fail-closed checks.
+- [x] Applied only migration `0072`, confirmed no pending remote migration or foreign-key violation,
+      and deployed operator Worker version `5666a5f4-4502-4d71-b2dc-0ac656048393`. Remote API Worker
+      version inspection confirms all three external-action flags remain `0`.
+
 ## Verification Matrix
 
 | Risk                 | Required evidence                                                   |

@@ -1,6 +1,6 @@
 # Cloudflare Operator Surface Policy
 
-Verified: 2026-08-16
+Verified: 2026-08-18
 
 This policy controls which parts of the pinned Lago React/Apollo console may become visible from
 the container-free Cloudflare Worker. It is evidence for M8, not authorization to expose a screen,
@@ -14,11 +14,11 @@ The complete item-level inventory remains generated in
 `cloudflare-rewrite-feature-inventory.json`.
 
 The deployed API Worker still serves the script-free migration shell. The separate operator Worker
-is implemented locally but remains undeployed until Access is approved. Its native module app uses
-22 tested membership-scoped REST route families and has no GraphQL client or browser credential
-input/storage. The generated inventory classifies every legacy operation as disabled, blocked,
-external, not-used, retired, or deferred and records the REST replacements separately. The legacy
-React application must not be built or uploaded wholesale.
+is deployed behind its approved Cloudflare Access application. Its native module app uses 22 tested
+membership-scoped REST route families and has no GraphQL client or browser credential input/storage.
+The generated inventory classifies every legacy operation as disabled, blocked, external, not-used,
+retired, or deferred and records the REST replacements separately. The legacy React application
+must not be built or uploaded wholesale.
 
 ## Screen admission rule
 
@@ -54,8 +54,10 @@ The selected browser architecture is:
    and provider webhooks are not intercepted by the human login policy.
 2. The Worker independently validates `Cf-Access-Jwt-Assertion` against the configured Access team
    issuer, application audience, signature, and expiry.
-3. A D1 operator-membership record maps a stable Access subject to one organization and an explicit
-   role. Email is display/audit metadata, not the tenant authorization key.
+3. D1 operator-membership records map a stable Access subject to one or more organizations, with an
+   explicit role per organization. Email is display/audit metadata, not the tenant authorization
+   key. Multi-membership requests select an admitted organization explicitly and fail closed when
+   the selection is missing or invalid.
 4. Browser API requests use the validated Access identity. Existing bearer API-key authentication
    remains available for service clients and is never synthesized in the browser.
 5. Same-origin mutation requests require JSON plus an operator-only CSRF header and reject an
@@ -64,10 +66,10 @@ The selected browser architecture is:
    closed. There is no development bypass in a deployed environment.
 
 Cloudflare currently documents direct Worker-name protection for self-hosted Access applications
-and requires Workers behind Access to validate the injected JWT. Provisioning is intentionally
-pending because the allowed identity/group policy, session duration, Access team domain, and
-application audience have not been approved or made available to this branch. Until then,
-interactive operator access stays disabled.
+and requires Workers behind Access to validate the injected JWT. The isolated
+`serp-dev-lago-operator` application and narrowly scoped allow policy are provisioned, and the
+Worker also validates the issuer, audience, signature, expiry, and D1 membership before admitting
+an operator request.
 
 Current platform references:
 
@@ -104,18 +106,18 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    Worker-name application and record its non-secret issuer/audience configuration. Do not deploy
    the functional operator Worker, Static Assets, or data bindings before Access protects that ID.
 3. Ship a read-only organization/status shell and prove tenant isolation remotely with synthetic
-   membership only. The membership-scoped organization BFF and its interactive read-only screen
-   are implemented locally; remote Access/membership proof remains pending.
+   membership only. The membership-scoped organization BFF, multi-organization selection, viewer
+   restriction, and tenant isolation have passed remote Access verification.
 4. Add API-key metadata management, keeping one-time create/rotate values ephemeral and never
    offering existing-key reveal. The complete viewer-read/admin-mutation BFF and interactive screen
-   are locally implemented and tested; remote Access proof remains pending. The screen uses no
+   are implemented, tested, and protected by the verified Access boundary. The screen uses no
    browser credential storage and clears one-time create/rotate values when its dialog closes.
 5. Add the retained catalog and billing screens in bounded families, each with complete operation
    mapping and rollback to the migration shell. The first catalog family, manual invoice custom-
-   section viewer reads plus admin create/edit/terminate, is implemented locally through the
-   canonical REST handler and existing internal domain-event Queue; remote Access proof remains
-   pending. The first billing family, single-default-entity viewer reads plus admin updates, is also
-   implemented locally through the canonical D1 handler. It exposes only supported legal, address,
+   section viewer reads plus admin create/edit/terminate, is implemented through the canonical REST
+   handler and existing internal domain-event Queue. The first billing family,
+   single-default-entity viewer reads plus admin updates, is also implemented through the canonical
+   D1 handler. It exposes only supported legal, address,
    payment-term, numbering, locale, and document defaults; multi-entity, e-invoicing, tax-assignment,
    and external-action paths remain unavailable. Payment-receipt list/show metadata is implemented
    as the next read-only family, with document URLs, generation/download, email, and every mutation

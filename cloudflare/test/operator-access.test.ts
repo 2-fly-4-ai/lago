@@ -50,9 +50,12 @@ async function accessToken(
     .sign(privateKey);
 }
 
-function accessRequest(token: string): Request {
+function accessRequest(token: string, organizationSlug?: string): Request {
   return new Request("https://operator.test/api/operator/v1/session", {
-    headers: { "Cf-Access-Jwt-Assertion": token },
+    headers: {
+      "Cf-Access-Jwt-Assertion": token,
+      ...(organizationSlug ? { "X-Operator-Organization": organizationSlug } : {}),
+    },
   });
 }
 
@@ -68,6 +71,13 @@ beforeAll(async () => {
 beforeEach(async () => {
   const subjectHash = await sha256Hex(`${issuer}\n${subject}`);
   await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      "DELETE FROM customers WHERE organization_id = 'org-operator-access-secondary'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM operator_memberships WHERE organization_id = 'org-operator-access-secondary'",
+    ),
+    env.BILLING_DB.prepare("DELETE FROM organizations WHERE id = 'org-operator-access-secondary'"),
     env.BILLING_DB.prepare(
       "DELETE FROM data_exports WHERE organization_id = 'org-operator-access'",
     ),
@@ -214,11 +224,21 @@ describe("operator Access authentication", () => {
       operatorEnv(),
       keySet,
     );
-    expect(context).toEqual({
+    expect(context).toMatchObject({
       membershipId: "membership-operator-access",
       organizationId: "org-operator-access",
       organizationExternalId: "operator-access",
+      organizationName: "Operator Access",
+      organizationSlug: "operator-access",
       role: "viewer",
+      memberships: [
+        {
+          membershipId: "membership-operator-access",
+          organizationId: "org-operator-access",
+          organizationSlug: "operator-access",
+          role: "viewer",
+        },
+      ],
     });
 
     await expect(
@@ -244,7 +264,7 @@ describe("operator Access authentication", () => {
     ).rejects.toMatchObject({ status: 403, code: "operator_membership_required" });
   });
 
-  it("keeps operator membership tenant identity immutable and unique", async () => {
+  it("allows one Access identity in multiple organizations while keeping each membership unique and immutable", async () => {
     const subjectHash = await sha256Hex(`${issuer}\n${subject}`);
     await expect(
       env.BILLING_DB.prepare(
@@ -257,6 +277,57 @@ describe("operator Access authentication", () => {
         .bind(issuer, subjectHash)
         .run(),
     ).rejects.toThrow();
+
+    await env.BILLING_DB.prepare(
+      `INSERT INTO organizations (id, external_id, name, slug, created_at, updated_at)
+       VALUES ('org-operator-access-secondary', 'operator-access-secondary',
+               'Operator Access Secondary', 'operator-access-secondary',
+               '2026-08-16T00:00:00.000Z', '2026-08-16T00:00:00.000Z')`,
+    ).run();
+    await expect(
+      env.BILLING_DB.prepare(
+        `INSERT INTO operator_memberships
+         (id, organization_id, access_issuer, access_subject_sha256, role, active, version,
+          created_at, updated_at, revoked_at)
+         VALUES ('membership-operator-secondary', 'org-operator-access-secondary', ?, ?,
+                 'admin', 1, 1, '2026-08-16T00:00:01.000Z',
+                 '2026-08-16T00:00:01.000Z', NULL)`,
+      )
+        .bind(issuer, subjectHash)
+        .run(),
+    ).resolves.toBeDefined();
+
+    const secondaryContext = await authenticateOperatorAccess(
+      accessRequest(await accessToken(), "operator-access-secondary"),
+      operatorEnv(),
+      keySet,
+    );
+    expect(secondaryContext).toMatchObject({
+      membershipId: "membership-operator-secondary",
+      organizationId: "org-operator-access-secondary",
+      organizationSlug: "operator-access-secondary",
+      role: "admin",
+    });
+    expect(secondaryContext.memberships).toHaveLength(2);
+
+    await expect(
+      authenticateOperatorAccess(
+        accessRequest(await accessToken(), "not-a-membership"),
+        operatorEnv(),
+        keySet,
+      ),
+    ).rejects.toMatchObject({ status: 403, code: "operator_organization_forbidden" });
+
+    await expect(
+      authenticateOperatorAccess(
+        new Request("https://operator.test/api/operator/v1/customers", {
+          headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+        }),
+        operatorEnv(),
+        keySet,
+      ),
+    ).rejects.toMatchObject({ status: 409, code: "operator_organization_required" });
+
     await expect(
       env.BILLING_DB.prepare(
         `UPDATE operator_memberships SET organization_id = 'missing-organization'
@@ -362,7 +433,21 @@ describe("operator Worker disabled boundary", () => {
         membership_id: "membership-operator-access",
         organization_id: "org-operator-access",
         organization_external_id: "operator-access",
+        organization_name: "Operator Access",
+        organization_slug: "operator-access",
         role: "viewer",
+        memberships: [
+          {
+            membership_id: "membership-operator-access",
+            role: "viewer",
+            organization: {
+              lago_id: "org-operator-access",
+              external_id: "operator-access",
+              name: "Operator Access",
+              slug: "operator-access",
+            },
+          },
+        ],
       },
     });
 
@@ -383,6 +468,99 @@ describe("operator Worker disabled boundary", () => {
         timezone: "UTC",
         version: 1,
       },
+    });
+  });
+
+  it("returns every membership and isolates organization-slug data requests", async () => {
+    const subjectHash = await sha256Hex(`${issuer}\n${subject}`);
+    const now = "2026-08-16T00:02:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO organizations (id, external_id, name, slug, created_at, updated_at)
+         VALUES ('org-operator-access-secondary', 'operator-access-secondary',
+                 'Operator Access Secondary', 'operator-access-secondary', ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO operator_memberships
+         (id, organization_id, access_issuer, access_subject_sha256, role, active, version,
+          created_at, updated_at, revoked_at)
+         VALUES ('membership-operator-secondary', 'org-operator-access-secondary', ?, ?,
+                 'admin', 1, 1, ?, ?, NULL)`,
+      ).bind(issuer, subjectHash, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, name, currency, metadata_json, version,
+          created_at, updated_at)
+         VALUES ('customer-operator-primary', 'org-operator-access', 'primary-customer',
+                 'Primary Customer', 'USD', '{}', 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, name, currency, metadata_json, version,
+          created_at, updated_at)
+         VALUES ('customer-operator-secondary', 'org-operator-access-secondary',
+                 'secondary-customer', 'Secondary Customer', 'NZD', '{}', 1, ?, ?)`,
+      ).bind(now, now),
+    ]);
+
+    const session = await handleOperatorRequest(
+      accessRequest(await accessToken(), "operator-access-secondary"),
+      operatorEnv(),
+      keySet,
+    );
+    expect(session.status).toBe(200);
+    await expect(session.json()).resolves.toMatchObject({
+      operator: {
+        membership_id: "membership-operator-secondary",
+        organization_slug: "operator-access-secondary",
+        role: "admin",
+        memberships: [
+          { organization: { slug: "operator-access" } },
+          { organization: { slug: "operator-access-secondary" } },
+        ],
+      },
+    });
+
+    const secondaryCustomers = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/customers", {
+        headers: {
+          "Cf-Access-Jwt-Assertion": await accessToken(),
+          "X-Operator-Organization": "operator-access-secondary",
+        },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(secondaryCustomers.json()).resolves.toMatchObject({
+      customers: [{ external_id: "secondary-customer", name: "Secondary Customer" }],
+      meta: { total_count: 1 },
+    });
+
+    const primaryCustomers = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/customers", {
+        headers: {
+          "Cf-Access-Jwt-Assertion": await accessToken(),
+          "X-Operator-Organization": "operator-access",
+        },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    await expect(primaryCustomers.json()).resolves.toMatchObject({
+      customers: [{ external_id: "primary-customer", name: "Primary Customer" }],
+      meta: { total_count: 1 },
+    });
+
+    const unscopedCustomers = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/customers", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    expect(unscopedCustomers.status).toBe(409);
+    await expect(unscopedCustomers.json()).resolves.toMatchObject({
+      code: "operator_organization_required",
     });
   });
 

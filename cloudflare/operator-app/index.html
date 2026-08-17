@@ -9,7 +9,7 @@
     />
     <meta name="color-scheme" content="light" />
     <meta name="robots" content="noindex, nofollow" />
-    <title>SERP Billing Operator</title>
+    <title>Lago · SERP Billing</title>
     <link rel="stylesheet" href="/assets/operator-app.css" />
     <script type="module" src="/assets/operator-app.js"></script>
   </head>
@@ -18,102 +18,135 @@
 
     <div class="app-shell">
       <aside class="sidebar" aria-label="Billing operator navigation">
-        <a class="brand" href="/" aria-label="SERP billing operator home">
-          <span class="brand-mark" aria-hidden="true">S</span>
-          <span>
-            <strong>SERP</strong>
-            <small>Billing operator</small>
-          </span>
-        </a>
+        <div class="organization-switcher-shell">
+          <button
+            class="organization-switcher"
+            id="organization-switcher"
+            type="button"
+            aria-expanded="false"
+            aria-controls="organization-menu"
+          >
+            <span class="organization-switcher-avatar" id="switcher-monogram" aria-hidden="true"
+              >L</span
+            >
+            <span class="organization-switcher-copy">
+              <strong id="switcher-name">Loading organization…</strong>
+              <small id="switcher-role">Checking membership…</small>
+            </span>
+            <img src="/assets/icons/chevron-down.svg" alt="" aria-hidden="true" />
+          </button>
+          <div class="organization-menu" id="organization-menu" role="menu" hidden>
+            <p>Organizations</p>
+            <div id="organization-menu-items"></div>
+          </div>
+        </div>
 
         <nav aria-label="Primary navigation">
-          <p class="nav-label">Workspace</p>
-          <a class="nav-item active" href="#overview" aria-current="page">
-            <span class="nav-icon" aria-hidden="true">⌂</span>
-            Overview
-          </a>
-          <a class="nav-item" href="#customers">
-            <span class="nav-icon" aria-hidden="true">◎</span>
-            Customers
-          </a>
-          <a class="nav-item" href="#billing-profile">
-            <span class="nav-icon" aria-hidden="true">▤</span>
-            Billing profile
-          </a>
-          <a class="nav-item" href="#api-keys">
-            <span class="nav-icon" aria-hidden="true">⌁</span>
-            API keys
-          </a>
-          <a class="nav-item" href="#invoice-sections">
-            <span class="nav-icon" aria-hidden="true">≡</span>
-            Invoice sections
-          </a>
-          <a class="nav-item" href="#taxes">
-            <span class="nav-icon" aria-hidden="true">%</span>
-            Taxes
-          </a>
-          <a class="nav-item" href="#add-ons">
-            <span class="nav-icon" aria-hidden="true">＋</span>
-            Add-ons
-          </a>
-          <a class="nav-item" href="#coupons">
-            <span class="nav-icon" aria-hidden="true">◇</span>
-            Coupons
-          </a>
-          <a class="nav-item" href="#plans">
-            <span class="nav-icon" aria-hidden="true">▧</span>
-            Plans
-          </a>
-          <a class="nav-item" href="#subscriptions">
-            <span class="nav-icon" aria-hidden="true">↻</span>
-            Subscriptions
-          </a>
-          <a class="nav-item" href="#invoices">
-            <span class="nav-icon" aria-hidden="true">▤</span>
-            Invoices
-          </a>
-          <a class="nav-item" href="#wallets">
-            <span class="nav-icon" aria-hidden="true">◉</span>
-            Wallets
-          </a>
-          <a class="nav-item" href="#credit-notes">
-            <span class="nav-icon" aria-hidden="true">↩</span>
-            Credit notes
-          </a>
-          <a class="nav-item" href="#payments"
-            ><span class="nav-icon" aria-hidden="true">$</span>Payments</a
-          >
-          <a class="nav-item" href="#quotes"
-            ><span class="nav-icon" aria-hidden="true">“</span>Quotes</a
-          >
-          <a class="nav-item" href="#data-exports"
-            ><span class="nav-icon" aria-hidden="true">⇩</span>Exports</a
-          >
-          <a class="nav-item" href="#webhook-endpoints"
-            ><span class="nav-icon" aria-hidden="true">⌁</span>Webhooks</a
-          >
-          <a class="nav-item" href="#dunning-campaigns"
-            ><span class="nav-icon" aria-hidden="true">!</span>Dunning</a
-          >
-          <a class="nav-item" href="#payment-receipts">
-            <span class="nav-icon" aria-hidden="true">¤</span>
-            Payment receipts
-          </a>
+          <div class="nav-section">
+            <p class="nav-label">Reports</p>
+            <a class="nav-item" href="/analytics" data-route="analytics" data-unavailable="true">
+              <img class="nav-icon" src="/assets/icons/chart-bar.svg" alt="" />Analytics
+            </a>
+            <a class="nav-item" href="/forecasts" data-route="forecasts" data-unavailable="true">
+              <img class="nav-icon" src="/assets/icons/forecast.svg" alt="" />Forecasts
+            </a>
+          </div>
+
+          <div class="nav-section">
+            <p class="nav-label">Configuration</p>
+            <a
+              class="nav-item"
+              href="/billable-metrics"
+              data-route="billable-metrics"
+              data-unavailable="true"
+            >
+              <img class="nav-icon" src="/assets/icons/pulse.svg" alt="" />Billable metrics
+            </a>
+            <a class="nav-item" href="/plans" data-route="plans">
+              <img class="nav-icon" src="/assets/icons/board.svg" alt="" />Plans
+            </a>
+            <a class="nav-item" href="/features" data-route="features" data-unavailable="true">
+              <img class="nav-icon" src="/assets/icons/switch.svg" alt="" />Features
+            </a>
+            <a class="nav-item" href="/add-ons" data-route="add-ons">
+              <img class="nav-icon" src="/assets/icons/puzzle.svg" alt="" />Add-ons
+            </a>
+            <a class="nav-item" href="/coupons" data-route="coupons">
+              <img class="nav-icon" src="/assets/icons/coupon.svg" alt="" />Coupons
+            </a>
+          </div>
+
+          <div class="nav-section">
+            <p class="nav-label">Billing &amp; operations</p>
+            <a class="nav-item" href="/customers" data-route="customers">
+              <img class="nav-icon" src="/assets/icons/user-multiple.svg" alt="" />Customers
+            </a>
+            <a class="nav-item" href="/subscriptions" data-route="subscriptions">
+              <img class="nav-icon" src="/assets/icons/clock.svg" alt="" />Subscriptions
+            </a>
+            <a class="nav-item" href="/invoices" data-route="invoices">
+              <img class="nav-icon" src="/assets/icons/document.svg" alt="" />Invoices
+            </a>
+            <a class="nav-item" href="/payments" data-route="payments">
+              <img class="nav-icon" src="/assets/icons/coin-dollar.svg" alt="" />Payments
+            </a>
+            <a class="nav-item" href="/credit-notes" data-route="credit-notes">
+              <img class="nav-icon" src="/assets/icons/receipt.svg" alt="" />Credit notes
+            </a>
+            <a class="nav-item" href="/wallets" data-route="wallets">
+              <img class="nav-icon" src="/assets/icons/wallet.svg" alt="" />Wallets
+            </a>
+            <a class="nav-item" href="/quotes" data-route="quotes">
+              <img class="nav-icon" src="/assets/icons/document.svg" alt="" />Quotes
+            </a>
+          </div>
+
+          <div class="nav-section nav-section-settings">
+            <p class="nav-label">Settings</p>
+            <a class="nav-item" href="/overview" data-route="overview">
+              <img class="nav-icon" src="/assets/icons/company.svg" alt="" />Organization
+            </a>
+            <a class="nav-item" href="/billing-profile" data-route="billing-profile">
+              <img class="nav-icon" src="/assets/icons/settings.svg" alt="" />Billing profile
+            </a>
+            <a class="nav-item" href="/invoice-sections" data-route="invoice-sections">
+              <img class="nav-icon" src="/assets/icons/table.svg" alt="" />Invoice sections
+            </a>
+            <a class="nav-item" href="/taxes" data-route="taxes">
+              <img class="nav-icon" src="/assets/icons/percentage.svg" alt="" />Taxes
+            </a>
+            <a class="nav-item" href="/api-keys" data-route="api-keys">
+              <img class="nav-icon" src="/assets/icons/key.svg" alt="" />API keys
+            </a>
+            <a class="nav-item" href="/payment-receipts" data-route="payment-receipts">
+              <img class="nav-icon" src="/assets/icons/receipt.svg" alt="" />Payment receipts
+            </a>
+            <a class="nav-item" href="/data-exports" data-route="data-exports">
+              <img class="nav-icon" src="/assets/icons/download.svg" alt="" />Data exports
+            </a>
+            <a class="nav-item" href="/webhook-endpoints" data-route="webhook-endpoints">
+              <img class="nav-icon" src="/assets/icons/plug.svg" alt="" />Webhooks
+            </a>
+            <a class="nav-item" href="/dunning-campaigns" data-route="dunning-campaigns">
+              <img class="nav-icon" src="/assets/icons/warning-unfilled.svg" alt="" />Dunning
+            </a>
+          </div>
         </nav>
 
-        <div class="sidebar-note">
-          <span class="status-dot" aria-hidden="true"></span>
-          <span>
-            <strong>Cloudflare native</strong>
-            <small>Isolated development</small>
-          </span>
+        <div class="sidebar-footer">
+          <a href="https://getlago.com/docs" target="_blank" rel="noreferrer">
+            <img src="/assets/icons/book.svg" alt="" />Documentation
+          </a>
+          <span><img src="/assets/lago-logo-grey.svg" alt="Lago" /></span>
         </div>
       </aside>
 
       <div class="workspace">
         <header class="topbar">
+          <button class="nav-burger" id="nav-burger" type="button" aria-label="Open navigation">
+            <img src="/assets/icons/burger.svg" alt="" />
+          </button>
           <div>
-            <p class="eyebrow">Billing operations</p>
             <p class="topbar-title" id="workspace-name">Loading workspace…</p>
           </div>
           <div class="operator-badge" id="operator-badge" hidden>
@@ -134,7 +167,9 @@
           </section>
 
           <section class="state-panel closed" id="closed-state" aria-live="assertive" hidden>
-            <div class="state-icon lock-icon" aria-hidden="true">×</div>
+            <div class="state-icon lock-icon" aria-hidden="true">
+              <img src="/assets/icons/close.svg" alt="" />
+            </div>
             <p class="eyebrow">Fail-closed boundary</p>
             <h1 id="closed-title">Operator Access not configured</h1>
             <p id="closed-message">
@@ -149,25 +184,58 @@
           </section>
 
           <div id="dashboard" hidden>
-            <section class="page-heading" id="overview" aria-labelledby="page-title">
+            <section
+              class="page-heading route-panel"
+              id="overview"
+              data-route-panel="overview"
+              aria-labelledby="page-title"
+            >
               <div>
-                <p class="eyebrow">Organization workspace</p>
-                <h1 id="page-title">Access and credentials</h1>
+                <p class="route-breadcrumb">Settings / Organization</p>
+                <h1 id="page-title">Organization</h1>
                 <p>
-                  Review organization settings and manage tenant-scoped API credentials through the
-                  Cloudflare-native billing service.
+                  Review the active organization, billing currency, timezone, and membership role.
                 </p>
               </div>
               <span class="role-pill" id="role-pill">Viewer access</span>
             </section>
 
             <div class="notice error" id="page-error" role="alert" hidden>
-              <span aria-hidden="true">!</span>
+              <span aria-hidden="true"
+                ><img src="/assets/icons/warning-unfilled.svg" alt=""
+              /></span>
               <p id="page-error-message"></p>
               <button class="text-button" id="dismiss-error" type="button">Dismiss</button>
             </div>
 
-            <section class="organization-card" aria-labelledby="organization-title">
+            <section
+              class="unavailable-page route-panel"
+              id="unavailable-route"
+              data-route-panel="unavailable"
+              hidden
+            >
+              <div class="unavailable-icon">
+                <img src="/assets/icons/warning-unfilled.svg" alt="" />
+              </div>
+              <p class="route-breadcrumb" id="unavailable-breadcrumb">Lago</p>
+              <h1 id="unavailable-title">Page unavailable</h1>
+              <p id="unavailable-message">
+                This familiar Lago page is retained, but its bounded Cloudflare read model is not
+                available yet.
+              </p>
+              <div class="unavailable-boundary">
+                <strong>Cloudflare boundary</strong>
+                <p id="unavailable-boundary-copy">
+                  No provider, customer, or external action has been enabled for this page.
+                </p>
+              </div>
+            </section>
+
+            <section
+              class="organization-card route-panel"
+              data-route-panel="overview"
+              aria-labelledby="organization-title"
+            >
               <div class="organization-monogram" id="organization-monogram" aria-hidden="true">
                 —
               </div>
@@ -257,7 +325,7 @@
                   <p>Review and update the retained core customer billing fields.</p>
                 </div>
                 <button class="primary-button" id="open-create-customer" type="button" hidden>
-                  <span aria-hidden="true">+</span>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
                   Create customer
                 </button>
               </div>
@@ -266,7 +334,7 @@
                   Loading customers…
                 </div>
                 <div class="empty-state" id="customers-empty" hidden>
-                  <span aria-hidden="true">◎</span>
+                  <img class="empty-icon" src="/assets/icons/user-multiple.svg" alt="" />
                   <h3>No customers</h3>
                   <p id="customers-empty-copy">This organization has no customers.</p>
                 </div>
@@ -288,6 +356,121 @@
               </div>
             </section>
 
+            <section
+              class="customer-detail route-panel"
+              id="customer-detail"
+              data-route-panel="customer-detail"
+              aria-labelledby="customer-detail-name"
+              hidden
+            >
+              <header class="detail-topbar">
+                <button class="detail-back" id="customer-detail-back" type="button">
+                  <img src="/assets/icons/arrow-left.svg" alt="" />
+                  <span>Customers</span>
+                </button>
+                <button class="primary-button" id="customer-detail-edit" type="button">
+                  Edit customer
+                </button>
+              </header>
+              <div class="detail-layout">
+                <div class="detail-main">
+                  <div class="detail-entity">
+                    <span class="detail-avatar" id="customer-detail-avatar" aria-hidden="true"
+                      >—</span
+                    >
+                    <div>
+                      <h1 id="customer-detail-name">Customer</h1>
+                      <p id="customer-detail-external-id">—</p>
+                    </div>
+                  </div>
+                  <nav class="detail-tabs" aria-label="Customer sections">
+                    <button type="button" data-customer-tab="overview">Overview</button>
+                    <button type="button" data-customer-tab="wallets">Wallets</button>
+                    <button type="button" data-customer-tab="analytics">Analytics</button>
+                    <button type="button" data-customer-tab="invoices">Invoices</button>
+                    <button type="button" data-customer-tab="credit-notes">Credit notes</button>
+                    <button type="button" data-customer-tab="settings">Settings</button>
+                  </nav>
+                  <div class="detail-tab-panel" id="customer-detail-tab-panel"></div>
+                </div>
+                <aside class="detail-aside" aria-label="Customer details">
+                  <div class="detail-aside-heading">
+                    <h2>Details</h2>
+                    <button class="text-button" id="customer-detail-edit-aside" type="button">
+                      Edit
+                    </button>
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>Name</dt>
+                      <dd id="customer-detail-field-name">—</dd>
+                    </div>
+                    <div>
+                      <dt>External ID</dt>
+                      <dd id="customer-detail-field-id">—</dd>
+                    </div>
+                    <div>
+                      <dt>Currency</dt>
+                      <dd id="customer-detail-field-currency">—</dd>
+                    </div>
+                    <div>
+                      <dt>Email</dt>
+                      <dd id="customer-detail-field-email">—</dd>
+                    </div>
+                    <div>
+                      <dt>Timezone</dt>
+                      <dd id="customer-detail-field-timezone">—</dd>
+                    </div>
+                    <div>
+                      <dt>Payment term</dt>
+                      <dd id="customer-detail-field-term">—</dd>
+                    </div>
+                  </dl>
+                </aside>
+              </div>
+            </section>
+
+            <section
+              class="entity-detail route-panel"
+              id="entity-detail"
+              data-route-panel="entity-detail"
+              aria-labelledby="entity-detail-name"
+              hidden
+            >
+              <header class="detail-topbar">
+                <button class="detail-back" id="entity-detail-back" type="button">
+                  <img src="/assets/icons/arrow-left.svg" alt="" />
+                  <span id="entity-detail-back-label">Back</span>
+                </button>
+                <button class="primary-button" id="entity-detail-edit" type="button" hidden>
+                  Edit
+                </button>
+              </header>
+              <div class="entity-detail-content">
+                <div class="detail-entity">
+                  <span class="detail-avatar" id="entity-detail-avatar" aria-hidden="true">—</span>
+                  <div>
+                    <p class="eyebrow" id="entity-detail-type">Billing object</p>
+                    <h1 id="entity-detail-name">Billing object</h1>
+                    <p id="entity-detail-id">—</p>
+                  </div>
+                </div>
+                <section class="entity-detail-card" aria-labelledby="entity-detail-overview-title">
+                  <div class="detail-panel-heading">
+                    <h2 id="entity-detail-overview-title">Overview</h2>
+                  </div>
+                  <dl class="entity-detail-fields" id="entity-detail-fields"></dl>
+                </section>
+                <div class="detail-empty" id="entity-detail-missing" hidden>
+                  <h2>Billing object not found</h2>
+                  <p>
+                    This object is not available in the selected organization. No other tenant was
+                    queried.
+                  </p>
+                </div>
+              </div>
+            </section>
+
             <section class="keys-section" id="api-keys" aria-labelledby="keys-title">
               <div class="section-heading">
                 <div>
@@ -296,7 +479,7 @@
                   <p>Secrets are shown only once when a key is created or rotated.</p>
                 </div>
                 <button class="primary-button" id="open-create-key" type="button" hidden>
-                  <span aria-hidden="true">+</span>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
                   Create API key
                 </button>
               </div>
@@ -306,7 +489,7 @@
                   Loading API keys…
                 </div>
                 <div class="empty-state" id="keys-empty" hidden>
-                  <span aria-hidden="true">⌁</span>
+                  <img class="empty-icon" src="/assets/icons/key.svg" alt="" />
                   <h3>No active API keys</h3>
                   <p id="keys-empty-copy">This organization has no active API credentials.</p>
                 </div>
@@ -339,7 +522,7 @@
                   <p>Add reusable manual text blocks to the organization’s invoice catalog.</p>
                 </div>
                 <button class="primary-button" id="open-create-section" type="button" hidden>
-                  <span aria-hidden="true">+</span>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
                   Create section
                 </button>
               </div>
@@ -349,7 +532,7 @@
                   Loading invoice sections…
                 </div>
                 <div class="empty-state" id="sections-empty" hidden>
-                  <span aria-hidden="true">≡</span>
+                  <img class="empty-icon" src="/assets/icons/table.svg" alt="" />
                   <h3>No custom sections</h3>
                   <p id="sections-empty-copy">This organization has no manual invoice sections.</p>
                 </div>
@@ -384,7 +567,7 @@
                   Loading payment receipts…
                 </div>
                 <div class="empty-state" id="receipts-empty" hidden>
-                  <span aria-hidden="true">¤</span>
+                  <img class="empty-icon" src="/assets/icons/receipt.svg" alt="" />
                   <h3>No payment receipts</h3>
                   <p>Receipts appear after a payment fully settles its payable.</p>
                 </div>
@@ -414,7 +597,7 @@
                   <p>Manage tenant-scoped percentage taxes used by supported billing resources.</p>
                 </div>
                 <button class="primary-button" id="open-create-tax" type="button" hidden>
-                  <span aria-hidden="true">+</span>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
                   Create tax
                 </button>
               </div>
@@ -423,7 +606,7 @@
                   Loading taxes…
                 </div>
                 <div class="empty-state" id="taxes-empty" hidden>
-                  <span aria-hidden="true">%</span>
+                  <img class="empty-icon" src="/assets/icons/percentage.svg" alt="" />
                   <h3>No manual taxes</h3>
                   <p id="taxes-empty-copy">This organization has no active manual taxes.</p>
                 </div>
@@ -452,7 +635,7 @@
                   <p>Manage reusable fixed-price items for supported plan charges.</p>
                 </div>
                 <button class="primary-button" id="open-create-add-on" type="button" hidden>
-                  <span aria-hidden="true">+</span>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
                   Create add-on
                 </button>
               </div>
@@ -461,7 +644,7 @@
                   Loading add-ons…
                 </div>
                 <div class="empty-state" id="add-ons-empty" hidden>
-                  <span aria-hidden="true">＋</span>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
                   <h3>No active add-ons</h3>
                   <p id="add-ons-empty-copy">This organization has no active add-ons.</p>
                 </div>
@@ -494,7 +677,7 @@
                     Apply coupon
                   </button>
                   <button class="primary-button" id="open-create-coupon" type="button" hidden>
-                    <span aria-hidden="true">+</span>
+                    <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
                     Create coupon
                   </button>
                 </div>
@@ -505,7 +688,7 @@
                   Loading coupons…
                 </div>
                 <div class="empty-state" id="coupons-empty" hidden>
-                  <span aria-hidden="true">◇</span>
+                  <img class="empty-icon" src="/assets/icons/coupon.svg" alt="" />
                   <h3>No coupons</h3>
                   <p id="coupons-empty-copy">This organization has no coupons.</p>
                 </div>
@@ -530,7 +713,7 @@
                   Loading coupon applications…
                 </div>
                 <div class="empty-state" id="applied-coupons-empty" hidden>
-                  <span aria-hidden="true">◎</span>
+                  <img class="empty-icon" src="/assets/icons/user-multiple.svg" alt="" />
                   <h3>No coupon applications</h3>
                   <p>No coupons have been applied to customers.</p>
                 </div>
@@ -568,7 +751,7 @@
                   >
                     Add fixed charge</button
                   ><button class="primary-button" id="open-create-plan" type="button" hidden>
-                    <span aria-hidden="true">+</span>Create plan
+                    <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create plan
                   </button>
                 </div>
               </div>
@@ -577,7 +760,7 @@
                   Loading plans…
                 </div>
                 <div class="empty-state" id="plans-empty" hidden>
-                  <span aria-hidden="true">▧</span>
+                  <img class="empty-icon" src="/assets/icons/board.svg" alt="" />
                   <h3>No plans</h3>
                   <p id="plans-empty-copy">This organization has no active plans.</p>
                 </div>
@@ -600,7 +783,7 @@
               <h3>Fixed charges</h3>
               <div class="table-shell">
                 <div class="empty-state" id="fixed-charges-empty" hidden>
-                  <span aria-hidden="true">＋</span>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
                   <h3>No fixed charges</h3>
                   <p>No active plan fixed charges are configured.</p>
                 </div>
@@ -630,7 +813,7 @@
                   <p>Create, change, schedule, cancel, or terminate customer subscriptions.</p>
                 </div>
                 <button class="primary-button" id="open-create-subscription" type="button" hidden>
-                  <span aria-hidden="true">+</span>Create subscription
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create subscription
                 </button>
               </div>
               <div class="table-shell">
@@ -638,7 +821,7 @@
                   Loading subscriptions…
                 </div>
                 <div class="empty-state" id="subscriptions-empty" hidden>
-                  <span aria-hidden="true">↻</span>
+                  <img class="empty-icon" src="/assets/icons/clock.svg" alt="" />
                   <h3>No subscriptions</h3>
                   <p id="subscriptions-empty-copy">This organization has no subscriptions.</p>
                 </div>
@@ -671,7 +854,8 @@
                   </p>
                 </div>
                 <button class="primary-button" id="open-create-invoice" type="button" hidden>
-                  <span aria-hidden="true">+</span>Create one-off invoice
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create one-off
+                  invoice
                 </button>
               </div>
               <div class="table-shell">
@@ -679,7 +863,7 @@
                   Loading invoices…
                 </div>
                 <div class="empty-state" id="invoices-empty" hidden>
-                  <span aria-hidden="true">▤</span>
+                  <img class="empty-icon" src="/assets/icons/document.svg" alt="" />
                   <h3>No invoices</h3>
                   <p id="invoices-empty-copy">This organization has no invoices.</p>
                 </div>
@@ -710,7 +894,7 @@
                   <p>Review balances and manage manual granted-credit wallets.</p>
                 </div>
                 <button class="primary-button" id="open-create-wallet" type="button" hidden>
-                  <span aria-hidden="true">+</span>Create wallet
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create wallet
                 </button>
               </div>
               <div class="table-shell">
@@ -718,7 +902,7 @@
                   Loading wallets…
                 </div>
                 <div class="empty-state" id="wallets-empty" hidden>
-                  <span aria-hidden="true">◉</span>
+                  <img class="empty-icon" src="/assets/icons/wallet.svg" alt="" />
                   <h3>No wallets</h3>
                   <p id="wallets-empty-copy">This organization has no granted-credit wallets.</p>
                 </div>
@@ -749,7 +933,7 @@
                   <p>Create itemized internal credits against finalized invoices.</p>
                 </div>
                 <button class="primary-button" id="open-create-credit-note" type="button" hidden>
-                  <span aria-hidden="true">+</span>Create credit note
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create credit note
                 </button>
               </div>
               <div class="table-shell">
@@ -757,7 +941,7 @@
                   Loading credit notes…
                 </div>
                 <div class="empty-state" id="credit-notes-empty" hidden>
-                  <span aria-hidden="true">↩</span>
+                  <img class="empty-icon" src="/assets/icons/receipt.svg" alt="" />
                   <h3>No credit notes</h3>
                   <p id="credit-notes-empty-copy">This organization has no credit notes.</p>
                 </div>
@@ -796,7 +980,7 @@
                   Loading payments…
                 </div>
                 <div class="empty-state" id="payments-empty" hidden>
-                  <span aria-hidden="true">$</span>
+                  <img class="empty-icon" src="/assets/icons/coin-dollar.svg" alt="" />
                   <h3>No payments</h3>
                   <p>No settlement records are available.</p>
                 </div>
@@ -829,7 +1013,7 @@
                   </p>
                 </div>
                 <button class="primary-button" id="open-create-quote" type="button" hidden>
-                  <span aria-hidden="true">+</span>Create quote
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create quote
                 </button>
               </div>
               <div class="table-shell">
@@ -837,7 +1021,7 @@
                   Loading quotes…
                 </div>
                 <div class="empty-state" id="quotes-empty" hidden>
-                  <span aria-hidden="true">“</span>
+                  <img class="empty-icon" src="/assets/icons/document.svg" alt="" />
                   <h3>No quotes</h3>
                   <p id="quotes-empty-copy">This organization has no quotes.</p>
                 </div>
@@ -868,7 +1052,7 @@
                   <p>Create bounded CSV snapshots and review generation status.</p>
                 </div>
                 <button class="primary-button" id="open-create-data-export" type="button" hidden>
-                  <span aria-hidden="true">+</span>Create export
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create export
                 </button>
               </div>
               <div class="table-shell">
@@ -876,7 +1060,7 @@
                   Loading exports…
                 </div>
                 <div class="empty-state" id="data-exports-empty" hidden>
-                  <span aria-hidden="true">⇩</span>
+                  <img class="empty-icon" src="/assets/icons/download.svg" alt="" />
                   <h3>No exports</h3>
                   <p id="data-exports-empty-copy">This organization has no export jobs.</p>
                 </div>
@@ -919,7 +1103,7 @@
                   Loading webhook endpoints…
                 </div>
                 <div class="empty-state" id="webhook-endpoints-empty" hidden>
-                  <span aria-hidden="true">⌁</span>
+                  <img class="empty-icon" src="/assets/icons/key.svg" alt="" />
                   <h3>No webhook endpoints</h3>
                   <p>No active outbound endpoints are configured.</p>
                 </div>
@@ -952,7 +1136,7 @@
                   </p>
                 </div>
                 <button class="primary-button" id="open-create-dunning" type="button" hidden>
-                  <span aria-hidden="true">+</span>Create campaign
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create campaign
                 </button>
               </div>
               <div class="table-shell">
@@ -960,7 +1144,7 @@
                   Loading dunning campaigns…
                 </div>
                 <div class="empty-state" id="dunning-empty" hidden>
-                  <span aria-hidden="true">!</span>
+                  <img class="empty-icon" src="/assets/icons/warning-unfilled.svg" alt="" />
                   <h3>No dunning campaigns</h3>
                   <p>No internal overdue policy is configured.</p>
                 </div>
@@ -985,7 +1169,7 @@
                   Loading payment requests…
                 </div>
                 <div class="empty-state" id="payment-requests-empty" hidden>
-                  <span aria-hidden="true">◎</span>
+                  <img class="empty-icon" src="/assets/icons/user-multiple.svg" alt="" />
                   <h3>No payment requests</h3>
                   <p>No dunning attempts have produced a payment request.</p>
                 </div>
@@ -1022,7 +1206,9 @@
             <p class="eyebrow">Internal overdue policy</p>
             <h2 id="dunning-form-title">Create dunning campaign</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy">
           This configures D1 scheduling only. It does not enable payment-provider or email actions.
@@ -1072,7 +1258,9 @@
             <p class="eyebrow" id="key-form-eyebrow">Tenant credential</p>
             <h2 id="key-form-title">Create API key</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy" id="key-form-copy">
           Give the credential a name that identifies the service using it.
@@ -1097,7 +1285,9 @@
             <p class="eyebrow">Invoice presentation</p>
             <h2 id="section-title">Create custom section</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy" id="section-form-copy">
           Create a reusable manual text block for organization invoices.
@@ -1140,7 +1330,9 @@
             <p class="eyebrow">Default billing entity</p>
             <h2 id="billing-form-title">Edit billing profile</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy">
           These settings control future billing documents. Existing finalized documents remain
@@ -1354,7 +1546,9 @@
             <p class="eyebrow">Billing catalog</p>
             <h2 id="tax-form-title">Create manual tax</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy" id="tax-form-copy">Create a percentage tax for this organization.</p>
         <div class="field-grid">
@@ -1402,7 +1596,9 @@
             <p class="eyebrow">Billing catalog</p>
             <h2 id="add-on-form-title">Create add-on</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy" id="add-on-form-copy">Create a reusable fixed-price item.</p>
         <div class="field-grid">
@@ -1461,7 +1657,9 @@
             <p class="eyebrow">Billing account</p>
             <h2 id="customer-form-title">Create customer</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy" id="customer-form-copy">Create a tenant-scoped billing customer.</p>
         <div class="field-grid">
@@ -1539,7 +1737,9 @@
             <p class="eyebrow">Discount catalog</p>
             <h2 id="coupon-form-title">Create coupon</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy">Coupon definitions are immutable after creation.</p>
         <div class="field-grid">
@@ -1621,7 +1821,9 @@
             <p class="eyebrow">Customer discount</p>
             <h2 id="apply-coupon-title">Apply coupon</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <div class="field-grid">
           <div>
@@ -1650,7 +1852,9 @@
             <p class="eyebrow">Product catalog</p>
             <h2 id="plan-form-title">Create plan</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy" id="plan-form-copy">Create a core recurring plan.</p>
         <div class="field-grid">
@@ -1715,7 +1919,9 @@
             <p class="eyebrow">Plan charge</p>
             <h2 id="fixed-charge-form-title">Add fixed charge</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <div class="field-grid">
           <div>
@@ -1785,7 +1991,9 @@
             <p class="eyebrow">Recurring billing</p>
             <h2 id="subscription-form-title">Create subscription</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy" id="subscription-form-copy">Create a customer subscription.</p>
         <div class="field-grid">
@@ -1865,7 +2073,9 @@
             <p class="eyebrow">Confirm billing transition</p>
             <h2 id="terminate-subscription-title">Terminate subscription?</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy" id="terminate-subscription-copy"></p>
         <label for="terminate-subscription-invoice">Final invoice</label
@@ -1904,7 +2114,9 @@
             <p class="eyebrow">One-off billing</p>
             <h2 id="invoice-form-title">Create one-off invoice</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <div class="field-grid">
           <div>
@@ -1939,7 +2151,9 @@
             <p class="eyebrow">Granted credits</p>
             <h2 id="wallet-form-title">Create wallet</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <div class="field-grid">
           <div>
@@ -1994,7 +2208,9 @@
             <p class="eyebrow">Manual grant</p>
             <h2 id="wallet-top-up-title">Top up wallet</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <label for="wallet-top-up-credits">Granted credits</label
         ><input id="wallet-top-up-credits" type="number" min="0.000001" step="any" required />
@@ -2021,7 +2237,9 @@
             <p class="eyebrow">Internal invoice credit</p>
             <h2 id="credit-note-form-title">Create credit note</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <label for="credit-note-invoice">Finalized invoice</label
         ><select id="credit-note-invoice" required></select>
@@ -2073,7 +2291,9 @@
             <p class="eyebrow">Commercial proposal</p>
             <h2 id="quote-form-title">Create quote</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy" id="quote-form-copy">Create a new draft quote.</p>
         <div class="field-grid">
@@ -2120,7 +2340,9 @@
             <p class="eyebrow">CSV snapshot</p>
             <h2 id="data-export-form-title">Create data export</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <label for="data-export-resource">Resource</label
         ><select id="data-export-resource">
@@ -2156,7 +2378,9 @@
             <p class="eyebrow">Confirm operator action</p>
             <h2 id="confirm-title">Confirm action</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
         </div>
         <p class="modal-copy" id="confirm-copy"></p>
         <p class="form-error" id="confirm-error" role="alert" hidden></p>
