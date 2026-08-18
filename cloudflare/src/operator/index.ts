@@ -8,6 +8,7 @@ import { createDataExport, listDataExports, showDataExport } from "../api/data-e
 import { handleDunningCampaignApi } from "../api/dunning-campaigns";
 import {
   createCreditNote,
+  handleCreditNoteLedgerRequest,
   listCreditNotes,
   showCreditNote,
   voidCreditNote,
@@ -18,6 +19,7 @@ import {
   createOneOffInvoice,
   createSubscription,
   finalizeDraftInvoice,
+  handleLagoCompatibilityRequest,
   handleCustomerCompatibilityRequest,
   listInvoices,
   refreshDraftInvoice,
@@ -25,7 +27,7 @@ import {
   voidInvoice,
 } from "../api/lago-compatibility";
 import { showOrganization } from "../api/organizations";
-import { handlePaymentReceiptReadsApi } from "../api/payment-receipts";
+import { handlePaymentReceiptReadsApi, handlePaymentReceiptsApi } from "../api/payment-receipts";
 import { listPayments, showPayment } from "../api/payment-ledger";
 import { handlePaymentRequestApi } from "../api/payment-requests";
 import { handlePlanCatalogRequest } from "../api/plan-catalog";
@@ -43,10 +45,14 @@ import {
   type OperatorEnv,
 } from "./access";
 import { handleOperatorAiRequest } from "./ai";
+import { handleOperatorAdvancedBillingRequest } from "./advanced-billing";
 import { handleOperatorAnalyticsRequest } from "./analytics";
+import { handleOperatorConfigurationRequest } from "./configuration";
 import { handleOperatorFeaturesRequest } from "./features";
+import { handleOperatorIntegrationsRequest } from "./integrations";
 import { handleOperatorObservabilityRequest, recordOperatorApiLog } from "./observability";
 import { handleOperatorProductParityRequest } from "./product-parity";
+import { handlePortalAdminRequest } from "./portal-admin";
 import { handleOperatorTeamRequest } from "./team";
 
 export function createOperatorHandler(keySet?: JWTVerifyGetKey): ExportedHandler<OperatorEnv> {
@@ -169,6 +175,63 @@ export async function handleOperatorRequest(
     if (url.pathname.startsWith("/api/operator/v1/team/")) {
       const operator = await authenticateOperatorAccess(request, env, keySet);
       const response = await handleOperatorTeamRequest(request, env, operator, requestId);
+      if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/integrations(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+      }
+      const response = await handleOperatorIntegrationsRequest(
+        request,
+        env.BILLING_DB,
+        operator.organizationId,
+        requestId,
+      );
+      if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/(?:pricing-units|alerts)(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+      }
+      const response = await handleOperatorConfigurationRequest(
+        request,
+        env.BILLING_DB,
+        operator.organizationId,
+        requestId,
+      );
+      if (response) return response;
+    }
+
+    if (
+      /^\/api\/operator\/v1\/(?:billing-entities|customers|subscriptions|invoices|credit-notes)(?:\/|$)/.test(
+        url.pathname,
+      )
+    ) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+      }
+      const response = await handleOperatorAdvancedBillingRequest(
+        request,
+        env,
+        operator.organizationId,
+        requestId,
+      );
+      if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/customers\/[^/]+\/portal-token$/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      assertOperatorAdmin(operator);
+      assertOperatorMutationRequest(request);
+      const response = await handlePortalAdminRequest(request, env.BILLING_DB, operator, requestId);
       if (response) return response;
     }
 
@@ -341,6 +404,21 @@ export async function handleOperatorRequest(
         { includeFileUrls: false },
       );
       if (response) return response;
+      if (forwardedUrl.pathname.endsWith("/download")) {
+        if (!env.BILLING_ARTIFACTS)
+          throw new ApiError(
+            503,
+            "artifact_storage_unavailable",
+            "Billing artifact storage is unavailable",
+          );
+        const downloadResponse = await handlePaymentReceiptsApi(
+          new Request(forwardedUrl, request),
+          env as unknown as Env,
+          auth,
+          requestId,
+        );
+        if (downloadResponse) return downloadResponse;
+      }
     }
 
     if (/^\/api\/operator\/v1\/payments(?:\/|$)/.test(url.pathname)) {
@@ -701,6 +779,25 @@ export async function handleOperatorRequest(
       if (match?.[1] && match[2] === "refresh" && request.method === "PUT") {
         return refreshDraftInvoice(decodeURIComponent(match[1]), env, auth, requestId);
       }
+      if (
+        match?.[1] &&
+        (match[2] === "download" || match[2] === "download_pdf") &&
+        request.method === "GET"
+      ) {
+        if (!env.BILLING_ARTIFACTS)
+          throw new ApiError(
+            503,
+            "artifact_storage_unavailable",
+            "Billing artifact storage is unavailable",
+          );
+        const response = await handleLagoCompatibilityRequest(
+          new Request(forwardedUrl, request),
+          env as unknown as Env,
+          auth,
+          requestId,
+        );
+        if (response) return response;
+      }
     }
 
     if (
@@ -751,7 +848,9 @@ export async function handleOperatorRequest(
       if (request.method === "GET" && forwardedUrl.pathname === "/api/v1/credit_notes") {
         return listCreditNotes(forwardedUrl, env.BILLING_DB, auth, requestId);
       }
-      const match = forwardedUrl.pathname.match(/^\/api\/v1\/credit_notes\/([^/]+)(?:\/(void))?$/);
+      const match = forwardedUrl.pathname.match(
+        /^\/api\/v1\/credit_notes\/([^/]+)(?:\/(void|download|download_pdf))?$/,
+      );
       if (request.method === "GET" && match?.[1] && !match[2]) {
         return showCreditNote(
           decodeURIComponent(match[1]),
@@ -772,6 +871,25 @@ export async function handleOperatorRequest(
           requestId,
           forwardedUrl.origin,
         );
+      }
+      if (
+        request.method === "GET" &&
+        match?.[1] &&
+        (match[2] === "download" || match[2] === "download_pdf")
+      ) {
+        if (!env.BILLING_ARTIFACTS)
+          throw new ApiError(
+            503,
+            "artifact_storage_unavailable",
+            "Billing artifact storage is unavailable",
+          );
+        const response = await handleCreditNoteLedgerRequest(
+          new Request(forwardedUrl, request),
+          env as unknown as Env,
+          auth,
+          requestId,
+        );
+        if (response) return response;
       }
       throw new ApiError(
         422,
@@ -837,6 +955,11 @@ async function assertOperatorCustomerMutationPayload(request: Request): Promise<
     "net_payment_term",
     "invoice_grace_period",
     "timezone",
+    "metadata",
+    "skip_invoice_custom_sections",
+    "invoice_custom_section_codes",
+    "applied_dunning_campaign_id",
+    "exclude_from_dunning_campaign",
   ]);
   const unsupported = Object.keys(input).find((key) => !supported.has(key));
   if (unsupported) {

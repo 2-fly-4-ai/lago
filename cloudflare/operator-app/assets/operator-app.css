@@ -27,6 +27,31 @@
   color: var(--lago-grey-600);
 }
 
+.integration-groups,
+.integration-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.integration-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.integration-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--lago-grey-300);
+  border-radius: 12px;
+}
+
+.integration-card p {
+  min-height: 40px;
+  margin: 0;
+  color: var(--lago-grey-600);
+}
+
 :root {
   color-scheme: light;
   font-family:
@@ -1125,6 +1150,12 @@ tbody tr:hover {
 
 .app-shell.ai-open .date-filter {
   flex-wrap: wrap;
+}
+
+@media (max-width: 1439px) and (min-width: 681px) {
+  .app-shell.ai-open .workspace {
+    margin-right: 48px;
+  }
 }
 
 .report-page {
@@ -2667,6 +2698,88 @@ tbody tr:hover {
   padding: 28px;
   border: 1px solid var(--lago-grey-300);
   border-radius: 10px;
+}
+
+.entity-detail-card + .entity-detail-card {
+  margin-top: 20px;
+}
+
+.entity-detail-card .detail-panel-heading p {
+  margin: 4px 0 0;
+  color: var(--lago-grey-500);
+  font-size: 13px;
+}
+
+.billing-advanced-card {
+  margin-top: 24px;
+}
+
+.advanced-settings-form,
+.advanced-inline-form {
+  display: grid;
+  gap: 16px;
+}
+
+.advanced-settings-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.advanced-settings-form label,
+.advanced-inline-form label {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  color: var(--lago-grey-600);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.advanced-settings-form select[multiple] {
+  min-height: 112px;
+}
+
+.advanced-settings-form .row-actions,
+.advanced-settings-form .form-error {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
+.advanced-inline-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.advanced-control-block + .advanced-control-block {
+  margin-top: 26px;
+  padding-top: 24px;
+  border-top: 1px solid var(--lago-grey-200);
+}
+
+.advanced-control-block h3 {
+  margin: 0 0 6px;
+  color: var(--lago-grey-700);
+  font-size: 14px;
+}
+
+.advanced-control-block > p {
+  margin: 0 0 16px;
+  color: var(--lago-grey-500);
+  font-size: 13px;
+}
+
+.metadata-editor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+@media (max-width: 900px) {
+  .advanced-settings-form,
+  .advanced-inline-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .entity-detail-fields {

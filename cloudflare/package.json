@@ -4,17 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "wrangler deploy --dry-run --outdir dist/api && wrangler deploy --config wrangler.operator.jsonc --dry-run --outdir dist/operator",
+    "build": "wrangler deploy --dry-run --outdir dist/api && wrangler deploy --config wrangler.operator.jsonc --dry-run --outdir dist/operator && wrangler deploy --config wrangler.portal.jsonc --dry-run --outdir dist/portal",
     "build:api": "wrangler deploy --dry-run --outdir dist/api",
     "build:operator": "wrangler deploy --config wrangler.operator.jsonc --dry-run --outdir dist/operator",
+    "build:portal": "wrangler deploy --config wrangler.portal.jsonc --dry-run --outdir dist/portal",
     "access:test": "node --test scripts/provision-operator-access.node-test.mjs",
     "check": "pnpm run format:check && pnpm run lint && pnpm run access:test && pnpm run inventory:check && pnpm run types:check && pnpm run typecheck && pnpm run test && pnpm run build",
     "dev": "wrangler dev --local",
     "dev:operator": "wrangler dev --config wrangler.operator.jsonc --local",
     "documents:golden": "node scripts/render-document-goldens.mjs --check",
     "documents:golden:update": "node scripts/render-document-goldens.mjs --update",
-    "format": "oxfmt --write src test scripts operator-ui operator-app README.md vitest.config.ts wrangler.jsonc wrangler.operator.jsonc wrangler.operator-bootstrap.jsonc package.json pnpm-workspace.yaml",
-    "format:check": "oxfmt --check src test scripts operator-ui operator-app README.md vitest.config.ts wrangler.jsonc wrangler.operator.jsonc wrangler.operator-bootstrap.jsonc package.json pnpm-workspace.yaml",
+    "format": "oxfmt --write src test scripts operator-ui operator-app portal-app README.md vitest.config.ts wrangler.jsonc wrangler.operator.jsonc wrangler.portal.jsonc wrangler.operator-bootstrap.jsonc package.json pnpm-workspace.yaml",
+    "format:check": "oxfmt --check src test scripts operator-ui operator-app portal-app README.md vitest.config.ts wrangler.jsonc wrangler.operator.jsonc wrangler.portal.jsonc wrangler.operator-bootstrap.jsonc package.json pnpm-workspace.yaml",
     "inventory": "node scripts/generate-feature-inventory.mjs && node scripts/generate-operator-parity-ledger.mjs",
     "inventory:check": "node scripts/generate-feature-inventory.mjs --check && node scripts/generate-operator-parity-ledger.mjs --check",
     "lint": "oxlint --deny-warnings --deny typescript/no-floating-promises src test scripts vitest.config.ts",
@@ -23,8 +24,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "types": "wrangler types worker-configuration.d.ts && wrangler types --config wrangler.operator.jsonc --env-interface OperatorBindings --include-runtime false worker-configuration.operator.d.ts",
-    "types:check": "wrangler types --check worker-configuration.d.ts && wrangler types --config wrangler.operator.jsonc --env-interface OperatorBindings --include-runtime false --check worker-configuration.operator.d.ts"
+    "types": "wrangler types worker-configuration.d.ts && wrangler types --config wrangler.operator.jsonc --env-interface OperatorBindings --include-runtime false worker-configuration.operator.d.ts && wrangler types --config wrangler.portal.jsonc --env-interface PortalBindings --include-runtime false worker-configuration.portal.d.ts",
+    "types:check": "wrangler types --check worker-configuration.d.ts && wrangler types --config wrangler.operator.jsonc --env-interface OperatorBindings --include-runtime false --check worker-configuration.operator.d.ts && wrangler types --config wrangler.portal.jsonc --env-interface PortalBindings --include-runtime false --check worker-configuration.portal.d.ts"
   },
   "dependencies": {
     "jose": "6.2.9"

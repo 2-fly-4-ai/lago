@@ -10,6 +10,7 @@ export type OperatorEnv = {
   AI_MODEL?: string;
   APP_ENV: string;
   BILLING_ACCOUNTS: DurableObjectNamespace<import("../index").BillingAccount>;
+  BILLING_ARTIFACTS?: R2Bucket;
   BILLING_DB: D1Database;
   DOMAIN_EVENTS: Queue;
   DOCUMENT_WORKFLOW: Env["DOCUMENT_WORKFLOW"];

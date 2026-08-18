@@ -20,6 +20,7 @@ function operatorEnv(overrides: Partial<OperatorEnv> = {}): OperatorEnv {
   return {
     APP_ENV: "test",
     BILLING_ACCOUNTS: env.BILLING_ACCOUNTS,
+    BILLING_ARTIFACTS: env.BILLING_ARTIFACTS,
     BILLING_DB: env.BILLING_DB,
     DOMAIN_EVENTS: env.DOMAIN_EVENTS,
     DOCUMENT_WORKFLOW: env.DOCUMENT_WORKFLOW,
@@ -77,6 +78,9 @@ beforeEach(async () => {
     ),
     env.BILLING_DB.prepare(
       "DELETE FROM operator_invitations WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM customer_portal_tokens WHERE organization_id = 'org-operator-access'",
     ),
     env.BILLING_DB.prepare("DELETE FROM ai_messages WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
@@ -1839,7 +1843,7 @@ describe("operator Worker disabled boundary", () => {
     });
   });
 
-  it("maps customer reads for viewers and upserts for admins while keeping deletion unavailable", async () => {
+  it("maps customer reads for viewers and admits dependency-safe admin deletion", async () => {
     const viewerList = await handleOperatorRequest(
       new Request("https://operator.test/api/operator/v1/customers", {
         headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
@@ -1904,8 +1908,7 @@ describe("operator Worker disabled boundary", () => {
     });
 
     const deleted = await operatorMutation("DELETE", "/customers/operator-customer");
-    expect(deleted.status).toBe(422);
-    await expect(deleted.json()).resolves.toMatchObject({ code: "unsupported_customer_deletion" });
+    expect(deleted.status).toBe(204);
   });
 });
 

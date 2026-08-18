@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'"
+    />
+    <title>Customer portal · Lago</title>
+    <link rel="stylesheet" href="/portal.css" />
+    <script type="module" src="/portal.js"></script>
+  </head>
+  <body>
+    <div class="portal-shell">
+      <aside class="portal-sidebar">
+        <h1 id="organization-name">Billing portal</h1>
+        <p>Manage your account, usage, wallets, and invoices.</p>
+        <span class="powered">Powered by <img src="/lago-logo-grey.svg" alt="Lago" /></span>
+      </aside>
+      <main>
+        <section class="state" id="loading"><h2>Loading your billing portal…</h2></section>
+        <section class="state error" id="error" hidden>
+          <h2>Portal unavailable</h2>
+          <p id="error-message">This link is invalid or expired.</p>
+        </section>
+        <div class="portal-content" id="content" hidden>
+          <section class="portal-section">
+            <header><h2>Wallets</h2></header>
+            <div class="card-grid" id="wallets"></div>
+          </section>
+          <section class="portal-section">
+            <header><h2>Usage</h2></header>
+            <div class="card-grid" id="usage"></div>
+          </section>
+          <section class="portal-section">
+            <header>
+              <h2>Customer information</h2>
+              <button class="text-button" id="edit-customer" type="button">Edit</button>
+            </header>
+            <dl class="info-grid" id="customer-info"></dl>
+          </section>
+          <section class="portal-section">
+            <header>
+              <div>
+                <h2>Invoices</h2>
+                <p id="invoice-summary"></p>
+              </div>
+              <input id="invoice-search" type="search" placeholder="Search invoices" />
+            </header>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Invoice</th>
+                    <th>Issued</th>
+                    <th>Status</th>
+                    <th>Amount</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="invoices"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <dialog id="customer-dialog">
+      <form method="dialog" id="customer-form">
+        <header>
+          <h2>Edit customer information</h2>
+          <button value="cancel" type="submit">Close</button>
+        </header>
+        <label>Name<input id="customer-name" /></label
+        ><label>Email<input id="customer-email" type="email" /></label
+        ><label>Timezone<input id="customer-timezone" /></label>
+        <p class="form-error" id="form-error" hidden></p>
+        <footer>
+          <button value="cancel" type="submit">Cancel</button
+          ><button class="primary" value="default" type="submit">Save</button>
+        </footer>
+      </form>
+    </dialog>
+  </body>
+</html>

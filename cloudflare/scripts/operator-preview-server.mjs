@@ -37,6 +37,9 @@ const customers = {
       timezone: "America/New_York",
       net_payment_term: 14,
       invoice_grace_period: 2,
+      applied_dunning_campaign_id: "campaign-preview-standard",
+      exclude_from_dunning_campaign: false,
+      selected_invoice_custom_sections: [],
       version: 1,
     },
     {
@@ -48,6 +51,9 @@ const customers = {
       timezone: "Europe/London",
       net_payment_term: null,
       invoice_grace_period: 0,
+      applied_dunning_campaign_id: null,
+      exclude_from_dunning_campaign: false,
+      selected_invoice_custom_sections: [],
       version: 1,
     },
   ],
@@ -61,6 +67,9 @@ const customers = {
       timezone: "Pacific/Auckland",
       net_payment_term: 7,
       invoice_grace_period: 0,
+      applied_dunning_campaign_id: null,
+      exclude_from_dunning_campaign: false,
+      selected_invoice_custom_sections: [],
       version: 1,
     },
   ],
@@ -152,6 +161,18 @@ const primaryPreviewCollections = {
       display_name: "Terms",
       description: "Synthetic preview section",
       details: "Net 14 days",
+    },
+  ],
+  pricing_units: [
+    {
+      lago_id: "pricing-unit-preview-credits",
+      code: "credits",
+      name: "Credits",
+      short_name: "cr",
+      description: "Customer-visible usage credits",
+      version: 1,
+      created_at: "2026-08-01T00:00:00Z",
+      updated_at: "2026-08-01T00:00:00Z",
     },
   ],
   payment_receipts: [
@@ -320,6 +341,7 @@ const primaryPreviewCollections = {
   ],
   dunning_campaigns: [
     {
+      lago_id: "campaign-preview-standard",
       code: "standard-recovery",
       name: "Standard recovery",
       description: "Synthetic payment recovery policy",
@@ -354,9 +376,23 @@ createServer(async (request, response) => {
       );
       return;
     }
+    if (/\/(?:invoices|credit-notes|payment-receipts)\/[^/]+\/download$/.test(url.pathname)) {
+      response.writeHead(200, {
+        "Cache-Control": "private, no-store",
+        "Content-Disposition": 'attachment; filename="synthetic-document.pdf"',
+        "Content-Type": "application/pdf",
+      });
+      response.end("%PDF-1.4\n% synthetic browser preview\n");
+      return;
+    }
     respondJson(
       response,
-      previewApi(url.pathname, request.headers["x-operator-organization"], request.method),
+      previewApi(
+        url.pathname,
+        request.headers["x-operator-organization"],
+        request.method,
+        url.searchParams,
+      ),
     );
     return;
   }
@@ -385,7 +421,7 @@ createServer(async (request, response) => {
   process.stdout.write(`Lago operator preview listening on http://127.0.0.1:${port}\n`);
 });
 
-function previewApi(pathname, requestedSlug, method = "GET") {
+function previewApi(pathname, requestedSlug, method = "GET", searchParams = new URLSearchParams()) {
   if (typeof requestedSlug === "string" && requestedSlug && !organizations[requestedSlug]) {
     return {
       __status: 403,
@@ -452,12 +488,30 @@ function previewApi(pathname, requestedSlug, method = "GET") {
         document_numbering: "per_billing_entity",
         document_number_prefix: "SERP",
         document_locale: "en",
+        subscription_invoice_issuing_date_adjustment: "align_with_finalization_date",
+        subscription_invoice_issuing_date_anchor: "next_period_start",
         finalize_zero_amount_invoice: true,
         taxes_count: 0,
         invoice_custom_sections_count: 0,
         version: 1,
       },
     };
+  }
+  if (pathname === "/api/operator/v1/billing-entities/default/taxes") {
+    return { taxes: slug === "serp-billing" ? primaryPreviewCollections.taxes.slice(0, 1) : [] };
+  }
+  if (pathname === "/api/operator/v1/billing-entities/default/dunning-campaign") {
+    return {
+      dunning_campaign:
+        method === "DELETE" || slug !== "serp-billing"
+          ? null
+          : primaryPreviewCollections.dunning_campaigns[0],
+    };
+  }
+  if (pathname === "/api/operator/v1/billing-entities/default/logo") {
+    return method === "DELETE"
+      ? { logo: null }
+      : { logo: { file_url: pathname, mime_type: "image/png", filename: "logo.png", version: 1 } };
   }
   if (pathname === "/api/operator/v1/customers") {
     return { customers: customers[slug], meta: { total_count: customers[slug].length } };
@@ -587,6 +641,146 @@ function previewApi(pathname, requestedSlug, method = "GET") {
       },
     };
   }
+  if (pathname === "/api/operator/v1/integrations") {
+    const catalog = [
+      ["stripe", "Stripe", "payments"],
+      ["adyen", "Adyen", "payments"],
+      ["authorize_net", "Authorize.Net", "payments"],
+      ["cashfree", "Cashfree", "payments"],
+      ["flutterwave", "Flutterwave", "payments"],
+      ["gocardless", "GoCardless", "payments"],
+      ["moneyhash", "MoneyHash", "payments"],
+      ["anrok", "Anrok", "tax"],
+      ["avalara", "Avalara", "tax"],
+      ["lago_tax_management", "Lago tax management", "tax"],
+      ["netsuite", "NetSuite", "accounting"],
+      ["xero", "Xero", "accounting"],
+      ["hubspot", "HubSpot", "crm"],
+      ["salesforce", "Salesforce", "crm"],
+    ];
+    return {
+      integrations: catalog.map(([provider_code, name, integration_group]) => ({
+        provider_code,
+        name,
+        integration_group,
+        display_name: null,
+        status: "disabled",
+        settings: {},
+        secret_ready: false,
+        external_actions_enabled: false,
+      })),
+    };
+  }
+  if (/^\/api\/operator\/v1\/customers\/[^/]+\/portal-token$/.test(pathname)) {
+    return { portal_token: "a".repeat(64), shown_once: true };
+  }
+  const customerSettingsMatch = pathname.match(
+    /^\/api\/operator\/v1\/customers\/([^/]+)\/document-settings$/,
+  );
+  if (customerSettingsMatch) {
+    return {
+      document_settings: {
+        external_customer_id: customerSettingsMatch[1],
+        document_locale: "en",
+        subscription_invoice_issuing_date_adjustment: "keep_anchor",
+        subscription_invoice_issuing_date_anchor: "current_period_end",
+      },
+    };
+  }
+  if (/^\/api\/operator\/v1\/customers\/[^/]+\/taxes(?:\/[^/]+)?$/.test(pathname)) {
+    return { taxes: slug === "serp-billing" ? primaryPreviewCollections.taxes.slice(0, 1) : [] };
+  }
+  const invoiceMetadataMatch = pathname.match(/^\/api\/operator\/v1\/invoices\/([^/]+)\/metadata$/);
+  if (invoiceMetadataMatch) {
+    return {
+      metadata: [{ lago_id: "metadata-preview-po", key: "purchase_order", value: "PO-2026-42" }],
+    };
+  }
+  const progressiveMatch = pathname.match(
+    /^\/api\/operator\/v1\/subscriptions\/([^/]+)\/progressive-billing$/,
+  );
+  if (progressiveMatch) {
+    return {
+      progressive_billing: {
+        external_subscription_id: progressiveMatch[1],
+        disabled: method === "PUT" ? true : false,
+      },
+    };
+  }
+  const invoiceAdjustedMatch = pathname.match(
+    /^\/api\/operator\/v1\/invoices\/([^/]+)\/adjusted-fees(?:\/(preview))?$/,
+  );
+  if (invoiceAdjustedMatch) {
+    return invoiceAdjustedMatch[2]
+      ? {
+          adjusted_fee: {
+            invoice_line_id: "fee-preview-001",
+            description: "Corrected creator fee",
+            units: "1",
+            unit_amount_cents: "4900",
+            amount_cents: 4900,
+          },
+        }
+      : { adjusted_fees: [] };
+  }
+  const invoicePaymentMatch = pathname.match(
+    /^\/api\/operator\/v1\/invoices\/([^/]+)\/payment-status$/,
+  );
+  if (invoicePaymentMatch) {
+    return { invoice: { lago_id: invoicePaymentMatch[1], payment_status: "succeeded" } };
+  }
+  const invoiceRegenerateMatch = pathname.match(
+    /^\/api\/operator\/v1\/invoices\/([^/]+)\/regenerate$/,
+  );
+  if (invoiceRegenerateMatch) {
+    return {
+      invoice: {
+        lago_id: "invoice-preview-regenerated",
+        status: "draft",
+        total_amount_cents: 4900,
+      },
+    };
+  }
+  const invoiceDetailMatch = pathname.match(/^\/api\/operator\/v1\/invoices\/([^/]+)$/);
+  if (invoiceDetailMatch) {
+    const invoice = primaryPreviewCollections.invoices.find(
+      (item) => item.lago_id === invoiceDetailMatch[1],
+    );
+    return {
+      invoice: invoice
+        ? {
+            ...invoice,
+            fees: [
+              {
+                lago_id: "fee-preview-001",
+                invoice_display_name: "Creator Monthly",
+                description: "Creator Monthly",
+                units: "1",
+                amount_cents: 4900,
+              },
+            ],
+          }
+        : null,
+    };
+  }
+  if (pathname === "/api/operator/v1/credit-notes/estimate") {
+    return {
+      credit_note: {
+        currency: organization.currency,
+        total_amount_cents: 500,
+        balance_amount_cents: 500,
+      },
+    };
+  }
+  const creditNoteDetailMatch = pathname.match(/^\/api\/operator\/v1\/credit-notes\/([^/]+)$/);
+  if (creditNoteDetailMatch) {
+    return {
+      credit_note:
+        primaryPreviewCollections.credit_notes.find(
+          (item) => item.lago_id === creditNoteDetailMatch[1],
+        ) ?? null,
+    };
+  }
   if (pathname === "/api/operator/v1/webhook-endpoints/webhook-preview-001/logs") {
     return {
       webhook_logs: [
@@ -670,10 +864,35 @@ function previewApi(pathname, requestedSlug, method = "GET") {
         null,
     };
   }
+  if (pathname === "/api/operator/v1/alerts") {
+    const resourceType = searchParams.get("resource_type") ?? "subscription";
+    return {
+      alerts:
+        slug === "serp-billing"
+          ? [
+              {
+                lago_id: `alert-preview-${resourceType}`,
+                resource_type: resourceType,
+                resource_id: searchParams.get("resource_id") ?? "preview-resource",
+                alert_type:
+                  resourceType === "wallet"
+                    ? "wallet_balance_amount"
+                    : "billable_metric_current_usage_units",
+                billable_metric_id: resourceType === "wallet" ? null : "metric-preview-api-calls",
+                code: `${resourceType}-threshold`,
+                name: `${resourceType === "wallet" ? "Wallet" : "Usage"} threshold`,
+                thresholds: [{ value: "500", recurring: true }],
+                version: 1,
+              },
+            ]
+          : [],
+    };
+  }
 
   const collections = {
     "/api/operator/v1/api-keys": "api_keys",
     "/api/operator/v1/invoice-custom-sections": "invoice_custom_sections",
+    "/api/operator/v1/pricing-units": "pricing_units",
     "/api/operator/v1/payment-receipts": "payment_receipts",
     "/api/operator/v1/taxes": "taxes",
     "/api/operator/v1/add-ons": "add_ons",

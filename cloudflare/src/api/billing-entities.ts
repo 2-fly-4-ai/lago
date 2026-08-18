@@ -179,6 +179,18 @@ async function updateBillingEntity(
       current.invoice_grace_period,
       nonNegativeInteger,
     ),
+    subscription_invoice_issuing_date_adjustment: field(
+      billing,
+      "subscription_invoice_issuing_date_adjustment",
+      current.subscription_invoice_issuing_date_adjustment,
+      issuingDateAdjustment,
+    ),
+    subscription_invoice_issuing_date_anchor: field(
+      billing,
+      "subscription_invoice_issuing_date_anchor",
+      current.subscription_invoice_issuing_date_anchor,
+      issuingDateAnchor,
+    ),
     document_locale: field(billing, "document_locale", current.document_locale, documentLocale),
   };
   const changedFields = billingEntityChangedFields(current, next);
@@ -199,7 +211,9 @@ async function updateBillingEntity(
                   legal_number = ?, timezone = ?, net_payment_term = ?, email_settings_json = ?,
                   document_numbering = ?, document_number_prefix = ?, tax_identification_number = ?,
                   finalize_zero_amount_invoice = ?, invoice_footer = ?, invoice_grace_period = ?,
-                  document_locale = ?, version = ?, updated_at = ?
+                  subscription_invoice_issuing_date_adjustment = ?,
+                  subscription_invoice_issuing_date_anchor = ?, document_locale = ?,
+                  version = ?, updated_at = ?
            WHERE id = ? AND version = ?`,
         )
         .bind(
@@ -223,6 +237,8 @@ async function updateBillingEntity(
           next.finalize_zero_amount_invoice,
           next.invoice_footer,
           next.invoice_grace_period,
+          next.subscription_invoice_issuing_date_adjustment,
+          next.subscription_invoice_issuing_date_anchor,
           next.document_locale,
           nextVersion,
           now,
@@ -417,6 +433,8 @@ function billingEntityChangedFields(current: BillingEntityRow, next: BillingEnti
     "finalize_zero_amount_invoice",
     "invoice_footer",
     "invoice_grace_period",
+    "subscription_invoice_issuing_date_adjustment",
+    "subscription_invoice_issuing_date_anchor",
     "document_locale",
   ];
   return fields.filter((fieldName) => current[fieldName] !== next[fieldName]);
@@ -450,21 +468,21 @@ function rejectSideEffectingConfiguration(input: Record<string, unknown>): void 
 
 function rejectUnsupportedIssuingDateSettings(billing: Record<string, unknown>): void {
   const anchor = billing.subscription_invoice_issuing_date_anchor;
-  if (anchor !== undefined && anchor !== "next_period_start") {
-    throw new ApiError(
-      422,
-      "unsupported_billing_entity_feature",
-      "Only next_period_start invoice issuing is implemented",
-    );
-  }
+  if (anchor !== undefined) issuingDateAnchor(anchor);
   const adjustment = billing.subscription_invoice_issuing_date_adjustment;
-  if (adjustment !== undefined && adjustment !== "align_with_finalization_date") {
-    throw new ApiError(
-      422,
-      "unsupported_billing_entity_feature",
-      "Only align_with_finalization_date invoice issuing is implemented",
-    );
-  }
+  if (adjustment !== undefined) issuingDateAdjustment(adjustment);
+}
+
+function issuingDateAdjustment(value: unknown): string {
+  if (value !== "keep_anchor" && value !== "align_with_finalization_date")
+    throw new ApiError(422, "validation_error", "subscription invoice adjustment is invalid");
+  return value;
+}
+
+function issuingDateAnchor(value: unknown): string {
+  if (value !== "current_period_end" && value !== "next_period_start")
+    throw new ApiError(422, "validation_error", "subscription invoice anchor is invalid");
+  return value;
 }
 
 function requiredName(value: unknown): string {

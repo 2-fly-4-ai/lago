@@ -1,9 +1,13 @@
+import { resolveOriginalRouteAlias } from "./operator-routes.js";
+
 const endpoints = {
   session: "/api/operator/v1/session",
   organization: "/api/operator/v1/organization",
   billingEntity: "/api/operator/v1/billing-entities/default",
   apiKeys: "/api/operator/v1/api-keys",
   invoiceSections: "/api/operator/v1/invoice-custom-sections",
+  pricingUnits: "/api/operator/v1/pricing-units",
+  alerts: "/api/operator/v1/alerts",
   paymentReceipts: "/api/operator/v1/payment-receipts",
   taxes: "/api/operator/v1/taxes",
   addOns: "/api/operator/v1/add-ons",
@@ -36,6 +40,10 @@ const endpoints = {
   teamRoles: "/api/operator/v1/team/roles",
   teamAuthentication: "/api/operator/v1/team/authentication",
   teamSecurityLogs: "/api/operator/v1/team/security-logs",
+  integrations: "/api/operator/v1/integrations",
+  billingEntityTaxes: "/api/operator/v1/billing-entities/default/taxes",
+  billingEntityDunning: "/api/operator/v1/billing-entities/default/dunning-campaign",
+  billingEntityLogo: "/api/operator/v1/billing-entities/default/logo",
 };
 
 const routeDefinitions = {
@@ -56,6 +64,7 @@ const routeDefinitions = {
   quotes: { title: "Quotes", group: "Billing & operations" },
   "billing-profile": { title: "Billing profile", group: "Settings" },
   "invoice-sections": { title: "Invoice sections", group: "Settings" },
+  "pricing-units": { title: "Pricing units", group: "Settings" },
   taxes: { title: "Taxes", group: "Settings" },
   "api-keys": { title: "API keys", group: "Settings" },
   "payment-receipts": { title: "Payment receipts", group: "Settings" },
@@ -66,6 +75,7 @@ const routeDefinitions = {
   "api-logs": { title: "API logs", group: "Developer tools" },
   events: { title: "Events", group: "Developer tools" },
   "team-security": { title: "Team & security", group: "Settings" },
+  integrations: { title: "Integrations", group: "Settings" },
 };
 
 const defaultRoute = "customers";
@@ -180,6 +190,19 @@ const entityDetailDefinitions = {
       ["Details", (item) => item.details],
     ],
     edit: (item) => openEditSectionDialog(item),
+  },
+  "pricing-units": {
+    collection: "pricingUnits",
+    singular: "Pricing unit",
+    id: (item) => item.lago_id,
+    label: (item) => safeText(item.name, "Unnamed pricing unit"),
+    fields: [
+      ["Code", (item) => item.code],
+      ["Short name", (item) => item.short_name],
+      ["Description", (item) => item.description],
+      ["Updated", (item) => formatDate(item.updated_at)],
+    ],
+    edit: (item) => openEditPricingUnitDialog(item),
   },
   "payment-receipts": {
     collection: "receipts",
@@ -498,6 +521,14 @@ const elements = {
   teamInviteRole: document.querySelector("#team-invite-role"),
   teamInviteError: document.querySelector("#team-invite-error"),
   submitTeamInvite: document.querySelector("#submit-team-invite"),
+  integrationGroups: document.querySelector("#integration-groups"),
+  integrationDialog: document.querySelector("#integration-dialog"),
+  integrationForm: document.querySelector("#integration-form"),
+  integrationDialogTitle: document.querySelector("#integration-dialog-title"),
+  integrationDisplayName: document.querySelector("#integration-display-name"),
+  integrationSettings: document.querySelector("#integration-settings"),
+  integrationError: document.querySelector("#integration-error"),
+  submitIntegration: document.querySelector("#submit-integration"),
   organizationMonogram: document.querySelector("#organization-monogram"),
   organizationTitle: document.querySelector("#organization-title"),
   organizationSlug: document.querySelector("#organization-slug"),
@@ -518,6 +549,13 @@ const elements = {
   billingZeroInvoices: document.querySelector("#billing-zero-invoices"),
   billingTaxCount: document.querySelector("#billing-tax-count"),
   billingSectionCount: document.querySelector("#billing-section-count"),
+  billingAdvancedForm: document.querySelector("#billing-advanced-form"),
+  billingDefaultTaxes: document.querySelector("#billing-default-taxes"),
+  billingDefaultDunning: document.querySelector("#billing-default-dunning"),
+  billingLogoFile: document.querySelector("#billing-logo-file"),
+  removeBillingLogo: document.querySelector("#remove-billing-logo"),
+  saveBillingAdvanced: document.querySelector("#save-billing-advanced"),
+  billingAdvancedError: document.querySelector("#billing-advanced-error"),
   billingFormDialog: document.querySelector("#billing-form-dialog"),
   billingForm: document.querySelector("#billing-form"),
   billingName: document.querySelector("#billing-name"),
@@ -538,6 +576,8 @@ const elements = {
   billingDocumentNumbering: document.querySelector("#billing-document-numbering"),
   billingDocumentPrefix: document.querySelector("#billing-document-prefix"),
   billingLocale: document.querySelector("#billing-locale"),
+  billingIssuingAdjustment: document.querySelector("#billing-issuing-adjustment"),
+  billingIssuingAnchor: document.querySelector("#billing-issuing-anchor"),
   billingFooter: document.querySelector("#billing-footer"),
   billingFinalizeZero: document.querySelector("#billing-finalize-zero"),
   billingFormError: document.querySelector("#billing-form-error"),
@@ -554,6 +594,20 @@ const elements = {
   sectionsEmptyCopy: document.querySelector("#sections-empty-copy"),
   sectionsTableShell: document.querySelector("#sections-table-shell"),
   sectionsTableBody: document.querySelector("#sections-table-body"),
+  openCreatePricingUnit: document.querySelector("#open-create-pricing-unit"),
+  pricingUnitsLoading: document.querySelector("#pricing-units-loading"),
+  pricingUnitsEmpty: document.querySelector("#pricing-units-empty"),
+  pricingUnitsTableShell: document.querySelector("#pricing-units-table-shell"),
+  pricingUnitsTableBody: document.querySelector("#pricing-units-table-body"),
+  pricingUnitDialog: document.querySelector("#pricing-unit-dialog"),
+  pricingUnitForm: document.querySelector("#pricing-unit-form"),
+  pricingUnitTitle: document.querySelector("#pricing-unit-title"),
+  pricingUnitName: document.querySelector("#pricing-unit-name"),
+  pricingUnitCode: document.querySelector("#pricing-unit-code"),
+  pricingUnitShortName: document.querySelector("#pricing-unit-short-name"),
+  pricingUnitDescription: document.querySelector("#pricing-unit-description"),
+  pricingUnitError: document.querySelector("#pricing-unit-error"),
+  submitPricingUnit: document.querySelector("#submit-pricing-unit"),
   receiptsLoading: document.querySelector("#receipts-loading"),
   receiptsEmpty: document.querySelector("#receipts-empty"),
   receiptsTableShell: document.querySelector("#receipts-table-shell"),
@@ -602,6 +656,7 @@ const elements = {
   customerDetail: document.querySelector("#customer-detail"),
   customerDetailBack: document.querySelector("#customer-detail-back"),
   customerDetailEdit: document.querySelector("#customer-detail-edit"),
+  customerPortalLink: document.querySelector("#customer-portal-link"),
   customerDetailEditAside: document.querySelector("#customer-detail-edit-aside"),
   customerDetailAvatar: document.querySelector("#customer-detail-avatar"),
   customerDetailName: document.querySelector("#customer-detail-name"),
@@ -624,6 +679,23 @@ const elements = {
   entityDetailId: document.querySelector("#entity-detail-id"),
   entityDetailFields: document.querySelector("#entity-detail-fields"),
   entityDetailMissing: document.querySelector("#entity-detail-missing"),
+  entityAlerts: document.querySelector("#entity-alerts"),
+  entityAlertsLoading: document.querySelector("#entity-alerts-loading"),
+  entityAlertsEmpty: document.querySelector("#entity-alerts-empty"),
+  entityAlertsTableShell: document.querySelector("#entity-alerts-table-shell"),
+  entityAlertsBody: document.querySelector("#entity-alerts-body"),
+  openCreateAlert: document.querySelector("#open-create-alert"),
+  alertDialog: document.querySelector("#alert-dialog"),
+  alertForm: document.querySelector("#alert-form"),
+  alertTitle: document.querySelector("#alert-title"),
+  alertName: document.querySelector("#alert-name"),
+  alertCode: document.querySelector("#alert-code"),
+  alertType: document.querySelector("#alert-type"),
+  alertMetric: document.querySelector("#alert-metric"),
+  alertThreshold: document.querySelector("#alert-threshold"),
+  alertRecurring: document.querySelector("#alert-recurring"),
+  alertError: document.querySelector("#alert-error"),
+  submitAlert: document.querySelector("#submit-alert"),
   customerFormDialog: document.querySelector("#customer-form-dialog"),
   customerForm: document.querySelector("#customer-form"),
   customerFormTitle: document.querySelector("#customer-form-title"),
@@ -866,6 +938,7 @@ const elements = {
   confirmAction: document.querySelector("#confirm-action"),
   secretDialog: document.querySelector("#secret-dialog"),
   secretValue: document.querySelector("#secret-value"),
+  secretTitle: document.querySelector("#secret-title"),
   copySecret: document.querySelector("#copy-secret"),
   copyStatus: document.querySelector("#copy-status"),
   closeSecret: document.querySelector("#close-secret"),
@@ -881,6 +954,11 @@ const elements = {
   sectionDetails: document.querySelector("#section-details"),
   sectionFormError: document.querySelector("#section-form-error"),
   submitSectionForm: document.querySelector("#submit-section-form"),
+  entityAdvanced: document.querySelector("#entity-advanced"),
+  entityAdvancedTitle: document.querySelector("#entity-advanced-title"),
+  entityAdvancedCopy: document.querySelector("#entity-advanced-copy"),
+  entityAdvancedContent: document.querySelector("#entity-advanced-content"),
+  entityDownloadDocument: document.querySelector("#entity-download-document"),
 };
 
 const state = {
@@ -890,12 +968,16 @@ const state = {
   detailId: null,
   detailTab: "overview",
   role: "viewer",
+  currentMembershipId: null,
   keys: [],
   keyFormMode: "create",
   selectedKeyId: null,
   confirmMode: null,
   oneTimeSecret: null,
   sections: [],
+  pricingUnits: [],
+  pricingUnitFormMode: "create",
+  selectedPricingUnitId: null,
   sectionFormMode: "create",
   selectedSectionCode: null,
   billingEntity: null,
@@ -957,6 +1039,11 @@ const state = {
   teamInvitations: [],
   teamRoles: [],
   teamAuthentication: null,
+  integrations: [],
+  selectedIntegrationCode: null,
+  entityAlerts: [],
+  alertFormMode: "create",
+  selectedAlertId: null,
 };
 
 for (const link of elements.navigationLinks) link.addEventListener("click", handleRouteNavigation);
@@ -979,8 +1066,13 @@ elements.secretDialog.addEventListener("close", clearOneTimeSecret);
 elements.openCreateSection.addEventListener("click", openCreateSectionDialog);
 elements.sectionsTableBody.addEventListener("click", handleSectionAction);
 elements.sectionForm.addEventListener("submit", submitSectionForm);
+elements.openCreatePricingUnit.addEventListener("click", openCreatePricingUnitDialog);
+elements.pricingUnitsTableBody.addEventListener("click", handlePricingUnitAction);
+elements.pricingUnitForm.addEventListener("submit", submitPricingUnitForm);
 elements.openEditBilling.addEventListener("click", openBillingDialog);
 elements.billingForm.addEventListener("submit", submitBillingForm);
+elements.billingAdvancedForm.addEventListener("submit", submitBillingAdvanced);
+elements.removeBillingLogo.addEventListener("click", removeBillingLogo);
 elements.openCreateTax.addEventListener("click", openCreateTaxDialog);
 elements.taxesTableBody.addEventListener("click", handleTaxAction);
 elements.taxForm.addEventListener("submit", submitTaxForm);
@@ -991,10 +1083,15 @@ elements.openCreateCustomer.addEventListener("click", openCreateCustomerDialog);
 elements.customersTableBody.addEventListener("click", handleCustomerAction);
 elements.customerDetailBack.addEventListener("click", () => navigateToRoute("customers"));
 elements.customerDetailEdit.addEventListener("click", openSelectedCustomerEditor);
+elements.customerPortalLink.addEventListener("click", createCustomerPortalLink);
 elements.customerDetailEditAside.addEventListener("click", openSelectedCustomerEditor);
 for (const tab of elements.customerDetailTabs) tab.addEventListener("click", handleCustomerTab);
 elements.entityDetailBack.addEventListener("click", () => navigateToRoute(state.route));
 elements.entityDetailEdit.addEventListener("click", openSelectedEntityEditor);
+elements.entityDownloadDocument.addEventListener("click", downloadSelectedDocument);
+elements.openCreateAlert.addEventListener("click", openCreateAlertDialog);
+elements.entityAlertsBody.addEventListener("click", handleAlertAction);
+elements.alertForm.addEventListener("submit", submitAlertForm);
 elements.dashboard.addEventListener("click", handleEntityDetailNavigation);
 elements.customerForm.addEventListener("submit", submitCustomerForm);
 elements.openCreateCoupon.addEventListener("click", openCreateCouponDialog);
@@ -1050,6 +1147,12 @@ elements.aiShortcuts.addEventListener("click", useAiShortcut);
 elements.aiForm.addEventListener("submit", submitAiMessage);
 elements.openTeamInvite.addEventListener("click", openTeamInviteDialog);
 elements.teamInviteForm.addEventListener("submit", submitTeamInvitation);
+elements.integrationGroups.addEventListener("click", handleIntegrationAction);
+elements.integrationForm.addEventListener("submit", submitIntegrationConfiguration);
+elements.teamMembersBody.addEventListener("change", updateTeamMemberRole);
+elements.teamMembersBody.addEventListener("click", revokeTeamMember);
+elements.teamInvitationsBody.addEventListener("change", updateTeamInvitationRole);
+elements.teamInvitationsBody.addEventListener("click", revokeTeamInvitation);
 
 void initialize();
 
@@ -1084,6 +1187,7 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
       billingPayload,
       keyPayload,
       sectionsPayload,
+      pricingUnitsPayload,
       receiptsPayload,
       taxesPayload,
       addOnsPayload,
@@ -1113,11 +1217,13 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
       teamInvitationsPayload,
       teamRolesPayload,
       teamAuthenticationPayload,
+      integrationsPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
       requestJson(endpoints.apiKeys),
       requestJson(endpoints.invoiceSections),
+      requestJson(endpoints.pricingUnits),
       requestJson(endpoints.paymentReceipts),
       requestJson(endpoints.taxes),
       requestJson(endpoints.addOns),
@@ -1151,12 +1257,14 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
       requestJson(endpoints.teamInvitations),
       requestJson(endpoints.teamRoles),
       requestJson(endpoints.teamAuthentication),
+      requestJson(endpoints.integrations),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
     renderBillingEntity(billingPayload.billing_entity);
     renderKeys(keyPayload.api_keys);
     renderSections(sectionsPayload.invoice_custom_sections);
+    renderPricingUnits(pricingUnitsPayload.pricing_units);
     renderReceipts(receiptsPayload.payment_receipts);
     renderTaxes(taxesPayload.taxes);
     renderAddOns(addOnsPayload.add_ons);
@@ -1191,6 +1299,8 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
       teamRolesPayload.roles,
       teamAuthenticationPayload.authentication,
     );
+    renderIntegrations(integrationsPayload.integrations);
+    await renderBillingAdvanced();
     elements.aiRail.hidden = false;
     await hydrateSelectedCatalogDetail();
     renderOrganizationMenu();
@@ -1211,6 +1321,24 @@ function routeFromLocation() {
   let detailTab = "overview";
   let analyticsTab = "revenue";
   let analyticsMetricCode = null;
+
+  const originalRoute = resolveOriginalRouteAlias(segments);
+  if (originalRoute) {
+    organizationSlug = originalRoute.organizationSlug;
+    route = originalRoute.route;
+    detailId = originalRoute.detailId ?? null;
+    detailTab = originalRoute.detailTab ?? "overview";
+    analyticsTab = originalRoute.analyticsTab ?? "revenue";
+    analyticsMetricCode = originalRoute.analyticsMetricCode ?? null;
+    return {
+      organizationSlug,
+      route,
+      detailId,
+      detailTab,
+      analyticsTab,
+      analyticsMetricCode,
+    };
+  }
 
   if (segments.length >= 2) {
     [organizationSlug, route] = segments;
@@ -1474,6 +1602,7 @@ function closeMobileNavigation() {
 }
 
 function renderOperator(operator) {
+  state.currentMembershipId = operator.membership_id;
   const isAdmin = state.role === "admin";
   elements.operatorRole.textContent = isAdmin ? "Administrator" : "Read-only viewer";
   elements.operatorBadge.hidden = false;
@@ -1482,6 +1611,7 @@ function renderOperator(operator) {
   elements.switcherRole.textContent = isAdmin ? "Administrator" : "Read-only viewer";
   elements.openCreateKey.hidden = !isAdmin;
   elements.openCreateSection.hidden = !isAdmin;
+  elements.openCreatePricingUnit.hidden = !isAdmin;
   elements.openEditBilling.hidden = !isAdmin;
   elements.openCreateTax.hidden = !isAdmin;
   elements.openCreateAddOn.hidden = !isAdmin;
@@ -1608,6 +1738,10 @@ function openBillingDialog() {
     entity.document_numbering === "per_customer" ? "per_customer" : "per_billing_entity";
   elements.billingDocumentPrefix.value = formValue(entity.document_number_prefix);
   elements.billingLocale.value = formValue(entity.document_locale);
+  elements.billingIssuingAdjustment.value =
+    entity.subscription_invoice_issuing_date_adjustment ?? "align_with_finalization_date";
+  elements.billingIssuingAnchor.value =
+    entity.subscription_invoice_issuing_date_anchor ?? "next_period_start";
   elements.billingFooter.value = formValue(entity.invoice_footer);
   elements.billingFinalizeZero.checked = entity.finalize_zero_amount_invoice === true;
   elements.billingFormError.hidden = true;
@@ -1646,6 +1780,8 @@ async function submitBillingForm(event) {
         invoice_footer: optionalFormValue(elements.billingFooter.value),
         invoice_grace_period: Number(elements.billingGracePeriod.value),
         document_locale: elements.billingLocale.value.trim(),
+        subscription_invoice_issuing_date_adjustment: elements.billingIssuingAdjustment.value,
+        subscription_invoice_issuing_date_anchor: elements.billingIssuingAnchor.value,
       },
     },
   };
@@ -1668,6 +1804,108 @@ async function submitBillingForm(event) {
     elements.billingFormError.hidden = false;
   } finally {
     setBusy(elements.submitBillingForm, false, "Save billing profile");
+  }
+}
+
+async function renderBillingAdvanced() {
+  elements.billingDefaultTaxes.replaceChildren();
+  for (const tax of state.taxes) {
+    const option = document.createElement("option");
+    option.value = tax.code;
+    option.textContent = `${safeText(tax.name, tax.code)} · ${Number(tax.rate) || 0}%`;
+    elements.billingDefaultTaxes.append(option);
+  }
+  elements.billingDefaultDunning.replaceChildren();
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "No billing-entity override";
+  elements.billingDefaultDunning.append(empty);
+  for (const campaign of state.dunningCampaigns) {
+    const option = document.createElement("option");
+    option.value = campaign.code;
+    option.textContent = safeText(campaign.name, campaign.code);
+    elements.billingDefaultDunning.append(option);
+  }
+  const controls = elements.billingAdvancedForm.querySelectorAll("input, select, button");
+  for (const control of controls) control.disabled = state.role !== "admin";
+  try {
+    const [taxPayload, dunningPayload] = await Promise.all([
+      requestJson(endpoints.billingEntityTaxes),
+      requestJson(endpoints.billingEntityDunning),
+    ]);
+    const selectedTaxes = new Set((taxPayload.taxes ?? []).map((tax) => tax.code));
+    for (const option of elements.billingDefaultTaxes.options) {
+      option.selected = selectedTaxes.has(option.value);
+    }
+    elements.billingDefaultDunning.value = dunningPayload.dunning_campaign?.code ?? "";
+  } catch (error) {
+    elements.billingAdvancedError.textContent = errorMessage(error);
+    elements.billingAdvancedError.hidden = false;
+  }
+}
+
+async function submitBillingAdvanced(event) {
+  event.preventDefault();
+  if (state.role !== "admin") return;
+  setBusy(elements.saveBillingAdvanced, true, "Saving…");
+  elements.billingAdvancedError.hidden = true;
+  try {
+    const taxCodes = Array.from(elements.billingDefaultTaxes.selectedOptions).map(
+      (option) => option.value,
+    );
+    const dunningCode = elements.billingDefaultDunning.value;
+    const requests = [
+      requestJson(endpoints.billingEntityTaxes, {
+        method: "PUT",
+        body: { billing_entity: { tax_codes: taxCodes } },
+      }),
+      dunningCode
+        ? requestJson(endpoints.billingEntityDunning, {
+            method: "PUT",
+            body: { billing_entity: { dunning_campaign_code: dunningCode } },
+          })
+        : requestJson(endpoints.billingEntityDunning, { method: "DELETE" }),
+    ];
+    const file = elements.billingLogoFile.files?.[0];
+    if (file) {
+      if (file.size > 1_048_576) throw new Error("Billing entity logo must be no larger than 1 MB");
+      requests.push(
+        requestJson(endpoints.billingEntityLogo, {
+          method: "PUT",
+          body: {
+            logo: {
+              filename: file.name,
+              mime_type: file.type,
+              data_base64: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
+            },
+          },
+        }),
+      );
+    }
+    await Promise.all(requests);
+    elements.billingLogoFile.value = "";
+    await renderBillingAdvanced();
+    hidePageError();
+  } catch (error) {
+    elements.billingAdvancedError.textContent = errorMessage(error);
+    elements.billingAdvancedError.hidden = false;
+  } finally {
+    setBusy(elements.saveBillingAdvanced, false, "Save defaults");
+  }
+}
+
+async function removeBillingLogo() {
+  if (state.role !== "admin") return;
+  setBusy(elements.removeBillingLogo, true, "Removing…");
+  try {
+    await requestJson(endpoints.billingEntityLogo, { method: "DELETE" });
+    elements.billingLogoFile.value = "";
+    hidePageError();
+  } catch (error) {
+    elements.billingAdvancedError.textContent = errorMessage(error);
+    elements.billingAdvancedError.hidden = false;
+  } finally {
+    setBusy(elements.removeBillingLogo, false, "Remove logo");
   }
 }
 
@@ -1788,6 +2026,45 @@ function createSectionRow(section) {
 
   row.append(nameCell, codeCell, displayCell, detailsCell, actionCell);
   return row;
+}
+
+function renderPricingUnits(pricingUnits) {
+  state.pricingUnits = Array.isArray(pricingUnits) ? pricingUnits : [];
+  elements.pricingUnitsTableBody.replaceChildren();
+  elements.pricingUnitsLoading.hidden = true;
+  elements.pricingUnitsEmpty.hidden = state.pricingUnits.length !== 0;
+  elements.pricingUnitsTableShell.hidden = state.pricingUnits.length === 0;
+  for (const pricingUnit of state.pricingUnits) {
+    const row = document.createElement("tr");
+    const name = document.createElement("td");
+    const label = document.createElement("span");
+    label.className = "key-name";
+    label.textContent = safeText(pricingUnit.name, "Unnamed pricing unit");
+    name.append(label);
+    const code = document.createElement("td");
+    code.textContent = safeText(pricingUnit.code, "—");
+    const shortName = document.createElement("td");
+    shortName.textContent = safeText(pricingUnit.short_name, "—");
+    const description = document.createElement("td");
+    description.textContent = safeText(pricingUnit.description, "No description");
+    if (!pricingUnit.description) description.className = "muted";
+    const actions = document.createElement("td");
+    actions.className = "actions-column";
+    if (state.role === "admin") {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "row-action";
+      edit.dataset.pricingUnitId = pricingUnit.lago_id;
+      edit.textContent = "Edit";
+      actions.append(edit);
+    } else {
+      actions.textContent = "Read only";
+      actions.classList.add("muted");
+    }
+    row.append(name, code, shortName, description, actions);
+    elements.pricingUnitsTableBody.append(row);
+  }
+  decorateEntityRows(elements.pricingUnitsTableBody, state.pricingUnits, "pricing-units");
 }
 
 function renderReceipts(receipts) {
@@ -2214,6 +2491,7 @@ function renderCustomerDetail() {
     missing.append(title, copy);
     elements.customerDetailTabPanel.append(missing);
     elements.customerDetailEdit.hidden = true;
+    elements.customerPortalLink.hidden = true;
     elements.customerDetailEditAside.hidden = true;
     return;
   }
@@ -2232,6 +2510,7 @@ function renderCustomerDetail() {
       ? "Organization default"
       : `${nonNegativeNumber(customer.net_payment_term)} days`;
   elements.customerDetailEdit.hidden = state.role !== "admin";
+  elements.customerPortalLink.hidden = state.role !== "admin";
   elements.customerDetailEditAside.hidden = state.role !== "admin";
 
   for (const tab of elements.customerDetailTabs) {
@@ -2271,7 +2550,7 @@ function renderCustomerDetail() {
     return;
   }
   if (state.detailTab === "settings") {
-    renderCustomerSettingsTab(customer);
+    void renderCustomerSettingsTab(customer);
     return;
   }
   renderCustomerOverview(customer);
@@ -3225,6 +3504,18 @@ async function handleEntityDetailNavigation(event) {
   closeMobileNavigation();
 }
 
+function navigateToEntityDetail(route, identifier, { replace = false } = {}) {
+  if (!entityDetailDefinitions[route] || !identifier) return;
+  state.route = route;
+  state.detailId = String(identifier);
+  state.detailTab = "overview";
+  const path = routePath(state.organizationSlug, route, state.detailId);
+  if (replace) window.history.replaceState({ route, identifier }, "", path);
+  else window.history.pushState({ route, identifier }, "", path);
+  renderRoute();
+  closeMobileNavigation();
+}
+
 async function hydrateSelectedCatalogDetail() {
   if (state.route === "webhook-endpoints" && state.detailId) {
     const item = state.webhookEndpoints.find((candidate) => candidate.lago_id === state.detailId);
@@ -3262,6 +3553,11 @@ function renderEntityDetail() {
   elements.entityDetailFields.replaceChildren();
   elements.entityDetailMissing.hidden = Boolean(item);
   elements.entityDetailEdit.hidden = true;
+  elements.entityDownloadDocument.hidden = true;
+  elements.entityAlerts.hidden = true;
+  elements.entityAdvanced.hidden = true;
+  elements.entityAdvancedContent.replaceChildren();
+  elements.entityAlertsBody.replaceChildren();
 
   if (!item) {
     elements.entityDetailAvatar.textContent = "—";
@@ -3287,6 +3583,687 @@ function renderEntityDetail() {
     description.textContent = detailValue(valueReader(item));
     group.append(term, description);
     elements.entityDetailFields.append(group);
+  }
+  if (state.route === "subscriptions" || state.route === "wallets") {
+    void renderEntityAlerts(item);
+  }
+  if (new Set(["subscriptions", "invoices", "credit-notes", "payment-receipts"]).has(state.route)) {
+    void renderEntityAdvanced(item);
+  }
+}
+
+async function renderEntityAdvanced(item) {
+  const route = state.route;
+  const detailId = state.detailId;
+  elements.entityAdvanced.hidden = false;
+  elements.entityAdvancedTitle.textContent =
+    route === "subscriptions"
+      ? "Progressive billing"
+      : route === "invoices"
+        ? "Invoice controls"
+        : route === "credit-notes"
+          ? "Credit note controls"
+          : "Receipt document";
+  elements.entityAdvancedCopy.textContent =
+    route === "subscriptions"
+      ? "Control threshold-based progressive billing for this subscription."
+      : route === "invoices"
+        ? "Manage metadata, payment state, PDF generation, and voided-invoice regeneration."
+        : route === "credit-notes"
+          ? "Edit internal note details and generate the retained PDF artifact."
+          : "Download the generated payment receipt PDF.";
+  elements.entityDownloadDocument.hidden = route === "subscriptions";
+  const loading = document.createElement("div");
+  loading.className = "table-loading compact";
+  loading.textContent = "Loading billing controls…";
+  elements.entityAdvancedContent.replaceChildren(loading);
+  if (route === "payment-receipts") {
+    loading.remove();
+    const copy = document.createElement("p");
+    copy.className = "muted";
+    copy.textContent =
+      "PDF generation remains inside the Cloudflare document workflow and artifact bucket.";
+    elements.entityAdvancedContent.append(copy);
+    return;
+  }
+  try {
+    if (route === "subscriptions") {
+      const payload = await requestJson(
+        `${subscriptionEndpoint(item.external_id)}/progressive-billing`,
+      );
+      if (state.route !== route || state.detailId !== detailId) return;
+      loading.remove();
+      renderSubscriptionProgressiveBilling(item, payload.progressive_billing);
+      return;
+    }
+    if (route === "credit-notes") {
+      loading.remove();
+      renderCreditNoteAdvanced(item);
+      return;
+    }
+    const [invoicePayload, metadataPayload, adjustedPayload] = await Promise.all([
+      requestJson(invoiceEndpoint(item.lago_id)),
+      requestJson(invoiceMetadataEndpoint(item.lago_id)),
+      requestJson(invoiceAdjustedFeesEndpoint(item.lago_id)),
+    ]);
+    if (state.route !== route || state.detailId !== detailId) return;
+    loading.remove();
+    renderInvoiceAdvanced(
+      invoicePayload.invoice ?? item,
+      metadataPayload.metadata ?? [],
+      adjustedPayload.adjusted_fees ?? [],
+    );
+  } catch (error) {
+    loading.className = "form-error inline-error";
+    loading.textContent = errorMessage(error);
+  }
+}
+
+function renderSubscriptionProgressiveBilling(subscription, progressiveBilling) {
+  const form = document.createElement("form");
+  form.className = "advanced-inline-form";
+  const disabled = document.createElement("label");
+  disabled.className = "checkbox-field";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = progressiveBilling?.disabled === true;
+  const copy = document.createElement("span");
+  copy.textContent = "Disable progressive billing for this subscription";
+  disabled.append(checkbox, copy);
+  const actions = document.createElement("div");
+  actions.className = "row-actions";
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "secondary-button";
+  reset.textContent = "Reset to enabled";
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className = "primary-button";
+  save.textContent = "Save progressive billing";
+  const error = document.createElement("p");
+  error.className = "form-error";
+  error.hidden = true;
+  if (state.role !== "admin") {
+    checkbox.disabled = true;
+    reset.hidden = true;
+    save.hidden = true;
+  }
+  const endpoint = `${subscriptionEndpoint(subscription.external_id)}/progressive-billing`;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    setBusy(save, true, "Saving…");
+    try {
+      await requestJson(endpoint, {
+        method: "PUT",
+        body: { progressive_billing: { disabled: checkbox.checked } },
+      });
+      error.hidden = true;
+    } catch (requestError) {
+      error.textContent = errorMessage(requestError);
+      error.hidden = false;
+    } finally {
+      setBusy(save, false, "Save progressive billing");
+    }
+  });
+  reset.addEventListener("click", async () => {
+    setBusy(reset, true, "Resetting…");
+    try {
+      await requestJson(endpoint, { method: "DELETE" });
+      checkbox.checked = false;
+      error.hidden = true;
+    } catch (requestError) {
+      error.textContent = errorMessage(requestError);
+      error.hidden = false;
+    } finally {
+      setBusy(reset, false, "Reset to enabled");
+    }
+  });
+  actions.append(reset, save);
+  form.append(disabled, actions, error);
+  elements.entityAdvancedContent.append(form);
+}
+
+function renderInvoiceAdvanced(invoice, metadata, adjustedFees) {
+  const metadataBlock = document.createElement("section");
+  metadataBlock.className = "advanced-control-block";
+  const metadataTitle = document.createElement("h3");
+  metadataTitle.textContent = "Invoice metadata";
+  const metadataCopy = document.createElement("p");
+  metadataCopy.textContent =
+    "Keep purchase-order references and internal billing context on the invoice.";
+  const metadataRows = document.createElement("div");
+  const addMetadata = document.createElement("button");
+  addMetadata.type = "button";
+  addMetadata.className = "secondary-button";
+  addMetadata.textContent = "Add metadata";
+  const saveMetadata = document.createElement("button");
+  saveMetadata.type = "button";
+  saveMetadata.className = "primary-button";
+  saveMetadata.textContent = "Save metadata";
+  const metadataError = document.createElement("p");
+  metadataError.className = "form-error";
+  metadataError.hidden = true;
+  const appendMetadataRow = (entry = {}) => {
+    const row = document.createElement("div");
+    row.className = "metadata-editor-row";
+    const key = document.createElement("input");
+    key.type = "text";
+    key.maxLength = 64;
+    key.placeholder = "Key";
+    key.value = safeText(entry.key, "");
+    const value = document.createElement("input");
+    value.type = "text";
+    value.maxLength = 512;
+    value.placeholder = "Value";
+    value.value = safeText(entry.value, "");
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "text-button danger";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => row.remove());
+    if (state.role !== "admin") for (const control of [key, value, remove]) control.disabled = true;
+    row.append(key, value, remove);
+    metadataRows.append(row);
+  };
+  for (const entry of metadata) appendMetadataRow(entry);
+  if (!metadata.length) appendMetadataRow();
+  addMetadata.hidden = state.role !== "admin";
+  saveMetadata.hidden = state.role !== "admin";
+  addMetadata.addEventListener("click", () => appendMetadataRow());
+  saveMetadata.addEventListener("click", async () => {
+    const rows = Array.from(metadataRows.querySelectorAll(".metadata-editor-row"));
+    const next = rows
+      .map((row) => ({
+        key: row.querySelector("input:nth-of-type(1)").value.trim(),
+        value: row.querySelector("input:nth-of-type(2)").value.trim(),
+      }))
+      .filter((entry) => entry.key || entry.value);
+    setBusy(saveMetadata, true, "Saving…");
+    try {
+      const payload = await requestJson(invoiceMetadataEndpoint(invoice.lago_id), {
+        method: "PUT",
+        body: { metadata: next },
+      });
+      metadataRows.replaceChildren();
+      for (const entry of payload.metadata ?? []) appendMetadataRow(entry);
+      if (!payload.metadata?.length) appendMetadataRow();
+      metadataError.hidden = true;
+    } catch (error) {
+      metadataError.textContent = errorMessage(error);
+      metadataError.hidden = false;
+    } finally {
+      setBusy(saveMetadata, false, "Save metadata");
+    }
+  });
+  const metadataActions = document.createElement("div");
+  metadataActions.className = "row-actions";
+  metadataActions.append(addMetadata, saveMetadata);
+  metadataBlock.append(metadataTitle, metadataCopy, metadataRows, metadataActions, metadataError);
+
+  const paymentBlock = document.createElement("section");
+  paymentBlock.className = "advanced-control-block";
+  const paymentTitle = document.createElement("h3");
+  paymentTitle.textContent = "Payment status";
+  const paymentCopy = document.createElement("p");
+  paymentCopy.textContent =
+    "Record the operator-visible state without invoking a payment provider.";
+  const paymentForm = document.createElement("form");
+  paymentForm.className = "advanced-inline-form";
+  const paymentSelect = labeledSelect("Status", [
+    ["pending", "Pending"],
+    ["requires_action", "Requires action"],
+    ["succeeded", "Succeeded"],
+    ["failed", "Failed"],
+    ["refunded", "Refunded"],
+  ]);
+  paymentSelect.select.value = invoice.payment_status;
+  const paymentSave = document.createElement("button");
+  paymentSave.type = "submit";
+  paymentSave.className = "primary-button";
+  paymentSave.textContent = "Update payment status";
+  const paymentError = document.createElement("p");
+  paymentError.className = "form-error";
+  paymentError.hidden = true;
+  if (state.role !== "admin" || invoice.status !== "finalized") {
+    paymentSelect.select.disabled = true;
+    paymentSave.hidden = true;
+  }
+  paymentForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    setBusy(paymentSave, true, "Saving…");
+    try {
+      await requestJson(`${invoiceEndpoint(invoice.lago_id)}/payment-status`, {
+        method: "PUT",
+        body: { invoice: { payment_status: paymentSelect.select.value } },
+      });
+      const selected = state.invoices.find((candidate) => candidate.lago_id === invoice.lago_id);
+      if (selected) selected.payment_status = paymentSelect.select.value;
+      paymentError.hidden = true;
+    } catch (error) {
+      paymentError.textContent = errorMessage(error);
+      paymentError.hidden = false;
+    } finally {
+      setBusy(paymentSave, false, "Update payment status");
+    }
+  });
+  paymentForm.append(paymentSelect.label, paymentSave, paymentError);
+  paymentBlock.append(paymentTitle, paymentCopy, paymentForm);
+
+  const regenerationBlock = document.createElement("section");
+  regenerationBlock.className = "advanced-control-block";
+  const regenerationTitle = document.createElement("h3");
+  regenerationTitle.textContent = "Adjusted fees and regeneration";
+  const regenerationCopy = document.createElement("p");
+  regenerationCopy.textContent =
+    "Preview and stage corrected fee values, then regenerate a voided invoice as a new draft.";
+  const feeForm = document.createElement("form");
+  feeForm.className = "advanced-inline-form";
+  const feeSelect = labeledSelect(
+    "Invoice fee",
+    (invoice.fees ?? []).map((fee) => [
+      fee.lago_id,
+      safeText(fee.invoice_display_name, fee.description),
+    ]),
+  );
+  const units = labeledInput("Units", "number", "1");
+  units.input.min = "0";
+  units.input.step = "0.000000001";
+  const amount = labeledInput("Unit amount (minor)", "number", "0");
+  amount.input.min = "0";
+  amount.input.step = "0.000000001";
+  const description = labeledInput("Description", "text", "");
+  const preview = document.createElement("button");
+  preview.type = "button";
+  preview.className = "secondary-button";
+  preview.textContent = "Preview adjustment";
+  const stage = document.createElement("button");
+  stage.type = "submit";
+  stage.className = "primary-button";
+  stage.textContent = "Stage adjustment";
+  const regenerate = document.createElement("button");
+  regenerate.type = "button";
+  regenerate.className = "primary-button";
+  regenerate.textContent = "Regenerate draft invoice";
+  regenerate.hidden = state.role !== "admin" || invoice.status !== "voided";
+  const feeResult = document.createElement("p");
+  feeResult.className = "muted";
+  feeResult.textContent = adjustedFees.length
+    ? `${adjustedFees.length} adjusted fee${adjustedFees.length === 1 ? "" : "s"} staged.`
+    : "No adjusted fees are staged.";
+  const feeError = document.createElement("p");
+  feeError.className = "form-error";
+  feeError.hidden = true;
+  const adjustmentBody = () => ({
+    adjusted_fee: {
+      invoice_line_id: feeSelect.select.value || null,
+      description: optionalFormValue(description.input.value),
+      units: units.input.value,
+      unit_amount_cents: amount.input.value,
+    },
+  });
+  preview.addEventListener("click", async () => {
+    try {
+      const payload = await requestJson(`${invoiceAdjustedFeesEndpoint(invoice.lago_id)}/preview`, {
+        method: "POST",
+        body: adjustmentBody(),
+      });
+      feeResult.textContent = `Preview: ${formatMoney(payload.adjusted_fee.amount_cents, invoice.currency)}.`;
+      feeError.hidden = true;
+    } catch (error) {
+      feeError.textContent = errorMessage(error);
+      feeError.hidden = false;
+    }
+  });
+  feeForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    setBusy(stage, true, "Staging…");
+    try {
+      const payload = await requestJson(invoiceAdjustedFeesEndpoint(invoice.lago_id), {
+        method: "POST",
+        body: adjustmentBody(),
+      });
+      feeResult.textContent = `${payload.adjusted_fees?.length ?? 0} adjusted fee${payload.adjusted_fees?.length === 1 ? "" : "s"} staged.`;
+      feeError.hidden = true;
+    } catch (error) {
+      feeError.textContent = errorMessage(error);
+      feeError.hidden = false;
+    } finally {
+      setBusy(stage, false, "Stage adjustment");
+    }
+  });
+  regenerate.addEventListener("click", async () => {
+    setBusy(regenerate, true, "Regenerating…");
+    try {
+      const payload = await requestJson(`${invoiceEndpoint(invoice.lago_id)}/regenerate`, {
+        method: "POST",
+        body: {},
+      });
+      await refreshInvoices();
+      navigateToEntityDetail("invoices", payload.invoice.lago_id);
+    } catch (error) {
+      feeError.textContent = errorMessage(error);
+      feeError.hidden = false;
+      setBusy(regenerate, false, "Regenerate draft invoice");
+    }
+  });
+  if (state.role !== "admin" || !(invoice.fees ?? []).length) {
+    for (const control of feeForm.querySelectorAll("input, select, button"))
+      control.disabled = true;
+  }
+  const feeActions = document.createElement("div");
+  feeActions.className = "row-actions";
+  feeActions.append(preview, stage, regenerate);
+  feeForm.append(
+    feeSelect.label,
+    units.label,
+    amount.label,
+    description.label,
+    feeActions,
+    feeResult,
+    feeError,
+  );
+  regenerationBlock.append(regenerationTitle, regenerationCopy, feeForm);
+  elements.entityAdvancedContent.append(metadataBlock, paymentBlock, regenerationBlock);
+}
+
+function renderCreditNoteAdvanced(creditNote) {
+  const form = document.createElement("form");
+  form.className = "advanced-inline-form";
+  const reason = labeledSelect("Reason", [
+    ["duplicated_charge", "Duplicated charge"],
+    ["product_unsatisfactory", "Product unsatisfactory"],
+    ["order_change", "Order change"],
+    ["order_cancellation", "Order cancellation"],
+    ["fraudulent_charge", "Fraudulent charge"],
+    ["other", "Other"],
+  ]);
+  reason.select.value = creditNote.reason;
+  const description = labeledInput("Description", "text", safeText(creditNote.description, ""));
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className = "primary-button";
+  save.textContent = "Save credit note";
+  const error = document.createElement("p");
+  error.className = "form-error";
+  error.hidden = true;
+  if (state.role !== "admin") {
+    reason.select.disabled = true;
+    description.input.disabled = true;
+    save.hidden = true;
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    setBusy(save, true, "Saving…");
+    try {
+      const payload = await requestJson(creditNoteEndpoint(creditNote.lago_id), {
+        method: "PUT",
+        body: {
+          credit_note: {
+            reason: reason.select.value,
+            description: optionalFormValue(description.input.value),
+          },
+        },
+      });
+      Object.assign(creditNote, payload.credit_note);
+      error.hidden = true;
+    } catch (requestError) {
+      error.textContent = errorMessage(requestError);
+      error.hidden = false;
+    } finally {
+      setBusy(save, false, "Save credit note");
+    }
+  });
+  form.append(reason.label, description.label, save, error);
+  elements.entityAdvancedContent.append(form);
+}
+
+async function downloadSelectedDocument() {
+  const definition = entityDetailDefinitions[state.route];
+  const item = findDetailEntity(definition, state.detailId);
+  if (!item) return;
+  const path =
+    state.route === "invoices"
+      ? `${invoiceEndpoint(item.lago_id)}/download`
+      : state.route === "credit-notes"
+        ? `${creditNoteEndpoint(item.lago_id)}/download`
+        : `${endpoints.paymentReceipts}/${encodeURIComponent(item.lago_id)}/download`;
+  setBusy(elements.entityDownloadDocument, true, "Preparing…");
+  try {
+    const headers = new Headers();
+    if (state.organizationSlug) headers.set("X-Operator-Organization", state.organizationSlug);
+    const response = await fetch(path, { headers });
+    if (response.status === 202) {
+      elements.entityAdvancedCopy.textContent =
+        "The PDF is generating in the Cloudflare document workflow. Try download again in a moment.";
+      return;
+    }
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new ApiRequestError(
+        response.status,
+        payload.code,
+        payload.message ?? "Document download failed",
+      );
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = documentFilename(response.headers.get("Content-Disposition"), state.route);
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    showPageError(errorMessage(error));
+  } finally {
+    setBusy(elements.entityDownloadDocument, false, "Download PDF");
+  }
+}
+
+async function renderEntityAlerts(item) {
+  const route = state.route;
+  const detailId = state.detailId;
+  const resourceType = route === "subscriptions" ? "subscription" : "wallet";
+  const resourceId = route === "subscriptions" ? item.external_id : item.lago_id;
+  elements.entityAlerts.hidden = false;
+  elements.entityAlertsLoading.textContent = "Loading alerts…";
+  elements.entityAlertsLoading.hidden = false;
+  elements.entityAlertsEmpty.hidden = true;
+  elements.entityAlertsTableShell.hidden = true;
+  elements.openCreateAlert.hidden = state.role !== "admin";
+  try {
+    const query = new URLSearchParams({
+      resource_type: resourceType,
+      resource_id: resourceId,
+    });
+    const payload = await requestJson(`${endpoints.alerts}?${query}`);
+    if (state.route !== route || state.detailId !== detailId) return;
+    state.entityAlerts = Array.isArray(payload.alerts) ? payload.alerts : [];
+    elements.entityAlertsBody.replaceChildren();
+    for (const alert of state.entityAlerts) elements.entityAlertsBody.append(createAlertRow(alert));
+    elements.entityAlertsLoading.hidden = true;
+    elements.entityAlertsEmpty.hidden = state.entityAlerts.length !== 0;
+    elements.entityAlertsTableShell.hidden = state.entityAlerts.length === 0;
+  } catch (error) {
+    elements.entityAlertsLoading.textContent = errorMessage(error);
+  }
+}
+
+function createAlertRow(alert) {
+  const row = document.createElement("tr");
+  const name = document.createElement("td");
+  const label = document.createElement("span");
+  label.className = "key-name";
+  label.textContent = safeText(alert.name, humanize(alert.code));
+  const code = document.createElement("span");
+  code.className = "key-id";
+  code.textContent = alert.code;
+  name.append(label, code);
+  const type = document.createElement("td");
+  type.textContent = humanize(alert.alert_type);
+  const thresholds = document.createElement("td");
+  thresholds.textContent = (alert.thresholds ?? [])
+    .map((threshold) => `${threshold.value}${threshold.recurring ? " recurring" : ""}`)
+    .join(", ");
+  const actions = document.createElement("td");
+  actions.className = "actions-column";
+  if (state.role === "admin") {
+    const group = document.createElement("div");
+    group.className = "row-actions";
+    for (const [action, text, dangerous] of [
+      ["edit", "Edit", false],
+      ["delete", "Delete", true],
+    ]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = dangerous ? "row-action danger" : "row-action";
+      button.dataset.alertAction = action;
+      button.dataset.alertId = alert.lago_id;
+      button.textContent = text;
+      group.append(button);
+    }
+    actions.append(group);
+  } else {
+    actions.textContent = "Read only";
+    actions.classList.add("muted");
+  }
+  row.append(name, type, thresholds, actions);
+  return row;
+}
+
+function handleAlertAction(event) {
+  const button = event.target.closest("button[data-alert-action]");
+  if (!button || state.role !== "admin") return;
+  const alert = state.entityAlerts.find(
+    (candidate) => candidate.lago_id === button.dataset.alertId,
+  );
+  if (!alert) return;
+  if (button.dataset.alertAction === "edit") {
+    openEditAlertDialog(alert);
+    return;
+  }
+  state.confirmMode = "delete-alert";
+  state.selectedAlertId = alert.lago_id;
+  elements.confirmError.hidden = true;
+  elements.confirmTitle.textContent = "Delete alert?";
+  elements.confirmCopy.textContent = `Deleting “${safeText(alert.name, alert.code)}” stops evaluating this threshold.`;
+  elements.confirmAction.textContent = "Delete alert";
+  elements.confirmDialog.showModal();
+}
+
+function openCreateAlertDialog() {
+  const item = findDetailEntity(entityDetailDefinitions[state.route], state.detailId);
+  if (!item || (state.route !== "subscriptions" && state.route !== "wallets")) return;
+  state.alertFormMode = "create";
+  state.selectedAlertId = null;
+  elements.alertForm.reset();
+  configureAlertSelects(state.route === "subscriptions" ? "subscription" : "wallet");
+  elements.alertTitle.textContent = "Create alert";
+  elements.submitAlert.textContent = "Create alert";
+  elements.alertError.hidden = true;
+  elements.alertDialog.showModal();
+  elements.alertName.focus();
+}
+
+function openEditAlertDialog(alert) {
+  state.alertFormMode = "edit";
+  state.selectedAlertId = alert.lago_id;
+  configureAlertSelects(alert.resource_type);
+  elements.alertName.value = safeText(alert.name, "");
+  elements.alertCode.value = alert.code;
+  elements.alertType.value = alert.alert_type;
+  elements.alertType.disabled = true;
+  elements.alertMetric.value = alert.billable_metric_id ?? "";
+  elements.alertThreshold.value = alert.thresholds?.[0]?.value ?? "";
+  elements.alertRecurring.checked = Boolean(alert.thresholds?.[0]?.recurring);
+  elements.alertTitle.textContent = "Edit alert";
+  elements.submitAlert.textContent = "Save alert";
+  elements.alertError.hidden = true;
+  updateAlertMetricAvailability();
+  elements.alertDialog.showModal();
+  elements.alertName.focus();
+  elements.alertName.select();
+}
+
+function configureAlertSelects(resourceType) {
+  const types =
+    resourceType === "wallet"
+      ? [
+          "wallet_balance_amount",
+          "wallet_credits_balance",
+          "wallet_ongoing_balance_amount",
+          "wallet_credits_ongoing_balance",
+        ]
+      : [
+          "current_usage_amount",
+          "lifetime_usage_amount",
+          "billable_metric_current_usage_amount",
+          "billable_metric_current_usage_units",
+          "billable_metric_lifetime_usage_units",
+        ];
+  replaceSelectOptions(elements.alertType, types, (value) => value, humanize);
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Not applicable";
+  elements.alertMetric.replaceChildren(placeholder);
+  for (const metric of state.billableMetrics) {
+    const option = document.createElement("option");
+    option.value = metric.lago_id;
+    option.textContent = `${safeText(metric.name, metric.code)} (${metric.code})`;
+    elements.alertMetric.append(option);
+  }
+  elements.alertType.disabled = false;
+  elements.alertType.onchange = updateAlertMetricAvailability;
+  updateAlertMetricAvailability();
+}
+
+function updateAlertMetricAvailability() {
+  const required = elements.alertType.value.startsWith("billable_metric_");
+  elements.alertMetric.disabled = !required;
+  elements.alertMetric.required = required;
+  if (!required) elements.alertMetric.value = "";
+}
+
+async function submitAlertForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    elements.alertDialog.close();
+    return;
+  }
+  if (!elements.alertForm.reportValidity()) return;
+  const item = findDetailEntity(entityDetailDefinitions[state.route], state.detailId);
+  if (!item) return;
+  const creating = state.alertFormMode === "create";
+  const resourceType = state.route === "subscriptions" ? "subscription" : "wallet";
+  const alert = {
+    billable_metric_id: elements.alertMetric.value || null,
+    code: elements.alertCode.value.trim(),
+    name: optionalFormValue(elements.alertName.value),
+    thresholds: [
+      { value: elements.alertThreshold.value.trim(), recurring: elements.alertRecurring.checked },
+    ],
+  };
+  if (creating) {
+    alert.resource_type = resourceType;
+    alert.resource_id = resourceType === "subscription" ? item.external_id : item.lago_id;
+    alert.alert_type = elements.alertType.value;
+  }
+  const body = { alert };
+  setBusy(elements.submitAlert, true, creating ? "Creating…" : "Saving…");
+  elements.alertError.hidden = true;
+  try {
+    await requestJson(creating ? endpoints.alerts : alertEndpoint(state.selectedAlertId), {
+      method: creating ? "POST" : "PUT",
+      body,
+    });
+    elements.alertDialog.close();
+    await renderEntityAlerts(item);
+  } catch (error) {
+    elements.alertError.textContent = errorMessage(error);
+    elements.alertError.hidden = false;
+  } finally {
+    setBusy(elements.submitAlert, false, creating ? "Create alert" : "Save alert");
   }
 }
 
@@ -3376,18 +4353,7 @@ function renderTeamSecurity(members, invitations, roles, authentication) {
   state.teamRoles = Array.isArray(roles) ? roles : [];
   state.teamAuthentication = authentication ?? null;
   elements.openTeamInvite.hidden = state.role !== "admin";
-  renderSimpleRows(elements.teamMembersBody, state.teamMembers, (member) => [
-    member.identity,
-    humanize(member.role),
-    humanize(member.status),
-    formatDate(member.created_at),
-  ]);
-  renderSimpleRows(elements.teamInvitationsBody, state.teamInvitations, (invitation) => [
-    invitation.identity,
-    humanize(invitation.role),
-    humanize(invitation.status),
-    formatDate(invitation.expires_at),
-  ]);
+  renderTeamRows();
   elements.teamAuthentication.replaceChildren();
   for (const [label, value] of [
     ["Provider", "Cloudflare Access"],
@@ -3412,6 +4378,132 @@ function renderTeamSecurity(members, invitations, roles, authentication) {
     copy.textContent = role.description;
     item.append(title, copy);
     elements.teamRoles.append(item);
+  }
+}
+
+function renderTeamRows() {
+  elements.teamMembersBody.replaceChildren();
+  for (const member of state.teamMembers) {
+    const row = teamBaseRow([
+      member.identity,
+      humanize(member.role),
+      humanize(member.status),
+      formatDate(member.created_at),
+    ]);
+    const actions = document.createElement("td");
+    if (
+      state.role === "admin" &&
+      member.status === "active" &&
+      member.lago_id !== state.currentMembershipId
+    ) {
+      const role = teamRoleSelect(member.role, "memberRole", member.lago_id);
+      const revoke = teamActionButton("Revoke", "memberRevoke", member.lago_id);
+      actions.append(role, revoke);
+    } else
+      actions.textContent = member.lago_id === state.currentMembershipId ? "Current session" : "—";
+    row.append(actions);
+    elements.teamMembersBody.append(row);
+  }
+  elements.teamInvitationsBody.replaceChildren();
+  for (const invitation of state.teamInvitations) {
+    const row = teamBaseRow([
+      invitation.identity,
+      humanize(invitation.role),
+      humanize(invitation.status),
+      formatDate(invitation.expires_at),
+    ]);
+    const actions = document.createElement("td");
+    if (state.role === "admin" && invitation.status === "pending") {
+      actions.append(
+        teamRoleSelect(invitation.role, "invitationRole", invitation.lago_id),
+        teamActionButton("Revoke", "invitationRevoke", invitation.lago_id),
+      );
+    } else actions.textContent = "—";
+    row.append(actions);
+    elements.teamInvitationsBody.append(row);
+  }
+}
+
+function teamBaseRow(values) {
+  const row = document.createElement("tr");
+  for (const value of values) {
+    const cell = document.createElement("td");
+    cell.textContent = detailValue(value);
+    row.append(cell);
+  }
+  return row;
+}
+
+function teamRoleSelect(value, key, id) {
+  const select = document.createElement("select");
+  select.dataset[key] = id;
+  for (const code of ["viewer", "admin"]) {
+    const option = document.createElement("option");
+    option.value = code;
+    option.textContent = humanize(code);
+    option.selected = code === value;
+    select.append(option);
+  }
+  return select;
+}
+
+function teamActionButton(label, key, id) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "text-button";
+  button.dataset[key] = id;
+  button.textContent = label;
+  return button;
+}
+
+async function updateTeamMemberRole(event) {
+  if (!event.target.dataset.memberRole) return;
+  await mutateTeam(
+    `${endpoints.teamMembers}/${encodeURIComponent(event.target.dataset.memberRole)}`,
+    "PATCH",
+    { role: event.target.value },
+  );
+}
+async function revokeTeamMember(event) {
+  const button = event.target.closest("button[data-member-revoke]");
+  if (!button) return;
+  await mutateTeam(
+    `${endpoints.teamMembers}/${encodeURIComponent(button.dataset.memberRevoke)}`,
+    "DELETE",
+  );
+}
+async function updateTeamInvitationRole(event) {
+  if (!event.target.dataset.invitationRole) return;
+  await mutateTeam(
+    `${endpoints.teamInvitations}/${encodeURIComponent(event.target.dataset.invitationRole)}`,
+    "PATCH",
+    { role: event.target.value },
+  );
+}
+async function revokeTeamInvitation(event) {
+  const button = event.target.closest("button[data-invitation-revoke]");
+  if (!button) return;
+  await mutateTeam(
+    `${endpoints.teamInvitations}/${encodeURIComponent(button.dataset.invitationRevoke)}`,
+    "DELETE",
+  );
+}
+
+async function mutateTeam(path, method, body) {
+  try {
+    await requestJson(path, { method, ...(body ? { body } : {}) });
+    const [members, invitations] = await Promise.all([
+      requestJson(endpoints.teamMembers),
+      requestJson(endpoints.teamInvitations),
+    ]);
+    renderTeamSecurity(
+      members.members,
+      invitations.invitations,
+      state.teamRoles,
+      state.teamAuthentication,
+    );
+  } catch (error) {
+    showPageError(errorMessage(error));
   }
 }
 
@@ -3459,6 +4551,89 @@ async function submitTeamInvitation(event) {
     elements.teamInviteError.hidden = false;
   } finally {
     setBusy(elements.submitTeamInvite, false, "Create invitation");
+  }
+}
+
+function renderIntegrations(integrations) {
+  state.integrations = Array.isArray(integrations) ? integrations : [];
+  elements.integrationGroups.replaceChildren();
+  for (const group of ["payments", "tax", "accounting", "crm"]) {
+    const section = document.createElement("section");
+    section.className = "chart-card integration-group";
+    const heading = document.createElement("div");
+    heading.className = "chart-card-heading";
+    const title = document.createElement("h3");
+    title.textContent = humanize(group);
+    heading.append(title);
+    const grid = document.createElement("div");
+    grid.className = "integration-grid";
+    for (const integration of state.integrations.filter(
+      (item) => item.integration_group === group,
+    )) {
+      const card = document.createElement("article");
+      card.className = "integration-card";
+      const name = document.createElement("strong");
+      name.textContent = integration.name;
+      const status = document.createElement("span");
+      status.className = "role-pill";
+      status.textContent = humanize(integration.status);
+      const copy = document.createElement("p");
+      copy.textContent = integration.external_actions_enabled
+        ? "External actions enabled"
+        : "Credentials and external actions disabled";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "secondary-button";
+      button.dataset.integrationCode = integration.provider_code;
+      button.textContent =
+        integration.status === "disabled" ? "Prepare configuration" : "Edit configuration";
+      if (state.role !== "admin") button.disabled = true;
+      card.append(name, status, copy, button);
+      grid.append(card);
+    }
+    section.append(heading, grid);
+    elements.integrationGroups.append(section);
+  }
+}
+
+function handleIntegrationAction(event) {
+  const button = event.target.closest("button[data-integration-code]");
+  if (!button || state.role !== "admin") return;
+  const integration = state.integrations.find(
+    (item) => item.provider_code === button.dataset.integrationCode,
+  );
+  if (!integration) return;
+  state.selectedIntegrationCode = integration.provider_code;
+  elements.integrationDialogTitle.textContent = `Configure ${integration.name}`;
+  elements.integrationDisplayName.value = integration.display_name ?? "";
+  elements.integrationSettings.value = JSON.stringify(integration.settings ?? {}, null, 2);
+  elements.integrationError.hidden = true;
+  elements.integrationDialog.showModal();
+}
+
+async function submitIntegrationConfiguration(event) {
+  if (event.submitter?.value === "cancel") return;
+  event.preventDefault();
+  if (!state.selectedIntegrationCode) return;
+  setBusy(elements.submitIntegration, true, "Saving…");
+  elements.integrationError.hidden = true;
+  try {
+    const settings = JSON.parse(elements.integrationSettings.value || "{}");
+    await requestJson(
+      `${endpoints.integrations}/${encodeURIComponent(state.selectedIntegrationCode)}`,
+      {
+        method: "PUT",
+        body: { display_name: elements.integrationDisplayName.value.trim(), settings },
+      },
+    );
+    const payload = await requestJson(endpoints.integrations);
+    renderIntegrations(payload.integrations);
+    elements.integrationDialog.close();
+  } catch (error) {
+    elements.integrationError.textContent = errorMessage(error);
+    elements.integrationError.hidden = false;
+  } finally {
+    setBusy(elements.submitIntegration, false, "Save disabled configuration");
   }
 }
 
@@ -3590,7 +4765,8 @@ function renderCustomerCollection(items, emptyText) {
   elements.customerDetailTabPanel.append(list);
 }
 
-function renderCustomerSettingsTab(customer) {
+async function renderCustomerSettingsTab(customer) {
+  elements.customerDetailTabPanel.replaceChildren();
   const heading = document.createElement("div");
   heading.className = "detail-panel-heading";
   const title = document.createElement("h2");
@@ -3613,6 +4789,221 @@ function renderCustomerSettingsTab(customer) {
     settings.append(row);
   }
   elements.customerDetailTabPanel.append(heading, settings);
+
+  const loading = document.createElement("div");
+  loading.className = "table-loading compact";
+  loading.textContent = "Loading document and tax settings…";
+  elements.customerDetailTabPanel.append(loading);
+  try {
+    const [documentPayload, taxPayload] = await Promise.all([
+      requestJson(customerDocumentSettingsEndpoint(customer.external_id)),
+      requestJson(customerTaxesEndpoint(customer.external_id)),
+    ]);
+    if (state.detailTab !== "settings" || state.detailId !== customer.external_id) return;
+    loading.remove();
+    const form = document.createElement("form");
+    form.className = "advanced-inline-form advanced-control-block";
+    const title = document.createElement("h3");
+    title.textContent = "Document settings";
+    const copy = document.createElement("p");
+    copy.textContent =
+      "Override the billing entity locale and subscription issuing-date policy for this customer.";
+    const grid = document.createElement("div");
+    grid.className = "advanced-inline-grid";
+    const locale = labeledSelect("Document locale", [
+      ["", "Billing entity default"],
+      ...["en", "fr", "de", "es", "it", "nb", "pt", "sv", "nl"].map((value) => [
+        value,
+        value.toUpperCase(),
+      ]),
+    ]);
+    locale.select.value = documentPayload.document_settings?.document_locale ?? "";
+    const adjustment = labeledSelect("Issuing-date adjustment", [
+      ["", "Billing entity default"],
+      ["keep_anchor", "Keep anchor"],
+      ["align_with_finalization_date", "Align with finalization date"],
+    ]);
+    adjustment.select.value =
+      documentPayload.document_settings?.subscription_invoice_issuing_date_adjustment ?? "";
+    const anchor = labeledSelect("Issuing-date anchor", [
+      ["", "Billing entity default"],
+      ["current_period_end", "Current period end"],
+      ["next_period_start", "Next period start"],
+    ]);
+    anchor.select.value =
+      documentPayload.document_settings?.subscription_invoice_issuing_date_anchor ?? "";
+    const finalizeZero = labeledSelect("Zero-amount invoices", [
+      ["", "Billing entity default"],
+      ["true", "Finalize"],
+      ["false", "Keep as draft"],
+    ]);
+    const configuredFinalize = documentPayload.document_settings?.finalize_zero_amount_invoice;
+    finalizeZero.select.value =
+      configuredFinalize === null || configuredFinalize === undefined
+        ? ""
+        : configuredFinalize
+          ? "true"
+          : "false";
+    const dunning = labeledSelect("Dunning campaign", [
+      ["", "Organization default"],
+      ["excluded", "Exclude from dunning"],
+      ...state.dunningCampaigns.map((campaign) => [
+        campaign.lago_id,
+        safeText(campaign.name, campaign.code),
+      ]),
+    ]);
+    dunning.select.value = customer.exclude_from_dunning_campaign
+      ? "excluded"
+      : (customer.applied_dunning_campaign_id ?? "");
+    const taxLabel = document.createElement("label");
+    taxLabel.textContent = "Applied taxes";
+    const taxSelect = document.createElement("select");
+    taxSelect.multiple = true;
+    taxSelect.size = Math.min(5, Math.max(2, state.taxes.length));
+    const selectedTaxCodes = new Set((taxPayload.taxes ?? []).map((tax) => tax.code));
+    for (const tax of state.taxes) {
+      const option = document.createElement("option");
+      option.value = tax.code;
+      option.textContent = `${safeText(tax.name, tax.code)} · ${Number(tax.rate) || 0}%`;
+      option.selected = selectedTaxCodes.has(tax.code);
+      taxSelect.append(option);
+    }
+    taxLabel.append(taxSelect);
+    const sectionLabel = document.createElement("label");
+    sectionLabel.textContent = "Invoice custom sections";
+    const sectionSelect = document.createElement("select");
+    sectionSelect.multiple = true;
+    sectionSelect.size = Math.min(5, Math.max(2, state.sections.length));
+    const selectedSectionCodes = new Set(
+      (customer.selected_invoice_custom_sections ?? []).map((section) => section.code),
+    );
+    for (const section of state.sections) {
+      const option = document.createElement("option");
+      option.value = section.code;
+      option.textContent = safeText(section.name, section.code);
+      option.selected = selectedSectionCodes.has(section.code);
+      sectionSelect.append(option);
+    }
+    sectionLabel.append(sectionSelect);
+    grid.append(
+      locale.label,
+      adjustment.label,
+      anchor.label,
+      finalizeZero.label,
+      dunning.label,
+      taxLabel,
+      sectionLabel,
+    );
+    const actions = document.createElement("div");
+    actions.className = "row-actions";
+    const error = document.createElement("p");
+    error.className = "form-error";
+    error.hidden = true;
+    if (state.role === "admin") {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "text-button danger";
+      remove.textContent = "Delete customer";
+      let armed = false;
+      remove.addEventListener("click", async () => {
+        if (!armed) {
+          armed = true;
+          remove.textContent = "Confirm delete customer";
+          return;
+        }
+        setBusy(remove, true, "Deleting…");
+        try {
+          await requestJson(customerEndpoint(customer.external_id), { method: "DELETE" });
+          await refreshCustomers();
+          navigateToRoute("customers", { replace: true });
+        } catch (requestError) {
+          error.textContent = errorMessage(requestError);
+          error.hidden = false;
+          setBusy(remove, false, "Delete customer");
+          armed = false;
+        }
+      });
+      const save = document.createElement("button");
+      save.type = "submit";
+      save.className = "primary-button";
+      save.textContent = "Save customer settings";
+      actions.append(remove, save);
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        setBusy(save, true, "Saving…");
+        error.hidden = true;
+        try {
+          await requestJson(customerDocumentSettingsEndpoint(customer.external_id), {
+            method: "PUT",
+            body: {
+              document_settings: {
+                document_locale: locale.select.value || null,
+                subscription_invoice_issuing_date_adjustment: adjustment.select.value || null,
+                subscription_invoice_issuing_date_anchor: anchor.select.value || null,
+                finalize_zero_amount_invoice:
+                  finalizeZero.select.value === "" ? null : finalizeZero.select.value === "true",
+              },
+            },
+          });
+          await requestJson(customerEndpoint(customer.external_id), {
+            method: "PUT",
+            body: {
+              customer: {
+                applied_dunning_campaign_id:
+                  dunning.select.value && dunning.select.value !== "excluded"
+                    ? dunning.select.value
+                    : null,
+                exclude_from_dunning_campaign: dunning.select.value === "excluded",
+                invoice_custom_section_codes: Array.from(sectionSelect.selectedOptions).map(
+                  (option) => option.value,
+                ),
+              },
+            },
+          });
+          const nextTaxes = new Set(
+            Array.from(taxSelect.selectedOptions).map((option) => option.value),
+          );
+          await Promise.all([
+            ...[...selectedTaxCodes]
+              .filter((code) => !nextTaxes.has(code))
+              .map((code) =>
+                requestJson(
+                  `${customerTaxesEndpoint(customer.external_id)}/${encodeURIComponent(code)}`,
+                  {
+                    method: "DELETE",
+                  },
+                ),
+              ),
+            ...[...nextTaxes]
+              .filter((code) => !selectedTaxCodes.has(code))
+              .map((code) =>
+                requestJson(customerTaxesEndpoint(customer.external_id), {
+                  method: "POST",
+                  body: { applied_tax: { tax_code: code } },
+                }),
+              ),
+          ]);
+          await refreshCustomers();
+          const refreshed = state.customers.find(
+            (candidate) => candidate.external_id === customer.external_id,
+          );
+          if (refreshed) void renderCustomerSettingsTab(refreshed);
+        } catch (requestError) {
+          error.textContent = errorMessage(requestError);
+          error.hidden = false;
+        } finally {
+          setBusy(save, false, "Save customer settings");
+        }
+      });
+    } else {
+      for (const control of grid.querySelectorAll("select")) control.disabled = true;
+    }
+    form.append(title, copy, grid, actions, error);
+    elements.customerDetailTabPanel.append(form);
+  } catch (error) {
+    loading.className = "form-error inline-error";
+    loading.textContent = errorMessage(error);
+  }
 }
 
 function openCreateCustomerDialog() {
@@ -5682,6 +7073,78 @@ async function submitSectionForm(event) {
   }
 }
 
+function handlePricingUnitAction(event) {
+  const button = event.target.closest("button[data-pricing-unit-id]");
+  if (!button || state.role !== "admin") return;
+  const pricingUnit = state.pricingUnits.find(
+    (candidate) => candidate.lago_id === button.dataset.pricingUnitId,
+  );
+  if (pricingUnit) openEditPricingUnitDialog(pricingUnit);
+}
+
+function openCreatePricingUnitDialog() {
+  state.pricingUnitFormMode = "create";
+  state.selectedPricingUnitId = null;
+  elements.pricingUnitForm.reset();
+  elements.pricingUnitCode.disabled = false;
+  elements.pricingUnitTitle.textContent = "Create pricing unit";
+  elements.submitPricingUnit.textContent = "Create pricing unit";
+  elements.pricingUnitError.hidden = true;
+  elements.pricingUnitDialog.showModal();
+  elements.pricingUnitName.focus();
+}
+
+function openEditPricingUnitDialog(pricingUnit) {
+  state.pricingUnitFormMode = "edit";
+  state.selectedPricingUnitId = pricingUnit.lago_id;
+  elements.pricingUnitName.value = safeText(pricingUnit.name, "");
+  elements.pricingUnitCode.value = safeText(pricingUnit.code, "");
+  elements.pricingUnitCode.disabled = true;
+  elements.pricingUnitShortName.value = safeText(pricingUnit.short_name, "");
+  elements.pricingUnitDescription.value = safeText(pricingUnit.description, "");
+  elements.pricingUnitTitle.textContent = "Edit pricing unit";
+  elements.submitPricingUnit.textContent = "Save pricing unit";
+  elements.pricingUnitError.hidden = true;
+  elements.pricingUnitDialog.showModal();
+  elements.pricingUnitName.focus();
+  elements.pricingUnitName.select();
+}
+
+async function submitPricingUnitForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    elements.pricingUnitDialog.close();
+    return;
+  }
+  if (!elements.pricingUnitForm.reportValidity()) return;
+  const creating = state.pricingUnitFormMode === "create";
+  const pricingUnit = {
+    name: elements.pricingUnitName.value.trim(),
+    code: elements.pricingUnitCode.value.trim(),
+    short_name: elements.pricingUnitShortName.value.trim(),
+    description: optionalFormValue(elements.pricingUnitDescription.value),
+  };
+  setBusy(elements.submitPricingUnit, true, creating ? "Creating…" : "Saving…");
+  elements.pricingUnitError.hidden = true;
+  try {
+    await requestJson(
+      creating ? endpoints.pricingUnits : pricingUnitEndpoint(state.selectedPricingUnitId),
+      { method: creating ? "POST" : "PUT", body: { pricing_unit: pricingUnit } },
+    );
+    elements.pricingUnitDialog.close();
+    await refreshPricingUnits();
+  } catch (error) {
+    elements.pricingUnitError.textContent = errorMessage(error);
+    elements.pricingUnitError.hidden = false;
+  } finally {
+    setBusy(
+      elements.submitPricingUnit,
+      false,
+      creating ? "Create pricing unit" : "Save pricing unit",
+    );
+  }
+}
+
 function openSectionTermination(section) {
   state.confirmMode = "terminate-section";
   state.selectedSectionCode = section.code;
@@ -5716,6 +7179,23 @@ async function submitConfirmedAction(event) {
   }
 
   const mode = state.confirmMode;
+  if (mode === "delete-alert") {
+    if (!state.selectedAlertId) return elements.confirmDialog.close();
+    const item = findDetailEntity(entityDetailDefinitions[state.route], state.detailId);
+    setBusy(elements.confirmAction, true, "Deleting…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(alertEndpoint(state.selectedAlertId), { method: "DELETE" });
+      elements.confirmDialog.close();
+      if (item) await renderEntityAlerts(item);
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(elements.confirmAction, false, "Delete alert");
+    }
+    return;
+  }
   if (mode === "delete-metric" || mode === "delete-feature") {
     const metric = mode === "delete-metric";
     const identifier = metric ? state.selectedMetricCode : state.selectedFeatureId;
@@ -5993,6 +7473,17 @@ async function refreshSections() {
   }
 }
 
+async function refreshPricingUnits() {
+  try {
+    const payload = await requestJson(endpoints.pricingUnits);
+    renderPricingUnits(payload.pricing_units);
+    hidePageError();
+    if (state.route === "pricing-units" && state.detailId) renderEntityDetail();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
 async function refreshTaxes() {
   try {
     const payload = await requestJson(endpoints.taxes);
@@ -6143,12 +7634,16 @@ async function refreshFeatures() {
   }
 }
 
-function revealOneTimeSecret(secret) {
-  if (typeof secret !== "string" || !secret.startsWith("lago_")) {
+function revealOneTimeSecret(secret, title = "Copy this API key now") {
+  if (
+    typeof secret !== "string" ||
+    (!secret.startsWith("lago_") && !secret.includes("/customer-portal/"))
+  ) {
     showPageError("The operation completed, but the one-time credential was not returned.");
     return;
   }
   state.oneTimeSecret = secret;
+  elements.secretTitle.textContent = title;
   elements.secretValue.textContent = secret;
   elements.copyStatus.textContent = "";
   elements.secretDialog.showModal();
@@ -6175,6 +7670,21 @@ function clearOneTimeSecret() {
   elements.secretValue.textContent = "—";
   elements.copyStatus.textContent = "";
   elements.copySecret.textContent = "Copy key";
+  elements.secretTitle.textContent = "Copy this API key now";
+}
+
+async function createCustomerPortalLink() {
+  if (state.role !== "admin" || !state.detailId) return;
+  try {
+    const payload = await requestJson(`${customerEndpoint(state.detailId)}/portal-token`, {
+      method: "POST",
+      body: {},
+    });
+    const link = `https://serp-dev-lago-customer-portal.serpcompany.workers.dev/customer-portal/${payload.portal_token}`;
+    revealOneTimeSecret(link, "Copy this customer portal link now");
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
 }
 
 function showClosedState(error) {
@@ -6282,6 +7792,14 @@ function sectionEndpoint(code) {
   return `${endpoints.invoiceSections}/${encodeURIComponent(code)}`;
 }
 
+function pricingUnitEndpoint(id) {
+  return `${endpoints.pricingUnits}/${encodeURIComponent(id)}`;
+}
+
+function alertEndpoint(id) {
+  return `${endpoints.alerts}/${encodeURIComponent(id)}`;
+}
+
 function taxEndpoint(code) {
   return `${endpoints.taxes}/${encodeURIComponent(code)}`;
 }
@@ -6292,6 +7810,14 @@ function addOnEndpoint(code) {
 
 function customerEndpoint(externalId) {
   return `${endpoints.customers}/${encodeURIComponent(externalId)}`;
+}
+
+function customerDocumentSettingsEndpoint(externalId) {
+  return `${customerEndpoint(externalId)}/document-settings`;
+}
+
+function customerTaxesEndpoint(externalId) {
+  return `${customerEndpoint(externalId)}/taxes`;
 }
 
 function appliedCouponEndpoint(applied) {
@@ -6328,6 +7854,42 @@ function walletEndpoint(walletId) {
 
 function creditNoteEndpoint(creditNoteId) {
   return `${endpoints.creditNotes}/${encodeURIComponent(creditNoteId)}`;
+}
+
+function invoiceMetadataEndpoint(invoiceId) {
+  return `${invoiceEndpoint(invoiceId)}/metadata`;
+}
+
+function invoiceAdjustedFeesEndpoint(invoiceId) {
+  return `${invoiceEndpoint(invoiceId)}/adjusted-fees`;
+}
+
+function labeledSelect(labelText, options) {
+  const label = document.createElement("label");
+  label.textContent = labelText;
+  const select = document.createElement("select");
+  for (const [value, text] of options) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = text;
+    select.append(option);
+  }
+  label.append(select);
+  return { label, select };
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function documentFilename(contentDisposition, route) {
+  const match = contentDisposition?.match(/filename="([^"]+)"/i);
+  if (match?.[1]) return match[1].replaceAll(/[^A-Za-z0-9._-]/g, "_");
+  return `${route === "credit-notes" ? "credit-note" : route === "payment-receipts" ? "payment-receipt" : "invoice"}.pdf`;
 }
 
 function quoteVersionEndpoint(versionId) {

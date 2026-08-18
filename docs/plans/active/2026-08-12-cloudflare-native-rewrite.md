@@ -742,6 +742,29 @@ Acceptance:
       and deployed operator Worker version `5666a5f4-4502-4d71-b2dc-0ac656048393`. Remote API Worker
       version inspection confirms all three external-action flags remain `0`.
 
+## Final retained-surface repair checkpoint — 2026-08-18
+
+- [x] Reconciled every original operator operation and route against an executable Cloudflare
+      contract or an explicit user-directed safety-disabled external action. The generated ledger
+      covers 503 operations and 159 routes without a partial status.
+- [x] Added the customer portal, integration registry, pricing units, resource alerts, advanced
+      customer/invoice/credit-note/subscription controls, billing-profile taxes/dunning/logo,
+      retained PDF downloads, and the original right-side Lago Assistant behavior.
+- [x] Replayed all 80 migrations against a fresh local D1 persistence directory.
+- [x] Passed the complete local gate: 358 tests across 65 files, Access provisioning tests,
+      formatting, lint, authoritative inventory checks, generated Worker bindings, TypeScript, and
+      API/operator/portal deployment dry runs.
+- [x] Audited all 29 visible primary-navigation destinations at 1280 × 720 and the customer and
+      assistant experiences at 390 × 844. No retained navigation destination showed the former
+      Cloudflare-boundary placeholder.
+- [x] Fixed the organization-prefixed original-route resolver discovered by browser QA and added
+      executable regression coverage without intercepting canonical organization/detail routes.
+- [x] Applied only pending migrations `0074` through `0080`, deployed operator version
+      `64287259-a894-4fcb-bdfd-274e3d01ae83` and customer-portal version
+      `6bfeedea-636d-4af4-bcf0-3e20573ab3a0`, reverified Access fail-closed behavior, tokenless
+      portal rejection, authenticated synthetic customer settings, the Lago Assistant, and legacy
+      route canonicalization.
+
 ## Verification Matrix
 
 | Risk                 | Required evidence                                                   |

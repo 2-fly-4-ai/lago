@@ -33,6 +33,12 @@
       "migrations_dir": "migrations",
     },
   ],
+  "r2_buckets": [
+    {
+      "binding": "BILLING_ARTIFACTS",
+      "bucket_name": "serp-dev-lago-native-billing-artifacts",
+    },
+  ],
   "durable_objects": {
     "bindings": [
       {

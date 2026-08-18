@@ -1,4 +1,9 @@
 import operatorScript from "../operator-app/assets/operator-app.js?raw";
+import {
+  originalRouteAlias,
+  resolveOriginalRouteAlias,
+} from "../operator-app/assets/operator-routes.js";
+import operatorRoutes from "../operator-app/assets/operator-routes.js?raw";
 import operatorHeaders from "../operator-app/_headers?raw";
 import operatorIndex from "../operator-app/index.html?raw";
 import operatorPreview from "../scripts/operator-preview-server.mjs?raw";
@@ -23,6 +28,7 @@ describe("isolated operator app assets", () => {
     expect(operatorConfig).toContain('"name": "BILLING_ACCOUNTS"');
     expect(operatorConfig).toContain('"script_name": "serp-dev-lago-native"');
     expect(operatorConfig).toContain('"binding": "AI"');
+    expect(operatorConfig).toContain('"binding": "BILLING_ARTIFACTS"');
     expect(operatorConfig).toContain('"@cf/zai-org/glm-4.7-flash"');
   });
 
@@ -81,6 +87,10 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/observability/activity-logs",
       "/api/operator/v1/observability/api-logs",
       "/api/operator/v1/observability/events",
+      "/api/operator/v1/integrations",
+      "/api/operator/v1/billing-entities/default/taxes",
+      "/api/operator/v1/billing-entities/default/dunning-campaign",
+      "/api/operator/v1/billing-entities/default/logo",
     ]) {
       expect(operatorScript).toContain(endpoint);
     }
@@ -104,6 +114,7 @@ describe("isolated operator app assets", () => {
       'id="activity-logs"',
       'id="api-logs"',
       'id="events"',
+      'id="integrations"',
     ]) {
       expect(operatorIndex).toContain(identifier);
     }
@@ -123,6 +134,15 @@ describe("isolated operator app assets", () => {
     expect(operatorScript).toContain("webhookLogsEndpoint");
     expect(operatorScript).toContain("renderObservability");
     expect(operatorIndex).toContain('id="plan-entitlements"');
+    expect(operatorIndex).toContain('id="entity-advanced"');
+    expect(operatorIndex).toContain('id="entity-download-document"');
+    expect(operatorIndex).toContain('id="billing-advanced-form"');
+    expect(operatorScript).toContain("renderCustomerSettingsTab");
+    expect(operatorScript).toContain("renderInvoiceAdvanced");
+    expect(operatorScript).toContain("renderCreditNoteAdvanced");
+    expect(operatorScript).toContain("downloadSelectedDocument");
+    expect(operatorScript).toContain("invoiceMetadataEndpoint");
+    expect(operatorScript).toContain("invoiceAdjustedFeesEndpoint");
   });
 
   it("uses organization-slug routes, real history, and the retained Lago navigation hierarchy", () => {
@@ -138,6 +158,30 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).not.toMatch(/href="#(?:overview|customers|plans|invoices)/);
     expect(operatorPreview).toContain('"serp-billing"');
     expect(operatorPreview).toContain('"serp-labs"');
+    expect(operatorScript).toContain("resolveOriginalRouteAlias");
+    expect(operatorRoutes).toContain('first === "customer"');
+    expect(operatorRoutes).toContain('first === "settings"');
+  });
+
+  it("resolves original Lago routes both with and without an organization slug", () => {
+    expect(originalRouteAlias(["customer", "tammy", "settings"])).toEqual({
+      route: "customers",
+      detailId: "tammy",
+      detailTab: "settings",
+    });
+    expect(resolveOriginalRouteAlias(["serp-billing", "customer", "tammy"])).toEqual({
+      organizationSlug: "serp-billing",
+      route: "customers",
+      detailId: "tammy",
+      detailTab: "overview",
+    });
+    expect(resolveOriginalRouteAlias(["serp-billing", "settings", "billing-entity"])).toEqual({
+      organizationSlug: "serp-billing",
+      route: "billing-profile",
+    });
+    expect(resolveOriginalRouteAlias(["serp-billing", "invoices", "invoice-preview-001"])).toBe(
+      null,
+    );
   });
 
   it("keeps admitted REST families in focused Lago list and detail routes", () => {
@@ -201,7 +245,7 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain(
       "Recurring rules, fee targeting, custom sections, paid credits",
     );
-    expect(operatorIndex).toContain("Refunds, offsets, provider actions, PDF");
+    expect(operatorIndex).toContain("PDF generation and download are available");
     expect(operatorIndex).toContain("Settlement ledger");
     expect(operatorIndex).toContain("payment-link");
     expect(operatorIndex).toContain("Quotes have no PDF, template, generation, download, email");
@@ -210,8 +254,8 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("signing-secret");
     expect(operatorIndex).toContain("Configure internal overdue thresholds");
     expect(operatorIndex).toContain("Provider collection and email delivery remain disabled");
-    expect(operatorIndex).toContain("Provider settings, dunning, metadata, custom sections");
-    expect(operatorIndex).toContain("E-invoicing, tax assignment, and additional billing entities");
+    expect(operatorIndex).toContain("Provider settings and custom sections");
+    expect(operatorIndex).toContain("E-invoicing and additional billing entities");
     expect(operatorScript).toContain("state.oneTimeSecret = null");
     expect(operatorScript).toContain('elements.secretValue.textContent = "—"');
   });

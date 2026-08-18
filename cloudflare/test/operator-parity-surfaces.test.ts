@@ -4,9 +4,12 @@ import { describe, expect, it } from "vitest";
 import { handleOperatorAiRequest, type OperatorAiEnv } from "../src/operator/ai";
 import { handleOperatorAnalyticsRequest } from "../src/operator/analytics";
 import type { OperatorContext } from "../src/operator/access";
+import { handleOperatorConfigurationRequest } from "../src/operator/configuration";
 import { handleOperatorFeaturesRequest } from "../src/operator/features";
+import { handleOperatorIntegrationsRequest } from "../src/operator/integrations";
 import { handleOperatorObservabilityRequest } from "../src/operator/observability";
 import { handleOperatorProductParityRequest } from "../src/operator/product-parity";
+import { handlePortalAdminRequest } from "../src/operator/portal-admin";
 import { handleOperatorTeamRequest } from "../src/operator/team";
 
 function jsonRequest(url: string, method: string, body: unknown): Request {
@@ -456,6 +459,230 @@ describe("operator Access team administration", () => {
       "request-team-secondary",
     );
     expect(await otherMembers?.json()).toMatchObject({ members: [] });
+  });
+});
+
+describe("operator integration registry", () => {
+  it("keeps provider configuration tenant scoped and rejects credential-shaped fields", async () => {
+    const primary = await createOrganization("integration-primary");
+    const secondary = await createOrganization("integration-secondary");
+    const configured = await handleOperatorIntegrationsRequest(
+      jsonRequest("https://operator.test/api/operator/v1/integrations/stripe", "PUT", {
+        display_name: "Primary Stripe",
+        settings: { success_redirect_host: "billing.example.invalid" },
+      }),
+      env.BILLING_DB,
+      primary.id,
+      "request-integration-configure",
+    );
+    expect(await configured?.json()).toMatchObject({
+      integration: {
+        provider_code: "stripe",
+        status: "configuration_required",
+        secret_ready: false,
+        external_actions_enabled: false,
+      },
+    });
+    const other = await handleOperatorIntegrationsRequest(
+      new Request("https://operator.test/api/operator/v1/integrations/stripe"),
+      env.BILLING_DB,
+      secondary.id,
+      "request-integration-other",
+    );
+    expect(await other?.json()).toMatchObject({
+      integration: { status: "disabled", display_name: null },
+    });
+    await expect(
+      handleOperatorIntegrationsRequest(
+        jsonRequest("https://operator.test/api/operator/v1/integrations/stripe", "PUT", {
+          settings: { api_key: "must-not-store" },
+        }),
+        env.BILLING_DB,
+        primary.id,
+        "request-integration-secret",
+      ),
+    ).rejects.toMatchObject({ code: "secret_not_admitted" });
+  });
+});
+
+describe("operator pricing units and alerts", () => {
+  it("keeps pricing units and resource alerts executable and tenant scoped", async () => {
+    const primary = await createOrganization("configuration-primary");
+    const secondary = await createOrganization("configuration-secondary");
+    const now = new Date().toISOString();
+    const customerId = crypto.randomUUID();
+    const planId = crypto.randomUUID();
+    const subscriptionId = crypto.randomUUID();
+    const walletId = crypto.randomUUID();
+    const metricId = crypto.randomUUID();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, name, currency, metadata_json, created_at, updated_at)
+         VALUES (?, ?, 'configuration-customer', 'Configuration customer', 'USD', '{}', ?, ?)`,
+      ).bind(customerId, primary.id, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO plans
+         (id, organization_id, code, name, interval, amount_minor, currency, version, active,
+          created_at, updated_at)
+         VALUES (?, ?, 'configuration-plan', 'Configuration plan', 'monthly', 0, 'USD', 1, 1, ?, ?)`,
+      ).bind(planId, primary.id, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'configuration-subscription', 'active', ?, ?, ?, 1, ?, ?)`,
+      ).bind(
+        subscriptionId,
+        primary.id,
+        customerId,
+        planId,
+        now,
+        now,
+        "2026-09-18T00:00:00.000Z",
+        now,
+        now,
+      ),
+      env.BILLING_DB.prepare(
+        `INSERT INTO wallets
+         (id, organization_id, customer_id, code, name, currency, currency_exponent, rate_amount,
+          priority, balance_minor, consumed_minor, status, version, request_sha256, created_at, updated_at)
+         VALUES (?, ?, ?, 'configuration-wallet', 'Configuration wallet', 'USD', 2, '1',
+          1, 1000, 0, 'active', 1, ?, ?, ?)`,
+      ).bind(walletId, primary.id, customerId, "d".repeat(64), now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO billable_metrics
+         (id, organization_id, code, name, aggregation_type, field_name, version, active,
+          created_at, updated_at)
+         VALUES (?, ?, 'configuration-units', 'Configuration units', 'sum_agg', 'units', 1, 1, ?, ?)`,
+      ).bind(metricId, primary.id, now, now),
+    ]);
+
+    const pricingUnit = await handleOperatorConfigurationRequest(
+      jsonRequest("https://operator.test/api/operator/v1/pricing-units", "POST", {
+        pricing_unit: {
+          code: "credits",
+          name: "Credits",
+          short_name: "cr",
+          description: "Customer-visible credits",
+        },
+      }),
+      env.BILLING_DB,
+      primary.id,
+      "request-pricing-unit-create",
+    );
+    expect(pricingUnit?.status).toBe(201);
+    expect(await pricingUnit?.json()).toMatchObject({
+      pricing_unit: { code: "credits", short_name: "cr", version: 1 },
+    });
+
+    const subscriptionAlert = await handleOperatorConfigurationRequest(
+      jsonRequest("https://operator.test/api/operator/v1/alerts", "POST", {
+        alert: {
+          resource_type: "subscription",
+          resource_id: "configuration-subscription",
+          alert_type: "billable_metric_current_usage_units",
+          billable_metric_id: metricId,
+          code: "units-warning",
+          name: "Units warning",
+          thresholds: [{ value: "500", recurring: true }],
+        },
+      }),
+      env.BILLING_DB,
+      primary.id,
+      "request-subscription-alert-create",
+    );
+    expect(subscriptionAlert?.status).toBe(201);
+    expect(await subscriptionAlert?.json()).toMatchObject({
+      alert: {
+        resource_type: "subscription",
+        resource_id: subscriptionId,
+        billable_metric_id: metricId,
+      },
+    });
+
+    const walletAlert = await handleOperatorConfigurationRequest(
+      jsonRequest("https://operator.test/api/operator/v1/alerts", "POST", {
+        alert: {
+          resource_type: "wallet",
+          resource_id: walletId,
+          alert_type: "wallet_balance_amount",
+          code: "wallet-low",
+          thresholds: [{ value: "10", recurring: false }],
+        },
+      }),
+      env.BILLING_DB,
+      primary.id,
+      "request-wallet-alert-create",
+    );
+    const walletAlertBody = (await walletAlert?.json()) as { alert: { lago_id: string } };
+    expect(walletAlertBody.alert.lago_id).toBeTruthy();
+
+    const walletAlerts = await handleOperatorConfigurationRequest(
+      new Request(
+        `https://operator.test/api/operator/v1/alerts?resource_type=wallet&resource_id=${walletId}`,
+      ),
+      env.BILLING_DB,
+      primary.id,
+      "request-wallet-alert-list",
+    );
+    expect(await walletAlerts?.json()).toMatchObject({
+      alerts: [expect.objectContaining({ code: "wallet-low" })],
+    });
+
+    await expect(
+      handleOperatorConfigurationRequest(
+        new Request(
+          `https://operator.test/api/operator/v1/alerts?resource_type=wallet&resource_id=${walletId}`,
+        ),
+        env.BILLING_DB,
+        secondary.id,
+        "request-wallet-alert-cross-tenant",
+      ),
+    ).rejects.toMatchObject({ code: "wallet_not_found" });
+  });
+});
+
+describe("operator customer portal administration", () => {
+  it("creates a one-time opaque portal token for only the selected tenant customer", async () => {
+    const primary = await createOrganization("portal-admin-primary");
+    const secondary = await createOrganization("portal-admin-secondary");
+    const now = new Date().toISOString();
+    const membershipId = crypto.randomUUID();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO operator_memberships
+         (id, organization_id, access_issuer, access_subject_sha256, role, active, version, created_at, updated_at)
+         VALUES (?, ?, 'https://serp-test.cloudflareaccess.com', ?, 'admin', 1, 1, ?, ?)`,
+      ).bind(membershipId, primary.id, "c".repeat(64), now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, name, currency, metadata_json, created_at, updated_at)
+         VALUES (?, ?, 'portal-customer', 'Portal customer', 'USD', '{}', ?, ?)`,
+      ).bind(crypto.randomUUID(), primary.id, now, now),
+    ]);
+    const created = await handlePortalAdminRequest(
+      new Request("https://operator.test/api/operator/v1/customers/portal-customer/portal-token", {
+        method: "POST",
+      }),
+      env.BILLING_DB,
+      operatorContext(primary, membershipId),
+      "request-portal-admin",
+    );
+    const body = (await created?.json()) as { portal_token: string; shown_once: boolean };
+    expect(body.portal_token).toMatch(/^[a-f0-9]{64}$/);
+    expect(body.shown_once).toBe(true);
+    await expect(
+      handlePortalAdminRequest(
+        new Request(
+          "https://operator.test/api/operator/v1/customers/portal-customer/portal-token",
+          { method: "POST" },
+        ),
+        env.BILLING_DB,
+        operatorContext(secondary, crypto.randomUUID()),
+        "request-portal-admin-other",
+      ),
+    ).rejects.toMatchObject({ code: "customer_not_found" });
   });
 });
 

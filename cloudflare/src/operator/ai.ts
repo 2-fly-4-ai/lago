@@ -283,8 +283,12 @@ async function loadMessages(
       `SELECT id, role, content, created_at FROM (
          SELECT id, role, content, created_at FROM ai_messages
          WHERE organization_id = ? AND conversation_id = ?
-         ORDER BY created_at DESC, id DESC LIMIT ?
-       ) ORDER BY created_at, id`,
+         ORDER BY created_at DESC,
+                  CASE role WHEN 'assistant' THEN 1 ELSE 0 END DESC,
+                  id DESC LIMIT ?
+       ) ORDER BY created_at,
+                  CASE role WHEN 'user' THEN 0 ELSE 1 END,
+                  id`,
     )
     .bind(organizationId, conversationId, limit)
     .all<MessageRow>();

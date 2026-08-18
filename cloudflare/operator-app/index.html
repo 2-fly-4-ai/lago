@@ -107,6 +107,9 @@
             <a class="nav-item" href="/invoice-sections" data-route="invoice-sections">
               <img class="nav-icon" src="/assets/icons/table.svg" alt="" />Invoice sections
             </a>
+            <a class="nav-item" href="/pricing-units" data-route="pricing-units">
+              <img class="nav-icon" src="/assets/icons/coin-dollar.svg" alt="" />Pricing units
+            </a>
             <a class="nav-item" href="/taxes" data-route="taxes">
               <img class="nav-icon" src="/assets/icons/percentage.svg" alt="" />Taxes
             </a>
@@ -128,6 +131,9 @@
             <a class="nav-item" href="/team-security" data-route="team-security">
               <img class="nav-icon" src="/assets/icons/user-multiple.svg" alt="" />Team &amp;
               security
+            </a>
+            <a class="nav-item" href="/integrations" data-route="integrations">
+              <img class="nav-icon" src="/assets/icons/plug.svg" alt="" />Integrations
             </a>
           </div>
 
@@ -528,6 +534,46 @@
                   </div>
                 </dl>
               </div>
+              <div class="entity-detail-card billing-advanced-card" id="billing-advanced-card">
+                <div class="detail-panel-heading">
+                  <div>
+                    <h2>Billing defaults</h2>
+                    <p>
+                      Manage the same tax, dunning, and document identity defaults used by Lago.
+                    </p>
+                  </div>
+                </div>
+                <form class="advanced-settings-form" id="billing-advanced-form">
+                  <label for="billing-default-taxes"
+                    >Default taxes
+                    <select id="billing-default-taxes" multiple size="4"></select>
+                  </label>
+                  <label for="billing-default-dunning"
+                    >Dunning campaign
+                    <select id="billing-default-dunning">
+                      <option value="">Organization default</option>
+                    </select>
+                  </label>
+                  <label for="billing-logo-file"
+                    >Billing entity logo
+                    <input
+                      id="billing-logo-file"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                    />
+                    <small>PNG, JPEG, or WebP · maximum 1 MB</small>
+                  </label>
+                  <div class="row-actions">
+                    <button class="secondary-button" id="remove-billing-logo" type="button">
+                      Remove logo
+                    </button>
+                    <button class="primary-button" id="save-billing-advanced" type="submit">
+                      Save defaults
+                    </button>
+                  </div>
+                  <p class="form-error" id="billing-advanced-error" hidden></p>
+                </form>
+              </div>
             </section>
 
             <section class="keys-section" id="customers" aria-labelledby="customers-title">
@@ -581,9 +627,14 @@
                   <img src="/assets/icons/arrow-left.svg" alt="" />
                   <span>Customers</span>
                 </button>
-                <button class="primary-button" id="customer-detail-edit" type="button">
-                  Edit customer
-                </button>
+                <div class="row-actions">
+                  <button class="secondary-button" id="customer-portal-link" type="button">
+                    Create portal link
+                  </button>
+                  <button class="primary-button" id="customer-detail-edit" type="button">
+                    Edit customer
+                  </button>
+                </div>
               </header>
               <div class="detail-layout">
                 <div class="detail-main">
@@ -655,9 +706,19 @@
                   <img src="/assets/icons/arrow-left.svg" alt="" />
                   <span id="entity-detail-back-label">Back</span>
                 </button>
-                <button class="primary-button" id="entity-detail-edit" type="button" hidden>
-                  Edit
-                </button>
+                <div class="row-actions" id="entity-detail-actions">
+                  <button
+                    class="secondary-button"
+                    id="entity-download-document"
+                    type="button"
+                    hidden
+                  >
+                    <img class="button-icon" src="/assets/icons/download.svg" alt="" />Download PDF
+                  </button>
+                  <button class="primary-button" id="entity-detail-edit" type="button" hidden>
+                    Edit
+                  </button>
+                </div>
               </header>
               <div class="entity-detail-content">
                 <div class="detail-entity">
@@ -673,6 +734,55 @@
                     <h2 id="entity-detail-overview-title">Overview</h2>
                   </div>
                   <dl class="entity-detail-fields" id="entity-detail-fields"></dl>
+                </section>
+                <section
+                  class="entity-detail-card"
+                  id="entity-alerts"
+                  aria-labelledby="entity-alerts-title"
+                  hidden
+                >
+                  <div class="detail-panel-heading">
+                    <div>
+                      <h2 id="entity-alerts-title">Alerts</h2>
+                      <p>Configure threshold alerts for this billing resource.</p>
+                    </div>
+                    <button class="secondary-button" id="open-create-alert" type="button" hidden>
+                      Add alert
+                    </button>
+                  </div>
+                  <div class="table-loading compact" id="entity-alerts-loading">
+                    Loading alerts…
+                  </div>
+                  <div class="detail-empty" id="entity-alerts-empty" hidden>
+                    <p>No alerts are configured for this resource.</p>
+                  </div>
+                  <div class="table-scroll" id="entity-alerts-table-shell" hidden>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Alert</th>
+                          <th>Type</th>
+                          <th>Thresholds</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody id="entity-alerts-body"></tbody>
+                    </table>
+                  </div>
+                </section>
+                <section
+                  class="entity-detail-card"
+                  id="entity-advanced"
+                  aria-labelledby="entity-advanced-title"
+                  hidden
+                >
+                  <div class="detail-panel-heading">
+                    <div>
+                      <h2 id="entity-advanced-title">Billing controls</h2>
+                      <p id="entity-advanced-copy"></p>
+                    </div>
+                  </div>
+                  <div id="entity-advanced-content"></div>
                 </section>
                 <div class="detail-empty" id="entity-detail-missing" hidden>
                   <h2>Billing object not found</h2>
@@ -802,6 +912,7 @@
                           <th>Role</th>
                           <th>Status</th>
                           <th>Joined</th>
+                          <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody id="team-members-body"></tbody>
@@ -818,6 +929,7 @@
                           <th>Role</th>
                           <th>Status</th>
                           <th>Expires</th>
+                          <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody id="team-invitations-body"></tbody>
@@ -833,6 +945,20 @@
                   <div id="team-roles" class="settings-list"></div>
                 </section>
               </div>
+            </section>
+
+            <section class="keys-section" id="integrations" aria-labelledby="integrations-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Settings / Integrations</p>
+                  <h2 id="integrations-title">Integrations</h2>
+                  <p>
+                    Prepare provider configuration while credentials and external actions stay
+                    disabled.
+                  </p>
+                </div>
+              </div>
+              <div class="integration-groups" id="integration-groups"></div>
             </section>
 
             <section class="keys-section" id="api-keys" aria-labelledby="keys-title">
@@ -922,7 +1048,7 @@
                 <div>
                   <p class="eyebrow">Payment evidence</p>
                   <h2 id="receipts-title">Payment receipts</h2>
-                  <p>Review tenant-scoped receipt metadata without document or email actions.</p>
+                  <p>Review tenant-scoped receipts and download generated PDF artifacts.</p>
                 </div>
               </div>
 
@@ -948,6 +1074,41 @@
                       </tr>
                     </thead>
                     <tbody id="receipts-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="pricing-units" aria-labelledby="pricing-units-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Settings / Invoice settings / Pricing units</p>
+                  <h2 id="pricing-units-title">Pricing units</h2>
+                  <p>Define the customer-visible units used by plans and invoice lines.</p>
+                </div>
+                <button class="primary-button" id="open-create-pricing-unit" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create pricing unit
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="pricing-units-loading">Loading pricing units…</div>
+                <div class="empty-state" id="pricing-units-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/coin-dollar.svg" alt="" />
+                  <h3>No pricing units</h3>
+                  <p>Create a pricing unit to label billable amounts consistently.</p>
+                </div>
+                <div class="table-scroll" id="pricing-units-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Code</th>
+                        <th>Short name</th>
+                        <th>Description</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="pricing-units-table-body"></tbody>
                   </table>
                 </div>
               </div>
@@ -1838,6 +1999,78 @@
       </form>
     </dialog>
 
+    <dialog class="modal" id="pricing-unit-dialog" aria-labelledby="pricing-unit-title">
+      <form method="dialog" id="pricing-unit-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Invoice settings</p>
+            <h2 id="pricing-unit-title">Create pricing unit</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <label for="pricing-unit-name">Name</label>
+        <input id="pricing-unit-name" maxlength="255" required />
+        <div class="field-grid">
+          <div>
+            <label for="pricing-unit-code">Code</label>
+            <input id="pricing-unit-code" maxlength="100" required />
+          </div>
+          <div>
+            <label for="pricing-unit-short-name">Short name</label>
+            <input id="pricing-unit-short-name" maxlength="3" required />
+          </div>
+        </div>
+        <label for="pricing-unit-description">Description</label>
+        <textarea id="pricing-unit-description" rows="3" maxlength="1000"></textarea>
+        <p class="form-error" id="pricing-unit-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-pricing-unit" value="default" type="submit">
+            Create pricing unit
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="alert-dialog" aria-labelledby="alert-title">
+      <form method="dialog" id="alert-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Threshold alert</p>
+            <h2 id="alert-title">Create alert</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <label for="alert-name">Name</label><input id="alert-name" maxlength="255" />
+        <label for="alert-code">Code</label><input id="alert-code" maxlength="100" required />
+        <label for="alert-type">Alert type</label
+        ><select id="alert-type" required></select>
+        <label for="alert-metric">Billable metric</label>
+        <select id="alert-metric">
+          <option value="">Not applicable</option>
+        </select>
+        <label for="alert-threshold">Threshold</label>
+        <input id="alert-threshold" inputmode="decimal" required />
+        <label class="checkbox-field">
+          <input id="alert-recurring" type="checkbox" />Recurring threshold
+        </label>
+        <p class="field-hint">
+          Alert evaluation stays internal; no email, webhook, or provider action is enabled.
+        </p>
+        <p class="form-error" id="alert-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-alert" value="default" type="submit">
+            Create alert
+          </button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog
       class="modal billing-modal"
       id="billing-form-dialog"
@@ -2035,6 +2268,20 @@
                 required
               />
             </div>
+            <div>
+              <label for="billing-issuing-adjustment">Subscription issuing adjustment</label>
+              <select id="billing-issuing-adjustment">
+                <option value="align_with_finalization_date">Align with finalization date</option>
+                <option value="keep_anchor">Keep anchor</option>
+              </select>
+            </div>
+            <div>
+              <label for="billing-issuing-anchor">Subscription issuing anchor</label>
+              <select id="billing-issuing-anchor">
+                <option value="next_period_start">Next period start</option>
+                <option value="current_period_end">Current period end</option>
+              </select>
+            </div>
           </div>
           <label for="billing-footer">Invoice footer</label>
           <textarea id="billing-footer" name="invoice_footer" rows="3"></textarea>
@@ -2045,8 +2292,7 @@
         </fieldset>
 
         <p class="field-hint">
-          E-invoicing, tax assignment, and additional billing entities are intentionally
-          unavailable.
+          E-invoicing and additional billing entities remain outside this default-entity form.
         </p>
         <p class="form-error" id="billing-form-error" role="alert" hidden></p>
         <div class="modal-actions">
@@ -2236,8 +2482,7 @@
           </div>
         </div>
         <p class="field-hint">
-          Provider settings, dunning, metadata, custom sections, tax targeting, and deletion remain
-          unavailable.
+          Provider settings and custom sections remain separate customer workflows.
         </p>
         <p class="form-error" id="customer-form-error" role="alert" hidden></p>
         <div class="modal-actions">
@@ -2795,8 +3040,8 @@
         ><textarea id="credit-note-items" rows="7" required>
 [{"fee_id":"","amount_cents":1}]</textarea>
         <p class="field-hint">
-          Items accept fee_id and amount_cents only. Refunds, offsets, provider actions, PDF
-          generation/download, and email are unavailable.
+          Items accept fee_id and amount_cents only. Refunds, offsets, provider actions, and email
+          delivery remain disabled; PDF generation and download are available from the detail page.
         </p>
         <p class="form-error" id="credit-note-form-error" role="alert" hidden></p>
         <div class="modal-actions">
@@ -2949,6 +3194,35 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button
           ><button class="primary-button" id="submit-team-invite" value="default" type="submit">
             Create invitation
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="integration-dialog" aria-labelledby="integration-dialog-title">
+      <form method="dialog" id="integration-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Disabled-by-default provider</p>
+            <h2 id="integration-dialog-title">Configure integration</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <label for="integration-display-name">Display name</label
+        ><input id="integration-display-name" maxlength="120" />
+        <label for="integration-settings">Non-secret settings (JSON)</label
+        ><textarea id="integration-settings" rows="8">{}</textarea>
+        <p class="field-hint">
+          Credentials are rejected here. No provider call, retry, sync, payment, or tax action is
+          enabled.
+        </p>
+        <p class="form-error" id="integration-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-integration" value="default" type="submit">
+            Save disabled configuration
           </button>
         </div>
       </form>

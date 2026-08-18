@@ -1,0 +1,234 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: #19212e;
+  background: #fff;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button,
+input {
+  font: inherit;
+}
+.portal-shell {
+  display: flex;
+  min-height: 100vh;
+}
+.portal-sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  width: 400px;
+  height: 100vh;
+  flex: 0 0 400px;
+  flex-direction: column;
+  gap: 32px;
+  padding: 64px;
+  background: #f4f5f7;
+}
+.portal-sidebar h1 {
+  margin: 0;
+  font-size: 24px;
+}
+.portal-sidebar p {
+  color: #667085;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.powered {
+  display: flex;
+  margin-top: auto;
+  align-items: center;
+  gap: 6px;
+  color: #8c95a6;
+  font-size: 12px;
+}
+.powered img {
+  width: 40px;
+}
+main {
+  width: 100%;
+  min-width: 0;
+  padding: 80px;
+}
+.portal-content {
+  display: flex;
+  max-width: 1024px;
+  flex-direction: column;
+  gap: 48px;
+}
+.portal-section {
+  max-width: 672px;
+}
+.portal-section > header {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+h2 {
+  margin: 0;
+  font-size: 20px;
+}
+header p {
+  margin: 5px 0 0;
+  color: #667085;
+}
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 32px;
+}
+.card {
+  display: grid;
+  gap: 5px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e3e6eb;
+}
+.card strong {
+  color: #667085;
+  font-size: 12px;
+}
+.card span {
+  font-size: 15px;
+}
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 32px;
+  margin: 0;
+}
+.info-grid div {
+  display: grid;
+  gap: 5px;
+}
+dt {
+  color: #667085;
+  font-size: 14px;
+}
+dd {
+  margin: 0;
+  color: #344054;
+}
+.text-button {
+  border: 0;
+  color: #5e2ced;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 600;
+}
+input {
+  min-height: 40px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid #e3e6eb;
+  border-radius: 10px;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+th,
+td {
+  padding: 13px 14px;
+  border-bottom: 1px solid #eaecf0;
+  text-align: left;
+  white-space: nowrap;
+}
+th {
+  color: #667085;
+  background: #f9fafb;
+}
+tr:last-child td {
+  border-bottom: 0;
+}
+.status {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #ecfdf3;
+  color: #027a48;
+  font-size: 12px;
+}
+.state {
+  padding: 40px;
+  border: 1px solid #e3e6eb;
+  border-radius: 12px;
+}
+.state.error {
+  border-color: #fecdca;
+  background: #fffbfa;
+}
+dialog {
+  width: min(520px, calc(100% - 24px));
+  border: 0;
+  border-radius: 14px;
+  padding: 0;
+  box-shadow: 0 24px 80px #10182833;
+}
+dialog::backdrop {
+  background: #10182880;
+}
+dialog form {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+dialog header,
+dialog footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+dialog label {
+  display: grid;
+  gap: 8px;
+  color: #475467;
+}
+dialog button {
+  min-height: 40px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: 8px 14px;
+  background: white;
+}
+dialog .primary {
+  border-color: #5e2ced;
+  color: white;
+  background: #5e2ced;
+}
+.form-error {
+  color: #b42318;
+}
+@media (max-width: 800px) {
+  .portal-shell {
+    display: block;
+  }
+  .portal-sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+    padding: 28px 20px;
+  }
+  .portal-sidebar p,
+  .powered {
+    display: none;
+  }
+  main {
+    padding: 32px 20px;
+  }
+  .card-grid,
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+}

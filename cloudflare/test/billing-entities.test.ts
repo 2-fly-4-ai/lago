@@ -112,8 +112,8 @@ describe("single billing entity compatibility API", () => {
           invoice_footer: "Entity footer",
           invoice_grace_period: 2,
           document_locale: "fr",
-          subscription_invoice_issuing_date_anchor: "next_period_start",
-          subscription_invoice_issuing_date_adjustment: "align_with_finalization_date",
+          subscription_invoice_issuing_date_anchor: "current_period_end",
+          subscription_invoice_issuing_date_adjustment: "keep_anchor",
         },
         einvoicing: false,
         eu_tax_management: false,
@@ -136,17 +136,23 @@ describe("single billing entity compatibility API", () => {
         invoice_footer: "Entity footer",
         invoice_grace_period: 2,
         document_locale: "fr",
+        subscription_invoice_issuing_date_anchor: "current_period_end",
+        subscription_invoice_issuing_date_adjustment: "keep_anchor",
         version: 2,
       },
     });
     const organization = await env.BILLING_DB.prepare(
-      `SELECT name, default_currency, document_numbering, version FROM organizations
+      `SELECT name, default_currency, document_numbering,
+              subscription_invoice_issuing_date_anchor,
+              subscription_invoice_issuing_date_adjustment, version FROM organizations
        WHERE id = 'org-billing-entity-api'`,
     ).first();
     expect(organization).toEqual({
       name: "Renamed Billing Entity",
       default_currency: "EUR",
       document_numbering: "per_customer",
+      subscription_invoice_issuing_date_anchor: "current_period_end",
+      subscription_invoice_issuing_date_adjustment: "keep_anchor",
       version: 2,
     });
     const event = await env.BILLING_DB.prepare(
@@ -199,18 +205,6 @@ describe("single billing entity compatibility API", () => {
         "/api/v1/billing_entities/default",
         "PUT",
         { billing_entity: { invoice_custom_section_codes: ["legal"] } },
-        "unsupported_billing_entity_feature",
-      ],
-      [
-        "/api/v1/billing_entities/default",
-        "PUT",
-        {
-          billing_entity: {
-            billing_configuration: {
-              subscription_invoice_issuing_date_anchor: "current_period_end",
-            },
-          },
-        },
         "unsupported_billing_entity_feature",
       ],
     ];

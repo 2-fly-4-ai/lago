@@ -97,7 +97,8 @@ Lago page/dialog spacing model. The five mistakenly omitted product surfaces are
 - Forecasts exposes bounded 3/6/12-month scenario projections.
 - Billable metrics exposes list/detail/create/edit/delete/duplicate and activity history.
 - Features exposes typed privilege CRUD, activity history, and plan entitlement assignment.
-- Lago Assistant uses the original 48px right rail and 360–420px pushed panel, with
+- Lago Assistant uses the original 48px right rail and 360–420px desktop panel, with an overlay at
+  narrower desktop widths so the underlying Lago detail layout is not crushed, plus
   membership-and-organization-scoped D1 history and a read-only Workers AI stream.
 
 New visual evidence:
@@ -111,3 +112,46 @@ billable-metric and feature details, outbox-backed activity, metric duplication,
 values, assistant open/close and streaming in the synthetic preview, and deployed authenticated
 navigation. The deployed worker showed each new route without the unavailable panel. Fresh
 unauthenticated root and session requests were intercepted by Cloudflare Access before origin.
+
+## Final parity-repair verification — 2026-08-18
+
+The continuation pass treated the operation ledger as a coverage index rather than visual proof.
+Fresh local browser QA at 1280 × 720 and 390 × 844 verified the rebuilt product surfaces against
+the checked-in Lago source and existing side-by-side evidence.
+
+- All 29 visible primary-navigation destinations rendered focused Lago pages; none showed the old
+  `Cloudflare boundary`, page-unavailable, or operator-unavailable panels.
+- Analytics, Forecasts, Billable metrics, and Features render real charts, tables, filters, CRUD
+  entry points, and typed feature privileges instead of placeholder cards.
+- The customer Settings tab now exposes document locale, issuing-date policy, zero-amount invoice
+  policy, dunning, applied taxes, invoice custom sections, and dependency-safe deletion.
+- Subscription, invoice, credit-note, and billing-profile details expose the newly retained policy,
+  metadata, adjusted-fee, document, tax, dunning, and logo controls.
+- The Lago Assistant opens from its right rail on desktop and as a full-screen mobile surface. A
+  responsive defect that compressed customer details at 1280px was corrected during this pass.
+- Viewer membership controls remain disabled in the second synthetic organization.
+- Browser QA found and fixed an organization-prefixed legacy-route defect. Original paths such as
+  `/serp-billing/customer/tammy` now canonicalize to the retained customer detail, while canonical
+  detail URLs continue to preserve their identifier.
+
+Final visual evidence:
+
+- `21-final-customers-desktop.png`
+- `22-final-customer-settings-ai.png`
+- `23-final-analytics.png`
+- `24-final-forecasts.png`
+- `25-final-billable-metrics.png`
+- `26-final-features-privileges.png`
+- `27-final-mobile-customers.png`
+- `28-final-mobile-assistant.png`
+- `29-deployed-customer-settings-ai.png`
+
+The local acceptance gate passed 358 tests across 65 files, all 80 migrations replayed from a
+fresh D1 directory, generated binding types were current, and API/operator/portal Wrangler dry-run
+bundles succeeded. Migrations `0074` through `0080` were then applied to the isolated development
+D1 database, leaving no pending migration. Operator version
+`64287259-a894-4fcb-bdfd-274e3d01ae83` and customer-portal version
+`6bfeedea-636d-4af4-bcf0-3e20573ab3a0` were deployed. Fresh unauthenticated operator root and
+session requests received Access `302`; the public portal root returned `200` and a tokenless portal
+session returned `401 portal_unauthorized`. Authenticated browser QA loaded the synthetic customer
+Settings page and Lago Assistant from the deployed operator.

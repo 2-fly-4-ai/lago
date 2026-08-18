@@ -35,14 +35,15 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `* * * * *`                                                        | Worker scheduled handler  | Deterministic legacy-schedule dispatch and activity fanout         |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 | Static Assets     | `operator-ui`                                                      | direct asset delivery     | Script-free operator migration shell and security headers          |
-| Worker            | `serp-dev-lago-operator` / `4090c15d-ad57-4dc8-9bf4-fd99b85b663d`  | D1, DO, Workflow, Queue, Workers AI | Access-protected synthetic-tenant operator BFF and Static Assets   |
+| Worker            | `serp-dev-lago-operator` / `64287259-a894-4fcb-bdfd-274e3d01ae83`  | D1, R2, DO, Workflow, Queue, Workers AI | Access-protected synthetic-tenant operator BFF and Static Assets |
+| Worker            | `serp-dev-lago-customer-portal` / `6bfeedea-636d-4af4-bcf0-3e20573ab3a0` | D1, R2 | Token-protected synthetic customer portal and Static Assets       |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0073_operator_product_parity.sql`.
+`0080_operator_policy_overrides.sql`.
 
 ## Operator Access rollout
 
-- `serp-dev-lago-operator` version `4090c15d-ad57-4dc8-9bf4-fd99b85b663d` is deployed from
+- `serp-dev-lago-operator` version `64287259-a894-4fcb-bdfd-274e3d01ae83` is deployed from
   `wrangler.operator.jsonc` with Access validation enabled, preview URLs disabled, the operator
   Static Assets application, isolated D1, Workers AI, and the existing internal Durable Object,
   Workflow, and Queue bindings. The API Worker remains outside the human Access application.
@@ -62,6 +63,18 @@ Applied D1 migrations: `0001_foundation.sql` through
   token is not required for the completed dashboard-provisioned application and policy.
 
 ## Verified behavior
+
+- Operator version `64287259-a894-4fcb-bdfd-274e3d01ae83` and customer-portal version
+  `6bfeedea-636d-4af4-bcf0-3e20573ab3a0` deploy the final retained-surface repair. Migrations
+  `0074` through `0080` were the only pending migrations and all applied successfully; follow-up
+  inventory reports no pending migration. The operator and portal share the existing isolated
+  `serp-dev-lago-native-billing-artifacts` bucket so document generation and download use the same
+  object namespace. Fresh unauthenticated operator root and session requests receive Cloudflare
+  Access `302` before origin, while the portal root returns `200` and its tokenless session endpoint
+  returns `401 portal_unauthorized`. Authenticated browser QA loaded the synthetic customer Settings
+  controls and Lago Assistant, and the original organization-prefixed customer path canonicalized
+  to the retained detail route. The full gate passes 358 tests across 65 files plus five Access
+  reconciler tests and all API/operator/portal dry-run bundles.
 
 - Operator version `4090c15d-ad57-4dc8-9bf4-fd99b85b663d` adds functional Analytics, Forecasts,
   Billable metrics, Features/plan entitlements, and Lago Assistant surfaces. Only migration `0073`
