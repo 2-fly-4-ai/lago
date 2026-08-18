@@ -44,28 +44,23 @@
         <nav aria-label="Primary navigation">
           <div class="nav-section">
             <p class="nav-label">Reports</p>
-            <a class="nav-item" href="/analytics" data-route="analytics" data-unavailable="true">
+            <a class="nav-item" href="/analytics" data-route="analytics">
               <img class="nav-icon" src="/assets/icons/chart-bar.svg" alt="" />Analytics
             </a>
-            <a class="nav-item" href="/forecasts" data-route="forecasts" data-unavailable="true">
+            <a class="nav-item" href="/forecasts" data-route="forecasts">
               <img class="nav-icon" src="/assets/icons/forecast.svg" alt="" />Forecasts
             </a>
           </div>
 
           <div class="nav-section">
             <p class="nav-label">Configuration</p>
-            <a
-              class="nav-item"
-              href="/billable-metrics"
-              data-route="billable-metrics"
-              data-unavailable="true"
-            >
+            <a class="nav-item" href="/billable-metrics" data-route="billable-metrics">
               <img class="nav-icon" src="/assets/icons/pulse.svg" alt="" />Billable metrics
             </a>
             <a class="nav-item" href="/plans" data-route="plans">
               <img class="nav-icon" src="/assets/icons/board.svg" alt="" />Plans
             </a>
-            <a class="nav-item" href="/features" data-route="features" data-unavailable="true">
+            <a class="nav-item" href="/features" data-route="features">
               <img class="nav-icon" src="/assets/icons/switch.svg" alt="" />Features
             </a>
             <a class="nav-item" href="/add-ons" data-route="add-ons">
@@ -228,6 +223,207 @@
                 <p id="unavailable-boundary-copy">
                   No provider, customer, or external action has been enabled for this page.
                 </p>
+              </div>
+            </section>
+
+            <section
+              class="report-page route-panel"
+              id="analytics"
+              aria-labelledby="analytics-title"
+            >
+              <header class="report-header">
+                <div>
+                  <p class="route-breadcrumb">Reports / Analytics</p>
+                  <h1 id="analytics-title">Analytics</h1>
+                  <p>Understand revenue, recurring subscriptions, usage, credits, and invoices.</p>
+                </div>
+                <div class="date-filter" aria-label="Analytics date range">
+                  <label for="analytics-from">From</label>
+                  <input id="analytics-from" type="date" />
+                  <label for="analytics-to">To</label>
+                  <input id="analytics-to" type="date" />
+                  <button class="secondary-button" id="refresh-analytics" type="button">
+                    Apply
+                  </button>
+                </div>
+              </header>
+              <nav class="report-tabs" aria-label="Analytics sections">
+                <button class="active" type="button" data-analytics-tab="revenue">
+                  Revenue streams
+                </button>
+                <button type="button" data-analytics-tab="mrr">MRR</button>
+                <button type="button" data-analytics-tab="usage">Usage</button>
+                <button type="button" data-analytics-tab="credits">Prepaid credits</button>
+                <button type="button" data-analytics-tab="invoices">Invoices</button>
+              </nav>
+              <div class="report-loading" id="analytics-loading">Loading analytics…</div>
+              <div id="analytics-content" hidden>
+                <div class="metric-card-grid" id="analytics-summary"></div>
+                <section class="chart-card" aria-labelledby="analytics-chart-title">
+                  <div class="chart-card-heading">
+                    <div>
+                      <p class="eyebrow" id="analytics-chart-eyebrow">Revenue</p>
+                      <h2 id="analytics-chart-title">Revenue streams over time</h2>
+                    </div>
+                    <span class="role-pill" id="analytics-currency">—</span>
+                  </div>
+                  <div
+                    class="bar-chart"
+                    id="analytics-chart"
+                    role="img"
+                    aria-label="Analytics values over time"
+                  ></div>
+                </section>
+                <section class="chart-card" aria-labelledby="analytics-breakdown-title">
+                  <div class="chart-card-heading">
+                    <h2 id="analytics-breakdown-title">Breakdown</h2>
+                  </div>
+                  <div class="analytics-breakdown" id="analytics-breakdown"></div>
+                </section>
+              </div>
+            </section>
+
+            <section
+              class="report-page route-panel"
+              id="forecasts"
+              aria-labelledby="forecasts-title"
+            >
+              <header class="report-header">
+                <div>
+                  <p class="route-breadcrumb">Reports / Forecasts</p>
+                  <div class="heading-with-chip">
+                    <h1 id="forecasts-title">Forecasts</h1>
+                    <span class="ai-chip">AI · Beta</span>
+                  </div>
+                  <p>Compare optimistic, realistic, and conservative revenue projections.</p>
+                </div>
+                <label class="compact-select" for="forecast-months"
+                  >Projection
+                  <select id="forecast-months">
+                    <option value="3">3 months</option>
+                    <option value="6" selected>6 months</option>
+                    <option value="12">12 months</option>
+                  </select>
+                </label>
+              </header>
+              <div class="report-loading" id="forecasts-loading">Building forecast…</div>
+              <div id="forecasts-content" hidden>
+                <div class="forecast-legend" aria-label="Forecast scenarios">
+                  <span><i class="scenario optimistic"></i>Optimistic</span>
+                  <span><i class="scenario realistic"></i>Realistic</span>
+                  <span><i class="scenario conservative"></i>Conservative</span>
+                </div>
+                <section class="chart-card">
+                  <div
+                    class="bar-chart grouped"
+                    id="forecast-chart"
+                    role="img"
+                    aria-label="Forecast scenarios by month"
+                  ></div>
+                </section>
+                <div class="table-shell">
+                  <div class="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Month</th>
+                          <th>Optimistic</th>
+                          <th>Realistic</th>
+                          <th>Conservative</th>
+                        </tr>
+                      </thead>
+                      <tbody id="forecast-table-body"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <p class="forecast-method" id="forecast-method"></p>
+              </div>
+            </section>
+
+            <section
+              class="keys-section"
+              id="billable-metrics"
+              aria-labelledby="billable-metrics-title"
+            >
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Configuration / Billable metrics</p>
+                  <h2 id="billable-metrics-title">Billable metrics</h2>
+                  <p>Define how incoming usage events are aggregated and rated.</p>
+                </div>
+                <div>
+                  <button class="primary-button" id="open-create-metric" type="button" hidden>
+                    <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create metric
+                  </button>
+                </div>
+              </div>
+              <div class="list-filter">
+                <label for="metric-search">Search</label
+                ><input id="metric-search" type="search" placeholder="Search metrics" />
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="metrics-loading">Loading billable metrics…</div>
+                <div class="empty-state" id="metrics-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/pulse.svg" alt="" />
+                  <h3>No billable metrics</h3>
+                  <p>Create a metric to begin metering usage events.</p>
+                </div>
+                <div class="table-scroll" id="metrics-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th>Aggregation</th>
+                        <th>Field</th>
+                        <th>Recurring</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="metrics-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="features" aria-labelledby="features-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Configuration / Features</p>
+                  <h2 id="features-title">Features</h2>
+                  <p>Define product features and the typed privileges plans may grant.</p>
+                </div>
+                <div>
+                  <button class="primary-button" id="open-create-feature" type="button" hidden>
+                    <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create feature
+                  </button>
+                </div>
+              </div>
+              <div class="list-filter">
+                <label for="feature-search">Search</label
+                ><input id="feature-search" type="search" placeholder="Search features" />
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="features-loading">Loading features…</div>
+                <div class="empty-state" id="features-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/switch.svg" alt="" />
+                  <h3>No features</h3>
+                  <p>Create a feature and add boolean, integer, string, or select privileges.</p>
+                </div>
+                <div class="table-scroll" id="features-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Feature</th>
+                        <th>Subscriptions</th>
+                        <th>Plans</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="features-table-body"></tbody>
+                  </table>
+                </div>
               </div>
             </section>
 
@@ -1193,7 +1389,162 @@
           </div>
         </main>
       </div>
+
+      <aside class="ai-rail" id="ai-rail" aria-label="Lago Assistant" hidden>
+        <button
+          class="ai-rail-button"
+          id="open-ai-panel"
+          type="button"
+          aria-expanded="false"
+          aria-controls="ai-panel"
+        >
+          <img src="/assets/lago-logo-grey.svg" alt="" /><span>Assistant</span>
+        </button>
+      </aside>
+      <aside class="ai-panel" id="ai-panel" aria-label="Lago Assistant conversation" hidden>
+        <header class="ai-panel-header">
+          <div>
+            <p class="eyebrow">Lago Assistant</p>
+            <h2>How can I help?</h2>
+          </div>
+          <button
+            class="icon-button"
+            id="close-ai-panel"
+            type="button"
+            aria-label="Close assistant"
+          >
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </header>
+        <div class="ai-history" id="ai-history" aria-label="Recent conversations"></div>
+        <div class="ai-messages" id="ai-messages" aria-live="polite"></div>
+        <div class="ai-shortcuts" id="ai-shortcuts">
+          <button type="button" data-ai-shortcut="Summarize this organization's billing health.">
+            Billing health
+          </button>
+          <button
+            type="button"
+            data-ai-shortcut="Explain the current revenue and subscription totals."
+          >
+            Explain revenue
+          </button>
+          <button type="button" data-ai-shortcut="What billing operations should I review next?">
+            Next checks
+          </button>
+        </div>
+        <form class="ai-composer" id="ai-form">
+          <label class="sr-only" for="ai-prompt">Ask Lago Assistant</label>
+          <textarea
+            id="ai-prompt"
+            rows="3"
+            maxlength="8000"
+            placeholder="Ask about billing operations…"
+            required
+          ></textarea>
+          <div>
+            <span>Read-only · scoped to this organization</span
+            ><button class="primary-button" id="send-ai-message" type="submit">Send</button>
+          </div>
+        </form>
+      </aside>
     </div>
+
+    <dialog class="modal section-modal" id="metric-form-dialog" aria-labelledby="metric-form-title">
+      <form method="dialog" id="metric-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Usage aggregation</p>
+            <h2 id="metric-form-title">Create billable metric</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="metric-name">Name</label><input id="metric-name" required maxlength="255" />
+          </div>
+          <div>
+            <label for="metric-code">Code</label><input id="metric-code" required maxlength="255" />
+          </div>
+          <div>
+            <label for="metric-aggregation">Aggregation</label
+            ><select id="metric-aggregation">
+              <option value="count_agg">Count</option>
+              <option value="sum_agg">Sum</option>
+              <option value="max_agg">Maximum</option>
+              <option value="unique_count_agg">Unique count</option>
+              <option value="latest_agg">Latest</option>
+              <option value="weighted_sum_agg">Weighted sum</option>
+              <option value="custom_agg">Custom expression</option>
+            </select>
+          </div>
+          <div>
+            <label for="metric-field">Event field</label><input id="metric-field" maxlength="255" />
+          </div>
+        </div>
+        <label for="metric-description">Description</label
+        ><textarea id="metric-description" rows="3" maxlength="600"></textarea>
+        <label for="metric-expression">Custom expression</label
+        ><textarea id="metric-expression" rows="3" maxlength="2000"></textarea>
+        <label class="checkbox-field"
+          ><input id="metric-recurring" type="checkbox" />Recurring aggregation</label
+        >
+        <p class="form-error" id="metric-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-metric-form" value="default" type="submit">
+            Create metric
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="feature-form-dialog"
+      aria-labelledby="feature-form-title"
+    >
+      <form method="dialog" id="feature-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Entitlement catalog</p>
+            <h2 id="feature-form-title">Create feature</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="feature-name">Name</label><input id="feature-name" maxlength="255" />
+          </div>
+          <div>
+            <label for="feature-code">Code</label
+            ><input id="feature-code" required maxlength="255" />
+          </div>
+        </div>
+        <label for="feature-description">Description</label
+        ><textarea id="feature-description" rows="3" maxlength="600"></textarea>
+        <div class="privilege-heading">
+          <div>
+            <h3>Privileges</h3>
+            <p>Add the values plans can grant for this feature.</p>
+          </div>
+          <button class="secondary-button" id="add-feature-privilege" type="button">
+            Add privilege
+          </button>
+        </div>
+        <div class="privilege-editor" id="feature-privileges"></div>
+        <p class="form-error" id="feature-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-feature-form" value="default" type="submit">
+            Create feature
+          </button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog
       class="modal section-modal"
@@ -1895,8 +2246,18 @@
             >Bill base amount in advance</span
           ></label
         >
+        <section class="plan-entitlements-editor" aria-labelledby="plan-entitlements-title">
+          <div>
+            <h3 id="plan-entitlements-title">Features</h3>
+            <p>Grant product features and typed privilege values to this plan.</p>
+          </div>
+          <div id="plan-entitlements"></div>
+          <p class="field-hint" id="plan-entitlements-empty" hidden>
+            Create a feature before adding plan entitlements.
+          </p>
+        </section>
         <p class="field-hint">
-          Usage charges, thresholds, commitments, taxes, and metadata are separate gated workflows.
+          Usage charges, thresholds, commitments, taxes, and metadata remain separate workflows.
         </p>
         <p class="form-error" id="plan-form-error" role="alert" hidden></p>
         <div class="modal-actions">

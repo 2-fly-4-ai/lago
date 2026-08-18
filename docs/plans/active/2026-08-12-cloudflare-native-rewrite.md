@@ -3367,3 +3367,19 @@ resource and mutation described.
   Access reconciler tests, formatting, lint, generated types, inventory, TypeScript, and both dry
   deployments. The API Worker remains outside Access and all external-action flags remain `0`; no
   production route, provider/payment action, customer message, secret, or customer data changed.
+- 2026-08-18: Corrected the M8 operator product-parity regression against the checked-in Lago
+  frontend. Added an authoritative 503-operation/159-route ledger that no longer treats legacy
+  classifications as approval. Analytics now retains five tabs, date/customer scope, plan/customer
+  revenue and MRR breakdowns, collection/overdue views, and usage-metric deep links; Forecasts now
+  provides bounded scenario projections. Billable metrics now has list/detail/create/edit/delete/
+  duplicate and activity history. Lago-owned Features now has typed privileges, activity history,
+  and plan entitlement values in D1. The original right-side Assistant rail/panel is restored with
+  membership-and-organization-scoped history and read-only Workers AI streaming. Migration `0073`
+  was replayed locally and applied as the only pending migration to isolated
+  `serp-dev-lago-native-d1`; the post-audit found no pending migration, no feature/entitlement/AI
+  rows, and no foreign-key errors. Deployed only `serp-dev-lago-operator` version
+  `4090c15d-ad57-4dc8-9bf4-fd99b85b663d`. Fresh unauthenticated root/session requests returned
+  Access `302`; authenticated browser QA loaded the corrected reports/catalogs and Assistant shell.
+  The full gate passes 343 tests across 62 files, strict formatting/lint/types/generated checks,
+  migration replay, and both dry bundles. No production route, API Worker, provider/payment action,
+  customer message, secret, or customer data changed.

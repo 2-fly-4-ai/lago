@@ -23,34 +23,19 @@ const endpoints = {
   webhookEndpoints: "/api/operator/v1/webhook-endpoints",
   dunningCampaigns: "/api/operator/v1/dunning-campaigns",
   paymentRequests: "/api/operator/v1/payment-requests",
+  analytics: "/api/operator/v1/analytics",
+  forecasts: "/api/operator/v1/forecasts",
+  billableMetrics: "/api/operator/v1/billable-metrics",
+  features: "/api/operator/v1/features",
+  aiConversations: "/api/operator/v1/ai/conversations",
 };
 
 const routeDefinitions = {
   overview: { title: "Organization", group: "Settings" },
-  analytics: {
-    title: "Analytics",
-    group: "Reports",
-    unavailable:
-      "Usage and revenue data is retained in D1, but the bounded analytics read model is not available yet.",
-  },
-  forecasts: {
-    title: "Forecasts",
-    group: "Reports",
-    unavailable:
-      "Forecasting remains visible in the Lago navigation while its isolated Cloudflare query contract is being defined.",
-  },
-  "billable-metrics": {
-    title: "Billable metrics",
-    group: "Configuration",
-    unavailable:
-      "The Cloudflare rating engine is active, but the operator metric-catalog read and edit contract is not exposed yet.",
-  },
-  features: {
-    title: "Features",
-    group: "Configuration",
-    unavailable:
-      "Feature entitlements remain owned by serp-auth. This Lago workspace keeps the familiar page without duplicating that authority.",
-  },
+  analytics: { title: "Analytics", group: "Reports" },
+  forecasts: { title: "Forecasts", group: "Reports" },
+  "billable-metrics": { title: "Billable metrics", group: "Configuration" },
+  features: { title: "Features", group: "Configuration" },
   plans: { title: "Plans", group: "Configuration" },
   "add-ons": { title: "Add-ons", group: "Configuration" },
   coupons: { title: "Coupons", group: "Configuration" },
@@ -82,6 +67,38 @@ const customerDetailTabs = new Set([
 ]);
 
 const entityDetailDefinitions = {
+  "billable-metrics": {
+    collection: "billableMetrics",
+    singular: "Billable metric",
+    id: (item) => item.code,
+    label: (item) => safeText(item.name, "Unnamed metric"),
+    fields: [
+      ["Code", (item) => item.code],
+      ["Aggregation", (item) => humanize(item.aggregation_type)],
+      ["Event field", (item) => item.field_name],
+      ["Recurring", (item) => (item.recurring ? "Yes" : "No")],
+      ["Expression", (item) => item.expression],
+      ["Description", (item) => item.description],
+      ["Activity", (item) => activitySummary(item.activity_logs)],
+    ],
+    edit: (item) => openEditMetricDialog(item),
+  },
+  features: {
+    collection: "features",
+    singular: "Feature",
+    id: (item) => item.lago_id,
+    label: (item) => safeText(item.name, "Unnamed feature"),
+    fields: [
+      ["Code", (item) => item.code],
+      ["Description", (item) => item.description],
+      ["Plans", (item) => item.plans_count],
+      ["Active subscriptions", (item) => item.subscriptions_count],
+      ["Privileges", (item) => privilegeSummary(item.privileges)],
+      ["Created", (item) => formatDate(item.created_at)],
+      ["Activity", (item) => activitySummary(item.activity_logs)],
+    ],
+    edit: (item) => openEditFeatureDialog(item),
+  },
   "api-keys": {
     collection: "keys",
     singular: "API key",
@@ -341,6 +358,69 @@ const elements = {
   unavailableTitle: document.querySelector("#unavailable-title"),
   unavailableMessage: document.querySelector("#unavailable-message"),
   unavailableBoundaryCopy: document.querySelector("#unavailable-boundary-copy"),
+  analyticsFrom: document.querySelector("#analytics-from"),
+  analyticsTo: document.querySelector("#analytics-to"),
+  refreshAnalytics: document.querySelector("#refresh-analytics"),
+  analyticsTabs: Array.from(document.querySelectorAll("[data-analytics-tab]")),
+  analyticsLoading: document.querySelector("#analytics-loading"),
+  analyticsContent: document.querySelector("#analytics-content"),
+  analyticsSummary: document.querySelector("#analytics-summary"),
+  analyticsCurrency: document.querySelector("#analytics-currency"),
+  analyticsChartEyebrow: document.querySelector("#analytics-chart-eyebrow"),
+  analyticsChartTitle: document.querySelector("#analytics-chart-title"),
+  analyticsChart: document.querySelector("#analytics-chart"),
+  analyticsBreakdownTitle: document.querySelector("#analytics-breakdown-title"),
+  analyticsBreakdown: document.querySelector("#analytics-breakdown"),
+  forecastMonths: document.querySelector("#forecast-months"),
+  forecastsLoading: document.querySelector("#forecasts-loading"),
+  forecastsContent: document.querySelector("#forecasts-content"),
+  forecastChart: document.querySelector("#forecast-chart"),
+  forecastTableBody: document.querySelector("#forecast-table-body"),
+  forecastMethod: document.querySelector("#forecast-method"),
+  openCreateMetric: document.querySelector("#open-create-metric"),
+  metricSearch: document.querySelector("#metric-search"),
+  metricsLoading: document.querySelector("#metrics-loading"),
+  metricsEmpty: document.querySelector("#metrics-empty"),
+  metricsTableShell: document.querySelector("#metrics-table-shell"),
+  metricsTableBody: document.querySelector("#metrics-table-body"),
+  metricFormDialog: document.querySelector("#metric-form-dialog"),
+  metricForm: document.querySelector("#metric-form"),
+  metricFormTitle: document.querySelector("#metric-form-title"),
+  metricName: document.querySelector("#metric-name"),
+  metricCode: document.querySelector("#metric-code"),
+  metricAggregation: document.querySelector("#metric-aggregation"),
+  metricField: document.querySelector("#metric-field"),
+  metricDescription: document.querySelector("#metric-description"),
+  metricExpression: document.querySelector("#metric-expression"),
+  metricRecurring: document.querySelector("#metric-recurring"),
+  metricFormError: document.querySelector("#metric-form-error"),
+  submitMetricForm: document.querySelector("#submit-metric-form"),
+  openCreateFeature: document.querySelector("#open-create-feature"),
+  featureSearch: document.querySelector("#feature-search"),
+  featuresLoading: document.querySelector("#features-loading"),
+  featuresEmpty: document.querySelector("#features-empty"),
+  featuresTableShell: document.querySelector("#features-table-shell"),
+  featuresTableBody: document.querySelector("#features-table-body"),
+  featureFormDialog: document.querySelector("#feature-form-dialog"),
+  featureForm: document.querySelector("#feature-form"),
+  featureFormTitle: document.querySelector("#feature-form-title"),
+  featureName: document.querySelector("#feature-name"),
+  featureCode: document.querySelector("#feature-code"),
+  featureDescription: document.querySelector("#feature-description"),
+  featurePrivileges: document.querySelector("#feature-privileges"),
+  addFeaturePrivilege: document.querySelector("#add-feature-privilege"),
+  featureFormError: document.querySelector("#feature-form-error"),
+  submitFeatureForm: document.querySelector("#submit-feature-form"),
+  aiRail: document.querySelector("#ai-rail"),
+  openAiPanel: document.querySelector("#open-ai-panel"),
+  aiPanel: document.querySelector("#ai-panel"),
+  closeAiPanel: document.querySelector("#close-ai-panel"),
+  aiHistory: document.querySelector("#ai-history"),
+  aiMessages: document.querySelector("#ai-messages"),
+  aiShortcuts: document.querySelector("#ai-shortcuts"),
+  aiForm: document.querySelector("#ai-form"),
+  aiPrompt: document.querySelector("#ai-prompt"),
+  sendAiMessage: document.querySelector("#send-ai-message"),
   organizationMonogram: document.querySelector("#organization-monogram"),
   organizationTitle: document.querySelector("#organization-title"),
   organizationSlug: document.querySelector("#organization-slug"),
@@ -536,6 +616,8 @@ const elements = {
   planInvoiceName: document.querySelector("#plan-invoice-name"),
   planDescription: document.querySelector("#plan-description"),
   planPayAdvance: document.querySelector("#plan-pay-advance"),
+  planEntitlements: document.querySelector("#plan-entitlements"),
+  planEntitlementsEmpty: document.querySelector("#plan-entitlements-empty"),
   planFormError: document.querySelector("#plan-form-error"),
   submitPlanForm: document.querySelector("#submit-plan-form"),
   fixedChargeFormDialog: document.querySelector("#fixed-charge-form-dialog"),
@@ -778,6 +860,19 @@ const state = {
   paymentRequests: [],
   dunningFormMode: "create",
   selectedDunningCode: null,
+  analytics: null,
+  analyticsTab: "revenue",
+  analyticsMetricCode: null,
+  forecast: null,
+  billableMetrics: [],
+  metricFormMode: "create",
+  selectedMetricCode: null,
+  features: [],
+  featureFormMode: "create",
+  selectedFeatureId: null,
+  aiConversations: [],
+  activeAiConversationId: null,
+  aiMessages: [],
 };
 
 for (const link of elements.navigationLinks) link.addEventListener("click", handleRouteNavigation);
@@ -851,6 +946,24 @@ elements.dataExportForm.addEventListener("submit", submitDataExportForm);
 elements.openCreateDunning.addEventListener("click", openCreateDunningDialog);
 elements.dunningTableBody.addEventListener("click", handleDunningAction);
 elements.dunningForm.addEventListener("submit", submitDunningForm);
+elements.refreshAnalytics.addEventListener("click", refreshAnalytics);
+for (const tab of elements.analyticsTabs) tab.addEventListener("click", selectAnalyticsTab);
+elements.forecastMonths.addEventListener("change", refreshForecasts);
+elements.openCreateMetric.addEventListener("click", openCreateMetricDialog);
+elements.metricSearch.addEventListener("input", renderBillableMetrics);
+elements.metricsTableBody.addEventListener("click", handleMetricAction);
+elements.metricForm.addEventListener("submit", submitMetricForm);
+elements.openCreateFeature.addEventListener("click", openCreateFeatureDialog);
+elements.featureSearch.addEventListener("input", renderFeatures);
+elements.featuresTableBody.addEventListener("click", handleFeatureAction);
+elements.featureForm.addEventListener("submit", submitFeatureForm);
+elements.addFeaturePrivilege.addEventListener("click", () => addPrivilegeEditor());
+elements.featurePrivileges.addEventListener("click", removePrivilegeEditor);
+elements.openAiPanel.addEventListener("click", openAiPanel);
+elements.closeAiPanel.addEventListener("click", closeAiPanel);
+elements.aiHistory.addEventListener("click", selectAiConversation);
+elements.aiShortcuts.addEventListener("click", useAiShortcut);
+elements.aiForm.addEventListener("submit", submitAiMessage);
 
 void initialize();
 
@@ -860,6 +973,8 @@ async function initialize() {
   state.organizationSlug = locationState.organizationSlug;
   state.detailId = locationState.detailId;
   state.detailTab = locationState.detailTab;
+  state.analyticsTab = locationState.analyticsTab;
+  state.analyticsMetricCode = locationState.analyticsMetricCode;
   await loadWorkspace({ replaceHistory: true });
 }
 
@@ -900,6 +1015,11 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
       webhookEndpointsPayload,
       dunningCampaignsPayload,
       paymentRequestsPayload,
+      analyticsPayload,
+      forecastPayload,
+      metricsPayload,
+      featuresPayload,
+      aiPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -922,6 +1042,15 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
       requestJson(endpoints.webhookEndpoints),
       requestJson(endpoints.dunningCampaigns),
       requestJson(endpoints.paymentRequests),
+      requestJson(
+        state.analyticsMetricCode
+          ? `${endpoints.analytics}?billable_metric_code=${encodeURIComponent(state.analyticsMetricCode)}`
+          : endpoints.analytics,
+      ),
+      requestJson(endpoints.forecasts),
+      requestJson(endpoints.billableMetrics),
+      requestJson(endpoints.features),
+      requestJson(`${endpoints.aiConversations}?limit=3`),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -945,6 +1074,14 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
     renderWebhookEndpoints(webhookEndpointsPayload.webhook_endpoints);
     renderDunningCampaigns(dunningCampaignsPayload.dunning_campaigns);
     renderPaymentRequests(paymentRequestsPayload.payment_requests);
+    renderAnalytics(analyticsPayload.analytics);
+    renderForecasts(forecastPayload.forecast);
+    renderBillableMetrics(metricsPayload.billable_metrics);
+    renderFeatures(featuresPayload.features);
+    renderAiHistory(aiPayload.conversations);
+    renderAiMessages();
+    elements.aiRail.hidden = false;
+    await hydrateSelectedCatalogDetail();
     renderOrganizationMenu();
     renderRoute({ replaceHistory });
     elements.loading.hidden = true;
@@ -961,13 +1098,25 @@ function routeFromLocation() {
   let route = defaultRoute;
   let detailId = null;
   let detailTab = "overview";
+  let analyticsTab = "revenue";
+  let analyticsMetricCode = null;
 
   if (segments.length >= 2) {
     [organizationSlug, route] = segments;
+    if (route === "analytics-v2") route = "analytics";
     if ((route === "customers" || entityDetailDefinitions[route]) && segments[2]) {
       detailId = segments[2];
     }
     if (route === "customers" && customerDetailTabs.has(segments[3])) detailTab = segments[3];
+    if (route === "analytics") {
+      const requestedTab = segments[2];
+      const tabAliases = { prepaid_credits: "credits", revenue_streams: "revenue" };
+      const normalizedTab = tabAliases[requestedTab] ?? requestedTab;
+      if (new Set(["revenue", "mrr", "usage", "credits", "invoices"]).has(normalizedTab)) {
+        analyticsTab = normalizedTab;
+      }
+      if (normalizedTab === "usage" && segments[3]) analyticsMetricCode = segments[3];
+    }
   } else if (segments.length === 1) {
     if (routeDefinitions[segments[0]]) route = segments[0];
     else organizationSlug = segments[0];
@@ -979,6 +1128,8 @@ function routeFromLocation() {
     route: routeDefinitions[route] ? route : "not-found",
     detailId,
     detailTab,
+    analyticsTab,
+    analyticsMetricCode,
   };
 }
 
@@ -1010,6 +1161,9 @@ function navigateToRoute(route, { replace = false, focus = true } = {}) {
   state.route = route;
   state.detailId = null;
   state.detailTab = "overview";
+  if (route !== "analytics") {
+    state.analyticsMetricCode = null;
+  }
   const path = routePath(state.organizationSlug, route);
   if (replace) window.history.replaceState({ route }, "", path);
   else window.history.pushState({ route }, "", path);
@@ -1023,6 +1177,8 @@ async function handleHistoryNavigation() {
   state.route = next.route;
   state.detailId = next.detailId;
   state.detailTab = next.detailTab;
+  state.analyticsTab = next.analyticsTab;
+  state.analyticsMetricCode = next.analyticsMetricCode;
   if (next.organizationSlug && next.organizationSlug !== state.organizationSlug) {
     state.organizationSlug = next.organizationSlug;
     await loadWorkspace();
@@ -1034,7 +1190,7 @@ async function handleHistoryNavigation() {
 function renderRoute({ replaceHistory = false } = {}) {
   const definition = routeDefinitions[state.route];
   const routePanels = document.querySelectorAll(
-    "#dashboard > .keys-section, #dashboard > [data-route-panel]",
+    "#dashboard > .keys-section, #dashboard > .route-panel",
   );
   for (const panel of routePanels) panel.hidden = true;
 
@@ -1094,13 +1250,22 @@ function renderRoute({ replaceHistory = false } = {}) {
     "Page not found";
   document.title = `${title} · Lago`;
   if (replaceHistory || window.location.hash) {
-    window.history.replaceState(
-      { route: state.route },
-      "",
-      routePath(state.organizationSlug, state.route, state.detailId, state.detailTab),
-    );
+    window.history.replaceState({ route: state.route }, "", currentRoutePath());
   }
   activePanel?.scrollIntoView({ block: "start" });
+}
+
+function currentRoutePath() {
+  if (state.route === "analytics") {
+    const base = routePath(state.organizationSlug, "analytics");
+    if (state.analyticsMetricCode) {
+      return `${base}/usage/${encodeURIComponent(state.analyticsMetricCode)}`;
+    }
+    return state.analyticsTab === "revenue"
+      ? base
+      : `${base}/${encodeURIComponent(state.analyticsTab)}`;
+  }
+  return routePath(state.organizationSlug, state.route, state.detailId, state.detailTab);
 }
 
 function configureRouteHeading(panel, definition) {
@@ -1221,6 +1386,8 @@ function renderOperator(operator) {
   elements.openCreateQuote.hidden = !isAdmin;
   elements.openCreateDataExport.hidden = !isAdmin;
   elements.openCreateDunning.hidden = !isAdmin;
+  elements.openCreateMetric.hidden = !isAdmin;
+  elements.openCreateFeature.hidden = !isAdmin;
   elements.keysEmptyCopy.textContent = isAdmin
     ? "Create a credential when a trusted service needs billing API access."
     : "This organization has no active API credentials. Admin access is required to create one.";
@@ -1963,10 +2130,7 @@ function renderCustomerDetail() {
   }
 
   if (state.detailTab === "analytics") {
-    renderCustomerUnavailableTab(
-      "Analytics",
-      "Customer usage and revenue analytics stay in the original detail hierarchy while the bounded D1 read model is completed.",
-    );
+    void renderCustomerAnalytics(customer);
     return;
   }
   if (state.detailTab === "wallets") {
@@ -2002,13 +2166,932 @@ function renderCustomerDetail() {
   renderCustomerOverview(customer);
 }
 
-function handleEntityDetailNavigation(event) {
+async function renderCustomerAnalytics(customer) {
+  elements.customerDetailTabPanel.replaceChildren();
+  const loading = document.createElement("div");
+  loading.className = "table-loading compact";
+  loading.textContent = "Loading customer analytics…";
+  elements.customerDetailTabPanel.append(loading);
+  try {
+    const query = new URLSearchParams({ customer_external_id: customer.external_id });
+    const payload = await requestJson(`${endpoints.analytics}?${query}`);
+    if (state.detailTab !== "analytics" || state.detailId !== customer.external_id) return;
+    const analytics = payload.analytics;
+    elements.customerDetailTabPanel.replaceChildren(
+      createDetailSummary(
+        "Revenue",
+        formatMoney(analytics.revenue_streams.total_amount_minor, analytics.currency),
+        "Finalized invoices in the selected year",
+      ),
+      createDetailSummary(
+        "Usage",
+        formatMoney(analytics.usage.total_amount_minor, analytics.currency),
+        `${analytics.usage.total_events_count} metered events`,
+      ),
+      createDetailSummary(
+        "Prepaid credits",
+        formatMoney(analytics.prepaid_credits.balance_minor, analytics.currency),
+        `${analytics.prepaid_credits.wallets_count} active wallets`,
+      ),
+    );
+  } catch (error) {
+    elements.customerDetailTabPanel.replaceChildren();
+    const failed = document.createElement("p");
+    failed.className = "form-error inline-error";
+    failed.textContent = errorMessage(error);
+    elements.customerDetailTabPanel.append(failed);
+  }
+}
+
+function selectAnalyticsTab(event) {
+  state.analyticsTab = event.currentTarget.dataset.analyticsTab;
+  state.analyticsMetricCode = null;
+  window.history.pushState(
+    { route: "analytics", analyticsTab: state.analyticsTab },
+    "",
+    `${routePath(state.organizationSlug, "analytics")}/${encodeURIComponent(state.analyticsTab)}`,
+  );
+  renderAnalytics(state.analytics);
+}
+
+function renderAnalytics(analytics) {
+  state.analytics = analytics;
+  elements.analyticsLoading.hidden = Boolean(analytics);
+  elements.analyticsContent.hidden = !analytics;
+  if (!analytics) return;
+  if (!elements.analyticsFrom.value) elements.analyticsFrom.value = analytics.from;
+  if (!elements.analyticsTo.value) elements.analyticsTo.value = analytics.to;
+  for (const tab of elements.analyticsTabs) {
+    const selected = tab.dataset.analyticsTab === state.analyticsTab;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+  }
+  elements.analyticsCurrency.textContent = analytics.currency;
+  elements.analyticsSummary.replaceChildren();
+  elements.analyticsChart.replaceChildren();
+  elements.analyticsBreakdown.replaceChildren();
+  const tab = state.analyticsTab;
+  if (tab === "mrr") {
+    elements.analyticsChartEyebrow.textContent = "Monthly recurring revenue";
+    elements.analyticsChartTitle.textContent = "Current MRR";
+    appendMetricCards([
+      [
+        "MRR",
+        formatMoney(analytics.mrr.amount_minor, analytics.currency),
+        "Normalized recurring plan value",
+      ],
+      [
+        "Subscriptions",
+        String(analytics.mrr.subscriptions_count),
+        "Active and past-due subscriptions",
+      ],
+    ]);
+    renderBarChart(
+      [{ period: "Current", amount_minor: analytics.mrr.amount_minor }],
+      analytics.currency,
+    );
+    renderBreakdown(
+      analytics.mrr.plan_breakdown?.length
+        ? analytics.mrr.plan_breakdown.map((plan) => [
+            `${safeText(plan.name, plan.code)} (${plan.code})`,
+            `${formatMoney(plan.amount_minor, analytics.currency)} · ${plan.subscriptions_count} subscriptions`,
+          ])
+        : [["Active recurring subscriptions", analytics.mrr.subscriptions_count]],
+    );
+    return;
+  }
+  if (tab === "usage") {
+    elements.analyticsChartEyebrow.textContent = "Usage";
+    elements.analyticsChartTitle.textContent = state.analyticsMetricCode
+      ? `${state.analyticsMetricCode} usage over time`
+      : "Metered usage over time";
+    appendMetricCards([
+      [
+        "Usage revenue",
+        formatMoney(analytics.usage.total_amount_minor, analytics.currency),
+        "Daily rated usage",
+      ],
+      ["Units", analytics.usage.total_units, "Aggregated billable units"],
+      ["Events", String(analytics.usage.total_events_count), "Metered event count"],
+    ]);
+    renderBarChart(analytics.usage.daily, analytics.currency);
+    renderBreakdown(
+      analytics.usage.billable_metrics.map((metric) => [
+        metric.code,
+        `${formatMoney(metric.amount_minor, analytics.currency)} · ${metric.units} units`,
+        metric.code,
+      ]),
+    );
+    return;
+  }
+  if (tab === "credits") {
+    elements.analyticsChartEyebrow.textContent = "Prepaid credits";
+    elements.analyticsChartTitle.textContent = "Credit movement over time";
+    appendMetricCards([
+      [
+        "Available balance",
+        formatMoney(analytics.prepaid_credits.balance_minor, analytics.currency),
+        "Across active wallets",
+      ],
+      [
+        "Consumed",
+        formatMoney(analytics.prepaid_credits.consumed_minor, analytics.currency),
+        "Lifetime wallet consumption",
+      ],
+      ["Wallets", String(analytics.prepaid_credits.wallets_count), "Active wallets"],
+    ]);
+    renderBarChart(
+      analytics.prepaid_credits.monthly.map((point) => ({
+        period: point.period,
+        amount_minor: point.granted_minor + point.purchased_minor,
+      })),
+      analytics.currency,
+    );
+    renderBreakdown(
+      analytics.prepaid_credits.monthly.map((point) => [
+        point.period,
+        `${formatMoney(point.granted_minor + point.purchased_minor, analytics.currency)} funded · ${formatMoney(point.consumed_minor, analytics.currency)} consumed`,
+      ]),
+    );
+    return;
+  }
+  if (tab === "invoices") {
+    elements.analyticsChartEyebrow.textContent = "Invoices";
+    elements.analyticsChartTitle.textContent = "Invoice value by status";
+    appendMetricCards([
+      [
+        "Invoice value",
+        formatMoney(analytics.invoices.total_amount_minor, analytics.currency),
+        "All invoices in range",
+      ],
+      ["Invoices", String(analytics.invoices.total_count), "Documents in range"],
+    ]);
+    renderBarChart(
+      analytics.invoices.breakdown.map((item) => ({
+        period: `${item.status} · ${item.payment_status}`,
+        amount_minor: item.amount_minor,
+      })),
+      analytics.currency,
+    );
+    renderBreakdown([
+      ...(analytics.invoices.collection_breakdown ?? []).map((item) => [
+        humanize(item.status),
+        `${formatMoney(item.amount_minor, analytics.currency)} · ${item.invoice_count} invoices`,
+      ]),
+      ...analytics.invoices.breakdown.map((item) => [
+        `${humanize(item.status)} · ${humanize(item.payment_status)}`,
+        `${formatMoney(item.amount_minor, analytics.currency)} · ${item.invoice_count} invoices`,
+      ]),
+    ]);
+    return;
+  }
+  elements.analyticsChartEyebrow.textContent = "Revenue";
+  elements.analyticsChartTitle.textContent = "Revenue streams over time";
+  appendMetricCards([
+    [
+      "Revenue",
+      formatMoney(analytics.revenue_streams.total_amount_minor, analytics.currency),
+      "Finalized invoice value",
+    ],
+    [
+      "Streams",
+      String(analytics.revenue_streams.breakdown.length),
+      "Subscription and one-off revenue",
+    ],
+  ]);
+  renderBarChart(analytics.revenue_streams.monthly, analytics.currency);
+  renderBreakdown([
+    ...analytics.revenue_streams.breakdown.map((item) => [
+      humanize(item.stream),
+      `${formatMoney(item.amount_minor, analytics.currency)} · ${item.invoice_count} invoices`,
+    ]),
+    ...(analytics.revenue_streams.plan_breakdown ?? []).map((item) => [
+      `Plan · ${safeText(item.name, item.code)}`,
+      `${formatMoney(item.amount_minor, analytics.currency)} · ${item.invoice_count} invoices`,
+    ]),
+    ...(analytics.revenue_streams.customer_breakdown ?? []).map((item) => [
+      `Customer · ${safeText(item.name, item.code)}`,
+      `${formatMoney(item.amount_minor, analytics.currency)} · ${item.invoice_count} invoices`,
+    ]),
+  ]);
+}
+
+function appendMetricCards(cards) {
+  for (const [label, value, copy] of cards) {
+    const card = document.createElement("article");
+    card.className = "metric-card";
+    const title = document.createElement("p");
+    title.textContent = label;
+    const amount = document.createElement("strong");
+    amount.textContent = value;
+    const detail = document.createElement("small");
+    detail.textContent = copy;
+    card.append(title, amount, detail);
+    elements.analyticsSummary.append(card);
+  }
+}
+
+function renderBarChart(points, currency) {
+  const normalized = Array.isArray(points) ? points : [];
+  if (normalized.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "chart-empty";
+    empty.textContent = "No data is available for this range.";
+    elements.analyticsChart.append(empty);
+    return;
+  }
+  const maximum = Math.max(1, ...normalized.map((point) => Number(point.amount_minor) || 0));
+  for (const point of normalized.slice(-24)) {
+    const item = document.createElement("div");
+    item.className = "bar-chart-item";
+    const value = document.createElement("span");
+    value.className = "bar-chart-value";
+    value.textContent = formatMoney(point.amount_minor, currency);
+    const bar = document.createElement("i");
+    bar.style.setProperty(
+      "--bar-height",
+      `${Math.max(3, ((Number(point.amount_minor) || 0) / maximum) * 100)}%`,
+    );
+    const label = document.createElement("small");
+    label.textContent = point.period;
+    item.append(value, bar, label);
+    elements.analyticsChart.append(item);
+  }
+}
+
+function renderBreakdown(rows) {
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "chart-empty";
+    empty.textContent = "No breakdown is available for this range.";
+    elements.analyticsBreakdown.append(empty);
+    return;
+  }
+  for (const [label, value, metricCode] of rows) {
+    const row = document.createElement("div");
+    const term = metricCode ? document.createElement("button") : document.createElement("strong");
+    term.textContent = label;
+    if (metricCode) {
+      term.type = "button";
+      term.className = "analytics-drilldown";
+      term.addEventListener("click", () => navigateToUsageMetric(metricCode));
+    }
+    const description = document.createElement("span");
+    description.textContent = String(value);
+    row.append(term, description);
+    elements.analyticsBreakdown.append(row);
+  }
+}
+
+async function navigateToUsageMetric(metricCode) {
+  state.analyticsTab = "usage";
+  state.analyticsMetricCode = metricCode;
+  window.history.pushState(
+    { route: "analytics", analyticsTab: "usage", analyticsMetricCode: metricCode },
+    "",
+    `${routePath(state.organizationSlug, "analytics")}/usage/${encodeURIComponent(metricCode)}`,
+  );
+  await refreshAnalytics();
+}
+
+async function refreshAnalytics() {
+  setBusy(elements.refreshAnalytics, true, "Loading…");
+  try {
+    const query = new URLSearchParams({
+      from: elements.analyticsFrom.value,
+      to: elements.analyticsTo.value,
+    });
+    if (state.analyticsMetricCode) query.set("billable_metric_code", state.analyticsMetricCode);
+    const payload = await requestJson(`${endpoints.analytics}?${query}`);
+    renderAnalytics(payload.analytics);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  } finally {
+    setBusy(elements.refreshAnalytics, false, "Apply");
+  }
+}
+
+function renderForecasts(forecast) {
+  state.forecast = forecast;
+  elements.forecastsLoading.hidden = Boolean(forecast);
+  elements.forecastsContent.hidden = !forecast;
+  if (!forecast) return;
+  elements.forecastChart.replaceChildren();
+  elements.forecastTableBody.replaceChildren();
+  const maximum = Math.max(
+    1,
+    ...forecast.projected_months.flatMap((point) => [
+      point.optimistic_amount_minor,
+      point.realistic_amount_minor,
+      point.conservative_amount_minor,
+    ]),
+  );
+  for (const point of forecast.projected_months) {
+    const group = document.createElement("div");
+    group.className = "forecast-bar-group";
+    for (const [scenario, value] of [
+      ["optimistic", point.optimistic_amount_minor],
+      ["realistic", point.realistic_amount_minor],
+      ["conservative", point.conservative_amount_minor],
+    ]) {
+      const bar = document.createElement("i");
+      bar.className = `forecast-bar ${scenario}`;
+      bar.style.setProperty("--bar-height", `${Math.max(3, (value / maximum) * 100)}%`);
+      bar.title = `${humanize(scenario)}: ${formatMoney(value, forecast.currency)}`;
+      group.append(bar);
+    }
+    const label = document.createElement("small");
+    label.textContent = point.period;
+    group.append(label);
+    elements.forecastChart.append(group);
+
+    const row = document.createElement("tr");
+    for (const value of [
+      point.period,
+      formatMoney(point.optimistic_amount_minor, forecast.currency),
+      formatMoney(point.realistic_amount_minor, forecast.currency),
+      formatMoney(point.conservative_amount_minor, forecast.currency),
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    elements.forecastTableBody.append(row);
+  }
+  elements.forecastMethod.textContent = `Method: ${forecast.methodology}. Generated ${formatDate(forecast.generated_at)}.`;
+}
+
+async function refreshForecasts() {
+  elements.forecastsLoading.hidden = false;
+  elements.forecastsContent.hidden = true;
+  try {
+    const payload = await requestJson(
+      `${endpoints.forecasts}?months=${elements.forecastMonths.value}`,
+    );
+    renderForecasts(payload.forecast);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+function renderBillableMetrics(metrics = state.billableMetrics) {
+  if (metrics !== state.billableMetrics)
+    state.billableMetrics = Array.isArray(metrics) ? metrics : [];
+  const search = elements.metricSearch.value.trim().toLowerCase();
+  const visible = state.billableMetrics.filter((metric) =>
+    `${metric.name ?? ""} ${metric.code ?? ""}`.toLowerCase().includes(search),
+  );
+  elements.metricsTableBody.replaceChildren();
+  elements.metricsLoading.hidden = true;
+  elements.metricsEmpty.hidden = visible.length !== 0;
+  elements.metricsTableShell.hidden = visible.length === 0;
+  for (const metric of visible) {
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("td");
+    const name = document.createElement("span");
+    name.className = "key-name";
+    name.textContent = safeText(metric.name, "Unnamed metric");
+    const code = document.createElement("span");
+    code.className = "key-id";
+    code.textContent = metric.code;
+    nameCell.append(name, code);
+    const actionCell = catalogActions("metric", metric.code);
+    for (const value of [
+      humanize(metric.aggregation_type),
+      safeText(metric.field_name, "—"),
+      metric.recurring ? "Yes" : "No",
+      formatDate(metric.created_at),
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    row.prepend(nameCell);
+    row.append(actionCell);
+    elements.metricsTableBody.append(row);
+  }
+  decorateEntityRows(elements.metricsTableBody, visible, "billable-metrics");
+}
+
+function renderFeatures(features = state.features) {
+  if (features !== state.features) state.features = Array.isArray(features) ? features : [];
+  const search = elements.featureSearch.value.trim().toLowerCase();
+  const visible = state.features.filter((feature) =>
+    `${feature.name ?? ""} ${feature.code ?? ""}`.toLowerCase().includes(search),
+  );
+  elements.featuresTableBody.replaceChildren();
+  elements.featuresLoading.hidden = true;
+  elements.featuresEmpty.hidden = visible.length !== 0;
+  elements.featuresTableShell.hidden = visible.length === 0;
+  for (const feature of visible) {
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("td");
+    const name = document.createElement("span");
+    name.className = "key-name";
+    name.textContent = safeText(feature.name, "Unnamed feature");
+    const code = document.createElement("span");
+    code.className = "key-id";
+    code.textContent = feature.code;
+    nameCell.append(name, code);
+    row.append(nameCell);
+    for (const value of [
+      feature.subscriptions_count,
+      feature.plans_count,
+      formatDate(feature.created_at),
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = String(value ?? 0);
+      row.append(cell);
+    }
+    row.append(catalogActions("feature", feature.lago_id));
+    elements.featuresTableBody.append(row);
+  }
+  decorateEntityRows(elements.featuresTableBody, visible, "features");
+}
+
+function catalogActions(kind, identifier) {
+  const cell = document.createElement("td");
+  cell.className = "actions-column";
+  if (state.role !== "admin") {
+    cell.textContent = "Read only";
+    cell.classList.add("muted");
+    return cell;
+  }
+  const actions = [
+    ["Edit", "edit", false],
+    ...(kind === "metric" ? [["Duplicate", "duplicate", false]] : []),
+    ["Delete", "delete", true],
+  ];
+  for (const [label, action, danger] of actions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = danger ? "row-action danger" : "row-action";
+    button.dataset.catalogKind = kind;
+    button.dataset.catalogAction = action;
+    button.dataset.catalogId = identifier;
+    button.textContent = label;
+    cell.append(button);
+  }
+  return cell;
+}
+
+async function handleMetricAction(event) {
+  const button = event.target.closest("button[data-catalog-kind='metric']");
+  if (!button || state.role !== "admin") return;
+  const metric = state.billableMetrics.find((item) => item.code === button.dataset.catalogId);
+  if (!metric) return;
+  if (button.dataset.catalogAction === "edit") openEditMetricDialog(metric);
+  else if (button.dataset.catalogAction === "duplicate") openDuplicateMetricDialog(metric);
+  else openCatalogDeletion("metric", metric.code, safeText(metric.name, metric.code));
+}
+
+async function handleFeatureAction(event) {
+  const button = event.target.closest("button[data-catalog-kind='feature']");
+  if (!button || state.role !== "admin") return;
+  const feature = state.features.find((item) => item.lago_id === button.dataset.catalogId);
+  if (!feature) return;
+  if (button.dataset.catalogAction === "delete") {
+    openCatalogDeletion("feature", feature.lago_id, safeText(feature.name, feature.code));
+    return;
+  }
+  try {
+    const payload = await requestJson(featureEndpoint(feature.lago_id));
+    Object.assign(feature, payload.feature);
+    openEditFeatureDialog(feature);
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+function openCreateMetricDialog() {
+  state.metricFormMode = "create";
+  state.selectedMetricCode = null;
+  elements.metricForm.reset();
+  elements.metricCode.disabled = false;
+  elements.metricAggregation.disabled = false;
+  elements.metricFormTitle.textContent = "Create billable metric";
+  elements.submitMetricForm.textContent = "Create metric";
+  elements.metricFormError.hidden = true;
+  elements.metricFormDialog.showModal();
+  elements.metricName.focus();
+}
+
+function openEditMetricDialog(metric) {
+  state.metricFormMode = "edit";
+  state.selectedMetricCode = metric.code;
+  elements.metricName.value = safeText(metric.name, "");
+  elements.metricCode.value = metric.code;
+  elements.metricCode.disabled = true;
+  elements.metricAggregation.value = metric.aggregation_type;
+  elements.metricAggregation.disabled = true;
+  elements.metricField.value = safeText(metric.field_name, "");
+  elements.metricDescription.value = safeText(metric.description, "");
+  elements.metricExpression.value = safeText(metric.expression, "");
+  elements.metricRecurring.checked = Boolean(metric.recurring);
+  elements.metricFormTitle.textContent = "Edit billable metric";
+  elements.submitMetricForm.textContent = "Save metric";
+  elements.metricFormError.hidden = true;
+  elements.metricFormDialog.showModal();
+}
+
+function openDuplicateMetricDialog(metric) {
+  state.metricFormMode = "create";
+  state.selectedMetricCode = null;
+  elements.metricName.value = `${safeText(metric.name, metric.code)} copy`;
+  elements.metricCode.value = `${metric.code}_copy`;
+  elements.metricCode.disabled = false;
+  elements.metricAggregation.value = metric.aggregation_type;
+  elements.metricAggregation.disabled = false;
+  elements.metricField.value = safeText(metric.field_name, "");
+  elements.metricDescription.value = safeText(metric.description, "");
+  elements.metricExpression.value = safeText(metric.expression, "");
+  elements.metricRecurring.checked = Boolean(metric.recurring);
+  elements.metricFormTitle.textContent = "Duplicate billable metric";
+  elements.submitMetricForm.textContent = "Create metric";
+  elements.metricFormError.hidden = true;
+  elements.metricFormDialog.showModal();
+  elements.metricCode.focus();
+  elements.metricCode.select();
+}
+
+async function submitMetricForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.metricFormDialog.close();
+  if (!elements.metricForm.reportValidity()) return;
+  const create = state.metricFormMode === "create";
+  setBusy(elements.submitMetricForm, true, create ? "Creating…" : "Saving…");
+  try {
+    await requestJson(
+      create ? endpoints.billableMetrics : metricEndpoint(state.selectedMetricCode),
+      {
+        method: create ? "POST" : "PUT",
+        body: {
+          billable_metric: {
+            name: elements.metricName.value.trim(),
+            code: elements.metricCode.value.trim(),
+            description: optionalFormValue(elements.metricDescription.value),
+            aggregation_type: elements.metricAggregation.value,
+            field_name: optionalFormValue(elements.metricField.value),
+            expression: optionalFormValue(elements.metricExpression.value),
+            recurring: elements.metricRecurring.checked,
+          },
+        },
+      },
+    );
+    elements.metricFormDialog.close();
+    await refreshBillableMetrics();
+  } catch (error) {
+    elements.metricFormError.textContent = errorMessage(error);
+    elements.metricFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitMetricForm, false, create ? "Create metric" : "Save metric");
+  }
+}
+
+function openCreateFeatureDialog() {
+  state.featureFormMode = "create";
+  state.selectedFeatureId = null;
+  elements.featureForm.reset();
+  elements.featureCode.disabled = false;
+  elements.featurePrivileges.replaceChildren();
+  elements.featureFormTitle.textContent = "Create feature";
+  elements.submitFeatureForm.textContent = "Create feature";
+  elements.featureFormError.hidden = true;
+  elements.featureFormDialog.showModal();
+  elements.featureName.focus();
+}
+
+function openEditFeatureDialog(feature) {
+  state.featureFormMode = "edit";
+  state.selectedFeatureId = feature.lago_id;
+  elements.featureName.value = safeText(feature.name, "");
+  elements.featureCode.value = feature.code;
+  elements.featureCode.disabled = true;
+  elements.featureDescription.value = safeText(feature.description, "");
+  elements.featurePrivileges.replaceChildren();
+  for (const privilege of feature.privileges ?? []) addPrivilegeEditor(privilege);
+  elements.featureFormTitle.textContent = "Edit feature";
+  elements.submitFeatureForm.textContent = "Save feature";
+  elements.featureFormError.hidden = true;
+  elements.featureFormDialog.showModal();
+}
+
+function addPrivilegeEditor(privilege = {}) {
+  const editor = document.createElement("fieldset");
+  editor.className = "privilege-row";
+  if (privilege.lago_id) editor.dataset.privilegeId = privilege.lago_id;
+  const legend = document.createElement("legend");
+  legend.textContent = privilege.name || "New privilege";
+  const name = labeledInput("Name", "text", privilege.name);
+  name.input.dataset.privilegeField = "name";
+  const code = labeledInput("Code", "text", privilege.code);
+  code.input.dataset.privilegeField = "code";
+  if (privilege.lago_id) code.input.disabled = true;
+  const typeLabel = document.createElement("label");
+  typeLabel.textContent = "Value type";
+  const type = document.createElement("select");
+  type.dataset.privilegeField = "value_type";
+  for (const value of ["boolean", "integer", "string", "select"]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = humanize(value);
+    type.append(option);
+  }
+  type.value = privilege.value_type || "boolean";
+  if (privilege.lago_id) type.disabled = true;
+  typeLabel.append(type);
+  const options = labeledInput(
+    "Select options (comma separated)",
+    "text",
+    privilege.config?.select_options?.join(", ") ?? "",
+  );
+  options.label.className = "privilege-options";
+  options.input.dataset.privilegeField = "options";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "text-button danger";
+  remove.dataset.removePrivilege = "1";
+  remove.textContent = "Remove";
+  editor.append(legend, name.label, code.label, typeLabel, options.label, remove);
+  elements.featurePrivileges.append(editor);
+}
+
+function labeledInput(labelText, type, value = "") {
+  const label = document.createElement("label");
+  label.textContent = labelText;
+  const input = document.createElement("input");
+  input.type = type;
+  input.value = safeText(value, "");
+  label.append(input);
+  return { label, input };
+}
+
+function removePrivilegeEditor(event) {
+  const button = event.target.closest("button[data-remove-privilege]");
+  button?.closest(".privilege-row")?.remove();
+}
+
+async function submitFeatureForm(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") return elements.featureFormDialog.close();
+  if (!elements.featureForm.reportValidity()) return;
+  const privileges = Array.from(elements.featurePrivileges.querySelectorAll(".privilege-row")).map(
+    (row) => {
+      const valueType = row.querySelector("[data-privilege-field='value_type']").value;
+      const options = row
+        .querySelector("[data-privilege-field='options']")
+        .value.split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      return {
+        ...(row.dataset.privilegeId ? { id: row.dataset.privilegeId } : {}),
+        name: optionalFormValue(row.querySelector("[data-privilege-field='name']").value),
+        code: row.querySelector("[data-privilege-field='code']").value.trim(),
+        value_type: valueType,
+        ...(valueType === "select" ? { config: { select_options: options } } : {}),
+      };
+    },
+  );
+  const create = state.featureFormMode === "create";
+  setBusy(elements.submitFeatureForm, true, create ? "Creating…" : "Saving…");
+  try {
+    await requestJson(create ? endpoints.features : featureEndpoint(state.selectedFeatureId), {
+      method: create ? "POST" : "PUT",
+      body: {
+        feature: {
+          name: optionalFormValue(elements.featureName.value),
+          code: elements.featureCode.value.trim(),
+          description: optionalFormValue(elements.featureDescription.value),
+          privileges,
+        },
+      },
+    });
+    elements.featureFormDialog.close();
+    await refreshFeatures();
+  } catch (error) {
+    elements.featureFormError.textContent = errorMessage(error);
+    elements.featureFormError.hidden = false;
+  } finally {
+    setBusy(elements.submitFeatureForm, false, create ? "Create feature" : "Save feature");
+  }
+}
+
+function openCatalogDeletion(kind, identifier, name) {
+  state.confirmMode = `delete-${kind}`;
+  if (kind === "metric") state.selectedMetricCode = identifier;
+  else state.selectedFeatureId = identifier;
+  elements.confirmError.hidden = true;
+  elements.confirmTitle.textContent = `Delete ${kind}?`;
+  elements.confirmCopy.textContent = `Delete “${name}”? This is blocked while the catalog item is in use.`;
+  elements.confirmAction.textContent = `Delete ${kind}`;
+  elements.confirmDialog.showModal();
+}
+
+function renderAiHistory(conversations) {
+  state.aiConversations = Array.isArray(conversations) ? conversations : [];
+  elements.aiHistory.replaceChildren();
+  for (const conversation of state.aiConversations) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.aiConversation = conversation.lago_id;
+    button.classList.toggle("active", conversation.lago_id === state.activeAiConversationId);
+    const title = document.createElement("strong");
+    title.textContent = conversation.title;
+    const date = document.createElement("small");
+    date.textContent = formatDate(conversation.updated_at);
+    button.append(title, date);
+    elements.aiHistory.append(button);
+  }
+}
+
+function openAiPanel() {
+  document.querySelector(".app-shell").classList.add("ai-open");
+  elements.aiPanel.hidden = false;
+  elements.openAiPanel.setAttribute("aria-expanded", "true");
+  elements.aiPrompt.focus();
+}
+
+function closeAiPanel() {
+  document.querySelector(".app-shell").classList.remove("ai-open");
+  elements.aiPanel.hidden = true;
+  elements.openAiPanel.setAttribute("aria-expanded", "false");
+}
+
+async function selectAiConversation(event) {
+  const button = event.target.closest("button[data-ai-conversation]");
+  if (!button) return;
+  try {
+    const payload = await requestJson(aiConversationEndpoint(button.dataset.aiConversation));
+    state.activeAiConversationId = payload.conversation.lago_id;
+    state.aiMessages = payload.conversation.messages ?? [];
+    renderAiMessages();
+    renderAiHistory(state.aiConversations);
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+function renderAiMessages() {
+  elements.aiMessages.replaceChildren();
+  if (state.aiMessages.length === 0) {
+    const welcome = document.createElement("div");
+    welcome.className = "ai-welcome";
+    const title = document.createElement("strong");
+    title.textContent = "Ask about your billing operation";
+    const copy = document.createElement("p");
+    copy.textContent = "I can explain tenant-scoped totals and suggest read-only follow-ups.";
+    welcome.append(title, copy);
+    elements.aiMessages.append(welcome);
+    return;
+  }
+  for (const message of state.aiMessages) appendAiMessage(message.role, message.content);
+  elements.aiMessages.scrollTop = elements.aiMessages.scrollHeight;
+}
+
+function appendAiMessage(role, content) {
+  const message = document.createElement("div");
+  message.className = `ai-message ${role}`;
+  const label = document.createElement("strong");
+  label.textContent = role === "assistant" ? "Lago Assistant" : "You";
+  const copy = document.createElement("p");
+  copy.textContent = content;
+  message.append(label, copy);
+  elements.aiMessages.append(message);
+  return copy;
+}
+
+function useAiShortcut(event) {
+  const button = event.target.closest("button[data-ai-shortcut]");
+  if (!button) return;
+  elements.aiPrompt.value = button.dataset.aiShortcut;
+  elements.aiPrompt.focus();
+}
+
+async function submitAiMessage(event) {
+  event.preventDefault();
+  const content = elements.aiPrompt.value.trim();
+  if (!content) return;
+  setBusy(elements.sendAiMessage, true, "Thinking…");
+  elements.aiPrompt.value = "";
+  try {
+    if (!state.activeAiConversationId) {
+      const created = await requestJson(endpoints.aiConversations, {
+        method: "POST",
+        body: { conversation: { title: content.slice(0, 80) } },
+      });
+      state.activeAiConversationId = created.conversation.lago_id;
+      state.aiConversations.unshift(created.conversation);
+    }
+    state.aiMessages.push({ role: "user", content });
+    appendAiMessage("user", content);
+    const assistantCopy = appendAiMessage("assistant", "");
+    const response = await fetch(aiMessagesEndpoint(state.activeAiConversationId), {
+      method: "POST",
+      headers: operatorHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }),
+      body: JSON.stringify({ message: { content } }),
+    });
+    if (!response.ok) throw await apiErrorFromResponse(response);
+    assistantCopy.textContent = await readAiStream(response, assistantCopy);
+    state.aiMessages.push({ role: "assistant", content: assistantCopy.textContent });
+    const history = await requestJson(`${endpoints.aiConversations}?limit=3`);
+    renderAiHistory(history.conversations);
+  } catch (error) {
+    showPageError(errorMessage(error));
+  } finally {
+    setBusy(elements.sendAiMessage, false, "Send");
+  }
+}
+
+async function readAiStream(response, target) {
+  if (!response.body) return "The assistant returned an empty response.";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split(/\r?\n/);
+    buffer = done ? "" : (lines.pop() ?? "");
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(data);
+        if (typeof parsed.response === "string") content += parsed.response;
+      } catch {
+        continue;
+      }
+    }
+    target.textContent = content;
+    elements.aiMessages.scrollTop = elements.aiMessages.scrollHeight;
+    if (done) break;
+  }
+  return content || "The assistant returned an empty response.";
+}
+
+function operatorHeaders(values = {}) {
+  const headers = new Headers(values);
+  headers.set("X-Operator-Request", "1");
+  if (state.organizationSlug) headers.set("X-Operator-Organization", state.organizationSlug);
+  return headers;
+}
+
+async function apiErrorFromResponse(response) {
+  try {
+    const payload = await response.json();
+    return new ApiRequestError(response.status, payload.code, payload.message);
+  } catch {
+    return new ApiRequestError(response.status, "invalid_response", "Invalid response");
+  }
+}
+
+function privilegeSummary(privileges) {
+  if (!Array.isArray(privileges) || privileges.length === 0) return "No privileges";
+  return privileges
+    .map((privilege) => `${privilege.code} (${humanize(privilege.value_type)})`)
+    .join(", ");
+}
+
+function humanize(value) {
+  return safeText(value, "—")
+    .replaceAll("_", " ")
+    .replace(/^./, (letter) => letter.toUpperCase());
+}
+
+async function handleEntityDetailNavigation(event) {
   const link = event.target.closest("a[data-entity-detail-route]");
   if (!link) return;
   event.preventDefault();
   const route = link.dataset.entityDetailRoute;
   const identifier = link.dataset.entityDetailId;
   if (!entityDetailDefinitions[route] || !identifier) return;
+  if (route === "features") {
+    try {
+      const payload = await requestJson(featureEndpoint(identifier));
+      const feature = state.features.find((item) => item.lago_id === identifier);
+      if (feature) Object.assign(feature, payload.feature);
+    } catch (error) {
+      showPageError(errorMessage(error));
+      return;
+    }
+  }
+  if (route === "features" || route === "billable-metrics") {
+    try {
+      const item =
+        route === "features"
+          ? state.features.find((candidate) => candidate.lago_id === identifier)
+          : state.billableMetrics.find((candidate) => candidate.code === identifier);
+      const payload = await requestJson(catalogActivityEndpoint(route, identifier));
+      if (item) item.activity_logs = payload.activity_logs ?? [];
+    } catch (error) {
+      showPageError(errorMessage(error));
+      return;
+    }
+  }
   state.route = route;
   state.detailId = identifier;
   state.detailTab = "overview";
@@ -2019,6 +3102,21 @@ function handleEntityDetailNavigation(event) {
   );
   renderRoute();
   closeMobileNavigation();
+}
+
+async function hydrateSelectedCatalogDetail() {
+  if (!new Set(["features", "billable-metrics"]).has(state.route) || !state.detailId) return;
+  const item =
+    state.route === "features"
+      ? state.features.find((candidate) => candidate.lago_id === state.detailId)
+      : state.billableMetrics.find((candidate) => candidate.code === state.detailId);
+  if (!item) return;
+  if (state.route === "features" && !Array.isArray(item.privileges)) {
+    const payload = await requestJson(featureEndpoint(state.detailId));
+    Object.assign(item, payload.feature);
+  }
+  const activityPayload = await requestJson(catalogActivityEndpoint(state.route, state.detailId));
+  item.activity_logs = activityPayload.activity_logs ?? [];
 }
 
 function findDetailEntity(definition, identifier) {
@@ -2075,6 +3173,16 @@ function detailValue(value) {
   if (Array.isArray(value)) return value.length > 0 ? value.join(", ") : "—";
   if (value === null || value === undefined || value === "") return "—";
   return String(value);
+}
+
+function activitySummary(logs) {
+  if (!Array.isArray(logs) || logs.length === 0) return "No recorded changes";
+  return logs
+    .slice(0, 6)
+    .map(
+      (log) => `${humanize(log.event_type.replaceAll(".", "_"))} · ${formatDate(log.occurred_at)}`,
+    )
+    .join("\n");
 }
 
 function decorateEntityRows(tableBody, items, route) {
@@ -2182,19 +3290,6 @@ function renderCustomerCollection(items, emptyText) {
     list.append(record);
   }
   elements.customerDetailTabPanel.append(list);
-}
-
-function renderCustomerUnavailableTab(titleText, copyText) {
-  const boundary = document.createElement("div");
-  boundary.className = "detail-empty detail-boundary";
-  const title = document.createElement("h2");
-  title.textContent = titleText;
-  const copy = document.createElement("p");
-  copy.textContent = copyText;
-  const safety = document.createElement("small");
-  safety.textContent = "No provider or external action is enabled from this state.";
-  boundary.append(title, copy, safety);
-  elements.customerDetailTabPanel.append(boundary);
 }
 
 function renderCustomerSettingsTab(customer) {
@@ -2618,10 +3713,11 @@ function handleFixedChargeAction(event) {
   if (button.dataset.action === "delete-fixed-charge") openFixedChargeDeletion(plan, fixed);
 }
 
-function openCreatePlanDialog() {
+async function openCreatePlanDialog() {
   state.planFormMode = "create";
   state.selectedPlanCode = null;
   elements.planForm.reset();
+  await renderPlanEntitlementEditors([]);
   elements.planCode.disabled = false;
   elements.planFormTitle.textContent = "Create plan";
   elements.planFormCopy.textContent = "Create a core recurring plan.";
@@ -2631,7 +3727,7 @@ function openCreatePlanDialog() {
   elements.planName.focus();
 }
 
-function openEditPlanDialog(plan) {
+async function openEditPlanDialog(plan) {
   state.planFormMode = "edit";
   state.selectedPlanCode = plan.code;
   elements.planName.value = formValue(plan.name);
@@ -2644,6 +3740,13 @@ function openEditPlanDialog(plan) {
   elements.planInvoiceName.value = formValue(plan.invoice_display_name);
   elements.planDescription.value = formValue(plan.description);
   elements.planPayAdvance.checked = plan.pay_in_advance === true;
+  try {
+    const payload = await requestJson(planEntitlementsEndpoint(plan.code));
+    await renderPlanEntitlementEditors(payload.entitlements ?? []);
+  } catch (error) {
+    showPageError(errorMessage(error));
+    return;
+  }
   elements.planFormTitle.textContent = "Edit plan";
   elements.planFormCopy.textContent = "Attached plans may accept only safe scalar changes.";
   elements.submitPlanForm.textContent = "Save plan";
@@ -2658,11 +3761,12 @@ async function submitPlanForm(event) {
   const create = state.planFormMode === "create";
   setBusy(elements.submitPlanForm, true, create ? "Creating…" : "Saving…");
   try {
+    const planCode = elements.planCode.value.trim();
     await requestJson(create ? endpoints.plans : planEndpoint(state.selectedPlanCode), {
       method: create ? "POST" : "PUT",
       body: {
         plan: {
-          code: elements.planCode.value.trim(),
+          code: planCode,
           name: elements.planName.value.trim(),
           invoice_display_name: optionalFormValue(elements.planInvoiceName.value),
           description: optionalFormValue(elements.planDescription.value),
@@ -2674,6 +3778,10 @@ async function submitPlanForm(event) {
         },
       },
     });
+    await requestJson(planEntitlementsEndpoint(planCode), {
+      method: "PUT",
+      body: { entitlements: collectPlanEntitlements() },
+    });
     elements.planFormDialog.close();
     await refreshPlans();
   } catch (error) {
@@ -2682,6 +3790,108 @@ async function submitPlanForm(event) {
   } finally {
     setBusy(elements.submitPlanForm, false, create ? "Create plan" : "Save plan");
   }
+}
+
+async function renderPlanEntitlementEditors(existing) {
+  const hydrated = await Promise.all(
+    state.features.map(async (feature) => {
+      if (Array.isArray(feature.privileges)) return feature;
+      const payload = await requestJson(featureEndpoint(feature.lago_id));
+      Object.assign(feature, payload.feature);
+      return feature;
+    }),
+  );
+  const current = new Map((existing ?? []).map((item) => [item.feature_code, item]));
+  elements.planEntitlements.replaceChildren();
+  elements.planEntitlementsEmpty.hidden = hydrated.length !== 0;
+  for (const feature of hydrated) {
+    const entitlement = current.get(feature.code);
+    const fieldset = document.createElement("fieldset");
+    fieldset.className = "plan-entitlement-row";
+    fieldset.dataset.featureCode = feature.code;
+    const toggleLabel = document.createElement("label");
+    toggleLabel.className = "checkbox-field";
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.checked = Boolean(entitlement);
+    toggle.dataset.entitlementToggle = "1";
+    const title = document.createElement("span");
+    title.textContent = `${safeText(feature.name, feature.code)} (${feature.code})`;
+    toggleLabel.append(toggle, title);
+    fieldset.append(toggleLabel);
+    const existingValues = new Map(
+      (entitlement?.privileges ?? []).map((privilege) => [
+        privilege.privilege_code,
+        privilege.value,
+      ]),
+    );
+    const values = document.createElement("div");
+    values.className = "entitlement-privilege-values";
+    values.hidden = !toggle.checked;
+    for (const privilege of feature.privileges ?? []) {
+      values.append(createEntitlementValueEditor(privilege, existingValues.get(privilege.code)));
+    }
+    toggle.addEventListener("change", () => {
+      values.hidden = !toggle.checked;
+    });
+    fieldset.append(values);
+    elements.planEntitlements.append(fieldset);
+  }
+}
+
+function createEntitlementValueEditor(privilege, existingValue) {
+  const label = document.createElement("label");
+  label.textContent = `${safeText(privilege.name, privilege.code)} (${privilege.code})`;
+  let input;
+  if (privilege.value_type === "boolean") {
+    input = document.createElement("select");
+    for (const value of ["true", "false"]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = humanize(value);
+      input.append(option);
+    }
+    input.value = String(existingValue ?? false);
+  } else if (privilege.value_type === "select") {
+    input = document.createElement("select");
+    for (const value of privilege.config?.select_options ?? []) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      input.append(option);
+    }
+    if (existingValue !== null && existingValue !== undefined) input.value = String(existingValue);
+  } else {
+    input = document.createElement("input");
+    input.type = privilege.value_type === "integer" ? "number" : "text";
+    if (input.type === "number") input.step = "1";
+    input.value =
+      existingValue === null || existingValue === undefined ? "" : String(existingValue);
+  }
+  input.dataset.entitlementPrivilegeCode = privilege.code;
+  input.dataset.entitlementValueType = privilege.value_type;
+  input.required = true;
+  label.append(input);
+  return label;
+}
+
+function collectPlanEntitlements() {
+  return Array.from(elements.planEntitlements.querySelectorAll(".plan-entitlement-row"))
+    .filter((row) => row.querySelector("[data-entitlement-toggle]").checked)
+    .map((row) => ({
+      feature_code: row.dataset.featureCode,
+      privileges: Array.from(row.querySelectorAll("[data-entitlement-privilege-code]")).map(
+        (input) => ({
+          privilege_code: input.dataset.entitlementPrivilegeCode,
+          value:
+            input.dataset.entitlementValueType === "boolean"
+              ? input.value === "true"
+              : input.dataset.entitlementValueType === "integer"
+                ? Number(input.value)
+                : input.value,
+        }),
+      ),
+    }));
 }
 
 function openCreateFixedChargeDialog() {
@@ -4208,6 +5418,27 @@ async function submitConfirmedAction(event) {
   }
 
   const mode = state.confirmMode;
+  if (mode === "delete-metric" || mode === "delete-feature") {
+    const metric = mode === "delete-metric";
+    const identifier = metric ? state.selectedMetricCode : state.selectedFeatureId;
+    if (!identifier) return elements.confirmDialog.close();
+    setBusy(elements.confirmAction, true, "Deleting…");
+    elements.confirmError.hidden = true;
+    try {
+      await requestJson(metric ? metricEndpoint(identifier) : featureEndpoint(identifier), {
+        method: "DELETE",
+      });
+      elements.confirmDialog.close();
+      if (metric) await refreshBillableMetrics();
+      else await refreshFeatures();
+    } catch (error) {
+      elements.confirmError.textContent = errorMessage(error);
+      elements.confirmError.hidden = false;
+    } finally {
+      setBusy(elements.confirmAction, false, metric ? "Delete metric" : "Delete feature");
+    }
+    return;
+  }
   if (mode === "terminate-section") {
     const section = state.sections.find(
       (candidate) => candidate.code === state.selectedSectionCode,
@@ -4594,6 +5825,26 @@ async function refreshDunningCampaigns() {
   }
 }
 
+async function refreshBillableMetrics() {
+  try {
+    const payload = await requestJson(endpoints.billableMetrics);
+    renderBillableMetrics(payload.billable_metrics);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
+async function refreshFeatures() {
+  try {
+    const payload = await requestJson(endpoints.features);
+    renderFeatures(payload.features);
+    hidePageError();
+  } catch (error) {
+    showPageError(errorMessage(error));
+  }
+}
+
 function revealOneTimeSecret(secret) {
   if (typeof secret !== "string" || !secret.startsWith("lago_")) {
     showPageError("The operation completed, but the one-time credential was not returned.");
@@ -4649,6 +5900,8 @@ function showClosedState(error) {
   }
   elements.workspaceName.textContent = "Access unavailable";
   elements.operatorBadge.hidden = true;
+  elements.aiRail.hidden = true;
+  elements.aiPanel.hidden = true;
   elements.loading.hidden = true;
   elements.dashboard.hidden = true;
   elements.closed.hidden = false;
@@ -4698,6 +5951,27 @@ function keyEndpoint(keyId) {
   return `${endpoints.apiKeys}/${encodeURIComponent(keyId)}`;
 }
 
+function metricEndpoint(code) {
+  return `${endpoints.billableMetrics}/${encodeURIComponent(code)}`;
+}
+
+function featureEndpoint(featureId) {
+  return `${endpoints.features}/${encodeURIComponent(featureId)}`;
+}
+
+function catalogActivityEndpoint(route, identifier) {
+  const base = route === "features" ? endpoints.features : endpoints.billableMetrics;
+  return `${base}/${encodeURIComponent(identifier)}/activity`;
+}
+
+function aiConversationEndpoint(conversationId) {
+  return `${endpoints.aiConversations}/${encodeURIComponent(conversationId)}`;
+}
+
+function aiMessagesEndpoint(conversationId) {
+  return `${aiConversationEndpoint(conversationId)}/messages`;
+}
+
 function dunningEndpoint(code) {
   return `${endpoints.dunningCampaigns}/${encodeURIComponent(code)}`;
 }
@@ -4724,6 +5998,10 @@ function appliedCouponEndpoint(applied) {
 
 function planEndpoint(code) {
   return `${endpoints.plans}/${encodeURIComponent(code)}`;
+}
+
+function planEntitlementsEndpoint(code) {
+  return `${planEndpoint(code)}/entitlements`;
 }
 
 function fixedChargesEndpoint(planCode) {

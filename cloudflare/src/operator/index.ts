@@ -13,6 +13,7 @@ import {
   voidCreditNote,
 } from "../api/credit-note-ledger";
 import { handleInvoiceCustomSectionRequest } from "../api/invoice-custom-sections";
+import { handleMeteredUsageRequest } from "../api/metered-usage";
 import {
   createOneOffInvoice,
   createSubscription,
@@ -41,11 +42,15 @@ import {
   authenticateOperatorAccess,
   type OperatorEnv,
 } from "./access";
+import { handleOperatorAiRequest } from "./ai";
+import { handleOperatorAnalyticsRequest } from "./analytics";
+import { handleOperatorFeaturesRequest } from "./features";
+import { handleOperatorProductParityRequest } from "./product-parity";
 
 export function createOperatorHandler(keySet?: JWTVerifyGetKey): ExportedHandler<OperatorEnv> {
   return {
-    async fetch(request: Request, env: OperatorEnv): Promise<Response> {
-      return handleOperatorRequest(request, env, keySet);
+    async fetch(request: Request, env: OperatorEnv, ctx: ExecutionContext): Promise<Response> {
+      return handleOperatorRequest(request, env, keySet, ctx);
     },
   };
 }
@@ -54,6 +59,7 @@ export async function handleOperatorRequest(
   request: Request,
   env: OperatorEnv,
   keySet?: JWTVerifyGetKey,
+  executionContext?: ExecutionContext,
 ): Promise<Response> {
   const requestId = request.headers.get("X-Request-Id")?.trim() || crypto.randomUUID();
   const url = new URL(request.url);
@@ -112,6 +118,87 @@ export async function handleOperatorRequest(
         },
         { requestId },
       );
+    }
+
+    if (
+      url.pathname === "/api/operator/v1/analytics" ||
+      url.pathname === "/api/operator/v1/forecasts"
+    ) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      const response = await handleOperatorAnalyticsRequest(
+        request,
+        env.BILLING_DB,
+        operator.organizationId,
+        requestId,
+      );
+      if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/billable-metrics(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      const parityResponse = await handleOperatorProductParityRequest(
+        request,
+        env.BILLING_DB,
+        operator.organizationId,
+        requestId,
+      );
+      if (parityResponse) return parityResponse;
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+      }
+      const auth: AuthContext = {
+        organizationId: operator.organizationId,
+        organizationExternalId: operator.organizationExternalId,
+        apiKeyId: `operator:${operator.membershipId}`,
+      };
+      const forwardedUrl = new URL(request.url);
+      forwardedUrl.pathname = forwardedUrl.pathname.replace(
+        "/api/operator/v1/billable-metrics",
+        "/api/v1/billable_metrics",
+      );
+      const response = await handleMeteredUsageRequest(
+        new Request(forwardedUrl, request),
+        env as unknown as Env,
+        auth,
+        requestId,
+      );
+      if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/features(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      const parityResponse = await handleOperatorProductParityRequest(
+        request,
+        env.BILLING_DB,
+        operator.organizationId,
+        requestId,
+      );
+      if (parityResponse) return parityResponse;
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+      }
+      const response = await handleOperatorFeaturesRequest(
+        request,
+        env.BILLING_DB,
+        operator.organizationId,
+        requestId,
+      );
+      if (response) return response;
+    }
+
+    if (/^\/api\/operator\/v1\/ai\/conversations(?:\/|$)/.test(url.pathname)) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") assertOperatorMutationRequest(request);
+      const response = await handleOperatorAiRequest(
+        request,
+        env,
+        operator,
+        requestId,
+        executionContext,
+      );
+      if (response) return response;
     }
 
     if (/^\/api\/operator\/v1\/api-keys(?:\/|$)/.test(url.pathname)) {
@@ -475,6 +562,15 @@ export async function handleOperatorRequest(
       if (request.method !== "GET") {
         assertOperatorAdmin(operator);
         assertOperatorMutationRequest(request);
+      }
+      const parityResponse = await handleOperatorProductParityRequest(
+        request,
+        env.BILLING_DB,
+        operator.organizationId,
+        requestId,
+      );
+      if (parityResponse) return parityResponse;
+      if (request.method !== "GET") {
         await assertOperatorPlanMutationPayload(request, url.pathname);
       }
       const auth: AuthContext = {

@@ -35,23 +35,23 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `* * * * *`                                                        | Worker scheduled handler  | Deterministic legacy-schedule dispatch and activity fanout         |
 | Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
 | Static Assets     | `operator-ui`                                                      | direct asset delivery     | Script-free operator migration shell and security headers          |
-| Worker            | `serp-dev-lago-operator` / `5666a5f4-4502-4d71-b2dc-0ac656048393`  | D1, DO, Workflow, Queue   | Access-protected synthetic-tenant operator BFF and Static Assets   |
+| Worker            | `serp-dev-lago-operator` / `4090c15d-ad57-4dc8-9bf4-fd99b85b663d`  | D1, DO, Workflow, Queue, Workers AI | Access-protected synthetic-tenant operator BFF and Static Assets   |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0072_operator_multi_organization_memberships.sql`.
+`0073_operator_product_parity.sql`.
 
 ## Operator Access rollout
 
-- `serp-dev-lago-operator` version `5666a5f4-4502-4d71-b2dc-0ac656048393` is deployed from
+- `serp-dev-lago-operator` version `4090c15d-ad57-4dc8-9bf4-fd99b85b663d` is deployed from
   `wrangler.operator.jsonc` with Access validation enabled, preview URLs disabled, the operator
-  Static Assets application, isolated D1, and the existing internal Durable Object, Workflow, and
-  Queue bindings. The API Worker remains outside the human Access application.
+  Static Assets application, isolated D1, Workers AI, and the existing internal Durable Object,
+  Workflow, and Queue bindings. The API Worker remains outside the human Access application.
 - The self-hosted Access application targets only the immutable `serp-dev-lago-operator` Worker,
   is hidden from the App Launcher, and uses a 24-hour application session. Its only policy is
   `Allow Lago operator development`, an Allow policy with one exact email include and no require or
   exclude rules. The application audience is stored as non-secret Worker configuration.
-- Migrations `0070_operator_access.sql` through
-  `0072_operator_multi_organization_memberships.sql` are applied. The authenticated Access identity
+- Migrations `0070_operator_access.sql` through `0073_operator_product_parity.sql` are applied. The
+  authenticated Access identity
   has one admin membership for the documented `synthetic-e2e-20260815-001` tenant and one viewer
   membership for the empty `serp-labs` synthetic organization. Memberships remain keyed by issuer
   plus SHA-256 subject and organization; no raw Access subject is stored.
@@ -62,6 +62,16 @@ Applied D1 migrations: `0001_foundation.sql` through
   token is not required for the completed dashboard-provisioned application and policy.
 
 ## Verified behavior
+
+- Operator version `4090c15d-ad57-4dc8-9bf4-fd99b85b663d` adds functional Analytics, Forecasts,
+  Billable metrics, Features/plan entitlements, and Lago Assistant surfaces. Only migration `0073`
+  was pending and applied; post-deploy inventory reports no pending migration, new product and AI
+  tables contain zero rows, and `PRAGMA foreign_key_check` returns none. Authenticated browser QA
+  loaded all four routes and the assistant shell for the synthetic admin membership. Fresh
+  unauthenticated root and session requests both received Access `302` before origin. The full local
+  gate passes 343 tests across 62 files, strict format/lint/type/generated checks, migration replay,
+  and both dry bundles. No production route, provider/payment action, customer message, secret, or
+  customer data changed.
 
 - Operator version `5666a5f4-4502-4d71-b2dc-0ac656048393` is fail-closed at the edge: a fresh
   unauthenticated request receives a Cloudflare Access `302` and no origin response. An authenticated

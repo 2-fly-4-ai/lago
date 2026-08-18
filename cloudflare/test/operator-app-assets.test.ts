@@ -22,6 +22,8 @@ describe("isolated operator app assets", () => {
     expect(operatorConfig).toContain('"database_id": "2f32f159-c269-46c6-a4dd-9e38477f5d25"');
     expect(operatorConfig).toContain('"name": "BILLING_ACCOUNTS"');
     expect(operatorConfig).toContain('"script_name": "serp-dev-lago-native"');
+    expect(operatorConfig).toContain('"binding": "AI"');
+    expect(operatorConfig).toContain('"@cf/zai-org/glm-4.7-flash"');
   });
 
   it("loads only same-origin static code under a restrictive browser policy", () => {
@@ -71,6 +73,11 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/webhook-endpoints",
       "/api/operator/v1/dunning-campaigns",
       "/api/operator/v1/payment-requests",
+      "/api/operator/v1/analytics",
+      "/api/operator/v1/forecasts",
+      "/api/operator/v1/billable-metrics",
+      "/api/operator/v1/features",
+      "/api/operator/v1/ai/conversations",
     ]) {
       expect(operatorScript).toContain(endpoint);
     }
@@ -80,6 +87,34 @@ describe("isolated operator app assets", () => {
     expect(operatorScript).not.toMatch(
       /localStorage|sessionStorage|indexedDB|document\.cookie|Authorization|\/graphql\b|innerHTML/i,
     );
+  });
+
+  it("implements the original report and catalog surfaces plus the right-side assistant", () => {
+    expect(operatorIndex).not.toContain('data-unavailable="true"');
+    for (const identifier of [
+      'id="analytics"',
+      'id="forecasts"',
+      'id="billable-metrics"',
+      'id="features"',
+      'id="ai-rail"',
+      'id="ai-panel"',
+    ]) {
+      expect(operatorIndex).toContain(identifier);
+    }
+    for (const tab of ["Revenue streams", "MRR", "Usage", "Prepaid credits", "Invoices"]) {
+      expect(operatorIndex).toContain(tab);
+    }
+    expect(operatorIndex).toContain("Optimistic");
+    expect(operatorIndex).toContain("Realistic");
+    expect(operatorIndex).toContain("Conservative");
+    expect(operatorScript).toContain("renderCustomerAnalytics");
+    expect(operatorScript).toContain("readAiStream");
+    expect(operatorScript).toContain("privilegeSummary");
+    expect(operatorScript).toContain("openDuplicateMetricDialog");
+    expect(operatorScript).toContain("catalogActivityEndpoint");
+    expect(operatorScript).toContain("planEntitlementsEndpoint");
+    expect(operatorScript).toContain("navigateToUsageMetric");
+    expect(operatorIndex).toContain('id="plan-entitlements"');
   });
 
   it("uses organization-slug routes, real history, and the retained Lago navigation hierarchy", () => {

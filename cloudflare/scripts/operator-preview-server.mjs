@@ -67,6 +67,75 @@ const customers = {
 };
 
 const primaryPreviewCollections = {
+  billable_metrics: [
+    {
+      lago_id: "metric-preview-api-calls",
+      code: "api_calls",
+      name: "API calls",
+      description: "Counts each billable API request",
+      aggregation_type: "count_agg",
+      field_name: null,
+      recurring: false,
+      expression: null,
+      created_at: "2026-07-12T00:00:00Z",
+    },
+    {
+      lago_id: "metric-preview-storage",
+      code: "storage_gb",
+      name: "Storage",
+      description: "Sums stored gigabytes",
+      aggregation_type: "sum_agg",
+      field_name: "gb",
+      recurring: true,
+      expression: null,
+      created_at: "2026-07-14T00:00:00Z",
+    },
+  ],
+  features: [
+    {
+      lago_id: "feature-preview-exports",
+      code: "data_exports",
+      name: "Data exports",
+      description: "Controls data export availability and formats",
+      subscriptions_count: 14,
+      plans_count: 2,
+      created_at: "2026-07-10T00:00:00Z",
+      privileges: [
+        {
+          lago_id: "priv-preview-enabled",
+          code: "enabled",
+          name: "Enabled",
+          value_type: "boolean",
+          config: {},
+        },
+        {
+          lago_id: "priv-preview-format",
+          code: "format",
+          name: "Format",
+          value_type: "select",
+          config: { select_options: ["csv", "json"] },
+        },
+      ],
+    },
+    {
+      lago_id: "feature-preview-seats",
+      code: "team_seats",
+      name: "Team seats",
+      description: "Controls the number of operator seats",
+      subscriptions_count: 8,
+      plans_count: 1,
+      created_at: "2026-07-16T00:00:00Z",
+      privileges: [
+        {
+          lago_id: "priv-preview-limit",
+          code: "limit",
+          name: "Seat limit",
+          value_type: "integer",
+          config: {},
+        },
+      ],
+    },
+  ],
   api_keys: [
     {
       id: "key-preview-primary",
@@ -275,7 +344,20 @@ const mimeTypes = {
 createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
   if (url.pathname.startsWith("/api/operator/v1/")) {
-    respondJson(response, previewApi(url.pathname, request.headers["x-operator-organization"]));
+    if (/\/ai\/conversations\/[^/]+\/messages$/.test(url.pathname)) {
+      response.writeHead(200, {
+        "Cache-Control": "no-store",
+        "Content-Type": "text/event-stream; charset=utf-8",
+      });
+      response.end(
+        'data: {"response":"Your synthetic billing workspace has stable recurring revenue, two active usage metrics, and no overdue invoice warnings."}\n\ndata: [DONE]\n\n',
+      );
+      return;
+    }
+    respondJson(
+      response,
+      previewApi(url.pathname, request.headers["x-operator-organization"], request.method),
+    );
     return;
   }
 
@@ -303,7 +385,7 @@ createServer(async (request, response) => {
   process.stdout.write(`Lago operator preview listening on http://127.0.0.1:${port}\n`);
 });
 
-function previewApi(pathname, requestedSlug) {
+function previewApi(pathname, requestedSlug, method = "GET") {
   if (typeof requestedSlug === "string" && requestedSlug && !organizations[requestedSlug]) {
     return {
       __status: 403,
@@ -380,6 +462,89 @@ function previewApi(pathname, requestedSlug) {
   if (pathname === "/api/operator/v1/customers") {
     return { customers: customers[slug], meta: { total_count: customers[slug].length } };
   }
+  if (pathname === "/api/operator/v1/analytics") {
+    return previewAnalytics(organization.currency);
+  }
+  if (pathname === "/api/operator/v1/forecasts") {
+    return previewForecast(organization.currency);
+  }
+  if (pathname === "/api/operator/v1/ai/conversations") {
+    return method === "POST"
+      ? {
+          conversation: {
+            lago_id: "conversation-preview-new",
+            title: "New conversation",
+            status: "active",
+            messages_count: 0,
+            created_at: "2026-08-18T00:00:00Z",
+            updated_at: "2026-08-18T00:00:00Z",
+            messages: [],
+          },
+        }
+      : { conversations: [] };
+  }
+  const activityMatch = pathname.match(
+    /^\/api\/operator\/v1\/(features|billable-metrics)\/([^/]+)\/activity$/,
+  );
+  if (activityMatch) {
+    return {
+      activity_logs: [
+        {
+          lago_id: `activity-preview-${activityMatch[2]}`,
+          event_type:
+            activityMatch[1] === "features" ? "feature.created" : "billable_metric.created",
+          version: 1,
+          payload: { synthetic: true },
+          occurred_at: "2026-07-10T00:00:00Z",
+        },
+      ],
+    };
+  }
+  const planEntitlementsMatch = pathname.match(
+    /^\/api\/operator\/v1\/plans\/([^/]+)\/entitlements$/,
+  );
+  if (planEntitlementsMatch) {
+    return {
+      plan_code: planEntitlementsMatch[1],
+      entitlements:
+        method === "PUT"
+          ? []
+          : [
+              {
+                lago_id: "entitlement-preview-exports",
+                feature_id: "feature-preview-exports",
+                feature_code: "data_exports",
+                feature_name: "Data exports",
+                privileges: [
+                  {
+                    privilege_id: "priv-preview-enabled",
+                    privilege_code: "enabled",
+                    privilege_name: "Enabled",
+                    value_type: "boolean",
+                    config: {},
+                    value: true,
+                  },
+                  {
+                    privilege_id: "priv-preview-format",
+                    privilege_code: "format",
+                    privilege_name: "Format",
+                    value_type: "select",
+                    config: { select_options: ["csv", "json"] },
+                    value: "csv",
+                  },
+                ],
+              },
+            ],
+    };
+  }
+  const featureMatch = pathname.match(/^\/api\/operator\/v1\/features\/([^/]+)$/);
+  if (featureMatch) {
+    return {
+      feature:
+        primaryPreviewCollections.features.find((feature) => feature.lago_id === featureMatch[1]) ??
+        null,
+    };
+  }
 
   const collections = {
     "/api/operator/v1/api-keys": "api_keys",
@@ -400,10 +565,129 @@ function previewApi(pathname, requestedSlug) {
     "/api/operator/v1/webhook-endpoints": "webhook_endpoints",
     "/api/operator/v1/dunning-campaigns": "dunning_campaigns",
     "/api/operator/v1/payment-requests": "payment_requests",
+    "/api/operator/v1/billable-metrics": "billable_metrics",
+    "/api/operator/v1/features": "features",
   };
   const collection = collections[pathname];
   const items = slug === "serp-billing" ? (primaryPreviewCollections[collection] ?? []) : [];
   return collection ? { [collection]: items, meta: { total_count: items.length } } : {};
+}
+
+function previewAnalytics(currency) {
+  const monthly = [
+    ["2026-03", 18400],
+    ["2026-04", 21700],
+    ["2026-05", 24600],
+    ["2026-06", 27400],
+    ["2026-07", 30100],
+    ["2026-08", 32800],
+  ].map(([period, amount_minor]) => ({ period, amount_minor }));
+  return {
+    analytics: {
+      currency,
+      from: "2025-09-01",
+      to: "2026-08-18",
+      customer_external_id: null,
+      revenue_streams: {
+        total_amount_minor: monthly.reduce((total, point) => total + point.amount_minor, 0),
+        monthly,
+        breakdown: [
+          { stream: "subscription", amount_minor: 139500, invoice_count: 31 },
+          { stream: "one_off", amount_minor: 35500, invoice_count: 9 },
+        ],
+        plan_breakdown: [
+          {
+            code: "creator-monthly",
+            name: "Creator Monthly",
+            amount_minor: 139500,
+            invoice_count: 31,
+          },
+          { code: "one_off", name: "One-off invoices", amount_minor: 35500, invoice_count: 9 },
+        ],
+        customer_breakdown: [
+          { code: "tammy", name: "Tammy Jones", amount_minor: 109000, invoice_count: 24 },
+          { code: "henry_1234", name: "Henry Graham", amount_minor: 66000, invoice_count: 16 },
+        ],
+      },
+      mrr: {
+        amount_minor: 32800,
+        subscriptions_count: 14,
+        plan_breakdown: [
+          {
+            code: "creator-monthly",
+            name: "Creator Monthly",
+            amount_minor: 32800,
+            subscriptions_count: 14,
+          },
+        ],
+      },
+      usage: {
+        total_amount_minor: 28400,
+        total_units: "18420",
+        total_events_count: 18420,
+        daily: monthly.map((point) => ({
+          ...point,
+          amount_minor: Math.round(point.amount_minor * 0.18),
+        })),
+        billable_metrics: [
+          { code: "api_calls", amount_minor: 18400, units: "17400", events_count: 17400 },
+          { code: "storage_gb", amount_minor: 10000, units: "1020", events_count: 1020 },
+        ],
+      },
+      prepaid_credits: {
+        balance_minor: 2000,
+        consumed_minor: 8500,
+        wallets_count: 2,
+        monthly: monthly.map((point, index) => ({
+          period: point.period,
+          granted_minor: index % 2 === 0 ? 2000 : 0,
+          purchased_minor: 1000,
+          consumed_minor: 1200 + index * 100,
+        })),
+      },
+      invoices: {
+        total_amount_minor: 175000,
+        total_count: 40,
+        breakdown: [
+          {
+            status: "finalized",
+            payment_status: "succeeded",
+            amount_minor: 162000,
+            invoice_count: 35,
+          },
+          { status: "finalized", payment_status: "pending", amount_minor: 13000, invoice_count: 5 },
+        ],
+        collection_breakdown: [
+          { status: "collected", amount_minor: 162000, invoice_count: 35 },
+          { status: "outstanding", amount_minor: 9000, invoice_count: 3 },
+          { status: "overdue", amount_minor: 4000, invoice_count: 2 },
+        ],
+      },
+    },
+  };
+}
+
+function previewForecast(currency) {
+  const projected_months = ["2026-09", "2026-10", "2026-11", "2026-12", "2027-01", "2027-02"].map(
+    (period, index) => {
+      const realistic = 34000 + index * 2400;
+      return {
+        period,
+        optimistic_amount_minor: Math.round(realistic * 1.14),
+        realistic_amount_minor: realistic,
+        conservative_amount_minor: Math.round(realistic * 0.87),
+      };
+    },
+  );
+  return {
+    forecast: {
+      currency,
+      generated_at: "2026-08-18T00:00:00Z",
+      historical_months: [],
+      projected_months,
+      methodology: "Trailing six-month invoiced revenue with bounded month-over-month trend",
+    },
+  };
 }
 
 function respondJson(response, payload) {

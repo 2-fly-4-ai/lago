@@ -71,6 +71,22 @@ beforeAll(async () => {
 beforeEach(async () => {
   const subjectHash = await sha256Hex(`${issuer}\n${subject}`);
   await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare("DELETE FROM ai_messages WHERE organization_id = 'org-operator-access'"),
+    env.BILLING_DB.prepare(
+      "DELETE FROM ai_conversations WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM entitlement_values WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM plan_entitlements WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM entitlement_privileges WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM entitlement_features WHERE organization_id = 'org-operator-access'",
+    ),
     env.BILLING_DB.prepare(
       "DELETE FROM customers WHERE organization_id = 'org-operator-access-secondary'",
     ),
@@ -1857,6 +1873,82 @@ describe("operator Worker disabled boundary", () => {
     const deleted = await operatorMutation("DELETE", "/customers/operator-customer");
     expect(deleted.status).toBe(422);
     await expect(deleted.json()).resolves.toMatchObject({ code: "unsupported_customer_deletion" });
+  });
+});
+
+describe("operator parity surface routing", () => {
+  it("gates feature and plan-entitlement mutations behind Access admin and CSRF checks", async () => {
+    const viewerList = await handleOperatorRequest(
+      new Request("https://operator.test/api/operator/v1/features", {
+        headers: { "Cf-Access-Jwt-Assertion": await accessToken() },
+      }),
+      operatorEnv(),
+      keySet,
+    );
+    expect(viewerList.status).toBe(200);
+
+    const viewerCreate = await operatorMutation("POST", "/features", {
+      feature: { name: "Exports", code: "exports", privileges: [] },
+    });
+    expect(viewerCreate.status).toBe(403);
+    await expect(viewerCreate.json()).resolves.toMatchObject({ code: "operator_admin_required" });
+
+    await promoteOperatorAdmin();
+    const createdFeature = await operatorMutation("POST", "/features", {
+      feature: {
+        name: "Exports",
+        code: "exports",
+        privileges: [{ name: "Enabled", code: "enabled", value_type: "boolean" }],
+      },
+    });
+    expect(createdFeature.status).toBe(201);
+    const feature = await createdFeature.json<{
+      feature: { lago_id: string; code: string };
+    }>();
+
+    const createdPlan = await operatorMutation("POST", "/plans", {
+      plan: {
+        code: "pro",
+        name: "Pro",
+        interval: "monthly",
+        amount_cents: 5000,
+        amount_currency: "USD",
+        pay_in_advance: false,
+      },
+    });
+    expect(createdPlan.status).toBe(200);
+
+    const entitlements = await operatorMutation("PUT", "/plans/pro/entitlements", {
+      entitlements: [
+        {
+          feature_code: "exports",
+          privileges: [{ privilege_code: "enabled", value: true }],
+        },
+      ],
+    });
+    expect(entitlements.status).toBe(200);
+    await expect(entitlements.json()).resolves.toMatchObject({
+      plan_code: "pro",
+      entitlements: [
+        {
+          feature_code: "exports",
+          privileges: [{ privilege_code: "enabled", value: true }],
+        },
+      ],
+    });
+
+    const activity = await handleOperatorRequest(
+      new Request(
+        `https://operator.test/api/operator/v1/features/${feature.feature.lago_id}/activity`,
+        { headers: { "Cf-Access-Jwt-Assertion": await accessToken() } },
+      ),
+      operatorEnv(),
+      keySet,
+    );
+    expect(activity.status).toBe(200);
+    await expect(activity.json()).resolves.toMatchObject({
+      activity_logs: [{ event_type: "feature.created" }],
+    });
   });
 });
 

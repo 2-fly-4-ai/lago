@@ -84,3 +84,30 @@ The deployed operator was captured directly in the current authenticated browser
 frontend was inspected from its checked-in source (`MainNavLayout`, `OrganizationSwitcher`,
 `MainNavMenuSections`, `MainHeader`, `NavLayout`, and design-system components) but was not started
 against a legacy backend for this audit, so no fresh original-runtime screenshot is claimed.
+
+## Remediation verification — 2026-08-18
+
+The structural findings above describe the superseded implementation that triggered this audit.
+The corrected operator now uses focused organization-slug routes, grouped Lago navigation, a
+multi-membership organization switcher, list/detail pages, original SVG assets, and the established
+Lago page/dialog spacing model. The five mistakenly omitted product surfaces are executable:
+
+- Analytics retains Revenue streams, MRR, Usage, Prepaid credits, and Invoices tabs, date filters,
+  customer/plan/collection breakdowns, and a deep-linkable billable-metric usage view.
+- Forecasts exposes bounded 3/6/12-month scenario projections.
+- Billable metrics exposes list/detail/create/edit/delete/duplicate and activity history.
+- Features exposes typed privilege CRUD, activity history, and plan entitlement assignment.
+- Lago Assistant uses the original 48px right rail and 360–420px pushed panel, with
+  membership-and-organization-scoped D1 history and a read-only Workers AI stream.
+
+New visual evidence:
+
+- `18-plan-feature-entitlements.png` — plan editor with the restored Features section.
+- `19-analytics-mrr-parity.png` — functional MRR tab in the corrected Lago shell.
+- `20-ai-assistant-panel.png` — pushed right-side assistant panel alongside Analytics.
+
+Interactive checks covered direct/reloaded Analytics tab and usage-metric URLs, Forecast rows,
+billable-metric and feature details, outbox-backed activity, metric duplication, plan entitlement
+values, assistant open/close and streaming in the synthetic preview, and deployed authenticated
+navigation. The deployed worker showed each new route without the unavailable panel. Fresh
+unauthenticated root and session requests were intercepted by Cloudflare Access before origin.

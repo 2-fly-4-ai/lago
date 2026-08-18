@@ -23,11 +23,11 @@ action.
 
 | Lago area        | Cloudflare route                                                      | Current product state                                                                                                                            |
 | ---------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Analytics        | `/:org/analytics`                                                     | Original navigation position retained; explicit unavailable panel until the bounded D1 analytics read model exists                               |
-| Forecasts        | `/:org/forecasts`                                                     | Original navigation position retained; explicit unavailable panel                                                                                |
-| Billable metrics | `/:org/billable-metrics`                                              | Original navigation position retained; rating engine remains active, operator catalog editor unavailable                                         |
-| Plans            | `/:org/plans` and `/:org/plans/:code`                                 | List, focused detail, create/edit/delete, and fixed-charge dialogs retained for the admitted core contract                                       |
-| Features         | `/:org/features`                                                      | Original navigation position retained; entitlement authority remains in `serp-auth`                                                              |
+| Analytics        | `/:org/analytics/:tab?` and `/:org/analytics/usage/:metricCode`        | Five original tabs, date filters, revenue/customer/plan breakdowns, MRR, usage drill-downs, credits, invoice collection/overdue states, and customer scope use native D1 read models |
+| Forecasts        | `/:org/forecasts`                                                     | Functional 3/6/12-month optimistic, realistic, and conservative projections with bounded tenant data                                             |
+| Billable metrics | `/:org/billable-metrics` and `/:org/billable-metrics/:code`           | List/detail, create/edit/delete/duplicate, expressions, filters, and outbox-backed activity are exposed                                           |
+| Plans            | `/:org/plans` and `/:org/plans/:code`                                 | List, focused detail, create/edit/delete, fixed charges, and typed feature-entitlement grants retained                                            |
+| Features         | `/:org/features` and `/:org/features/:id`                             | Lago-owned feature/privilege CRUD, detail counts, activity history, and plan entitlement assignment; `serp-auth` is only a future projection consumer |
 | Add-ons          | `/:org/add-ons` and `/:org/add-ons/:code`                             | List, focused detail, create/edit/terminate                                                                                                      |
 | Coupons          | `/:org/coupons` and `/:org/coupons/:code`                             | Definitions, customer applications, create/apply/terminate; immutable-definition boundary is visible                                             |
 | Customers        | `/:org/customers`, `/:org/customers/:externalId`, optional detail tab | Original entity header, Overview/Wallets/Analytics/Invoices/Credit notes/Settings tabs, details rail, create/edit, and tenant-safe missing state |
@@ -46,6 +46,7 @@ action.
 | Data exports     | `/:org/data-exports` and `/:org/data-exports/:lagoId`                 | List, focused status detail, idempotent snapshot create; artifact delivery unavailable                                                           |
 | Webhooks         | `/:org/webhook-endpoints` and `/:org/webhook-endpoints/:lagoId`       | Read-only endpoint list/detail; secret mutation and delivery controls unavailable                                                                |
 | Dunning          | `/:org/dunning-campaigns` and `/:org/dunning-campaigns/:code`         | Campaign list/detail/create/edit/delete plus read-only payment-request ledger; provider collection and messaging flags stay disabled             |
+| AI assistant     | Global 48px right rail and 360–420px panel                             | Workers AI streaming chat, shortcuts, and D1 history are scoped to Access membership plus organization; assistant has aggregate read-only context and no mutation tools |
 
 ## Preserved safety boundaries
 
@@ -55,8 +56,8 @@ action.
   authority or a second tenant selector.
 - Admin controls remain hidden from viewer memberships and server-side role checks remain
   authoritative.
-- Unsupported portions of an otherwise retained Lago screen stay visible as unavailable states.
-  They are not removed from the information architecture and are not represented as implemented.
+- Unsupported external actions remain explicit and fail closed. Analytics, Forecasts, Billable
+  metrics, Features, and the AI assistant no longer use unavailable placeholders.
 - Provider reads, provider mutations, customer messages, and document delivery remain controlled by
   the existing external-action flags, which must remain `0` for this isolated rollout.
 
