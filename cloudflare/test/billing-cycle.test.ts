@@ -616,13 +616,20 @@ describe("billing period close", () => {
       },
     });
 
+    await env.BILLING_DB.prepare("UPDATE invoices SET payment_status = 'succeeded' WHERE id = ?")
+      .bind(first.invoiceId)
+      .run();
     const voided = await invoiceRequest(`/api/v1/invoices/${first.invoiceId}/void`, "POST");
     expect(voided.status).toBe(200);
     const voidedBody = await voided.json<{ invoice: { voided_at: string } }>();
     expect(voidedBody.invoice.voided_at).toBeTruthy();
     const voidReplay = await invoiceRequest(`/api/v1/invoices/${first.invoiceId}/void`, "POST");
     await expect(voidReplay.json()).resolves.toMatchObject({
-      invoice: { status: "voided", voided_at: voidedBody.invoice.voided_at },
+      invoice: {
+        status: "voided",
+        payment_status: "succeeded",
+        voided_at: voidedBody.invoice.voided_at,
+      },
     });
     const voidCount = await env.BILLING_DB.prepare(
       "SELECT COUNT(*) AS total FROM outbox_events WHERE event_type = 'invoice.voided' AND aggregate_id = ?",

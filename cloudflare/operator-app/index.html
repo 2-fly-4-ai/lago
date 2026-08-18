@@ -10,8 +10,8 @@
     <meta name="color-scheme" content="light" />
     <meta name="robots" content="noindex, nofollow" />
     <title>Lago · SERP Billing</title>
-    <link rel="stylesheet" href="/assets/operator-app.css" />
-    <script type="module" src="/assets/operator-app.js"></script>
+    <link rel="stylesheet" href="/assets/operator-app.css?v=20260818-retained-parity-2" />
+    <script type="module" src="/assets/operator-app.js?v=20260818-retained-parity-2"></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -1453,9 +1453,9 @@
             <section class="keys-section" id="credit-notes" aria-labelledby="credit-notes-title">
               <div class="section-heading">
                 <div>
-                  <p class="eyebrow">Internal credits</p>
+                  <p class="eyebrow">Invoice adjustments</p>
                   <h2 id="credit-notes-title">Credit notes</h2>
-                  <p>Create itemized internal credits against finalized invoices.</p>
+                  <p>Issue itemized credit notes against finalized invoices.</p>
                 </div>
                 <button class="primary-button" id="open-create-credit-note" type="button" hidden>
                   <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create credit note
@@ -3001,15 +3001,15 @@
     </dialog>
 
     <dialog
-      class="modal section-modal"
+      class="modal section-modal billing-modal"
       id="credit-note-form-dialog"
       aria-labelledby="credit-note-form-title"
     >
       <form method="dialog" id="credit-note-form">
         <div class="modal-heading">
           <div>
-            <p class="eyebrow">Internal invoice credit</p>
-            <h2 id="credit-note-form-title">Create credit note</h2>
+            <p class="eyebrow">Invoice adjustment</p>
+            <h2 id="credit-note-form-title">Issue a credit note</h2>
           </div>
           <button class="icon-button" value="cancel" aria-label="Close" type="submit">
             <img src="/assets/icons/close.svg" alt="" />
@@ -3017,31 +3017,54 @@
         </div>
         <label for="credit-note-invoice">Finalized invoice</label
         ><select id="credit-note-invoice" required></select>
-        <div class="field-grid">
-          <div>
-            <label for="credit-note-reason">Reason</label
-            ><select id="credit-note-reason">
-              <option value="order_change">Order change</option>
-              <option value="order_cancellation">Order cancellation</option>
-              <option value="duplicated_charge">Duplicated charge</option>
-              <option value="product_unsatisfactory">Product unsatisfactory</option>
-              <option value="fraudulent_charge">Fraudulent charge</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-          <div>
-            <label for="credit-note-amount">Credit amount (minor units)</label
-            ><input id="credit-note-amount" type="number" min="1" step="1" required />
-          </div>
-        </div>
+        <label for="credit-note-reason">Reason</label
+        ><select id="credit-note-reason">
+          <option value="order_change">Order change</option>
+          <option value="order_cancellation">Order cancellation</option>
+          <option value="duplicated_charge">Duplicated charge</option>
+          <option value="product_unsatisfactory">Product unsatisfactory</option>
+          <option value="fraudulent_charge">Fraudulent charge</option>
+          <option value="other">Other</option>
+        </select>
         <label for="credit-note-description">Description (optional)</label
         ><input id="credit-note-description" maxlength="255" />
-        <label for="credit-note-items">Items (JSON array)</label
-        ><textarea id="credit-note-items" rows="7" required>
-[{"fee_id":"","amount_cents":1}]</textarea>
+        <fieldset class="credit-note-items-fieldset">
+          <legend>Items to credit</legend>
+          <div id="credit-note-items"></div>
+        </fieldset>
+        <div class="credit-note-estimate" aria-live="polite">
+          <div><span>Selected items</span><strong id="credit-note-items-total">—</strong></div>
+          <div><span>Coupon adjustment</span><strong id="credit-note-coupon-total">—</strong></div>
+          <div><span>Taxes</span><strong id="credit-note-tax-total">—</strong></div>
+          <div class="credit-note-estimate-total">
+            <span>Total to allocate</span><strong id="credit-note-total">—</strong>
+          </div>
+        </div>
+        <div class="field-grid credit-note-allocation-grid">
+          <div>
+            <label for="credit-note-amount">Credit amount (minor units)</label
+            ><input id="credit-note-amount" type="number" min="0" step="1" required />
+          </div>
+          <div>
+            <label for="credit-note-offset-amount">Offset amount (minor units)</label
+            ><input id="credit-note-offset-amount" type="number" min="0" step="1" required />
+          </div>
+          <div>
+            <label for="credit-note-refund-amount">Refund amount (minor units)</label
+            ><input
+              id="credit-note-refund-amount"
+              type="number"
+              min="0"
+              step="1"
+              value="0"
+              disabled
+            />
+          </div>
+        </div>
         <p class="field-hint">
-          Items accept fee_id and amount_cents only. Refunds, offsets, provider actions, and email
-          delivery remain disabled; PDF generation and download are available from the detail page.
+          Allocate the adjusted total between customer credit and the unpaid invoice balance.
+          Provider refunds remain disabled in this environment; PDF generation and download are
+          available from the detail page.
         </p>
         <p class="form-error" id="credit-note-form-error" role="alert" hidden></p>
         <div class="modal-actions">
@@ -3052,7 +3075,7 @@
             value="default"
             type="submit"
           >
-            Create credit note
+            Issue credit note
           </button>
         </div>
       </form>

@@ -18,6 +18,7 @@ describe("isolated operator app assets", () => {
     expect(operatorConfig).toContain('"directory": "operator-app"');
     expect(operatorConfig).not.toContain('"directory": "operator-ui"');
     expect(operatorConfig).toContain('"OPERATOR_ACCESS_ENABLED": "1"');
+    expect(operatorConfig).toContain('"CREDIT_NOTE_REFUND_MODE": "disabled"');
     expect(operatorConfig).toContain(
       '"ACCESS_TEAM_DOMAIN": "https://serpcompany.cloudflareaccess.com"',
     );
@@ -33,8 +34,9 @@ describe("isolated operator app assets", () => {
   });
 
   it("loads only same-origin static code under a restrictive browser policy", () => {
-    expect(operatorIndex).toContain('src="/assets/operator-app.js"');
-    expect(operatorIndex).toContain('href="/assets/operator-app.css"');
+    expect(operatorIndex).toContain('src="/assets/operator-app.js?v=20260818-retained-parity-2"');
+    expect(operatorIndex).toContain('href="/assets/operator-app.css?v=20260818-retained-parity-2"');
+    expect(operatorHeaders).toContain("Cache-Control: no-cache, must-revalidate");
     expect(operatorIndex).not.toMatch(/<script[^>]*>\s*[^<\s]/i);
     for (const directive of [
       "default-src 'self'",
@@ -143,6 +145,13 @@ describe("isolated operator app assets", () => {
     expect(operatorScript).toContain("downloadSelectedDocument");
     expect(operatorScript).toContain("invoiceMetadataEndpoint");
     expect(operatorScript).toContain("invoiceAdjustedFeesEndpoint");
+    expect(operatorScript).toContain("renderCreditNoteItemAllocation");
+    expect(operatorScript).toContain("refreshCreditNoteEstimate");
+    expect(operatorScript).toContain("requestJson(invoiceEndpoint(invoice.lago_id))");
+    expect(operatorScript).toContain("invoice?.customer?.external_id");
+    expect(operatorIndex).toContain("Issue a credit note");
+    expect(operatorIndex).toContain("Offset amount (minor units)");
+    expect(operatorIndex).toContain("Provider refunds remain disabled in this environment");
   });
 
   it("uses organization-slug routes, real history, and the retained Lago navigation hierarchy", () => {
@@ -245,7 +254,7 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain(
       "Recurring rules, fee targeting, custom sections, paid credits",
     );
-    expect(operatorIndex).toContain("PDF generation and download are available");
+    expect(operatorIndex).toContain("PDF generation and download are");
     expect(operatorIndex).toContain("Settlement ledger");
     expect(operatorIndex).toContain("payment-link");
     expect(operatorIndex).toContain("Quotes have no PDF, template, generation, download, email");

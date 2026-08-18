@@ -2136,13 +2136,6 @@ export async function voidInvoice(
   if (invoice.status !== "finalized") {
     throw new ApiError(422, "not_voidable", "Only finalized invoices can be voided");
   }
-  if (invoice.payment_status === "succeeded") {
-    throw new ApiError(
-      422,
-      "unsupported_paid_invoice_void",
-      "Paid invoice void requires credit-note/refund ledger support",
-    );
-  }
   const requestHash = await sha256Hex(
     JSON.stringify({ invoiceId, version: invoice.version, operation: "void" }),
   );
@@ -2189,7 +2182,7 @@ export async function voidInvoice(
           `UPDATE invoices SET status = 'voided', voided_at = ?, version = version + 1,
              updated_at = ?
            WHERE id = ? AND organization_id = ? AND status = 'finalized'
-             AND payment_status <> 'succeeded' AND version = ?`,
+             AND version = ?`,
         ).bind(voidedAt, voidedAt, invoice.id, auth.organizationId, invoice.version),
         env.BILLING_DB.prepare(
           `INSERT INTO outbox_events

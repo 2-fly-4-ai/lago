@@ -18,6 +18,7 @@
   "vars": {
     "APP_ENV": "development",
     "AI_MODEL": "@cf/zai-org/glm-4.7-flash",
+    "CREDIT_NOTE_REFUND_MODE": "disabled",
     "OPERATOR_ACCESS_ENABLED": "1",
     "ACCESS_TEAM_DOMAIN": "https://serpcompany.cloudflareaccess.com",
     "ACCESS_AUD": "4e2aeb75eccbd0abda500c9318a371acbeab7a244f8727904358021daea5a951",

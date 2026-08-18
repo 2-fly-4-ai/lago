@@ -944,6 +944,91 @@ tbody tr:hover {
   line-height: 1.45;
 }
 
+.credit-note-items-fieldset {
+  margin: 20px 0 0;
+  padding: 16px;
+  border: 1px solid #e0e6de;
+  border-radius: 12px;
+}
+
+.credit-note-items-fieldset legend {
+  padding: 0 7px;
+  color: #66746c;
+  font-size: 0.7rem;
+  font-weight: 760;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.credit-note-item-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  align-items: end;
+  gap: 14px;
+}
+
+.credit-note-item-row + .credit-note-item-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #edf0ec;
+}
+
+.credit-note-item-copy strong,
+.credit-note-item-copy small {
+  display: block;
+}
+
+.credit-note-item-copy small {
+  margin-top: 3px;
+  color: #7c8982;
+  font-size: 0.7rem;
+}
+
+.credit-note-item-row label {
+  margin-top: 0 !important;
+}
+
+.credit-note-estimate {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid #e0e6de;
+  border-radius: 12px;
+  background: #e0e6de;
+}
+
+.credit-note-estimate > div {
+  padding: 12px;
+  background: #f8faf7;
+}
+
+.credit-note-estimate span,
+.credit-note-estimate strong {
+  display: block;
+}
+
+.credit-note-estimate span {
+  color: #7c8982;
+  font-size: 0.68rem;
+}
+
+.credit-note-estimate strong {
+  margin-top: 4px;
+  color: #24322a;
+  font-size: 0.82rem;
+}
+
+.credit-note-estimate-total strong {
+  color: #16794b;
+}
+
+.credit-note-allocation-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
 .form-error {
   color: #a33f33;
 }
@@ -1053,6 +1138,12 @@ tbody tr:hover {
 @media (max-width: 680px) {
   .app-shell {
     display: block;
+  }
+
+  .credit-note-item-row,
+  .credit-note-estimate,
+  .credit-note-allocation-grid {
+    grid-template-columns: 1fr;
   }
 
   .sidebar {

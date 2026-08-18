@@ -171,3 +171,23 @@ session then loaded Analytics with its real US$19.99 invoice projection, six-mon
 Billable Metrics, Features, Credit Notes, and the original right-side Lago Assistant conversation
 panel. No former Cloudflare-boundary placeholder appeared. Browser QA performed only reads and
 panel navigation; it created no remote billing or AI conversation rows.
+
+## Final retained lifecycle verification — 2026-08-18
+
+The invoice and credit-note pass closed the last retained non-production lifecycle gaps without
+expanding the external-action boundary. Finalized invoices can now be voided even when their
+payment status is successful; voiding remains replay-safe and preserves payment settlement as
+independent evidence. The Credit Notes dialog now loads canonical invoice fee rows, requests an
+authoritative coupon/tax-adjusted estimate, and allocates the result between internal credit and
+invoice offset. Provider refund allocation remains visibly disabled and is also rejected by the
+deployed environment gate.
+
+Operator Static Assets now use explicit no-cache revalidation plus versioned script and stylesheet
+URLs. This corrected a live stale-JavaScript defect discovered during authenticated verification.
+The final deployed operator version is `ebab21c9-e64e-4171-a3f7-0c3c90b2c2db`; the accompanying API
+version is `8b72b89f-2755-470b-bac4-d54c79863017`. Authenticated browser QA verified the synthetic
+customer identifier, invoice amount, Void action, retained navigation, and right-side Assistant.
+No mutation was submitted. Unauthenticated operator root/readiness requests were redirected by
+Cloudflare Access, unauthenticated billing API access returned `401`, API health returned `200`,
+and aggregate-only D1 verification found no credit-note, offset, or refund rows and no foreign-key
+violations.

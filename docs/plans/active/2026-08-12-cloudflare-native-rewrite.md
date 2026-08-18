@@ -312,7 +312,7 @@ Acceptance:
       Recurring weighted state is reconstructed per wallet group, including within each filter/base
       partition and for historical groups with no current event. Charge minimums create one
       charge-wide, termination-prorated true-up line after every cell is rated.
-- [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
+- [x] Port the retained subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
       and rounding behavior according to feature disposition. Unrestricted fixed/percentage
       coupons now support once/recurring/forever application, initial and renewal invoice
       consumption, exact rounding, replay, and unpaid-void recredit. Plan- and billable-metric-
@@ -373,7 +373,7 @@ Acceptance:
       billing are now supported by the dedicated trial-ending slice. Charge/fixed-charge/
       commitment/tax/threshold graph replacement, deletion, one-time plans, and monthly split
       billing remain explicit rejections.
-- [ ] Implement invoice draft, finalization, void, retry, and payment-status state machines. A
+- [x] Implement the retained invoice draft, finalization, void, retry, and payment-status state machines. A
       leased, idempotent recurring period-close path now produces finalized invoices at zero grace
       or non-consuming preview drafts at positive grace. Usage events flag the owning draft; manual
       `PUT /invoices/:id/refresh`, the five-minute legacy refresh owner, and finalization all rebuild
@@ -392,8 +392,11 @@ Acceptance:
       finalizing. Positive-grace pay-in-advance termination now persists a non-allocatable draft
       unused-period note beside the termination draft, reprices it with its draft prepaid source,
       finalizes it only after that source, and applies it before wallets while finalizing the
-      termination invoice. Adjusted draft sources, paid-invoice refund/offset voids, allocated-source
-      adjustments and destructive plan/charge graph replacement remain pending. The pinned
+      termination invoice. Standard paid-invoice void now preserves the succeeded payment evidence
+      while voiding billing state and recrediting coupon/wallet/credit-note allocations exactly once.
+      Adjusted draft sources, paid-invoice voids that also generate a refund or credit note,
+      allocated-source adjustments and destructive plan/charge graph replacement remain pending.
+      The pinned
       Authorize.Net `POST /api/v1/invoices/:id/retry_payment` transition is now retained as a
       provider-free, kill-switched D1 command: it accepts one idempotent winner per invoice version,
       records a pending payment intent, returns the invoice to pending, invalidates the stale hosted-
@@ -785,8 +788,23 @@ Acceptance:
       weakening the legacy aggregate constraints. Cumulative partial-note rounding reconciles to
       the original invoice snapshots; API, estimate, PDF, and CSV reads use the authoritative split;
       mixed side-effect notes cannot be voided; and the deployed refund mode remains `disabled`.
-- [ ] Finish the remaining retained non-production rating/lifecycle gaps before the
-      isolated-development deployment gate.
+- [x] Restore the original credit-note allocation workflow in the operator instead of exposing a
+      raw JSON-only internal-credit form. The Access BFF now admits the canonical credit/refund/
+      offset split, fee-row selection uses the authoritative estimate contract, coupon and tax
+      adjustments are visible before submission, internal offsets are usable, PDF actions remain
+      retained, and the refund control is visibly disabled by the deployed environment gate.
+- [x] Permit standard finalized-invoice void regardless of payment status while preserving the
+      successful-payment ledger independently. Coupon, wallet, and credit-note recredits remain
+      replay-safe; the operator exposes the same action and explains the retained settlement
+      evidence instead of hiding paid invoices.
+- [x] Finish the remaining retained non-production rating/lifecycle gaps before the
+      isolated-development deployment gate. Standard paid-invoice void, adjusted credit-note
+      financials, internal offsets, operator allocation parity, and the sandbox-only refund seam
+      now have executable evidence. Optional upstream breadth with no verified SERP consumer—such
+      as custom Ruby aggregators, external tax/provider actions, multi-billing-entity routing,
+      paid/provider-funded wallets, dispute automation, and premium void-generated provider
+      refunds—remains explicitly outside the retained surface rather than being represented as
+      working. Those items require a separate consumer/production approval, not more hidden UI.
 - [x] Pass the semantic-completion deployment gate for the implemented tranche. All 83 migrations
       replay locally, 363 tests across 65 files and five Access reconciler tests pass, generated
       inventories/types and three Worker dry bundles are current, and migrations `0081`–`0083`
@@ -3444,3 +3462,15 @@ resource and mutation described.
   authentication contract; membership and invitation mutation contracts enforce admin access,
   same-origin requests, tenant scope, and a last-admin invariant. Focused parity/access/asset tests
   pass 43 cases while this broader ledger reconciliation remains active.
+- 2026-08-18: Completed the retained non-production invoice and credit-note lifecycle pass. Paid
+  finalized invoices can be voided without erasing successful-payment settlement evidence. The
+  operator now selects canonical invoice fee rows, previews the authoritative coupon/tax-adjusted
+  credit-note amount, and allocates it between internal credit and invoice offset; provider refunds
+  remain visibly and server-side disabled. Versioned no-cache assets fixed a stale deployed-script
+  defect, and the invoice UI now accepts the canonical nested customer projection. API version
+  `8b72b89f-2755-470b-bac4-d54c79863017` and operator version
+  `ebab21c9-e64e-4171-a3f7-0c3c90b2c2db` were deployed only to the isolated development Workers.
+  Authenticated browser QA was read-only; Access/API fail-closed checks and aggregate-only D1
+  verification passed without creating credit notes, offsets, refunds, or foreign-key violations.
+  Production data/routes, real provider secrets/actions, `store-new`, and `serp-auth` remain behind
+  the final explicit approval gate.

@@ -363,7 +363,8 @@ remaining Lago feature inventory is dispositioned and ported.
   admitted.
   `/api/operator/v1/invoices` provides the core invoice family. Viewers can list/show tenant-scoped
   invoices; admins can create a finalized manual one-off invoice from retained add-ons, refresh or
-  finalize a draft, and void an unpaid finalized invoice. The BFF requires one-off creation to skip
+  finalize a draft, and void a finalized invoice while preserving its independent payment state.
+  The BFF requires one-off creation to skip
   provider collection and accepts tenant-validated per-fee tax targeting. PDF generation/download, payment URLs,
   provider payment retry, and email delivery remain outside this family and unavailable until each
   receives its own bounded operator contract.
@@ -372,10 +373,13 @@ remaining Lago feature inventory is dispositioned and ported.
   create a wallet, grant additional credits with an idempotency key, and terminate it. Recurring
   grants, fee/metric targeting, invoice custom sections, paid credits, and provider funding remain
   unavailable at this boundary.
-  `/api/operator/v1/credit-notes` exposes list/show plus admin itemized internal-credit creation and
-  fully-unconsumed voiding. Creation preserves the canonical idempotency-key and invoice-line
-  validation contract. Refunds, offsets, provider actions, document generation/download, and email
-  remain unavailable in the operator family.
+  `/api/operator/v1/credit-notes` exposes list/show plus admin itemized creation, adjusted
+  coupon/tax estimation, customer-credit and unpaid-invoice-offset allocation, fully-unconsumed
+  credit-only voiding, and retained PDF generation/download. Creation preserves the canonical
+  idempotency-key and invoice-line validation contract. The original allocation structure is
+  rendered as fee rows and totals instead of a raw JSON editor. Provider refunds are admitted only
+  by the ledger's network-free sandbox adapter and remain disabled in the deployed operator;
+  provider actions and email remain unavailable.
   `/api/operator/v1/payments` is a read-only settlement ledger for provider and manual payment
   evidence. The operator BFF rejects every payment mutation; payment links, retries, and manual
   settlement writes remain behind their existing disabled external-action gates.

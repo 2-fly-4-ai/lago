@@ -283,7 +283,7 @@ const entityDetailDefinitions = {
     label: (item) => safeText(item.name, item.external_id),
     fields: [
       ["External ID", (item) => item.external_id],
-      ["Customer", (item) => item.external_customer_id],
+      ["Customer", (item) => invoiceCustomerExternalId(item)],
       ["Plan", (item) => item.plan_code],
       ["Status", (item) => item.status],
       ["Billing time", (item) => item.billing_time],
@@ -333,6 +333,15 @@ const entityDetailDefinitions = {
       ["Reason", (item) => item.reason],
       ["Status", (item) => item.status],
       ["Credit status", (item) => item.credit_status],
+      ["Total", (item) => formatMoney(item.total_amount_cents, item.currency)],
+      ["Credit", (item) => formatMoney(item.credit_amount_cents, item.currency)],
+      ["Invoice offset", (item) => formatMoney(item.offset_amount_cents, item.currency)],
+      ["Refund", (item) => formatMoney(item.refund_amount_cents, item.currency)],
+      [
+        "Coupon adjustment",
+        (item) => formatMoney(item.coupons_adjustment_amount_cents, item.currency),
+      ],
+      ["Taxes", (item) => formatMoney(item.taxes_amount_cents, item.currency)],
       ["Balance", (item) => formatMoney(item.balance_amount_cents, item.currency)],
     ],
   },
@@ -860,8 +869,14 @@ const elements = {
   creditNoteInvoice: document.querySelector("#credit-note-invoice"),
   creditNoteReason: document.querySelector("#credit-note-reason"),
   creditNoteAmount: document.querySelector("#credit-note-amount"),
+  creditNoteOffsetAmount: document.querySelector("#credit-note-offset-amount"),
+  creditNoteRefundAmount: document.querySelector("#credit-note-refund-amount"),
   creditNoteDescription: document.querySelector("#credit-note-description"),
   creditNoteItems: document.querySelector("#credit-note-items"),
+  creditNoteItemsTotal: document.querySelector("#credit-note-items-total"),
+  creditNoteCouponTotal: document.querySelector("#credit-note-coupon-total"),
+  creditNoteTaxTotal: document.querySelector("#credit-note-tax-total"),
+  creditNoteTotal: document.querySelector("#credit-note-total"),
   creditNoteFormError: document.querySelector("#credit-note-form-error"),
   submitCreditNoteForm: document.querySelector("#submit-credit-note-form"),
   paymentsLoading: document.querySelector("#payments-loading"),
@@ -1008,6 +1023,8 @@ const state = {
   selectedWalletId: null,
   creditNotes: [],
   selectedCreditNoteId: null,
+  creditNoteEstimate: null,
+  creditNoteEstimateRequest: 0,
   payments: [],
   quotes: [],
   quoteFormMode: "create",
@@ -1119,6 +1136,9 @@ elements.walletTopUpForm.addEventListener("submit", submitWalletTopUp);
 elements.openCreateCreditNote.addEventListener("click", openCreateCreditNoteDialog);
 elements.creditNotesTableBody.addEventListener("click", handleCreditNoteAction);
 elements.creditNoteForm.addEventListener("submit", submitCreditNoteForm);
+elements.creditNoteInvoice.addEventListener("change", renderCreditNoteItemAllocation);
+elements.creditNoteItems.addEventListener("input", refreshCreditNoteEstimate);
+elements.creditNoteOffsetAmount.addEventListener("input", allocateCreditNoteRemainder);
 elements.openCreateQuote.addEventListener("click", openCreateQuoteDialog);
 elements.quotesTableBody.addEventListener("click", handleQuoteAction);
 elements.quoteForm.addEventListener("submit", submitQuoteForm);
@@ -1654,7 +1674,7 @@ function renderOperator(operator) {
     ? "Create a manual granted-credit wallet for a retained billing customer."
     : "This organization has no wallets. Admin access is required to create one.";
   elements.creditNotesEmptyCopy.textContent = isAdmin
-    ? "Create an itemized internal credit against a finalized invoice."
+    ? "Issue an itemized credit note against a finalized invoice."
     : "This organization has no credit notes. Admin access is required to create one.";
   elements.quotesEmptyCopy.textContent = isAdmin
     ? "Create a retained draft proposal for a billing customer."
@@ -2534,7 +2554,9 @@ function renderCustomerDetail() {
   if (state.detailTab === "invoices") {
     renderCustomerCollectionTab(
       "Invoices",
-      state.invoices.filter((invoice) => invoice.external_customer_id === customer.external_id),
+      state.invoices.filter(
+        (invoice) => invoiceCustomerExternalId(invoice) === customer.external_id,
+      ),
       "No invoices are available for this customer.",
     );
     return;
@@ -4686,7 +4708,7 @@ function renderCustomerOverview(customer) {
     (subscription) => subscription.external_customer_id === customer.external_id,
   );
   const invoices = state.invoices.filter(
-    (invoice) => invoice.external_customer_id === customer.external_id,
+    (invoice) => invoiceCustomerExternalId(invoice) === customer.external_id,
   );
   const heading = document.createElement("div");
   heading.className = "detail-panel-heading";
@@ -5979,7 +6001,7 @@ function renderInvoices(invoices) {
     id.textContent = safeText(invoice.lago_id, "—");
     identity.append(number, id);
     const values = [
-      invoice.external_customer_id,
+      invoiceCustomerExternalId(invoice),
       invoice.invoice_type,
       invoice.status,
       invoice.payment_status,
@@ -6001,7 +6023,7 @@ function renderInvoices(invoices) {
           invoiceActionButton("Refresh", "refresh-invoice", invoice.lago_id),
           invoiceActionButton("Finalize", "finalize-invoice", invoice.lago_id),
         );
-      } else if (invoice.status === "finalized" && invoice.payment_status !== "succeeded") {
+      } else if (invoice.status === "finalized") {
         group.append(invoiceActionButton("Void", "void-invoice", invoice.lago_id, true));
       }
       if (group.childNodes.length > 0) actions.append(group);
@@ -6051,7 +6073,7 @@ async function handleInvoiceAction(event) {
   } else {
     elements.confirmTitle.textContent = "Void invoice?";
     elements.confirmCopy.textContent =
-      "Voiding reverses retained wallet, coupon, and credit-note allocations. Paid invoices remain protected.";
+      "Voiding reverses retained wallet, coupon, and credit-note allocations. Any successful payment remains recorded as independent settlement evidence.";
     elements.confirmAction.textContent = "Void invoice";
   }
   elements.confirmDialog.showModal();
@@ -6851,28 +6873,161 @@ function openCreateCreditNoteDialog() {
     elements.creditNoteInvoice,
     invoices,
     (item) => item.lago_id,
-    (item) => `${safeText(item.number, "Unnumbered")} · ${item.external_customer_id}`,
+    (item) =>
+      `${safeText(item.number, "Unnumbered")} · ${safeText(invoiceCustomerExternalId(item), "Unknown customer")}`,
   );
-  elements.creditNoteItems.value = JSON.stringify(
-    [{ fee_id: invoices[0]?.fees?.[0]?.lago_id ?? "", amount_cents: 1 }],
-    null,
-    2,
-  );
-  elements.creditNoteAmount.value = "1";
+  elements.creditNoteAmount.value = "0";
+  elements.creditNoteOffsetAmount.value = "0";
+  elements.creditNoteRefundAmount.value = "0";
+  state.creditNoteEstimate = null;
   elements.creditNoteFormError.hidden = true;
   elements.creditNoteFormDialog.showModal();
+  void renderCreditNoteItemAllocation();
+}
+
+function selectedCreditNoteInvoice() {
+  return state.invoices.find((invoice) => invoice.lago_id === elements.creditNoteInvoice.value);
+}
+
+async function renderCreditNoteItemAllocation() {
+  let invoice = selectedCreditNoteInvoice();
+  elements.creditNoteItems.replaceChildren();
+  state.creditNoteEstimate = null;
+  elements.creditNoteAmount.value = "0";
+  elements.creditNoteOffsetAmount.value = "0";
+  if (invoice && !Array.isArray(invoice.fees)) {
+    try {
+      const payload = await requestJson(invoiceEndpoint(invoice.lago_id));
+      Object.assign(invoice, payload.invoice);
+      invoice = selectedCreditNoteInvoice();
+      const selectedOption = elements.creditNoteInvoice.selectedOptions[0];
+      if (selectedOption) {
+        selectedOption.textContent = `${safeText(invoice?.number, "Unnumbered")} · ${safeText(invoiceCustomerExternalId(invoice), "Unknown customer")}`;
+      }
+    } catch (error) {
+      elements.creditNoteFormError.textContent = errorMessage(error);
+      elements.creditNoteFormError.hidden = false;
+    }
+  }
+  elements.creditNoteOffsetAmount.max = String(nonNegativeNumber(invoice?.total_due_amount_cents));
+  for (const [index, fee] of (invoice?.fees ?? []).entries()) {
+    const row = document.createElement("div");
+    row.className = "credit-note-item-row";
+    const copy = document.createElement("div");
+    copy.className = "credit-note-item-copy";
+    const name = document.createElement("strong");
+    name.textContent = safeText(fee.invoice_display_name, safeText(fee.description, "Invoice fee"));
+    const details = document.createElement("small");
+    details.textContent = `${formatMoney(fee.amount_cents, invoice.currency)} available · ${safeText(fee.lago_id, "Unknown fee")}`;
+    copy.append(name, details);
+    const label = document.createElement("label");
+    label.textContent = "Amount (minor units)";
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "0";
+    input.max = String(nonNegativeNumber(fee.amount_cents));
+    input.step = "1";
+    input.value = index === 0 && nonNegativeNumber(fee.amount_cents) > 0 ? "1" : "0";
+    input.dataset.creditNoteFeeId = fee.lago_id;
+    label.append(input);
+    row.append(copy, label);
+    elements.creditNoteItems.append(row);
+  }
+  if (!(invoice?.fees ?? []).length) {
+    const empty = document.createElement("p");
+    empty.className = "field-hint";
+    empty.textContent = "This finalized invoice has no creditable fee items.";
+    elements.creditNoteItems.append(empty);
+  }
+  void refreshCreditNoteEstimate();
+}
+
+function collectCreditNoteItems() {
+  return Array.from(elements.creditNoteItems.querySelectorAll("[data-credit-note-fee-id]"))
+    .map((input) => ({
+      fee_id: input.dataset.creditNoteFeeId,
+      amount_cents: Number(input.value),
+    }))
+    .filter((item) => Number.isInteger(item.amount_cents) && item.amount_cents > 0);
+}
+
+async function refreshCreditNoteEstimate() {
+  const requestNumber = ++state.creditNoteEstimateRequest;
+  const invoice = selectedCreditNoteInvoice();
+  const items = collectCreditNoteItems();
+  if (!invoice || items.length === 0) {
+    state.creditNoteEstimate = null;
+    for (const output of [
+      elements.creditNoteItemsTotal,
+      elements.creditNoteCouponTotal,
+      elements.creditNoteTaxTotal,
+      elements.creditNoteTotal,
+    ])
+      output.textContent = "—";
+    elements.creditNoteAmount.value = "0";
+    return null;
+  }
+  try {
+    const payload = await requestJson(`${endpoints.creditNotes}/estimate`, {
+      method: "POST",
+      body: { credit_note: { invoice_id: invoice.lago_id, items } },
+    });
+    if (requestNumber !== state.creditNoteEstimateRequest) return null;
+    const estimate = payload.credit_note;
+    state.creditNoteEstimate = estimate;
+    elements.creditNoteItemsTotal.textContent = formatMoney(
+      nonNegativeNumber(estimate.sub_total_excluding_taxes_amount_cents) +
+        nonNegativeNumber(estimate.coupons_adjustment_amount_cents),
+      estimate.currency,
+    );
+    elements.creditNoteCouponTotal.textContent = `−${formatMoney(estimate.coupons_adjustment_amount_cents, estimate.currency)}`;
+    elements.creditNoteTaxTotal.textContent = formatMoney(
+      estimate.taxes_amount_cents,
+      estimate.currency,
+    );
+    elements.creditNoteTotal.textContent = formatMoney(
+      estimate.total_amount_cents,
+      estimate.currency,
+    );
+    allocateCreditNoteRemainder();
+    elements.creditNoteFormError.hidden = true;
+    return estimate;
+  } catch (error) {
+    if (requestNumber !== state.creditNoteEstimateRequest) return null;
+    state.creditNoteEstimate = null;
+    elements.creditNoteFormError.textContent = errorMessage(error);
+    elements.creditNoteFormError.hidden = false;
+    return null;
+  }
+}
+
+function allocateCreditNoteRemainder() {
+  if (!state.creditNoteEstimate) return;
+  const offset = nonNegativeNumber(elements.creditNoteOffsetAmount.value);
+  const refund = nonNegativeNumber(elements.creditNoteRefundAmount.value);
+  elements.creditNoteAmount.value = String(
+    Math.max(nonNegativeNumber(state.creditNoteEstimate.total_amount_cents) - offset - refund, 0),
+  );
 }
 
 async function submitCreditNoteForm(event) {
   event.preventDefault();
   if (event.submitter?.value === "cancel") return elements.creditNoteFormDialog.close();
   if (!elements.creditNoteForm.reportValidity()) return;
-  let items;
-  try {
-    items = JSON.parse(elements.creditNoteItems.value);
-    if (!Array.isArray(items) || items.length === 0) throw new Error("invalid_items");
-  } catch {
-    elements.creditNoteFormError.textContent = "Items must be a non-empty JSON array.";
+  const items = collectCreditNoteItems();
+  if (items.length === 0) {
+    elements.creditNoteFormError.textContent = "Select at least one positive invoice item amount.";
+    elements.creditNoteFormError.hidden = false;
+    return;
+  }
+  const estimate = await refreshCreditNoteEstimate();
+  if (!estimate) return;
+  const creditAmount = nonNegativeNumber(elements.creditNoteAmount.value);
+  const offsetAmount = nonNegativeNumber(elements.creditNoteOffsetAmount.value);
+  const refundAmount = nonNegativeNumber(elements.creditNoteRefundAmount.value);
+  if (creditAmount + offsetAmount + refundAmount !== estimate.total_amount_cents) {
+    elements.creditNoteFormError.textContent =
+      "Credit, offset, and refund allocations must equal the adjusted credit note total.";
     elements.creditNoteFormError.hidden = false;
     return;
   }
@@ -6886,7 +7041,9 @@ async function submitCreditNoteForm(event) {
           invoice_id: elements.creditNoteInvoice.value,
           reason: elements.creditNoteReason.value,
           description: optionalFormValue(elements.creditNoteDescription.value),
-          credit_amount_cents: Number(elements.creditNoteAmount.value),
+          credit_amount_cents: creditAmount,
+          offset_amount_cents: offsetAmount,
+          refund_amount_cents: refundAmount,
           items,
         },
       },
@@ -6897,7 +7054,7 @@ async function submitCreditNoteForm(event) {
     elements.creditNoteFormError.textContent = errorMessage(error);
     elements.creditNoteFormError.hidden = false;
   } finally {
-    setBusy(elements.submitCreditNoteForm, false, "Create credit note");
+    setBusy(elements.submitCreditNoteForm, false, "Issue credit note");
   }
 }
 
@@ -7917,6 +8074,10 @@ function setBusy(button, busy, label) {
 
 function safeText(value, fallback) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function invoiceCustomerExternalId(invoice) {
+  return invoice?.external_customer_id ?? invoice?.customer?.external_id ?? null;
 }
 
 function optionalFormValue(value) {

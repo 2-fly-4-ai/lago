@@ -1519,6 +1519,9 @@ describe("operator Worker disabled boundary", () => {
         fees: [{ item: { code: "support" } }],
       },
     });
+    await env.BILLING_DB.prepare("UPDATE invoices SET payment_status = 'succeeded' WHERE id = ?")
+      .bind(createdBody.invoice.lago_id)
+      .run();
 
     const voided = await operatorMutation(
       "POST",
@@ -1526,7 +1529,9 @@ describe("operator Worker disabled boundary", () => {
       {},
     );
     expect(voided.status).toBe(200);
-    await expect(voided.json()).resolves.toMatchObject({ invoice: { status: "voided" } });
+    await expect(voided.json()).resolves.toMatchObject({
+      invoice: { status: "voided", payment_status: "succeeded" },
+    });
   });
 
   it("maps core granted-credit wallet reads, creation, top-up, and termination", async () => {
@@ -1650,16 +1655,22 @@ describe("operator Worker disabled boundary", () => {
     }).then((response) =>
       response.json<{ invoice: { lago_id: string; fees: Array<{ lago_id: string }> } }>(),
     );
-    const blockedRefund = await operatorMutation(
-      "POST",
-      "/credit-notes",
-      { credit_note: { refund_amount_cents: 100 } },
-      { "Idempotency-Key": "blocked-credit-refund" },
-    );
-    expect(blockedRefund.status).toBe(422);
-    await expect(blockedRefund.json()).resolves.toMatchObject({
-      code: "unsupported_operator_credit_note_field",
-    });
+    await expect(
+      operatorMutation(
+        "POST",
+        "/credit-notes",
+        {
+          credit_note: {
+            invoice_id: invoice.invoice.lago_id,
+            credit_amount_cents: 300,
+            refund_amount_cents: 100,
+            offset_amount_cents: 0,
+            items: [{ fee_id: invoice.invoice.fees[0]!.lago_id, amount_cents: 400 }],
+          },
+        },
+        { "Idempotency-Key": "blocked-credit-refund" },
+      ),
+    ).rejects.toMatchObject({ status: 503, code: "credit_note_refunds_disabled" });
 
     const created = await operatorMutation(
       "POST",
@@ -1687,6 +1698,31 @@ describe("operator Worker disabled boundary", () => {
     expect(voided.status).toBe(200);
     await expect(voided.json()).resolves.toMatchObject({
       credit_note: { credit_status: "voided", balance_amount_cents: 0 },
+    });
+
+    const offset = await operatorMutation(
+      "POST",
+      "/credit-notes",
+      {
+        credit_note: {
+          invoice_id: invoice.invoice.lago_id,
+          reason: "order_change",
+          credit_amount_cents: 0,
+          offset_amount_cents: 100,
+          refund_amount_cents: 0,
+          items: [{ fee_id: invoice.invoice.fees[0]!.lago_id, amount_cents: 100 }],
+        },
+      },
+      { "Idempotency-Key": "operator-credit-note-offset" },
+    );
+    expect(offset.status).toBe(200);
+    await expect(offset.json()).resolves.toMatchObject({
+      credit_note: {
+        credit_status: "consumed",
+        credit_amount_cents: 0,
+        offset_amount_cents: 100,
+        refund_amount_cents: 0,
+      },
     });
   });
 

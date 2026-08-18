@@ -1142,6 +1142,8 @@ async function assertOperatorCreditNoteMutationPayload(
     "reason",
     "description",
     "credit_amount_cents",
+    "refund_amount_cents",
+    "offset_amount_cents",
     "items",
   ]);
   const unsupported = Object.keys(input).find((key) => !supported.has(key));

@@ -255,9 +255,20 @@ const primaryPreviewCollections = {
       status: "finalized",
       payment_status: "succeeded",
       total_amount_cents: 4900,
+      total_due_amount_cents: 0,
+      total_paid_amount_cents: 4900,
       currency: "USD",
       issuing_date: "2026-08-01",
       created_at: "2026-08-01T00:00:00Z",
+      fees: [
+        {
+          lago_id: "fee-preview-001",
+          invoice_display_name: "Creator Monthly",
+          description: "Creator Monthly",
+          units: "1",
+          amount_cents: 4900,
+        },
+      ],
     },
   ],
   wallets: [
@@ -767,8 +778,12 @@ function previewApi(pathname, requestedSlug, method = "GET", searchParams = new 
     return {
       credit_note: {
         currency: organization.currency,
-        total_amount_cents: 500,
-        balance_amount_cents: 500,
+        total_amount_cents: 1,
+        sub_total_excluding_taxes_amount_cents: 1,
+        coupons_adjustment_amount_cents: 0,
+        taxes_amount_cents: 0,
+        credit_amount_cents: 1,
+        balance_amount_cents: 1,
       },
     };
   }

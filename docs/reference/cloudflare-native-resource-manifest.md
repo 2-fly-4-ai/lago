@@ -815,6 +815,18 @@ Applied D1 migrations: `0001_foundation.sql` through
   scheduled, and queue handlers and all three external-action flags at `0`; the checkout dispatcher
   therefore performed no provider call. No production route/domain, secret, customer message,
   provider action, customer data, or payment action occurred.
+- The final retained invoice/credit-note parity deployment was code-and-assets only with no remote
+  migration. API version `8b72b89f-2755-470b-bac4-d54c79863017` permits replay-safe voiding of a
+  finalized invoice while preserving independent successful-payment evidence. Operator version
+  `ebab21c9-e64e-4171-a3f7-0c3c90b2c2db` adds fee-row credit-note allocation, authoritative
+  coupon/tax estimates, internal credit/offset splits, a visibly disabled provider-refund control,
+  and no-cache versioned assets. Authenticated browser verification loaded the synthetic invoice,
+  customer identifier, Void action, retained navigation, and Assistant. Fresh unauthenticated
+  requests returned Access `302` for operator root/readiness and `401` for the billing API; API
+  health returned `200`. Aggregate-only remote verification still found two organizations, one
+  invoice, and zero credit notes, offsets, and refunds, with zero foreign-key violations. No remote
+  billing mutation, production route, provider secret/action, customer message, `store-new`, or
+  `serp-auth` change occurred.
 - Remote business state is limited to the documented `synthetic-e2e-20260815-001` tenant graph and
   revoked smoke-key/audit evidence. No production/customer data, active key, payment state,
   document artifact, provider secret, or customer message is present.
