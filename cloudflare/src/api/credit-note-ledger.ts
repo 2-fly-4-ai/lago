@@ -169,8 +169,8 @@ export async function createCreditNote(
   }
   const invoice = await env.BILLING_DB.prepare(
     `SELECT id, customer_id, number, status, currency, subtotal_minor, tax_minor, total_due_minor,
-            version,
-            coupons_minor, prepaid_credit_minor, credit_notes_minor
+            version, coupons_minor, prepaid_credit_minor, credit_notes_minor,
+            payment_dispute_lost_at
      FROM invoices WHERE organization_id = ? AND id = ? LIMIT 1`,
   )
     .bind(auth.organizationId, invoiceId)
@@ -187,6 +187,7 @@ export async function createCreditNote(
       coupons_minor: number;
       prepaid_credit_minor: number;
       credit_notes_minor: number;
+      payment_dispute_lost_at: string | null;
     }>();
   if (!invoice || invoice.status !== "finalized")
     throw new ApiError(404, "invoice_not_found", "Finalized invoice was not found");
@@ -217,6 +218,13 @@ export async function createCreditNote(
       "Credit, refund, and offset amounts must equal the adjusted item total",
     );
   if (requestedRefund > 0) {
+    if (invoice.payment_dispute_lost_at) {
+      throw new ApiError(
+        422,
+        "refund_unavailable_after_lost_dispute",
+        "A provider refund cannot be issued after the invoice dispute was lost",
+      );
+    }
     if (env.CREDIT_NOTE_REFUND_MODE !== "sandbox")
       throw new ApiError(
         503,
@@ -230,6 +238,22 @@ export async function createCreditNote(
         "refund_amount_exceeds_paid_amount",
         "Refund amount exceeds successful payments that have not already been refunded",
       );
+  }
+  const refundPayment =
+    requestedRefund > 0
+      ? await refundablePaymentAttempt(
+          env.BILLING_DB,
+          auth.organizationId,
+          invoice.id,
+          requestedRefund,
+        )
+      : null;
+  if (requestedRefund > 0 && !refundPayment) {
+    throw new ApiError(
+      422,
+      "refund_payment_source_not_found",
+      "Refund execution requires one successful payment that covers the requested amount",
+    );
   }
   const paidAmount = await successfulPaymentAmount(env.BILLING_DB, invoice.id);
   const outstandingAmount = Math.max(invoice.total_due_minor - paidAmount, 0);
@@ -430,6 +454,29 @@ export async function createCreditNote(
             `sandbox-refund:${id}`,
             requestedRefund,
             invoice.currency,
+            now,
+          ),
+          env.BILLING_DB.prepare(
+            `INSERT INTO provider_refund_operations
+             (id, organization_id, credit_note_id, invoice_id, payment_attempt_id, provider,
+              provider_account_code, provider_payment_id, provider_refund_id, idempotency_key,
+              request_sha256, amount_minor, currency, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?)`,
+          ).bind(
+            await deterministicUuid("provider-refund-operation", id),
+            auth.organizationId,
+            id,
+            invoice.id,
+            refundPayment!.id,
+            refundPayment!.provider,
+            refundPayment!.provider_account_code,
+            refundPayment!.provider_transaction_id,
+            `sandbox-refund:${id}`,
+            `sandbox:${idempotencyKey}`,
+            requestHash,
+            requestedRefund,
+            invoice.currency,
+            now,
             now,
           ),
         ]
@@ -943,6 +990,34 @@ async function refundableAmount(
     .bind(organizationId, invoiceId)
     .first<{ amount: number }>();
   return Math.max(paid - (refunded?.amount ?? 0), 0);
+}
+
+async function refundablePaymentAttempt(
+  db: D1Database,
+  organizationId: string,
+  invoiceId: string,
+  amountMinor: number,
+): Promise<{
+  id: string;
+  provider: string;
+  provider_account_code: string;
+  provider_transaction_id: string;
+} | null> {
+  return db
+    .prepare(
+      `SELECT id, provider, provider_account_code, provider_transaction_id
+       FROM payment_attempts
+       WHERE organization_id = ? AND invoice_id = ? AND status = 'succeeded'
+         AND provider_transaction_id IS NOT NULL AND amount_minor >= ?
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .bind(organizationId, invoiceId, amountMinor)
+    .first<{
+      id: string;
+      provider: string;
+      provider_account_code: string;
+      provider_transaction_id: string;
+    }>();
 }
 function requiredIdempotencyKey(request: Request) {
   const value = request.headers.get("Idempotency-Key")?.trim();

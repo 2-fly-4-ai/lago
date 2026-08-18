@@ -469,9 +469,16 @@ Acceptance:
 - [x] Disposition other providers according to the feature inventory. A read-only audit at
       `store-new@5f7781f678bb8263e83e67089f915109a5e7a025` and
       `serp-auth@bb037306a4eb0de660971dfb222db215fd93c233` found that both own their Stripe
-      calls directly and neither consumes Lago APIs. Lago-managed Stripe, Adyen, GoCardless,
-      Cashfree, Flutterwave, and MoneyHash therefore remain `not-used`; Authorize.Net is the only
-      retained Lago provider adapter.
+      calls directly and neither consumes Lago APIs. Their checkout/subscription ownership remains
+      unchanged. Lago-managed Stripe checkout, Adyen, GoCardless, Cashfree, Flutterwave, and
+      MoneyHash remain `not-used`; Authorize.Net is the only active retained provider adapter.
+- [x] Add a disabled Stripe-compatible financial-control foundation without changing provider
+      ownership. Migration `0084` adds tenant-scoped dispute and provider-refund ledgers plus a
+      lost-dispute invoice marker. The Worker can verify raw signed test events, enforce an exact
+      organization/account mapping, reject live mode, deduplicate/order dispute state, and update
+      only pre-existing refund operations. The outbound refund contract requires both an explicit
+      network gate and a restricted key, is not wired into live credit notes, and is tested only
+      through an injected in-memory transport.
 - [x] Implement checkout/payment Workflows with intent, attempt, outcome, and reconciliation records.
       Invoice hosted checkout retains the synchronous store contract with Durable Object command
       reservations; payment-request checkout uses a D1 intent/outcome ledger and a retryable
@@ -486,6 +493,7 @@ Acceptance:
 - Provider adapters pass fake-server contract suites without live credentials.
 - Kill/retry tests cannot produce a duplicate provider mutation.
 - Webhook replay converges on the same payment and invoice state.
+- Checked-in configuration and tests produce zero Stripe network traffic.
 
 ### M5: Jobs, schedules, outbound events, and reconciliation
 
@@ -801,9 +809,9 @@ Acceptance:
       isolated-development deployment gate. Standard paid-invoice void, adjusted credit-note
       financials, internal offsets, operator allocation parity, and the sandbox-only refund seam
       now have executable evidence. Optional upstream breadth with no verified SERP consumer—such
-      as custom Ruby aggregators, external tax/provider actions, multi-billing-entity routing,
-      paid/provider-funded wallets, dispute automation, and premium void-generated provider
-      refunds—remains explicitly outside the retained surface rather than being represented as
+      as custom Ruby aggregators, external tax-provider actions, multi-billing-entity routing,
+      paid/provider-funded wallets, dispute evidence submission, and live provider-refund
+      activation—remains explicitly outside the retained surface rather than being represented as
       working. Those items require a separate consumer/production approval, not more hidden UI.
 - [x] Pass the semantic-completion deployment gate for the implemented tranche. All 83 migrations
       replay locally, 363 tests across 65 files and five Access reconciler tests pass, generated
@@ -3474,3 +3482,18 @@ resource and mutation described.
   verification passed without creating credit notes, offsets, refunds, or foreign-key violations.
   Production data/routes, real provider secrets/actions, `store-new`, and `serp-auth` remain behind
   the final explicit approval gate.
+- 2026-08-18: Added and deployed the disabled Stripe-compatible financial-control foundation without
+  changing checkout/subscription ownership. Migration `0084` adds tenant-scoped dispute and generic
+  provider-refund ledgers plus a lost-dispute refund guard. The Worker verifies raw-body synthetic
+  signatures, enforces a fixed organization/account mapping, rejects live events, archives immutable
+  webhook evidence, orders dispute updates, and updates only pre-existing refund operations. The
+  outbound refund contract requires both an explicit network gate and a restricted key and was
+  exercised only through an injected in-memory transport; it is not connected to the live
+  credit-note command. API version `3259da96-654c-48ff-b293-bd5678bf37a8` and Access-protected
+  operator version `20f56c71-e643-4c39-af07-d1276f13de03` were deployed only to the isolated
+  development stack. The complete gate passes 374 tests across 68 files, five Access reconciler
+  tests, all 84 migrations from an empty local D1 database, and all three dry bundles. Remote
+  preflight/postflight remained aggregate-only: no pending migration, no foreign-key violations,
+  and zero dispute, provider-refund, or Stripe receipt rows. The API Worker has no secrets, every
+  Stripe gate remains disabled, and no Stripe request, provider registration, production route/data,
+  customer message, `store-new`, or `serp-auth` change occurred.

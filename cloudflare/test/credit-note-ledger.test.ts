@@ -430,6 +430,82 @@ describe("credit-note ledger", () => {
         .bind(source.invoice_id)
         .first(),
     ).resolves.toEqual({ amount_minor: 1000, provider_mode: "sandbox", status: "succeeded" });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT provider, provider_account_code, provider_payment_id, status, amount_minor
+         FROM provider_refund_operations WHERE invoice_id = ?`,
+      )
+        .bind(source.invoice_id)
+        .first(),
+    ).resolves.toEqual({
+      provider: "sandbox",
+      provider_account_code: "sandbox",
+      provider_payment_id: "sandbox-payment",
+      status: "succeeded",
+      amount_minor: 1000,
+    });
+  });
+
+  it("refuses a provider refund after the invoice dispute was lost", async () => {
+    expect(
+      (
+        await request("/api/v1/plans", "POST", {
+          plan: {
+            code: "credit-note-lost-dispute-plan",
+            name: "Lost dispute refund guard",
+            interval: "monthly",
+            amount_cents: 1000,
+            amount_currency: "USD",
+            pay_in_advance: true,
+            tax_codes: [],
+          },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (await createSubscription("credit-note-lost-dispute-source", "credit-note-lost-dispute-plan"))
+        .status,
+    ).toBe(200);
+    const source = await sourceInvoice("credit-note-lost-dispute-source");
+    await env.BILLING_DB.prepare("UPDATE invoices SET payment_dispute_lost_at = ? WHERE id = ?")
+      .bind("2026-08-18T01:00:00.000Z", source.invoice_id)
+      .run();
+
+    await expect(
+      createCreditNote(
+        new Request("https://lago.test/api/v1/credit_notes", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": "lost-dispute-refund",
+          },
+          body: JSON.stringify({
+            credit_note: {
+              invoice_id: source.invoice_id,
+              refund_amount_cents: 1000,
+              items: [{ fee_id: source.line_id, amount_cents: 1000 }],
+            },
+          }),
+        }),
+        { ...env, CREDIT_NOTE_REFUND_MODE: "sandbox" },
+        {
+          organizationId: "org-credit-note",
+          organizationExternalId: "credit-note-test",
+          apiKeyId: "key-credit-note",
+        },
+        "lost-dispute-refund-request",
+      ),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "refund_unavailable_after_lost_dispute",
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT COUNT(*) AS count FROM provider_refund_operations WHERE invoice_id = ?",
+      )
+        .bind(source.invoice_id)
+        .first(),
+    ).resolves.toEqual({ count: 0 });
   });
 });
 

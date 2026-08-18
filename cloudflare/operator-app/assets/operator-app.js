@@ -21,6 +21,8 @@ const endpoints = {
   walletTransactions: "/api/operator/v1/wallet-transactions",
   creditNotes: "/api/operator/v1/credit-notes",
   payments: "/api/operator/v1/payments",
+  paymentDisputes: "/api/operator/v1/payment-disputes",
+  providerRefunds: "/api/operator/v1/provider-refunds",
   quotes: "/api/operator/v1/quotes",
   quoteVersions: "/api/operator/v1/quote-versions",
   dataExports: "/api/operator/v1/data-exports",
@@ -883,6 +885,14 @@ const elements = {
   paymentsEmpty: document.querySelector("#payments-empty"),
   paymentsTableShell: document.querySelector("#payments-table-shell"),
   paymentsTableBody: document.querySelector("#payments-table-body"),
+  paymentDisputesLoading: document.querySelector("#payment-disputes-loading"),
+  paymentDisputesEmpty: document.querySelector("#payment-disputes-empty"),
+  paymentDisputesTableShell: document.querySelector("#payment-disputes-table-shell"),
+  paymentDisputesTableBody: document.querySelector("#payment-disputes-table-body"),
+  providerRefundsLoading: document.querySelector("#provider-refunds-loading"),
+  providerRefundsEmpty: document.querySelector("#provider-refunds-empty"),
+  providerRefundsTableShell: document.querySelector("#provider-refunds-table-shell"),
+  providerRefundsTableBody: document.querySelector("#provider-refunds-table-body"),
   openCreateQuote: document.querySelector("#open-create-quote"),
   quotesLoading: document.querySelector("#quotes-loading"),
   quotesEmpty: document.querySelector("#quotes-empty"),
@@ -1026,6 +1036,8 @@ const state = {
   creditNoteEstimate: null,
   creditNoteEstimateRequest: 0,
   payments: [],
+  paymentDisputes: [],
+  providerRefunds: [],
   quotes: [],
   quoteFormMode: "create",
   selectedQuoteId: null,
@@ -1220,6 +1232,8 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
       walletsPayload,
       creditNotesPayload,
       paymentsPayload,
+      paymentDisputesPayload,
+      providerRefundsPayload,
       quotesPayload,
       dataExportsPayload,
       webhookEndpointsPayload,
@@ -1256,6 +1270,8 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
       requestJson(endpoints.wallets),
       requestJson(endpoints.creditNotes),
       requestJson(endpoints.payments),
+      requestJson(endpoints.paymentDisputes),
+      requestJson(endpoints.providerRefunds),
       requestJson(endpoints.quotes),
       requestJson(endpoints.dataExports),
       requestJson(endpoints.webhookEndpoints),
@@ -1297,6 +1313,8 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
     renderWallets(walletsPayload.wallets);
     renderCreditNotes(creditNotesPayload.credit_notes);
     renderPayments(paymentsPayload.payments);
+    renderPaymentDisputes(paymentDisputesPayload.payment_disputes);
+    renderProviderRefunds(providerRefundsPayload.provider_refunds);
     renderQuotes(quotesPayload.quotes);
     renderDataExports(dataExportsPayload.data_exports);
     renderWebhookEndpoints(webhookEndpointsPayload.webhook_endpoints);
@@ -6385,6 +6403,66 @@ function renderPayments(payments) {
     elements.paymentsTableBody.append(row);
   }
   decorateEntityRows(elements.paymentsTableBody, state.payments, "payments");
+}
+
+function renderPaymentDisputes(disputes) {
+  state.paymentDisputes = Array.isArray(disputes) ? disputes : [];
+  elements.paymentDisputesTableBody.replaceChildren();
+  elements.paymentDisputesLoading.hidden = true;
+  elements.paymentDisputesEmpty.hidden = state.paymentDisputes.length !== 0;
+  elements.paymentDisputesTableShell.hidden = state.paymentDisputes.length === 0;
+  for (const dispute of state.paymentDisputes) {
+    const row = document.createElement("tr");
+    const identity = document.createElement("td");
+    const providerId = document.createElement("span");
+    providerId.className = "key-name";
+    providerId.textContent = safeText(dispute.provider_dispute_id, "Unknown dispute");
+    const account = document.createElement("span");
+    account.className = "key-id";
+    account.textContent = `${safeText(dispute.provider, "Provider")} · ${safeText(dispute.provider_account_code, "Unknown account")}`;
+    identity.append(providerId, account);
+    row.append(identity);
+    const values = [
+      dispute.invoice_number ?? dispute.invoice_id,
+      humanize(dispute.reason),
+      humanize(dispute.status),
+      formatMoney(dispute.amount_cents, dispute.currency),
+      formatDate(dispute.evidence_due_by),
+      dispute.livemode ? "Live" : "Test",
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = safeText(value, "—");
+      row.append(cell);
+    }
+    elements.paymentDisputesTableBody.append(row);
+  }
+}
+
+function renderProviderRefunds(refunds) {
+  state.providerRefunds = Array.isArray(refunds) ? refunds : [];
+  elements.providerRefundsTableBody.replaceChildren();
+  elements.providerRefundsLoading.hidden = true;
+  elements.providerRefundsEmpty.hidden = state.providerRefunds.length !== 0;
+  elements.providerRefundsTableShell.hidden = state.providerRefunds.length === 0;
+  for (const refund of state.providerRefunds) {
+    const row = document.createElement("tr");
+    const values = [
+      refund.provider_refund_id ?? refund.lago_id,
+      refund.invoice_number ?? refund.invoice_id,
+      refund.credit_note_number ?? refund.credit_note_id,
+      `${safeText(refund.provider, "Provider")} · ${safeText(refund.provider_account_code, "Unknown account")}`,
+      humanize(refund.status),
+      formatMoney(refund.amount_cents, refund.currency),
+      formatDate(refund.updated_at),
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = safeText(value, "—");
+      row.append(cell);
+    }
+    elements.providerRefundsTableBody.append(row);
+  }
 }
 
 function renderQuotes(quotes) {

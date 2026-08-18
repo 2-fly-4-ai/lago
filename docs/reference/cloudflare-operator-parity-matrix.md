@@ -33,7 +33,7 @@ action.
 | Customers        | `/:org/customers`, `/:org/customers/:externalId`, optional detail tab | Original entity header, Overview/Wallets/Analytics/Invoices/Credit notes/Settings tabs, details rail, create/edit, and tenant-safe missing state                                     |
 | Subscriptions    | `/:org/subscriptions` and `/:org/subscriptions/:externalId`           | List, focused detail, create/edit/terminate or cancel with explicit termination options                                                                                              |
 | Invoices         | `/:org/invoices` and `/:org/invoices/:lagoId`                         | List, focused detail, manual one-off create, draft refresh/finalize, and finalized void while independent successful-payment evidence is preserved                                   |
-| Payments         | `/:org/payments` and `/:org/payments/:lagoId`                         | Read-only settlement list/detail; payment links, retry, and manual settlement remain unavailable                                                                                     |
+| Payments         | `/:org/payments` and `/:org/payments/:lagoId`                         | Read-only settlement list/detail plus verified dispute and provider-refund ledgers; evidence submission, payment links, retry, refund execution, and manual settlement remain unavailable |
 | Credit notes     | `/:org/credit-notes` and `/:org/credit-notes/:lagoId`                 | List/detail, fee-row selection, coupon/tax estimate, credit/offset allocation, eligible void, and PDF; provider refunds remain visibly safety-disabled                               |
 | Wallets          | `/:org/wallets` and `/:org/wallets/:lagoId`                           | List, focused detail, granted-credit create/top-up/terminate; provider-funded and paid-credit paths unavailable                                                                      |
 | Quotes           | `/:org/quotes` and `/:org/quotes/:lagoId`                             | List, focused detail, draft create/edit, approve/void, and version clone; PDF/email/public delivery unavailable                                                                      |
@@ -60,6 +60,9 @@ action.
   metrics, Features, and the AI assistant no longer use unavailable placeholders.
 - Provider reads, provider mutations, customer messages, and document delivery remain controlled by
   the existing external-action flags, which must remain `0` for this isolated rollout.
+- Stripe network access, webhook ingestion, and live-mode events have independent fail-closed
+  gates. The checked-in operator exposes only normalized D1 evidence and never raw webhook bodies
+  or provider credentials.
 
 ## Visual and interaction evidence
 

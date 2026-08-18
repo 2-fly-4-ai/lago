@@ -11,13 +11,16 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `65bf69a8-70ab-46f3-8cdb-2af1137f13d0`
+- Latest verified version: `3259da96-654c-48ff-b293-bd5678bf37a8`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
 - `CREDIT_NOTE_REFUND_MODE`: `disabled`
 - `PROVIDER_READS_ENABLED`: `0`
+- `STRIPE_NETWORK_MODE`: `disabled`
+- `STRIPE_WEBHOOKS_ENABLED`: `0`
+- `STRIPE_LIVEMODE_ALLOWED`: `0`
 - `OUTBOUND_WEBHOOKS_ENABLED`: `0`
 
 ## Resources
@@ -40,11 +43,11 @@ It is not a production inventory and contains no secrets or customer data.
 | Worker            | `serp-dev-lago-customer-portal` / `6bfeedea-636d-4af4-bcf0-3e20573ab3a0` | D1, R2                                  | Token-protected synthetic customer portal and Static Assets        |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0083_credit_note_financial_adjustments.sql`.
+`0084_provider_financial_controls.sql`.
 
 ## Operator Access rollout
 
-- `serp-dev-lago-operator` version `64287259-a894-4fcb-bdfd-274e3d01ae83` is deployed from
+- `serp-dev-lago-operator` version `20f56c71-e643-4c39-af07-d1276f13de03` is deployed from
   `wrangler.operator.jsonc` with Access validation enabled, preview URLs disabled, the operator
   Static Assets application, isolated D1, Workers AI, and the existing internal Durable Object,
   Workflow, and Queue bindings. The API Worker remains outside the human Access application.
@@ -64,6 +67,21 @@ Applied D1 migrations: `0001_foundation.sql` through
   token is not required for the completed dashboard-provisioned application and policy.
 
 ## Verified behavior
+
+- API version `3259da96-654c-48ff-b293-bd5678bf37a8` and operator version
+  `20f56c71-e643-4c39-af07-d1276f13de03` deploy the disabled Stripe-compatible financial-control
+  foundation. Only migration `0084_provider_financial_controls.sql` was pending; it applied to the
+  isolated development D1 after aggregate-only preflight found two synthetic organizations, one
+  synthetic customer/invoice, and no payment attempt, credit note, or refund rows. Post-deploy
+  verification found no pending migration, no dispute/provider-refund/Stripe-receipt rows, and no
+  foreign-key violations. API health returned `200`, unauthenticated billing returned `401`, the
+  disabled Stripe webhook route returned `503 stripe_webhooks_disabled`, and unauthenticated
+  operator access returned the expected Cloudflare Access `302`. The complete gate passes 374
+  tests across 68 files, five Access reconciler tests, formatting/lint/types/generated checks, all
+  84 migrations from empty local D1, and all three dry bundles. The API has no configured secrets;
+  Stripe network, webhook, and live-mode gates remain disabled. No Stripe request, provider
+  registration, customer message, production route/data, `store-new`, or `serp-auth` change
+  occurred.
 
 - API version `65bf69a8-70ab-46f3-8cdb-2af1137f13d0` and operator version
   `b5cc487d-1102-4d33-9a5d-1eda18b67d55` deploy targeted tax/coupon and adjusted-credit-note parity.

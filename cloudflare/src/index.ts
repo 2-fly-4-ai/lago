@@ -4,6 +4,7 @@ import { handleLagoCompatibilityRequest } from "./api/lago-compatibility";
 import { ApiError, apiErrorResponse } from "./http";
 import { authorizeNetPaymentForm } from "./providers/authorize-net";
 import { handleAuthorizeNetWebhook } from "./webhooks/authorize-net";
+import { handleStripeWebhook } from "./webhooks/stripe";
 import { reconcileAuthorizeNetReceipt } from "./reconciliation/authorize-net";
 import { deliverOutboundWebhooks } from "./webhooks/outbound";
 import { scheduleInstanceId } from "./schedules/registry";
@@ -71,6 +72,16 @@ export default {
           request,
           env,
           decodeURIComponent(authorizeNetWebhookMatch[1]),
+          requestId,
+        );
+      }
+
+      const stripeWebhookMatch = url.pathname.match(/^\/webhooks\/stripe\/([^/]+)$/);
+      if (request.method === "POST" && stripeWebhookMatch?.[1]) {
+        return await handleStripeWebhook(
+          request,
+          env,
+          decodeURIComponent(stripeWebhookMatch[1]),
           requestId,
         );
       }

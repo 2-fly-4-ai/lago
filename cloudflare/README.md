@@ -38,7 +38,13 @@ remaining Lago feature inventory is dispositioned and ported.
   offset, and refund amounts, and project the same values through API, PDF, and CSV reads. Offsets
   settle only the source invoice's current unpaid balance. Refunds remain fail-closed in deployed
   configuration; an explicit `sandbox` adapter records synthetic success evidence without making an
-  external request or accepting provider credentials.
+  external request or accepting provider credentials. Lost provider disputes block later refunds,
+  and every sandbox outcome also enters the generic provider-refund ledger.
+- Stripe financial controls: a narrow, disabled-by-default compatibility boundary can construct an
+  idempotent refund request through an injected transport, verify raw-body webhook signatures,
+  reject live-mode events, archive immutable evidence, and project disputes/refund outcomes into
+  tenant-scoped D1 ledgers. It does not own checkout or subscription billing, is not wired into the
+  live credit-note command, and makes no Stripe request in the checked-in configuration.
 - Quote API: the pinned Lago GraphQL-only quote domain is exposed as a documented REST replacement
   with tenant-scoped organization numbering, customer/subscription validation, active-member owners,
   one active version, draft edits, approval, voiding, superseding clones, optimistic revisions,
@@ -502,13 +508,19 @@ Multi-billing-entity routing and provider-created system sections remain explici
 
 ### Retained payment-provider scope
 
-The Cloudflare rewrite retains only the Authorize.Net adapter used by the pinned Lago compatibility
-contract. A read-only audit of committed `store-new` and `serp-auth` sources found that those systems
-own Stripe checkout, billing, webhooks, reconciliation, operator actions, and receipt recovery
-directly; neither calls Lago for provider operations. Lago-managed Stripe, Adyen, GoCardless,
-Cashfree, Flutterwave, and MoneyHash are therefore explicit `not-used` feature-inventory entries,
-not missing Worker implementations. Adding one back requires a verified SERP consumer contract,
-synthetic provider fixtures, and the existing disabled-by-default provider gates.
+The Cloudflare rewrite retains Authorize.Net as the only active provider adapter used by the pinned
+Lago compatibility contract. A read-only audit of committed `store-new` and `serp-auth` sources
+found that those systems own Stripe checkout and subscription billing directly; neither calls Lago
+for provider execution. Their ownership remains unchanged. Lago-managed Stripe checkout, Adyen,
+GoCardless, Cashfree, Flutterwave, and MoneyHash remain explicit `not-used` feature-inventory
+entries.
+
+The broader operator surface now includes a narrow Stripe-compatible financial-control foundation:
+an outbound refund contract exercised only with injected in-memory transports, disabled signed
+webhook ingestion for disputes/refund outcomes, lost-dispute refund exclusion, and read-only
+operator ledgers. This is preparation, not activation. Enabling it requires a separately approved
+tenant/account mapping, restricted test key, webhook secret/registration, isolated test data, and
+action-time confirmation; production and live-mode activation remain out of scope.
 
 Wallet create/update and granted wallet-transaction create accept the same
 `invoice_custom_section` attach/skip wrapper. Wallet list/show and wallet-transaction reads expose
@@ -546,6 +558,10 @@ unsupported.
   redirects; it is not a provider endpoint, credential, custom domain, or production route.
 - `PAYMENT_MUTATIONS_ENABLED=0` prevents hosted-payment token creation.
 - `PROVIDER_READS_ENABLED=0` defers provider reconciliation.
+- `STRIPE_NETWORK_MODE=disabled` fails before transport selection, so the Worker cannot call Stripe.
+- `STRIPE_WEBHOOKS_ENABLED=0` rejects Stripe payloads before reading or persisting their bodies.
+- `STRIPE_LIVEMODE_ALLOWED=0` independently rejects live-mode events if webhook ingestion is later
+  approved for an isolated test account.
 - `OUTBOUND_WEBHOOKS_ENABLED=0` prevents endpoint creation/update and outbound delivery until an
   approved HMAC signing secret is configured. No signing key is committed or deployed.
 - Provider credentials are secrets and are never stored in `wrangler.jsonc`.

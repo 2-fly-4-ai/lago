@@ -14,6 +14,9 @@ import { describe, expect, it } from "vitest";
 describe("isolated operator app assets", () => {
   it("keeps the API shell separate from the Access-protected operator app", () => {
     expect(apiConfig).toContain('"directory": "operator-ui"');
+    expect(apiConfig).toContain('"STRIPE_NETWORK_MODE": "disabled"');
+    expect(apiConfig).toContain('"STRIPE_WEBHOOKS_ENABLED": "0"');
+    expect(apiConfig).toContain('"STRIPE_LIVEMODE_ALLOWED": "0"');
     expect(apiConfig).not.toContain('"directory": "operator-app"');
     expect(operatorConfig).toContain('"directory": "operator-app"');
     expect(operatorConfig).not.toContain('"directory": "operator-ui"');
@@ -75,6 +78,8 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/wallet-transactions",
       "/api/operator/v1/credit-notes",
       "/api/operator/v1/payments",
+      "/api/operator/v1/payment-disputes",
+      "/api/operator/v1/provider-refunds",
       "/api/operator/v1/quotes",
       "/api/operator/v1/quote-versions",
       "/api/operator/v1/data-exports",
@@ -152,6 +157,8 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("Issue a credit note");
     expect(operatorIndex).toContain("Offset amount (minor units)");
     expect(operatorIndex).toContain("Provider refunds remain disabled in this environment");
+    expect(operatorIndex).toContain("Payment disputes");
+    expect(operatorIndex).toContain("Stripe network access remains disabled");
   });
 
   it("uses organization-slug routes, real history, and the retained Lago navigation hierarchy", () => {

@@ -1526,6 +1526,69 @@
                   </table>
                 </div>
               </div>
+              <div class="billing-subsection" aria-labelledby="payment-disputes-title">
+                <div>
+                  <p class="eyebrow">Provider risk</p>
+                  <h3 id="payment-disputes-title">Payment disputes</h3>
+                  <p>Verified provider outcomes only. Evidence submission remains in Stripe.</p>
+                </div>
+                <div class="table-loading" id="payment-disputes-loading" aria-live="polite">
+                  Loading payment disputes…
+                </div>
+                <div class="empty-state compact-empty" id="payment-disputes-empty" hidden>
+                  <h3>No payment disputes</h3>
+                  <p>No verified dispute events have been received.</p>
+                </div>
+                <div class="table-scroll" id="payment-disputes-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Dispute</th>
+                        <th scope="col">Invoice</th>
+                        <th scope="col">Reason</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Evidence due</th>
+                        <th scope="col">Mode</th>
+                      </tr>
+                    </thead>
+                    <tbody id="payment-disputes-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="billing-subsection" aria-labelledby="provider-refunds-title">
+                <div>
+                  <p class="eyebrow">Provider returns</p>
+                  <h3 id="provider-refunds-title">Provider refunds</h3>
+                  <p>
+                    Read-only execution evidence. Stripe network access remains disabled in this
+                    environment.
+                  </p>
+                </div>
+                <div class="table-loading" id="provider-refunds-loading" aria-live="polite">
+                  Loading provider refunds…
+                </div>
+                <div class="empty-state compact-empty" id="provider-refunds-empty" hidden>
+                  <h3>No provider refunds</h3>
+                  <p>No provider refund operation has been submitted.</p>
+                </div>
+                <div class="table-scroll" id="provider-refunds-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Refund</th>
+                        <th scope="col">Invoice</th>
+                        <th scope="col">Credit note</th>
+                        <th scope="col">Provider</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Updated</th>
+                      </tr>
+                    </thead>
+                    <tbody id="provider-refunds-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
             </section>
 
             <section class="keys-section" id="quotes" aria-labelledby="quotes-title">

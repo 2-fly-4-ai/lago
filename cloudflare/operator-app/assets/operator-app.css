@@ -396,6 +396,29 @@ main {
   line-height: 1.55;
 }
 
+.billing-subsection {
+  display: grid;
+  gap: 16px;
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--lago-grey-300);
+}
+
+.billing-subsection h3 {
+  margin: 4px 0 6px;
+  font-size: 18px;
+  color: var(--lago-grey-700);
+}
+
+.billing-subsection > div > p:last-child {
+  margin: 0;
+  color: var(--lago-grey-500);
+}
+
+.compact-empty {
+  min-height: 120px;
+}
+
 .role-pill.admin {
   border-color: #bcd8c5;
   color: #286345;
