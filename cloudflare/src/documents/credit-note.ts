@@ -184,9 +184,15 @@ async function loadCreditNote(database: D1Database, creditNoteId: string) {
               invoice.number AS invoice_number, note.number,
               CASE WHEN note.allocation_state = 'draft' THEN 'draft' ELSE note.status END AS status,
               note.credit_status, note.reason, note.description, note.currency,
-              note.total_amount_minor, note.credit_amount_minor, note.balance_amount_minor,
-              note.refund_amount_minor, note.offset_amount_minor, note.taxes_amount_minor,
-              note.coupons_adjustment_minor, note.version, note.issuing_date,
+              COALESCE(financial.total_amount_minor, note.total_amount_minor) AS total_amount_minor,
+              COALESCE(financial.credit_amount_minor, note.credit_amount_minor) AS credit_amount_minor,
+              note.balance_amount_minor,
+              COALESCE(financial.refund_amount_minor, note.refund_amount_minor) AS refund_amount_minor,
+              COALESCE(financial.offset_amount_minor, note.offset_amount_minor) AS offset_amount_minor,
+              COALESCE(financial.taxes_amount_minor, note.taxes_amount_minor) AS taxes_amount_minor,
+              COALESCE(financial.coupons_adjustment_minor, note.coupons_adjustment_minor)
+                AS coupons_adjustment_minor,
+              note.version, note.issuing_date,
               organization.name AS organization_name,
               organization.legal_name AS organization_legal_name,
               organization.legal_number AS organization_legal_number,
@@ -204,6 +210,7 @@ async function loadCreditNote(database: D1Database, creditNoteId: string) {
        JOIN invoices invoice ON invoice.id = note.invoice_id
        JOIN organizations organization ON organization.id = note.organization_id
        JOIN customers customer ON customer.id = note.customer_id
+       LEFT JOIN credit_note_financials financial ON financial.credit_note_id = note.id
        WHERE note.id = ? LIMIT 1`,
     )
     .bind(creditNoteId)

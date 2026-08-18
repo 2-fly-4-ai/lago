@@ -18,6 +18,7 @@
     "APP_ENV": "development",
     "PUBLIC_BASE_URL": "https://serp-dev-lago-native.serpcompany.workers.dev",
     "PAYMENT_MUTATIONS_ENABLED": "0",
+    "CREDIT_NOTE_REFUND_MODE": "disabled",
     "PROVIDER_READS_ENABLED": "0",
     "OUTBOUND_WEBHOOKS_ENABLED": "0",
   },

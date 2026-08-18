@@ -136,6 +136,21 @@ beforeEach(async () => {
     env.BILLING_DB.prepare(
       "DELETE FROM invoice_custom_sections WHERE organization_id = 'org-operator-access'",
     ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM credit_note_taxes WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM credit_note_item_adjustments WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM credit_note_offsets WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM credit_note_refunds WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM credit_note_financials WHERE organization_id = 'org-operator-access'",
+    ),
     env.BILLING_DB.prepare("DELETE FROM taxes WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
       "DELETE FROM applied_coupons WHERE organization_id = 'org-operator-access'",

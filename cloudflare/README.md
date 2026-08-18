@@ -33,6 +33,12 @@ remaining Lago feature inventory is dispositioned and ported.
   and authenticated private downloads. Voiding advances the credit-note version and produces a new
   immutable PDF without replacing the prior artifact. UBL/XML e-invoicing remains explicitly
   disabled.
+- Credit-note financials: fee-bounded notes snapshot proportional coupon adjustments and source tax
+  rates with cumulative rounding, split the adjusted total across customer credit, source-invoice
+  offset, and refund amounts, and project the same values through API, PDF, and CSV reads. Offsets
+  settle only the source invoice's current unpaid balance. Refunds remain fail-closed in deployed
+  configuration; an explicit `sandbox` adapter records synthetic success evidence without making an
+  external request or accepting provider credentials.
 - Quote API: the pinned Lago GraphQL-only quote domain is exposed as a documented REST replacement
   with tenant-scoped organization numbering, customer/subscription validation, active-member owners,
   one active version, draft edits, approval, voiding, superseding clones, optimistic revisions,
@@ -50,7 +56,8 @@ remaining Lago feature inventory is dispositioned and ported.
   billing-entity subset rejects e-invoicing and every document API keeps XML disabled, `pdfcpu` is
   deliberately absent rather than replaced by an unreachable Wasm or JavaScript shim.
 - D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
-  credit-note balances/applications/recredits, granted-credit wallets and consumption lots,
+  credit-note balances/applications/recredits, immutable tax/coupon adjustment snapshots, internal
+  invoice offsets, sandbox refund evidence, granted-credit wallets and consumption lots,
   manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
   fixed charges with in-arrears or in-advance timing, local-day proration, effective-dated
   subscription units, immediate-billing evidence and durable repair state, customer payment terms,

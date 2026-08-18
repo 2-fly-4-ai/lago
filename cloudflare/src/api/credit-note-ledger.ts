@@ -4,6 +4,7 @@ import type { DomainEvent } from "../domain-events";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import { Decimal } from "../rating/decimal";
 
 type CreditNoteRow = {
   id: string;
@@ -25,6 +26,9 @@ type CreditNoteRow = {
   offset_amount_minor: number;
   taxes_amount_minor: number;
   coupons_adjustment_minor: number;
+  items_amount_minor: number;
+  precise_taxes_amount_minor: string;
+  refund_status: string | null;
   version: number;
   idempotency_key: string;
   request_sha256: string;
@@ -36,8 +40,28 @@ type CreditNoteRow = {
   pdf_object_key: string | null;
 };
 
-type InputItem = { lineId: string; amountMinor: number };
-type CreditNoteMutationEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">;
+export type CreditNoteInputItem = { lineId: string; amountMinor: number };
+type CreditNoteMutationEnv = {
+  BILLING_DB: D1Database;
+  DOMAIN_EVENTS: Queue;
+  CREDIT_NOTE_REFUND_MODE?: string;
+};
+export type CalculatedCreditNoteItem = CreditNoteInputItem & {
+  couponAdjustmentMinor: number;
+  taxableBaseMinor: number;
+  taxes: CalculatedCreditNoteTax[];
+};
+export type CalculatedCreditNoteTax = {
+  invoiceLineTaxId: string;
+  taxId: string;
+  code: string;
+  name: string;
+  description: string | null;
+  rate: string;
+  taxableBaseMinor: number;
+  amountMinor: number;
+  preciseAmountMinor: string;
+};
 const REASONS = new Set([
   "duplicated_charge",
   "product_unsatisfactory",
@@ -94,22 +118,31 @@ export async function createCreditNote(
   requestId: string,
 ): Promise<Response> {
   const input = objectAt(await parseJsonObject(request), "credit_note");
-  rejectSideEffects(input);
+  rejectUnsupportedFields(input);
   const idempotencyKey = requiredIdempotencyKey(request);
   const invoiceId = requiredString(input, "invoice_id");
   const items = parseItems(input.items);
-  const total = items.reduce((sum, item) => safeAdd(sum, item.amountMinor), 0);
-  const requestedCredit =
-    input.credit_amount_cents === undefined
-      ? total
-      : positiveInteger(input.credit_amount_cents, "credit_amount_cents");
-  if (requestedCredit !== total)
-    throw new ApiError(422, "does_not_match_item_amounts", "Credit amount must equal item amounts");
+  const requestedCreditInput = optionalNonNegativeInteger(
+    input.credit_amount_cents,
+    "credit_amount_cents",
+  );
+  const requestedRefund =
+    optionalNonNegativeInteger(input.refund_amount_cents, "refund_amount_cents") ?? 0;
+  const requestedOffset =
+    optionalNonNegativeInteger(input.offset_amount_cents, "offset_amount_cents") ?? 0;
   const reason = optionalString(input, "reason") ?? "other";
   if (!REASONS.has(reason)) throw new ApiError(422, "validation_error", "reason is invalid");
   const description = optionalString(input, "description");
   const requestHash = await sha256Hex(
-    stableJson({ description, invoiceId, items, reason, requestedCredit }),
+    stableJson({
+      description,
+      invoiceId,
+      items,
+      reason,
+      requestedCreditInput,
+      requestedOffset,
+      requestedRefund,
+    }),
   );
   const existing = await findCreditNoteByIdempotencyKey(
     env.BILLING_DB,
@@ -135,7 +168,8 @@ export async function createCreditNote(
     );
   }
   const invoice = await env.BILLING_DB.prepare(
-    `SELECT id, customer_id, number, status, currency, subtotal_minor, tax_minor,
+    `SELECT id, customer_id, number, status, currency, subtotal_minor, tax_minor, total_due_minor,
+            version,
             coupons_minor, prepaid_credit_minor, credit_notes_minor
      FROM invoices WHERE organization_id = ? AND id = ? LIMIT 1`,
   )
@@ -148,20 +182,62 @@ export async function createCreditNote(
       currency: string;
       subtotal_minor: number;
       tax_minor: number;
+      total_due_minor: number;
+      version: number;
       coupons_minor: number;
       prepaid_credit_minor: number;
       credit_notes_minor: number;
     }>();
   if (!invoice || invoice.status !== "finalized")
     throw new ApiError(404, "invoice_not_found", "Finalized invoice was not found");
-  await validateItems(items, env.BILLING_DB, invoice.id, auth.organizationId);
-  const remainingInvoice =
-    invoice.subtotal_minor + invoice.tax_minor - invoice.coupons_minor - invoice.credit_notes_minor;
-  if (total > remainingInvoice)
+  const calculatedItems = await calculateCreditNoteItems(
+    items,
+    env.BILLING_DB,
+    invoice.id,
+    auth.organizationId,
+  );
+  const itemsAmount = calculatedItems.reduce((sum, item) => safeAdd(sum, item.amountMinor), 0);
+  const taxesAmount = calculatedItems.reduce(
+    (sum, item) => item.taxes.reduce((taxSum, tax) => safeAdd(taxSum, tax.amountMinor), sum),
+    0,
+  );
+  const couponsAdjustment = calculatedItems.reduce(
+    (sum, item) => safeAdd(sum, item.couponAdjustmentMinor),
+    0,
+  );
+  const total = safeAdd(itemsAmount, taxesAmount) - couponsAdjustment;
+  if (!Number.isSafeInteger(total) || total <= 0)
+    throw new ApiError(422, "invalid_credit_note_total", "Credit note total must be positive");
+  const hasNonCreditSplit = requestedRefund > 0 || requestedOffset > 0;
+  const requestedCredit = requestedCreditInput ?? (hasNonCreditSplit ? 0 : total);
+  if (safeAdd(safeAdd(requestedCredit, requestedRefund), requestedOffset) !== total)
     throw new ApiError(
       422,
-      "higher_than_remaining_invoice_amount",
-      "Credit note exceeds the remaining invoice amount",
+      "does_not_match_item_amounts",
+      "Credit, refund, and offset amounts must equal the adjusted item total",
+    );
+  if (requestedRefund > 0) {
+    if (env.CREDIT_NOTE_REFUND_MODE !== "sandbox")
+      throw new ApiError(
+        503,
+        "credit_note_refunds_disabled",
+        "Credit note refunds are disabled unless the isolated sandbox adapter is enabled",
+      );
+    const refundable = await refundableAmount(env.BILLING_DB, auth.organizationId, invoice.id);
+    if (requestedRefund > refundable)
+      throw new ApiError(
+        422,
+        "refund_amount_exceeds_paid_amount",
+        "Refund amount exceeds successful payments that have not already been refunded",
+      );
+  }
+  const paidAmount = await successfulPaymentAmount(env.BILLING_DB, invoice.id);
+  const outstandingAmount = Math.max(invoice.total_due_minor - paidAmount, 0);
+  if (requestedOffset > outstandingAmount)
+    throw new ApiError(
+      422,
+      "offset_amount_exceeds_due_amount",
+      "Offset amount exceeds the source invoice balance",
     );
   const now = new Date().toISOString();
   const sequence = await env.BILLING_DB.prepare(
@@ -177,11 +253,22 @@ export async function createCreditNote(
     totalAmountMinor: total,
   });
   const persistedItems = await Promise.all(
-    items.map(async (item) => ({
+    calculatedItems.map(async (item) => ({
       ...item,
       id: await deterministicUuid("credit-note-item", `${id}:${item.lineId}`),
+      taxes: await Promise.all(
+        item.taxes.map(async (tax) => ({
+          ...tax,
+          id: await deterministicUuid("credit-note-tax", `${id}:${item.lineId}:${tax.taxId}`),
+        })),
+      ),
     })),
   );
+  const preciseTaxesAmount = calculatedItems
+    .flatMap((item) => item.taxes)
+    .reduce((sum, tax) => sum.add(Decimal.parse(tax.preciseAmountMinor)), Decimal.zero())
+    .toString();
+  const refundStatus = requestedRefund > 0 ? "succeeded" : null;
   const statements: D1PreparedStatement[] = [
     env.BILLING_DB.prepare(
       `INSERT INTO credit_notes
@@ -189,7 +276,7 @@ export async function createCreditNote(
         credit_status, reason, description, currency, total_amount_minor, credit_amount_minor,
         balance_amount_minor, version, idempotency_key, request_sha256, issuing_date, created_at,
         updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'finalized', 'available', ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, 'finalized', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
     ).bind(
       id,
       auth.organizationId,
@@ -197,16 +284,38 @@ export async function createCreditNote(
       invoiceId,
       sequentialId,
       number,
+      requestedCredit > 0 ? "available" : "consumed",
       reason,
       description,
       invoice.currency,
       total,
       total,
-      total,
+      requestedCredit,
       idempotencyKey,
       requestHash,
       now.slice(0, 10),
       now,
+      now,
+    ),
+    env.BILLING_DB.prepare(
+      `INSERT INTO credit_note_financials
+       (credit_note_id, organization_id, items_amount_minor, taxes_amount_minor,
+        coupons_adjustment_minor, total_amount_minor, credit_amount_minor,
+        refund_amount_minor, offset_amount_minor, precise_taxes_amount_minor,
+        refund_status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      id,
+      auth.organizationId,
+      itemsAmount,
+      taxesAmount,
+      couponsAdjustment,
+      total,
+      requestedCredit,
+      requestedRefund,
+      requestedOffset,
+      preciseTaxesAmount,
+      refundStatus,
       now,
     ),
     ...persistedItems.map((item) =>
@@ -225,6 +334,106 @@ export async function createCreditNote(
         now,
       ),
     ),
+    ...persistedItems.map((item) =>
+      env.BILLING_DB.prepare(
+        `INSERT INTO credit_note_item_adjustments
+         (credit_note_item_id, organization_id, coupon_adjustment_minor,
+          taxable_base_minor, created_at) VALUES (?, ?, ?, ?, ?)`,
+      ).bind(item.id, auth.organizationId, item.couponAdjustmentMinor, item.taxableBaseMinor, now),
+    ),
+    ...persistedItems.flatMap((item) =>
+      item.taxes.map((tax) =>
+        env.BILLING_DB.prepare(
+          `INSERT INTO credit_note_taxes
+           (id, organization_id, credit_note_id, credit_note_item_id,
+            invoice_line_tax_id, tax_id, tax_code, tax_name, tax_description,
+            tax_rate, taxable_base_minor, amount_minor, precise_amount_minor,
+            currency, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          tax.id,
+          auth.organizationId,
+          id,
+          item.id,
+          tax.invoiceLineTaxId,
+          tax.taxId,
+          tax.code,
+          tax.name,
+          tax.description,
+          tax.rate,
+          tax.taxableBaseMinor,
+          tax.amountMinor,
+          tax.preciseAmountMinor,
+          invoice.currency,
+          now,
+        ),
+      ),
+    ),
+    ...(requestedOffset > 0
+      ? [
+          env.BILLING_DB.prepare(
+            `INSERT INTO credit_note_offsets
+             (id, organization_id, credit_note_id, invoice_id, amount_minor, status, created_at)
+             VALUES (?, ?, ?, ?, ?, 'succeeded', ?)`,
+          ).bind(
+            await deterministicUuid("credit-note-offset", id),
+            auth.organizationId,
+            id,
+            invoice.id,
+            requestedOffset,
+            now,
+          ),
+          env.BILLING_DB.prepare(
+            `UPDATE invoices
+             SET credits_minor = credits_minor + ?, credit_notes_minor = credit_notes_minor + ?,
+                 total_due_minor = total_due_minor - ?,
+                 payment_status = CASE
+                   WHEN total_due_minor - ? = COALESCE((SELECT SUM(payment.amount_minor)
+                     FROM payment_attempts payment
+                     WHERE payment.invoice_id = invoices.id AND payment.status = 'succeeded'), 0)
+                   THEN 'succeeded' ELSE payment_status END,
+                 ready_for_payment_processing = CASE
+                   WHEN total_due_minor - ? = COALESCE((SELECT SUM(payment.amount_minor)
+                     FROM payment_attempts payment
+                     WHERE payment.invoice_id = invoices.id AND payment.status = 'succeeded'), 0)
+                   THEN 0 ELSE ready_for_payment_processing END,
+                 version = version + 1, updated_at = ?
+             WHERE id = ? AND organization_id = ? AND status = 'finalized'
+               AND total_due_minor - COALESCE((SELECT SUM(payment.amount_minor)
+                 FROM payment_attempts payment
+                 WHERE payment.invoice_id = invoices.id AND payment.status = 'succeeded'), 0) >= ?`,
+          ).bind(
+            requestedOffset,
+            requestedOffset,
+            requestedOffset,
+            requestedOffset,
+            requestedOffset,
+            now,
+            invoice.id,
+            auth.organizationId,
+            requestedOffset,
+          ),
+        ]
+      : []),
+    ...(requestedRefund > 0
+      ? [
+          env.BILLING_DB.prepare(
+            `INSERT INTO credit_note_refunds
+             (id, organization_id, credit_note_id, invoice_id, provider_mode,
+              provider_refund_id, amount_minor, currency, status, created_at)
+             VALUES (?, ?, ?, ?, 'sandbox', ?, ?, ?, 'succeeded', ?)`,
+          ).bind(
+            await deterministicUuid("credit-note-refund", id),
+            auth.organizationId,
+            id,
+            invoice.id,
+            `sandbox-refund:${id}`,
+            requestedRefund,
+            invoice.currency,
+            now,
+          ),
+        ]
+      : []),
     outboxStatement(env.BILLING_DB, auth.organizationId, event),
   ];
   try {
@@ -322,11 +531,16 @@ export async function voidCreditNote(
       { credit_note: await serializeCreditNote(env.BILLING_DB, note, origin) },
       { requestId },
     );
-  if (note.credit_status !== "available" || note.balance_amount_minor !== note.credit_amount_minor)
+  if (
+    note.refund_amount_minor > 0 ||
+    note.offset_amount_minor > 0 ||
+    note.credit_status !== "available" ||
+    note.balance_amount_minor !== note.credit_amount_minor
+  )
     throw new ApiError(
       422,
       "no_voidable_amount",
-      "Only a fully unconsumed credit balance can be voided",
+      "Only a fully unconsumed credit-only note can be voided",
     );
   const now = new Date().toISOString();
   const event = creditNoteEvent(
@@ -439,7 +653,7 @@ export async function dispatchCreditNoteDocument(
   }
 }
 
-function parseItems(value: unknown): InputItem[] {
+function parseItems(value: unknown): CreditNoteInputItem[] {
   if (!Array.isArray(value) || value.length === 0)
     throw new ApiError(422, "validation_error", "items must be a non-empty array");
   const seen = new Set<string>();
@@ -455,12 +669,13 @@ function parseItems(value: unknown): InputItem[] {
   });
 }
 
-async function validateItems(
-  items: InputItem[],
+export async function calculateCreditNoteItems(
+  items: CreditNoteInputItem[],
   db: D1Database,
   invoiceId: string,
   organizationId: string,
-) {
+): Promise<CalculatedCreditNoteItem[]> {
+  const calculated: CalculatedCreditNoteItem[] = [];
   for (const item of items) {
     const { lineId, amountMinor } = item;
     const line = await db
@@ -469,11 +684,14 @@ async function validateItems(
               COALESCE((SELECT SUM(cni.amount_minor) FROM credit_note_items cni
                 JOIN credit_notes cn ON cn.id = cni.credit_note_id
                 WHERE cni.invoice_line_id = il.id AND cn.credit_status <> 'voided'), 0) AS credited
+              , COALESCE((SELECT SUM(coupon_line.amount_minor)
+                  FROM coupon_credit_lines coupon_line
+                  WHERE coupon_line.invoice_line_id = il.id), 0) AS coupon_minor
        FROM invoice_lines il JOIN invoices i ON i.id = il.invoice_id
        WHERE il.id = ? AND il.invoice_id = ? AND i.organization_id = ? LIMIT 1`,
       )
       .bind(lineId, invoiceId, organizationId)
-      .first<{ amount_minor: number; credited: number }>();
+      .first<{ amount_minor: number; credited: number; coupon_minor: number }>();
     if (!line) throw new ApiError(404, "fee_not_found", "Invoice fee was not found");
     if (amountMinor > line.amount_minor - line.credited)
       throw new ApiError(
@@ -481,11 +699,68 @@ async function validateItems(
         "higher_than_remaining_fee_amount",
         "Item exceeds the remaining fee amount",
       );
+    const previousCoupon = proportionalRounded(line.coupon_minor, line.credited, line.amount_minor);
+    const cumulativeCoupon = proportionalRounded(
+      line.coupon_minor,
+      safeAdd(line.credited, amountMinor),
+      line.amount_minor,
+    );
+    const couponAdjustmentMinor = cumulativeCoupon - previousCoupon;
+    const previousTaxableBase = Math.max(line.credited - previousCoupon, 0);
+    const taxableBaseMinor = Math.max(amountMinor - couponAdjustmentMinor, 0);
+    const cumulativeTaxableBase = safeAdd(previousTaxableBase, taxableBaseMinor);
+    const sourceTaxes = await db
+      .prepare(
+        `SELECT id, tax_id, tax_code, tax_name, tax_description, tax_rate
+         FROM invoice_line_taxes
+         WHERE organization_id = ? AND invoice_id = ? AND invoice_line_id = ?
+         ORDER BY created_at, id`,
+      )
+      .bind(organizationId, invoiceId, lineId)
+      .all<{
+        id: string;
+        tax_id: string;
+        tax_code: string;
+        tax_name: string;
+        tax_description: string | null;
+        tax_rate: string;
+      }>();
+    const taxes = sourceTaxes.results.map((tax): CalculatedCreditNoteTax => {
+      const previousPrecise = Decimal.parse(previousTaxableBase)
+        .multiply(Decimal.parse(tax.tax_rate))
+        .divideByInteger(100n);
+      const cumulativePrecise = Decimal.parse(cumulativeTaxableBase)
+        .multiply(Decimal.parse(tax.tax_rate))
+        .divideByInteger(100n);
+      const precise = cumulativePrecise.subtract(previousPrecise);
+      const amount = cumulativePrecise.round() - previousPrecise.round();
+      const amountMinor = Number(amount);
+      if (!Number.isSafeInteger(amountMinor) || amountMinor < 0)
+        throw new ApiError(422, "invalid_minor_amount", "Calculated credit note tax is invalid");
+      return {
+        invoiceLineTaxId: tax.id,
+        taxId: tax.tax_id,
+        code: tax.tax_code,
+        name: tax.tax_name,
+        description: tax.tax_description,
+        rate: tax.tax_rate,
+        taxableBaseMinor,
+        amountMinor,
+        preciseAmountMinor: precise.toString(),
+      };
+    });
+    calculated.push({
+      ...item,
+      couponAdjustmentMinor,
+      taxableBaseMinor,
+      taxes,
+    });
   }
+  return calculated;
 }
 
 function creditNoteSelect() {
-  return `SELECT cn.id, cn.invoice_id, i.number AS invoice_number, cn.customer_id, c.external_id AS customer_external_id, cn.sequential_id, cn.number, CASE WHEN cn.allocation_state = 'draft' THEN 'draft' ELSE cn.status END AS status, cn.credit_status, cn.reason, cn.description, cn.currency, cn.total_amount_minor, cn.credit_amount_minor, cn.balance_amount_minor, cn.refund_amount_minor, cn.offset_amount_minor, cn.taxes_amount_minor, cn.coupons_adjustment_minor, cn.version, cn.idempotency_key, cn.request_sha256, cn.issuing_date, cn.created_at, cn.updated_at, cn.voided_at, artifact.status AS pdf_status, artifact.object_key AS pdf_object_key FROM credit_notes cn JOIN invoices i ON i.id = cn.invoice_id JOIN customers c ON c.id = cn.customer_id LEFT JOIN credit_note_document_artifacts artifact ON artifact.credit_note_id = cn.id AND artifact.credit_note_version = cn.version`;
+  return `SELECT cn.id, cn.invoice_id, i.number AS invoice_number, cn.customer_id, c.external_id AS customer_external_id, cn.sequential_id, cn.number, CASE WHEN cn.allocation_state = 'draft' THEN 'draft' ELSE cn.status END AS status, cn.credit_status, cn.reason, cn.description, cn.currency, COALESCE(financial.total_amount_minor, cn.total_amount_minor) AS total_amount_minor, COALESCE(financial.credit_amount_minor, cn.credit_amount_minor) AS credit_amount_minor, cn.balance_amount_minor, COALESCE(financial.refund_amount_minor, cn.refund_amount_minor) AS refund_amount_minor, COALESCE(financial.offset_amount_minor, cn.offset_amount_minor) AS offset_amount_minor, COALESCE(financial.taxes_amount_minor, cn.taxes_amount_minor) AS taxes_amount_minor, COALESCE(financial.coupons_adjustment_minor, cn.coupons_adjustment_minor) AS coupons_adjustment_minor, COALESCE(financial.items_amount_minor, cn.total_amount_minor) AS items_amount_minor, COALESCE(financial.precise_taxes_amount_minor, CAST(cn.taxes_amount_minor AS TEXT)) AS precise_taxes_amount_minor, financial.refund_status, cn.version, cn.idempotency_key, cn.request_sha256, cn.issuing_date, cn.created_at, cn.updated_at, cn.voided_at, artifact.status AS pdf_status, artifact.object_key AS pdf_object_key FROM credit_notes cn JOIN invoices i ON i.id = cn.invoice_id JOIN customers c ON c.id = cn.customer_id LEFT JOIN credit_note_financials financial ON financial.credit_note_id = cn.id LEFT JOIN credit_note_document_artifacts artifact ON artifact.credit_note_id = cn.id AND artifact.credit_note_version = cn.version`;
 }
 async function findCreditNote(db: D1Database, org: string, id: string) {
   return db
@@ -521,6 +796,28 @@ async function serializeCreditNote(db: D1Database, note: CreditNoteRow, origin: 
       source_type: string;
       source_id: string;
     }>();
+  const taxes = await db
+    .prepare(
+      `SELECT MIN(id) AS id, tax_id, tax_name, tax_code, tax_description, tax_rate,
+              SUM(taxable_base_minor) AS taxable_base_minor,
+              SUM(amount_minor) AS amount_minor, currency, MIN(created_at) AS created_at
+       FROM credit_note_taxes WHERE credit_note_id = ?
+       GROUP BY tax_id, tax_name, tax_code, tax_description, tax_rate, currency
+       ORDER BY MIN(created_at), tax_id`,
+    )
+    .bind(note.id)
+    .all<{
+      id: string;
+      tax_id: string;
+      tax_name: string;
+      tax_code: string;
+      tax_description: string | null;
+      tax_rate: string;
+      taxable_base_minor: number;
+      amount_minor: number;
+      currency: string;
+      created_at: string;
+    }>();
   return {
     lago_id: note.id,
     sequential_id: note.sequential_id,
@@ -529,21 +826,21 @@ async function serializeCreditNote(db: D1Database, note: CreditNoteRow, origin: 
     invoice_number: note.invoice_number,
     issuing_date: note.issuing_date,
     credit_status: note.credit_status,
-    refund_status: null,
+    refund_status: note.refund_status,
     reason: note.reason,
     description: note.description,
     currency: note.currency,
     total_amount_cents: note.total_amount_minor,
     precise_total_amount_cents: String(note.total_amount_minor),
     taxes_amount_cents: note.taxes_amount_minor,
-    precise_taxes_amount_cents: "0",
-    sub_total_excluding_taxes_amount_cents: note.total_amount_minor,
+    precise_taxes_amount_cents: note.precise_taxes_amount_minor,
+    sub_total_excluding_taxes_amount_cents: note.items_amount_minor - note.coupons_adjustment_minor,
     balance_amount_cents: note.balance_amount_minor,
     credit_amount_cents: note.credit_amount_minor,
     refund_amount_cents: note.refund_amount_minor,
     offset_amount_cents: note.offset_amount_minor,
     coupons_adjustment_amount_cents: note.coupons_adjustment_minor,
-    taxes_rate: 0,
+    taxes_rate: taxes.results.reduce((sum, tax) => sum + Number(tax.tax_rate), 0),
     created_at: note.created_at,
     updated_at: note.updated_at,
     file_url:
@@ -568,7 +865,19 @@ async function serializeCreditNote(db: D1Database, note: CreditNoteRow, origin: 
         },
       },
     })),
-    applied_taxes: [],
+    applied_taxes: taxes.results.map((tax) => ({
+      lago_id: tax.id,
+      lago_tax_id: tax.tax_id,
+      tax_name: tax.tax_name,
+      tax_code: tax.tax_code,
+      tax_description: tax.tax_description,
+      tax_rate: Number(tax.tax_rate),
+      amount_cents: tax.amount_minor,
+      precise_amount_cents: String(tax.amount_minor),
+      taxable_base_amount_cents: tax.taxable_base_minor,
+      amount_currency: tax.currency,
+      created_at: tax.created_at,
+    })),
     error_details: [],
   };
 }
@@ -578,16 +887,62 @@ function positiveInteger(value: unknown, field: string) {
     throw new ApiError(422, "validation_error", `${field} must be a positive integer`);
   return value;
 }
+function optionalNonNegativeInteger(value: unknown, field: string): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    throw new ApiError(422, "validation_error", `${field} must be a non-negative integer`);
+  return value;
+}
 function safeAdd(left: number, right: number) {
   const total = left + right;
   if (!Number.isSafeInteger(total))
     throw new ApiError(422, "invalid_minor_amount", "Credit amount exceeds supported precision");
   return total;
 }
-function rejectSideEffects(input: Record<string, unknown>) {
-  for (const field of ["refund_amount_cents", "offset_amount_cents", "metadata"])
-    if (input[field] !== undefined && input[field] !== null && input[field] !== 0)
-      throw new ApiError(422, "unsupported_credit_note_side_effect", `${field} is not implemented`);
+function rejectUnsupportedFields(input: Record<string, unknown>) {
+  if (input.metadata !== undefined && input.metadata !== null)
+    throw new ApiError(
+      422,
+      "unsupported_credit_note_feature",
+      "metadata is not implemented for Cloudflare credit notes",
+    );
+}
+function proportionalRounded(total: number, part: number, whole: number): number {
+  if (total === 0 || part === 0) return 0;
+  const numerator = BigInt(total) * BigInt(part);
+  const denominator = BigInt(whole);
+  const quotient = numerator / denominator;
+  const remainder = numerator % denominator;
+  const rounded = remainder * 2n >= denominator ? quotient + 1n : quotient;
+  const result = Number(rounded);
+  if (!Number.isSafeInteger(result))
+    throw new ApiError(422, "invalid_minor_amount", "Prorated amount exceeds supported precision");
+  return result;
+}
+async function successfulPaymentAmount(db: D1Database, invoiceId: string): Promise<number> {
+  const result = await db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_minor), 0) AS amount
+       FROM payment_attempts WHERE invoice_id = ? AND status = 'succeeded'`,
+    )
+    .bind(invoiceId)
+    .first<{ amount: number }>();
+  return result?.amount ?? 0;
+}
+async function refundableAmount(
+  db: D1Database,
+  organizationId: string,
+  invoiceId: string,
+): Promise<number> {
+  const paid = await successfulPaymentAmount(db, invoiceId);
+  const refunded = await db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_minor), 0) AS amount FROM credit_note_refunds
+       WHERE organization_id = ? AND invoice_id = ? AND status = 'succeeded'`,
+    )
+    .bind(organizationId, invoiceId)
+    .first<{ amount: number }>();
+  return Math.max(paid - (refunded?.amount ?? 0), 0);
 }
 function requiredIdempotencyKey(request: Request) {
   const value = request.headers.get("Idempotency-Key")?.trim();

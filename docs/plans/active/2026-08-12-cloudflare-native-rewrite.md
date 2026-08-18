@@ -317,11 +317,12 @@ Acceptance:
       coupons now support once/recurring/forever application, initial and renewal invoice
       consumption, exact rounding, replay, and unpaid-void recredit. Plan- and billable-metric-
       targeted coupons now retain tenant-safe targets, sequential per-line allocation, immutable
-      allocation snapshots, tax-base reduction, and subscription-override plan matching. Credit
-      note refunds/offsets/taxes remain pending. Credit-only finalized
-      notes now support fee-bounded issuance, idempotent replay, customer balance application to
-      later invoices, and auditable unpaid-void recredit; provider refunds, invoice offsets,
-      tax-adjusted notes, documents, email, and external reporting remain pending. Granted-credit wallets now support
+      allocation snapshots, tax-base reduction, and subscription-override plan matching. Finalized
+      credit notes now support fee-bounded issuance, idempotent replay, customer balance application
+      to later invoices, auditable unpaid-void recredit, cumulative coupon/tax adjustment snapshots,
+      internal source-invoice offsets, API/PDF/CSV projection, and a network-free sandbox refund
+      adapter. Live provider refunds remain disabled and email/e-invoicing remain outside the
+      retained surface. Granted-credit wallets now support
       create/list/show/terminate, idempotent top-up, priority/lot-ordered initial and renewal
       invoice consumption, and auditable unpaid-void recredit. One fixed interval- or
       threshold-triggered recurring granted-credit rule per wallet now supports tenant-safe
@@ -340,8 +341,9 @@ Acceptance:
       Manual percentage taxes now support create/list/show/update/terminate; billing-entity,
       customer, plan, charge, fixed-charge, minimum-commitment, add-on, and explicit one-off-fee
       targeting; inherited subscription-override graphs; coupon-adjusted per-line taxable bases;
-      exact rounding; draft invalidation; and immutable invoice/fee snapshots. External providers,
-      exemptions, tax identifiers, and credit-note tax adjustments remain pending.
+      exact rounding; draft invalidation; immutable invoice/fee snapshots; and cumulative
+      credit-note tax/coupon adjustments. External providers, exemptions, and tax identifiers
+      remain outside the retained manual-tax surface.
       Plan-level in-arrears minimum commitments now create only the rounded billing-period
       shortfall while retaining the precise fee value. Final termination invoices also prorate the
       target over the retained UTC unsplit window before subtracting precise and rounded fees;
@@ -778,8 +780,19 @@ Acceptance:
 - [x] Added plan- and billable-metric-targeted coupons with tenant-safe target validation,
       sequential line-level allocation, persisted allocation evidence, subscription-override plan
       matching, and tax calculation on the discounted eligible base.
-- [ ] Finish credit-note tax adjustment, internal offset, provider-fake refund, and remaining
-      non-production rating/lifecycle gaps before the isolated-development deployment gate.
+- [x] Finish credit-note tax adjustment, internal offset, and provider-fake refund. Migration `0083`
+      adds immutable financial, line-adjustment, tax, offset, and sandbox-refund evidence without
+      weakening the legacy aggregate constraints. Cumulative partial-note rounding reconciles to
+      the original invoice snapshots; API, estimate, PDF, and CSV reads use the authoritative split;
+      mixed side-effect notes cannot be voided; and the deployed refund mode remains `disabled`.
+- [ ] Finish the remaining retained non-production rating/lifecycle gaps before the
+      isolated-development deployment gate.
+- [x] Pass the semantic-completion deployment gate for the implemented tranche. All 83 migrations
+      replay locally, 363 tests across 65 files and five Access reconciler tests pass, generated
+      inventories/types and three Worker dry bundles are current, and migrations `0081`–`0083`
+      applied cleanly to isolated D1. API version `65bf69a8-70ab-46f3-8cdb-2af1137f13d0` and operator
+      version `b5cc487d-1102-4d33-9a5d-1eda18b67d55` retain all disabled external-action gates and
+      pass unauthenticated fail-closed plus authenticated synthetic browser QA.
 
 ## Verification Matrix
 

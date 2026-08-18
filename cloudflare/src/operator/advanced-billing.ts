@@ -1,4 +1,5 @@
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
+import { calculateCreditNoteItems } from "../api/credit-note-ledger";
 import {
   replaceTaxTargetStatements,
   resolveActiveTaxes,
@@ -1056,41 +1057,37 @@ async function estimateCreditNote(
     throw new ApiError(422, "invoice_not_finalized", "Only finalized invoices can be credited");
   if (!Array.isArray(input.items) || !input.items.length)
     throw new ApiError(422, "validation_error", "items must be a non-empty array");
-  let total = 0;
-  const items = [];
+  const items: Array<{ fee_id: string; amount_cents: number }> = [];
   for (const value of input.items) {
     if (!value || typeof value !== "object" || Array.isArray(value))
       throw new ApiError(422, "validation_error", "Credit note item is invalid");
     const item = value as Record<string, unknown>;
     const feeId = requiredString(item, "fee_id");
     const amount = integer(item.amount_cents, "amount_cents", 1);
-    const line = await database
-      .prepare("SELECT id, amount_minor FROM invoice_lines WHERE id = ? AND invoice_id = ?")
-      .bind(feeId, invoiceId)
-      .first<{ id: string; amount_minor: number }>();
-    if (!line || amount > line.amount_minor)
-      throw new ApiError(
-        422,
-        "invalid_credit_note_item",
-        "Credit note item exceeds its invoice fee",
-      );
-    total += amount;
     items.push({ fee_id: feeId, amount_cents: amount });
   }
-  const available =
-    invoice.subtotal_minor + invoice.tax_minor - invoice.coupons_minor - invoice.credit_notes_minor;
-  if (total > available)
-    throw new ApiError(
-      422,
-      "higher_than_remaining_invoice_amount",
-      "Credit note exceeds the remaining invoice amount",
-    );
+  const calculated = await calculateCreditNoteItems(
+    items.map((item) => ({ lineId: item.fee_id, amountMinor: item.amount_cents })),
+    database,
+    invoiceId,
+    organizationId,
+  );
+  const itemsAmount = calculated.reduce((sum, item) => sum + item.amountMinor, 0);
+  const couponsAdjustment = calculated.reduce((sum, item) => sum + item.couponAdjustmentMinor, 0);
+  const taxesAmount = calculated.reduce(
+    (sum, item) => sum + item.taxes.reduce((taxSum, tax) => taxSum + tax.amountMinor, 0),
+    0,
+  );
+  const total = itemsAmount + taxesAmount - couponsAdjustment;
   return json(
     {
       credit_note: {
         invoice_id: invoiceId,
         currency: invoice.currency,
         total_amount_cents: total,
+        taxes_amount_cents: taxesAmount,
+        coupons_adjustment_amount_cents: couponsAdjustment,
+        sub_total_excluding_taxes_amount_cents: itemsAmount - couponsAdjustment,
         credit_amount_cents: total,
         balance_amount_cents: total,
         items,

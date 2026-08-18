@@ -570,8 +570,20 @@ async function creditNoteBatch(
 ): Promise<CreditNoteExportRow[]> {
   const where = ["cn.organization_id = ?", "cn.created_at <= ?"];
   const values: (string | number)[] = [exportRow.organization_id, exportRow.created_at];
-  numberFilter(where, values, "cn.total_amount_minor", filters.amount_from, ">=");
-  numberFilter(where, values, "cn.total_amount_minor", filters.amount_to, "<=");
+  numberFilter(
+    where,
+    values,
+    "COALESCE(financial.total_amount_minor, cn.total_amount_minor)",
+    filters.amount_from,
+    ">=",
+  );
+  numberFilter(
+    where,
+    values,
+    "COALESCE(financial.total_amount_minor, cn.total_amount_minor)",
+    filters.amount_to,
+    "<=",
+  );
   exactFilter(where, values, "cn.currency", filters.currency);
   exactFilter(where, values, "c.external_id", filters.customer_external_id);
   exactFilter(where, values, "cn.customer_id", filters.customer_id);
@@ -582,7 +594,7 @@ async function creditNoteBatch(
   dateFilter(where, values, "cn.issuing_date", filters.issuing_date_to, "<=");
   retainedBillingEntityFilter(where, filters.billing_entity_ids, exportRow.organization_id);
   if (filters.self_billed === true) where.push("0 = 1");
-  if (Array.isArray(filters.refund_status) && filters.refund_status.length > 0) where.push("0 = 1");
+  arrayFilter(where, values, "financial.refund_status", filters.refund_status);
   if (Array.isArray(filters.types) && !filters.types.includes("credit")) where.push("0 = 1");
   if (typeof filters.search_term === "string") {
     where.push(
@@ -597,12 +609,19 @@ async function creditNoteBatch(
       `SELECT cn.id, cn.sequential_id, cn.issuing_date, cn.customer_id,
               c.external_id AS customer_external_id, c.name AS customer_name,
               c.email AS customer_email, cn.number, invoice.number AS invoice_number,
-              cn.credit_status, cn.reason, cn.description, cn.currency, cn.total_amount_minor,
-              cn.taxes_amount_minor, cn.coupons_adjustment_minor, cn.offset_amount_minor,
-              cn.credit_amount_minor, cn.balance_amount_minor, cn.refund_amount_minor,
+              cn.credit_status, cn.reason, cn.description, cn.currency,
+              COALESCE(financial.total_amount_minor, cn.total_amount_minor) AS total_amount_minor,
+              COALESCE(financial.taxes_amount_minor, cn.taxes_amount_minor) AS taxes_amount_minor,
+              COALESCE(financial.coupons_adjustment_minor, cn.coupons_adjustment_minor)
+                AS coupons_adjustment_minor,
+              COALESCE(financial.offset_amount_minor, cn.offset_amount_minor) AS offset_amount_minor,
+              COALESCE(financial.credit_amount_minor, cn.credit_amount_minor) AS credit_amount_minor,
+              cn.balance_amount_minor,
+              COALESCE(financial.refund_amount_minor, cn.refund_amount_minor) AS refund_amount_minor,
               CASE WHEN artifact.status = 'ready' THEN 1 ELSE 0 END AS pdf_ready, cn.created_at
        FROM credit_notes cn JOIN customers c ON c.id = cn.customer_id
        JOIN invoices invoice ON invoice.id = cn.invoice_id
+       LEFT JOIN credit_note_financials financial ON financial.credit_note_id = cn.id
        LEFT JOIN credit_note_document_artifacts artifact
          ON artifact.credit_note_id = cn.id AND artifact.credit_note_version = cn.version
        WHERE ${where.join(" AND ")}

@@ -155,3 +155,19 @@ D1 database, leaving no pending migration. Operator version
 session requests received Access `302`; the public portal root returned `200` and a tokenless portal
 session returned `401 portal_unauthorized`. Authenticated browser QA loaded the synthetic customer
 Settings page and Lago Assistant from the deployed operator.
+
+## Semantic-completion deployment verification — 2026-08-18
+
+Targeted taxes, targeted coupons, and adjusted credit notes passed a fresh 83-migration replay and
+the complete 363-test Workers suite. Migrations `0081` through `0083` were the only remote pending
+migrations. Aggregate-only preflight found two synthetic organizations, one invoice, and zero tax,
+coupon, or credit-note rows; after migration there were no foreign-key violations or populated new
+financial/target ledgers. API version `65bf69a8-70ab-46f3-8cdb-2af1137f13d0` and operator version
+`b5cc487d-1102-4d33-9a5d-1eda18b67d55` deployed with every external-action flag still disabled.
+
+Fresh unauthenticated verification returned API health `200`, billing API `401`, and Cloudflare
+Access `302` for the operator before origin. The existing authenticated synthetic administrator
+session then loaded Analytics with its real US$19.99 invoice projection, six-month Forecasts,
+Billable Metrics, Features, Credit Notes, and the original right-side Lago Assistant conversation
+panel. No former Cloudflare-boundary placeholder appeared. Browser QA performed only reads and
+panel navigation; it created no remote billing or AI conversation rows.

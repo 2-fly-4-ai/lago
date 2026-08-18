@@ -11,35 +11,36 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `75370a2a-ca89-4244-ad51-f514e1dece1d`
+- Latest verified version: `65bf69a8-70ab-46f3-8cdb-2af1137f13d0`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
+- `CREDIT_NOTE_REFUND_MODE`: `disabled`
 - `PROVIDER_READS_ENABLED`: `0`
 - `OUTBOUND_WEBHOOKS_ENABLED`: `0`
 
 ## Resources
 
-| Kind              | Name or ID                                                         | Binding                   | Purpose                                                            |
-| ----------------- | ------------------------------------------------------------------ | ------------------------- | ------------------------------------------------------------------ |
-| D1                | `serp-dev-lago-native-d1` / `2f32f159-c269-46c6-a4dd-9e38477f5d25` | `BILLING_DB`              | Synthetic billing state                                            |
-| R2                | `serp-dev-lago-native-billing-artifacts`                           | `BILLING_ARTIFACTS`       | Immutable provider webhook, usage-event, and invoice PDF artifacts |
-| Queue             | `serp-dev-lago-domain-events`                                      | `DOMAIN_EVENTS`           | Domain events and reconciliation dispatch                          |
-| DLQ               | `serp-dev-lago-domain-events-dlq`                                  | none                      | Poison/retry exhaustion                                            |
-| Durable Object    | `BillingAccount`                                                   | `BILLING_ACCOUNTS`        | Per-invoice command reservations                                   |
-| Workflow          | `serp-dev-lago-checkout`                                           | `CHECKOUT_WORKFLOW`       | Checkout orchestration target                                      |
-| Workflow          | `serp-dev-lago-reconciliation`                                     | `RECONCILIATION_WORKFLOW` | Provider and outbox reconciliation                                 |
-| Workflow          | `serp-dev-lago-documents`                                          | `DOCUMENT_WORKFLOW`       | Retryable invoice PDF generation and R2 archival                   |
-| Workflow          | `serp-dev-lago-plan-deletion`                                      | `PLAN_DELETION_WORKFLOW`  | Durable subscription-bearing plan retirement                       |
-| Cron              | `* * * * *`                                                        | Worker scheduled handler  | Deterministic legacy-schedule dispatch and activity fanout         |
-| Browser Rendering | account binding                                                    | `BROWSER`                 | Invoice HTML-to-PDF rendering                                      |
-| Static Assets     | `operator-ui`                                                      | direct asset delivery     | Script-free operator migration shell and security headers          |
-| Worker            | `serp-dev-lago-operator` / `64287259-a894-4fcb-bdfd-274e3d01ae83`  | D1, R2, DO, Workflow, Queue, Workers AI | Access-protected synthetic-tenant operator BFF and Static Assets |
-| Worker            | `serp-dev-lago-customer-portal` / `6bfeedea-636d-4af4-bcf0-3e20573ab3a0` | D1, R2 | Token-protected synthetic customer portal and Static Assets       |
+| Kind              | Name or ID                                                               | Binding                                 | Purpose                                                            |
+| ----------------- | ------------------------------------------------------------------------ | --------------------------------------- | ------------------------------------------------------------------ |
+| D1                | `serp-dev-lago-native-d1` / `2f32f159-c269-46c6-a4dd-9e38477f5d25`       | `BILLING_DB`                            | Synthetic billing state                                            |
+| R2                | `serp-dev-lago-native-billing-artifacts`                                 | `BILLING_ARTIFACTS`                     | Immutable provider webhook, usage-event, and invoice PDF artifacts |
+| Queue             | `serp-dev-lago-domain-events`                                            | `DOMAIN_EVENTS`                         | Domain events and reconciliation dispatch                          |
+| DLQ               | `serp-dev-lago-domain-events-dlq`                                        | none                                    | Poison/retry exhaustion                                            |
+| Durable Object    | `BillingAccount`                                                         | `BILLING_ACCOUNTS`                      | Per-invoice command reservations                                   |
+| Workflow          | `serp-dev-lago-checkout`                                                 | `CHECKOUT_WORKFLOW`                     | Checkout orchestration target                                      |
+| Workflow          | `serp-dev-lago-reconciliation`                                           | `RECONCILIATION_WORKFLOW`               | Provider and outbox reconciliation                                 |
+| Workflow          | `serp-dev-lago-documents`                                                | `DOCUMENT_WORKFLOW`                     | Retryable invoice PDF generation and R2 archival                   |
+| Workflow          | `serp-dev-lago-plan-deletion`                                            | `PLAN_DELETION_WORKFLOW`                | Durable subscription-bearing plan retirement                       |
+| Cron              | `* * * * *`                                                              | Worker scheduled handler                | Deterministic legacy-schedule dispatch and activity fanout         |
+| Browser Rendering | account binding                                                          | `BROWSER`                               | Invoice HTML-to-PDF rendering                                      |
+| Static Assets     | `operator-ui`                                                            | direct asset delivery                   | Script-free operator migration shell and security headers          |
+| Worker            | `serp-dev-lago-operator` / `b5cc487d-1102-4d33-9a5d-1eda18b67d55`        | D1, R2, DO, Workflow, Queue, Workers AI | Access-protected synthetic-tenant operator BFF and Static Assets   |
+| Worker            | `serp-dev-lago-customer-portal` / `6bfeedea-636d-4af4-bcf0-3e20573ab3a0` | D1, R2                                  | Token-protected synthetic customer portal and Static Assets        |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0080_operator_policy_overrides.sql`.
+`0083_credit_note_financial_adjustments.sql`.
 
 ## Operator Access rollout
 
@@ -63,6 +64,21 @@ Applied D1 migrations: `0001_foundation.sql` through
   token is not required for the completed dashboard-provisioned application and policy.
 
 ## Verified behavior
+
+- API version `65bf69a8-70ab-46f3-8cdb-2af1137f13d0` and operator version
+  `b5cc487d-1102-4d33-9a5d-1eda18b67d55` deploy targeted tax/coupon and adjusted-credit-note parity.
+  Only migrations `0081` through `0083` were pending; all applied successfully, all 83 migrations
+  replay from an empty local D1 directory, the remote inventory is empty, and
+  `PRAGMA foreign_key_check` returns no rows. Aggregate-only preflight found two synthetic
+  organizations, one synthetic invoice, and no tax, coupon, or credit-note rows; the new financial,
+  target, offset, and refund ledgers remained empty after migration and browser QA. The full local
+  gate passes 363 tests across 65 files plus five Access reconciler tests, strict formatting/lint/
+  types/inventory checks, and all three dry bundles. API health returns `200`, unauthenticated API
+  billing reads return `401`, and the operator receives Access `302` before origin. Authenticated
+  browser QA loaded real Analytics and Forecasts, Billable Metrics, Features, Credit Notes, and the
+  original right-side Lago Assistant. Payment mutations, provider reads, outbound webhooks, and
+  credit-note refunds remain disabled; no production route, secret, provider call, customer message,
+  or remote billing mutation was introduced.
 
 - Operator version `64287259-a894-4fcb-bdfd-274e3d01ae83` and customer-portal version
   `6bfeedea-636d-4af4-bcf0-3e20573ab3a0` deploy the final retained-surface repair. Migrations
