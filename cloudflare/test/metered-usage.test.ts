@@ -1301,10 +1301,40 @@ describe("Lago-compatible metered usage", () => {
     await expect(advance.json()).resolves.toMatchObject({
       charge: { code: "guarded-advance", pay_in_advance: true },
     });
+    expect(
+      (
+        await api("/api/v1/taxes", {
+          method: "POST",
+          body: {
+            tax: {
+              code: "metered-vat",
+              name: "Metered VAT",
+              rate: "9",
+              applied_to_organization: false,
+            },
+          },
+        })
+      ).status,
+    ).toBe(200);
+    const taxed = await api("/api/v1/plans/metered-plan/charges", {
+      method: "POST",
+      body: {
+        charge: {
+          billable_metric_id: metricId,
+          code: "guarded-tax",
+          charge_model: "standard",
+          properties: { amount: "10" },
+          tax_codes: ["metered-vat"],
+        },
+      },
+    });
+    expect(taxed.status).toBe(200);
+    await expect(taxed.json()).resolves.toMatchObject({
+      charge: { taxes: [{ code: "metered-vat", rate: 9 }] },
+    });
     for (const [suffix, unsupported] of [
       ["prorated", { prorated: true }],
       ["filters", { filters: [{ properties: {}, values: {} }] }],
-      ["tax", { tax_codes: ["vat"] }],
     ] as const) {
       const response = await api("/api/v1/plans/metered-plan/charges", {
         method: "POST",

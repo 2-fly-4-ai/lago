@@ -52,6 +52,16 @@ type AppliedCouponRow = {
   consumed_minor: number;
 };
 
+type CouponTarget = {
+  id: string;
+  code: string;
+};
+
+type NormalizedCouponTargets = {
+  targetType: "plan" | "billable_metric" | null;
+  targets: CouponTarget[];
+};
+
 const COUPON_TYPES = new Set(["fixed_amount", "percentage"]);
 const FREQUENCIES = new Set(["once", "recurring", "forever"]);
 const EXPIRATIONS = new Set(["no_expiration", "time_limit"]);
@@ -110,7 +120,11 @@ async function createCoupon(
   requestId: string,
 ): Promise<Response> {
   const input = objectAt(await parseJsonObject(request), "coupon");
-  rejectCouponTargets(input.applies_to);
+  const couponTargets = await normalizeCouponTargets(
+    input.applies_to,
+    env.BILLING_DB,
+    auth.organizationId,
+  );
   const code = requiredString(input, "code");
   const name = requiredString(input, "name");
   const couponType = enumValue(input, "coupon_type", COUPON_TYPES);
@@ -142,12 +156,19 @@ async function createCoupon(
     name,
     percentageRate,
     reusable,
+    appliesTo: {
+      targetType: couponTargets.targetType,
+      codes: couponTargets.targets.map((target) => target.code),
+    },
   };
   const requestHash = await sha256Hex(stableJson(normalized));
   const existing = await findCoupon(env.BILLING_DB, auth.organizationId, code);
   if (existing) {
     if (existing.request_sha256 === requestHash) {
-      return json({ coupon: serializeCoupon(existing) }, { requestId });
+      return json(
+        { coupon: await serializeCoupon(env.BILLING_DB, auth.organizationId, existing) },
+        { requestId },
+      );
     }
     throw new ApiError(422, "value_already_exist", "Coupon code already exists");
   }
@@ -192,6 +213,13 @@ async function createCoupon(
         now,
         now,
       ),
+      ...couponTargets.targets.map((target) =>
+        env.BILLING_DB.prepare(
+          `INSERT INTO coupon_targets
+           (organization_id, coupon_id, target_type, target_id, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        ).bind(auth.organizationId, id, couponTargets.targetType, target.id, now),
+      ),
       outboxStatement(env.BILLING_DB, auth.organizationId, event),
     ]);
   } catch (error) {
@@ -200,12 +228,18 @@ async function createCoupon(
     if (concurrent.request_sha256 !== requestHash) {
       throw new ApiError(422, "value_already_exist", "Coupon code already exists");
     }
-    return json({ coupon: serializeCoupon(concurrent) }, { requestId });
+    return json(
+      { coupon: await serializeCoupon(env.BILLING_DB, auth.organizationId, concurrent) },
+      { requestId },
+    );
   }
   await env.DOMAIN_EVENTS.send(event);
   const coupon = await findCoupon(env.BILLING_DB, auth.organizationId, code);
   if (!coupon) throw new ApiError(500, "persistence_error", "Coupon was not persisted");
-  return json({ coupon: serializeCoupon(coupon) }, { requestId });
+  return json(
+    { coupon: await serializeCoupon(env.BILLING_DB, auth.organizationId, coupon) },
+    { requestId },
+  );
 }
 
 async function listCoupons(
@@ -229,7 +263,9 @@ async function listCoupons(
     .all<CouponRow>();
   return json(
     {
-      coupons: rows.results.map(serializeCoupon),
+      coupons: await Promise.all(
+        rows.results.map((coupon) => serializeCoupon(database, auth.organizationId, coupon)),
+      ),
       meta: pagination(count?.total ?? 0, page, perPage),
     },
     { requestId },
@@ -244,7 +280,10 @@ async function showCoupon(
 ): Promise<Response> {
   const coupon = await findCoupon(database, auth.organizationId, code);
   if (!coupon) throw new ApiError(404, "coupon_not_found", "Coupon was not found");
-  return json({ coupon: serializeCoupon(coupon) }, { requestId });
+  return json(
+    { coupon: await serializeCoupon(database, auth.organizationId, coupon) },
+    { requestId },
+  );
 }
 
 async function applyCoupon(
@@ -565,7 +604,33 @@ async function findAppliedForCustomer(
     .first<AppliedCouponRow>();
 }
 
-function serializeCoupon(row: CouponRow): Record<string, unknown> {
+async function serializeCoupon(
+  database: D1Database,
+  organizationId: string,
+  row: CouponRow,
+): Promise<Record<string, unknown>> {
+  const targets = await database
+    .prepare(
+      `SELECT target.target_type,
+              CASE target.target_type
+                WHEN 'plan' THEN plan.code
+                ELSE metric.code
+              END AS code
+       FROM coupon_targets target
+       LEFT JOIN plans plan ON target.target_type = 'plan' AND plan.id = target.target_id
+       LEFT JOIN billable_metrics metric
+         ON target.target_type = 'billable_metric' AND metric.id = target.target_id
+       WHERE target.organization_id = ? AND target.coupon_id = ?
+       ORDER BY target.created_at, target.target_id`,
+    )
+    .bind(organizationId, row.id)
+    .all<{ target_type: "plan" | "billable_metric"; code: string }>();
+  const planCodes = targets.results
+    .filter((target) => target.target_type === "plan")
+    .map((target) => target.code);
+  const metricCodes = targets.results
+    .filter((target) => target.target_type === "billable_metric")
+    .map((target) => target.code);
   return {
     lago_id: row.id,
     name: row.name,
@@ -578,10 +643,10 @@ function serializeCoupon(row: CouponRow): Record<string, unknown> {
     frequency: row.frequency,
     frequency_duration: row.frequency_duration,
     reusable: row.reusable === 1,
-    limited_plans: false,
-    limited_billable_metrics: false,
-    plan_codes: [],
-    billable_metric_codes: [],
+    limited_plans: planCodes.length > 0,
+    limited_billable_metrics: metricCodes.length > 0,
+    plan_codes: planCodes,
+    billable_metric_codes: metricCodes,
     created_at: row.created_at,
     expiration: row.expiration,
     expiration_at: row.expiration_at,
@@ -650,21 +715,76 @@ function normalizeAppliedTerms(input: Record<string, unknown>, coupon: CouponRow
   return { amountMinor, currency, percentageRate, frequency, frequencyDuration };
 }
 
-function rejectCouponTargets(value: unknown): void {
-  if (value === undefined || value === null) return;
-  if (typeof value !== "object" || Array.isArray(value))
+async function normalizeCouponTargets(
+  value: unknown,
+  database: D1Database,
+  organizationId: string,
+): Promise<NormalizedCouponTargets> {
+  if (value === undefined || value === null) return { targetType: null, targets: [] };
+  if (typeof value !== "object" || Array.isArray(value)) {
     throw new ApiError(422, "validation_error", "applies_to must be an object");
-  if (
-    Object.values(value as Record<string, unknown>).some((entry) =>
-      Array.isArray(entry) ? entry.length > 0 : entry != null,
-    )
-  ) {
+  }
+  const input = value as Record<string, unknown>;
+  const unsupported = Object.keys(input).find(
+    (key) => key !== "plan_codes" && key !== "billable_metric_codes",
+  );
+  if (unsupported) {
+    throw new ApiError(422, "validation_error", `applies_to.${unsupported} is not supported`);
+  }
+  const planCodes = couponTargetCodes(input.plan_codes, "applies_to.plan_codes");
+  const metricCodes = couponTargetCodes(
+    input.billable_metric_codes,
+    "applies_to.billable_metric_codes",
+  );
+  if (planCodes.length > 0 && metricCodes.length > 0) {
     throw new ApiError(
       422,
-      "unsupported_coupon_targets",
-      "Plan and billable-metric coupon targets are not implemented",
+      "only_one_limitation_type_per_coupon_allowed",
+      "A coupon may target plans or billable metrics, but not both",
     );
   }
+  const targetType =
+    planCodes.length > 0 ? "plan" : metricCodes.length > 0 ? "billable_metric" : null;
+  const codes = targetType === "plan" ? planCodes : metricCodes;
+  if (!targetType) return { targetType: null, targets: [] };
+  const table = targetType === "plan" ? "plans" : "billable_metrics";
+  const rootCondition = targetType === "plan" ? "AND parent_id IS NULL" : "";
+  const rows = await database
+    .prepare(
+      `SELECT id, code FROM ${table}
+       WHERE organization_id = ? AND active = 1 ${rootCondition}
+         AND code IN (${codes.map(() => "?").join(", ")})`,
+    )
+    .bind(organizationId, ...codes)
+    .all<CouponTarget>();
+  const byCode = new Map(rows.results.map((target) => [target.code, target]));
+  const missing = codes.find((code) => !byCode.has(code));
+  if (missing) {
+    throw new ApiError(
+      404,
+      targetType === "plan" ? "plan_not_found" : "billable_metric_not_found",
+      `${targetType === "plan" ? "Plan" : "Billable metric"} ${missing} was not found`,
+    );
+  }
+  return { targetType, targets: codes.map((code) => byCode.get(code)!) };
+}
+
+function couponTargetCodes(value: unknown, field: string): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new ApiError(422, "validation_error", `${field} must be an array of at most 100 codes`);
+  }
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const [index, candidate] of value.entries()) {
+    if (typeof candidate !== "string" || candidate.trim() === "") {
+      throw new ApiError(422, "validation_error", `${field}[${index}] must be a non-empty string`);
+    }
+    const code = candidate.trim();
+    if (!seen.has(code)) result.push(code);
+    seen.add(code);
+  }
+  return result;
 }
 
 function enumValue(

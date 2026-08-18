@@ -1,4 +1,10 @@
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
+import {
+  replaceTaxTargetStatements,
+  resolveActiveTaxes,
+  taxesForTarget,
+  type ResolvedTax,
+} from "../billing/tax-targets";
 import type { OperatorEnv } from "./access";
 
 const PAYMENT_STATUSES = new Set(["pending", "requires_action", "succeeded", "failed", "refunded"]);
@@ -188,15 +194,8 @@ export async function handleOperatorAdvancedBillingRequest(
 }
 
 async function billingEntityTaxes(database: D1Database, organizationId: string, requestId: string) {
-  const taxes = await database
-    .prepare(
-      `SELECT id AS lago_id, code, name, rate, description
-       FROM taxes WHERE organization_id = ? AND status = 'active' AND applied_to_organization = 1
-       ORDER BY name, code`,
-    )
-    .bind(organizationId)
-    .all();
-  return json({ taxes: taxes.results }, { requestId });
+  const taxes = await taxesForTarget(database, organizationId, "billing_entity", organizationId);
+  return json({ taxes: serializeTargetTaxes(taxes) }, { requestId });
 }
 
 async function replaceBillingEntityTaxes(
@@ -207,33 +206,32 @@ async function replaceBillingEntityTaxes(
 ) {
   const input = objectAt(await parseJsonObject(request), "billing_entity");
   const codes = uniqueStringArray(input.tax_codes, "tax_codes", 50);
-  if (codes.length) {
-    const found = await database
-      .prepare(
-        `SELECT code FROM taxes WHERE organization_id = ? AND status = 'active'
-         AND code IN (${codes.map(() => "?").join(",")})`,
-      )
-      .bind(organizationId, ...codes)
-      .all<{ code: string }>();
-    if (found.results.length !== codes.length)
-      throw new ApiError(422, "tax_not_found", "One or more selected taxes were not found");
-  }
+  const taxes = await resolveActiveTaxes(database, organizationId, codes);
   const now = new Date().toISOString();
-  const statements = [
+  await database.batch([
     database
       .prepare(
-        "UPDATE taxes SET applied_to_organization = 0, version = version + 1, updated_at = ? WHERE organization_id = ? AND status = 'active' AND applied_to_organization = 1",
+        `UPDATE taxes SET applied_to_organization = 0, version = version + 1, updated_at = ?
+         WHERE organization_id = ? AND status = 'active' AND applied_to_organization = 1`,
       )
       .bind(now, organizationId),
     ...codes.map((code) =>
       database
         .prepare(
-          "UPDATE taxes SET applied_to_organization = 1, version = version + 1, updated_at = ? WHERE organization_id = ? AND status = 'active' AND code = ?",
+          `UPDATE taxes SET applied_to_organization = 1, version = version + 1, updated_at = ?
+           WHERE organization_id = ? AND status = 'active' AND code = ?`,
         )
         .bind(now, organizationId, code),
     ),
-  ];
-  await database.batch(statements);
+    ...replaceTaxTargetStatements(
+      database,
+      organizationId,
+      "billing_entity",
+      organizationId,
+      taxes,
+      now,
+    ),
+  ]);
   return billingEntityTaxes(database, organizationId, requestId);
 }
 
@@ -408,15 +406,8 @@ async function listCustomerTaxes(
   requestId: string,
 ) {
   const customer = await requiredCustomer(database, organizationId, customerKey);
-  const taxes = await database
-    .prepare(
-      `SELECT tax.id AS lago_id, tax.code, tax.name, tax.rate, tax.description
-     FROM customer_applied_taxes link JOIN taxes tax ON tax.id = link.tax_id
-     WHERE link.organization_id = ? AND link.customer_id = ? ORDER BY tax.name, tax.code`,
-    )
-    .bind(organizationId, customer.id)
-    .all();
-  return json({ taxes: taxes.results }, { requestId });
+  const taxes = await taxesForTarget(database, organizationId, "customer", customer.id);
+  return json({ taxes: serializeTargetTaxes(taxes) }, { requestId });
 }
 
 async function addCustomerTax(
@@ -429,17 +420,20 @@ async function addCustomerTax(
   const customer = await requiredCustomer(database, organizationId, customerKey);
   const input = objectAt(await parseJsonObject(request), "applied_tax");
   const code = requiredString(input, "tax_code");
-  const tax = await database
-    .prepare("SELECT id FROM taxes WHERE organization_id = ? AND code = ? AND status = 'active'")
-    .bind(organizationId, code)
-    .first<{ id: string }>();
-  if (!tax) throw new ApiError(404, "tax_not_found", "Tax was not found");
-  await database
-    .prepare(
-      "INSERT OR IGNORE INTO customer_applied_taxes (organization_id, customer_id, tax_id, created_at) VALUES (?, ?, ?, ?)",
-    )
-    .bind(organizationId, customer.id, tax.id, new Date().toISOString())
-    .run();
+  const current = await taxesForTarget(database, organizationId, "customer", customer.id);
+  const selected = current.some((tax) => tax.code === code)
+    ? current
+    : [...current, ...(await resolveActiveTaxes(database, organizationId, [code]))];
+  await database.batch(
+    replaceTaxTargetStatements(
+      database,
+      organizationId,
+      "customer",
+      customer.id,
+      selected,
+      new Date().toISOString(),
+    ),
+  );
   return listCustomerTaxes(database, organizationId, customerKey, requestId);
 }
 
@@ -451,13 +445,19 @@ async function removeCustomerTax(
   requestId: string,
 ) {
   const customer = await requiredCustomer(database, organizationId, customerKey);
-  await database
-    .prepare(
-      `DELETE FROM customer_applied_taxes WHERE organization_id = ? AND customer_id = ?
-     AND tax_id IN (SELECT id FROM taxes WHERE organization_id = ? AND code = ?)`,
-    )
-    .bind(organizationId, customer.id, organizationId, taxCode)
-    .run();
+  const selected = (await taxesForTarget(database, organizationId, "customer", customer.id)).filter(
+    (tax) => tax.code !== taxCode,
+  );
+  await database.batch(
+    replaceTaxTargetStatements(
+      database,
+      organizationId,
+      "customer",
+      customer.id,
+      selected,
+      new Date().toISOString(),
+    ),
+  );
   return listCustomerTaxes(database, organizationId, customerKey, requestId);
 }
 
@@ -1292,6 +1292,16 @@ function uniqueStringArray(value: unknown, name: string, max: number): string[] 
   if (new Set(result).size !== result.length)
     throw new ApiError(422, "validation_error", `${name} must not contain duplicates`);
   return result;
+}
+
+function serializeTargetTaxes(taxes: ResolvedTax[]) {
+  return taxes.map((tax) => ({
+    lago_id: tax.id,
+    code: tax.code,
+    name: tax.name,
+    rate: Number(tax.rate),
+    description: tax.description,
+  }));
 }
 
 function decimal(value: unknown, name: string): string {

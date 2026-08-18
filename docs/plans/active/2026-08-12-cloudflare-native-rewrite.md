@@ -304,7 +304,7 @@ Acceptance:
       Invoiceable, non-prorated pay-in-advance usage is ported for count, sum, and unique-count
       metrics using standard, graduated, package, percentage, and graduated-percentage pricing.
       Non-invoiceable or prorated advance usage, volume/custom aggregation, positive minimums,
-      grouped pricing, targeted taxes, and pricing units fail explicitly. Charge- and filter-level
+      grouped pricing and pricing units fail explicitly. Charge- and filter-level
       cascades across subscription override graphs are ported. Weighted filters reconstruct independent
       recurring baselines per filter/base partition across periods and subscription generations.
       Filter/base partitions can also combine with target-wallet grouping as exact two-dimensional
@@ -315,8 +315,10 @@ Acceptance:
 - [ ] Port subscription, recurring, fixed, usage, minimum-commitment, coupon, credit, wallet, tax,
       and rounding behavior according to feature disposition. Unrestricted fixed/percentage
       coupons now support once/recurring/forever application, initial and renewal invoice
-      consumption, exact rounding, replay, and unpaid-void recredit; targeted coupons, credit
-      note refunds/offsets/taxes, commitments, and taxes remain pending. Credit-only finalized
+      consumption, exact rounding, replay, and unpaid-void recredit. Plan- and billable-metric-
+      targeted coupons now retain tenant-safe targets, sequential per-line allocation, immutable
+      allocation snapshots, tax-base reduction, and subscription-override plan matching. Credit
+      note refunds/offsets/taxes remain pending. Credit-only finalized
       notes now support fee-bounded issuance, idempotent replay, customer balance application to
       later invoices, and auditable unpaid-void recredit; provider refunds, invoice offsets,
       tax-adjusted notes, documents, email, and external reporting remain pending. Granted-credit wallets now support
@@ -335,23 +337,24 @@ Acceptance:
       usage rate independently, explicit targets override normal limitations, and missing wallets
       emit replay-safe `event.error` evidence. Paid/target recurring rules, provider funding, and
       dedicated-organization cadence remain pending.
-      Organization-default manual percentage taxes now support create/list/show/update/terminate,
-      coupon-adjusted fee taxable bases, exact rounding, and immutable invoice/fee snapshots;
-      customer/plan/charge targeting, external providers, exemptions, tax identifiers, and
-      credit-note tax adjustments remain pending.
+      Manual percentage taxes now support create/list/show/update/terminate; billing-entity,
+      customer, plan, charge, fixed-charge, minimum-commitment, add-on, and explicit one-off-fee
+      targeting; inherited subscription-override graphs; coupon-adjusted per-line taxable bases;
+      exact rounding; draft invalidation; and immutable invoice/fee snapshots. External providers,
+      exemptions, tax identifiers, and credit-note tax adjustments remain pending.
       Plan-level in-arrears minimum commitments now create only the rounded billing-period
       shortfall while retaining the precise fee value. Final termination invoices also prorate the
       target over the retained UTC unsplit window before subtracting precise and rounded fees;
-      commitment-specific taxes, pay-in-advance reconciliation, split windows, tenant-local civil
-      dates, and subscription overrides remain pending.
+      Commitment-specific taxes and subscription-override commitment cloning are now retained;
+      pay-in-advance reconciliation, split windows, and tenant-local civil dates remain pending.
       Tenant-scoped add-ons now support idempotent create/list/show/update/terminate with versioned
       outbox events, and plans support standard/graduated/volume recurring pay-in-arrears fixed
       charges. Fixed fees enter the exact recurring invoice pipeline before minimum commitments,
       coupons, taxes, credit notes, and wallets. In-arrears standard, volume, and graduated charges
       support event-weighted customer-local calendar-day proration for renewal, current usage, and
       termination. Standard pay-in-advance fixed charges support optional local-day proration;
-      graduated advance charges are non-prorated, while volume advance charges and targeted taxes
-      remain explicit unsupported boundaries.
+      graduated advance charges are non-prorated, while volume advance charges remain an explicit
+      unsupported boundary.
       Subscription
       fixed-charge list/show/update is ported; override mutations clone the full active pricing
       graph and persist effective-dated units so the default applies at the next boundary while an
@@ -764,6 +767,19 @@ Acceptance:
       `6bfeedea-636d-4af4-bcf0-3e20573ab3a0`, reverified Access fail-closed behavior, tokenless
       portal rejection, authenticated synthetic customer settings, the Lago Assistant, and legacy
       route canonicalization.
+
+## Non-production semantic completion checkpoint — 2026-08-18
+
+- [x] Added targeted manual taxes across billing entity, customer, plan, charge, fixed charge,
+      minimum commitment, add-on, and explicit one-off fee scopes with deterministic precedence,
+      draft invalidation, immutable invoice snapshots, and subscription-override graph cloning.
+- [x] Fixed subscription override cloning so minimum commitments and every inherited tax target
+      survive the hidden child-plan transition instead of silently changing the bill.
+- [x] Added plan- and billable-metric-targeted coupons with tenant-safe target validation,
+      sequential line-level allocation, persisted allocation evidence, subscription-override plan
+      matching, and tax calculation on the discounted eligible base.
+- [ ] Finish credit-note tax adjustment, internal offset, provider-fake refund, and remaining
+      non-production rating/lifecycle gaps before the isolated-development deployment gate.
 
 ## Verification Matrix
 
@@ -3384,7 +3400,7 @@ resource and mutation described.
   validation and deployed functional operator version `2787e247-b3b9-4dc8-b91b-86b36bc44251` with
   Static Assets, D1, existing DO/Workflow, and producer-only Queue bindings. Authenticated browser
   verification loaded `SERP Billing Operator` as Administrator for only `Synthetic E2E 20260815
-  001`. The first live upload safely failed before version creation because the operator config had
+001`. The first live upload safely failed before version creation because the operator config had
   a pre-existing 35-character D1 UUID; correcting the verified resource ID and adding a regression
   assertion resolved it. The authoritative check passes all 333 tests across 61 files plus five
   Access reconciler tests, formatting, lint, generated types, inventory, TypeScript, and both dry

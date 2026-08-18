@@ -22,6 +22,14 @@ import {
 import { createPayInAdvanceFixedChargeDeltaInvoice } from "../billing/pay-in-advance-fixed-charges";
 import { validatePayInAdvanceUsageConfiguration } from "../usage/pay-in-advance-validation";
 import {
+  guardedReplaceTaxTargetStatements,
+  normalizeTaxCodes,
+  replaceTaxTargetStatements,
+  resolveActiveTaxes,
+  taxesForTarget,
+  type ResolvedTax,
+} from "../billing/tax-targets";
+import {
   normalizeUsageThresholdInputs,
   prepareUsageThresholds,
   serializeUsageThreshold,
@@ -31,6 +39,7 @@ import {
 
 type PlanRow = {
   id: string;
+  organization_id: string;
   parent_id: string | null;
   code: string;
   name: string;
@@ -101,12 +110,14 @@ type NormalizedCharge = {
   minAmountMinor: number;
   acceptsTargetWallet: number;
   filters: ChargeFilter[];
+  taxes: ResolvedTax[];
 };
 
 type NormalizedCommitment = {
   id: string;
   amountMinor: number;
   invoiceDisplayName: string | null;
+  taxes: ResolvedTax[];
 };
 
 type NormalizedFixedCharge = {
@@ -120,6 +131,7 @@ type NormalizedFixedCharge = {
   payInAdvance: 0 | 1;
   prorated: 0 | 1;
   applyUnitsImmediately: boolean;
+  taxes: ResolvedTax[];
 };
 
 type PreparedFixedChargeCascadeUpdate = {
@@ -311,14 +323,11 @@ async function createPlan(
     );
   const metadata = optionalObject(input.metadata, "metadata");
   const usageThresholdInputs = normalizeUsageThresholdInputs(input.usage_thresholds);
-  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
-    throw new ApiError(
-      422,
-      "unsupported_tax_target",
-      "Plan tax targeting is not implemented; use organization-default taxes",
-    );
+  const planTaxCodes = normalizeTaxCodes(input.tax_codes) ?? [];
+  const planTaxes = await resolveActiveTaxes(database, auth.organizationId, planTaxCodes);
   const minimumCommitment = await normalizeMinimumCommitment(
     input.minimum_commitment,
+    database,
     auth.organizationId,
     code,
   );
@@ -351,6 +360,7 @@ async function createPlan(
     name,
     payInAdvance: booleanInteger(input.pay_in_advance, false),
     trialPeriod: optionalNonNegativeNumber(input.trial_period, "trial_period"),
+    taxCodes: planTaxCodes,
     usageThresholds: usageThresholdInputs,
   };
   const requestHash = await sha256Hex(stableJson(normalizedRequest));
@@ -507,6 +517,37 @@ async function createPlan(
               ),
           ]
         : []),
+      ...replaceTaxTargetStatements(database, auth.organizationId, "plan", planId, planTaxes, now),
+      ...charges.flatMap((charge) =>
+        replaceTaxTargetStatements(
+          database,
+          auth.organizationId,
+          "charge",
+          charge.id,
+          charge.taxes,
+          now,
+        ),
+      ),
+      ...fixedCharges.flatMap((charge) =>
+        replaceTaxTargetStatements(
+          database,
+          auth.organizationId,
+          "fixed_charge",
+          charge.id,
+          charge.taxes,
+          now,
+        ),
+      ),
+      ...(minimumCommitment
+        ? replaceTaxTargetStatements(
+            database,
+            auth.organizationId,
+            "commitment",
+            minimumCommitment.id,
+            minimumCommitment.taxes,
+            now,
+          )
+        : []),
       outboxStatement(database, auth.organizationId, event),
     ]);
   } catch (error) {
@@ -574,7 +615,14 @@ async function listFixedCharges(
     .all<FixedChargeRow>();
   return json(
     {
-      fixed_charges: result.results.map(serializeFixedCharge),
+      fixed_charges: await Promise.all(
+        result.results.map(async (charge) =>
+          serializeFixedCharge(
+            charge,
+            await taxesForTarget(database, auth.organizationId, "fixed_charge", charge.id),
+          ),
+        ),
+      ),
       meta: pagination(count?.total ?? 0, page, perPage),
     },
     { requestId },
@@ -601,7 +649,15 @@ async function createFixedCharge(
   const existing = await findFixedCharge(database, plan.id, normalized.code);
   if (existing) {
     if (sameFixedCharge(existing, normalized))
-      return json({ fixed_charge: serializeFixedCharge(existing) }, { requestId });
+      return json(
+        {
+          fixed_charge: serializeFixedCharge(
+            existing,
+            await taxesForTarget(database, auth.organizationId, "fixed_charge", existing.id),
+          ),
+        },
+        { requestId },
+      );
     throw new ApiError(422, "value_already_exist", "Fixed-charge code already exists");
   }
   const historical = await database
@@ -797,6 +853,14 @@ async function createFixedCharge(
         now,
         1,
       ),
+      ...replaceTaxTargetStatements(
+        database,
+        auth.organizationId,
+        "fixed_charge",
+        normalized.id,
+        normalized.taxes,
+        now,
+      ),
     ]);
     if (
       (results[0]?.meta.changes ?? 0) < 1 ||
@@ -815,7 +879,15 @@ async function createFixedCharge(
     if (error instanceof ApiError) throw error;
     const concurrent = await findFixedCharge(database, plan.id, normalized.code);
     if (concurrent && sameFixedCharge(concurrent, normalized))
-      return json({ fixed_charge: serializeFixedCharge(concurrent) }, { requestId });
+      return json(
+        {
+          fixed_charge: serializeFixedCharge(
+            concurrent,
+            await taxesForTarget(database, auth.organizationId, "fixed_charge", concurrent.id),
+          ),
+        },
+        { requestId },
+      );
     if (concurrent)
       throw new ApiError(422, "value_already_exist", "Fixed-charge code already exists");
     throw error;
@@ -827,7 +899,7 @@ async function createFixedCharge(
   }
   const created = await findFixedCharge(database, plan.id, normalized.code);
   if (!created) throw new ApiError(500, "persistence_error", "Fixed charge was not persisted");
-  return json({ fixed_charge: serializeFixedCharge(created) }, { requestId });
+  return json({ fixed_charge: serializeFixedCharge(created, normalized.taxes) }, { requestId });
 }
 
 async function updateFixedCharge(
@@ -846,6 +918,13 @@ async function updateFixedCharge(
   if (!fixedCharge) throw new ApiError(404, "fixed_charge_not_found", "Fixed charge was not found");
   const input = objectAt(await parseJsonObject(request), "fixed_charge");
   rejectUnsupportedFixedChargeMutation(input, fixedCharge);
+  const taxCodes = normalizeTaxCodes(input.tax_codes);
+  const currentTaxes = await taxesForTarget(
+    database,
+    auth.organizationId,
+    "fixed_charge",
+    fixedCharge.id,
+  );
   const cascade = cascadeRequested(input);
   const attached = await database
     .prepare("SELECT id FROM subscriptions WHERE plan_id = ? LIMIT 1")
@@ -878,6 +957,10 @@ async function updateFixedCharge(
     payInAdvance: fixedCharge.pay_in_advance === 1 ? 1 : 0,
     prorated: fixedCharge.prorated === 1 ? 1 : 0,
     applyUnitsImmediately: input.apply_units_immediately === true,
+    taxes:
+      taxCodes === undefined
+        ? currentTaxes
+        : await resolveActiveTaxes(database, auth.organizationId, taxCodes),
   } satisfies NormalizedFixedCharge;
   validateFixedChargeRating(next.units, next.chargeModel, next.properties, "fixed_charge");
   if (next.code !== fixedCharge.code) {
@@ -885,8 +968,8 @@ async function updateFixedCharge(
     if (duplicate)
       throw new ApiError(422, "value_already_exist", "Fixed-charge code already exists");
   }
-  if (sameFixedCharge(fixedCharge, next) && !cascade)
-    return json({ fixed_charge: serializeFixedCharge(fixedCharge) }, { requestId });
+  if (sameFixedCharge(fixedCharge, next) && sameTaxSets(currentTaxes, next.taxes) && !cascade)
+    return json({ fixed_charge: serializeFixedCharge(fixedCharge, currentTaxes) }, { requestId });
   const now = new Date().toISOString();
   const fixedChargeCascade = cascade
     ? await prepareFixedChargeUpdateCascade(database, fixedCharge, next)
@@ -1082,6 +1165,17 @@ async function updateFixedCharge(
         now,
         1,
       ),
+      ...(taxCodes === undefined
+        ? []
+        : guardedReplaceTaxTargetStatements(
+            database,
+            auth.organizationId,
+            "fixed_charge",
+            fixedCharge.id,
+            next.taxes,
+            now,
+            fixedCharge.version + 1,
+          )),
     ]);
     if (
       (results[0]?.meta.changes ?? 0) < 1 ||
@@ -1102,7 +1196,7 @@ async function updateFixedCharge(
   }
   const updated = await findFixedCharge(database, plan.id, next.code);
   if (!updated) throw new ApiError(500, "persistence_error", "Fixed charge disappeared");
-  return json({ fixed_charge: serializeFixedCharge(updated) }, { requestId });
+  return json({ fixed_charge: serializeFixedCharge(updated, next.taxes) }, { requestId });
 }
 
 async function deleteFixedCharge(
@@ -1246,7 +1340,15 @@ async function deleteFixedCharge(
     throw new ApiError(409, "fixed_charge_version_conflict", "Fixed charge changed concurrently");
   await env.DOMAIN_EVENTS.send(event);
   for (const childEvent of childEvents) await env.DOMAIN_EVENTS.send(childEvent);
-  return json({ fixed_charge: serializeFixedCharge(fixedCharge) }, { requestId });
+  return json(
+    {
+      fixed_charge: serializeFixedCharge(
+        fixedCharge,
+        await taxesForTarget(database, auth.organizationId, "fixed_charge", fixedCharge.id),
+      ),
+    },
+    { requestId },
+  );
 }
 
 async function showFixedCharge(
@@ -1265,7 +1367,15 @@ async function showFixedCharge(
     .bind(plan.id, fixedChargeCode)
     .first<FixedChargeRow>();
   if (!charge) throw new ApiError(404, "fixed_charge_not_found", "Fixed charge was not found");
-  return json({ fixed_charge: serializeFixedCharge(charge) }, { requestId });
+  return json(
+    {
+      fixed_charge: serializeFixedCharge(
+        charge,
+        await taxesForTarget(database, auth.organizationId, "fixed_charge", charge.id),
+      ),
+    },
+    { requestId },
+  );
 }
 
 function fixedChargeSelect(): string {
@@ -1308,6 +1418,11 @@ async function updatePlan(
   assertPlanMutationAvailable(plan);
   const input = objectAt(await parseJsonObject(request), "plan");
   rejectUpdateGraph(input);
+  const taxCodes = normalizeTaxCodes(input.tax_codes);
+  const nextTaxes =
+    taxCodes === undefined
+      ? await taxesForTarget(env.BILLING_DB, auth.organizationId, "plan", plan.id)
+      : await resolveActiveTaxes(env.BILLING_DB, auth.organizationId, taxCodes);
   const usageThresholdInputs =
     input.usage_thresholds === undefined
       ? null
@@ -1578,6 +1693,17 @@ async function updatePlan(
       ),
       clearPlanMutationGuardStatement(env.BILLING_DB, requestId, plan.id),
       ...usageThresholdStatements,
+      ...(taxCodes === undefined
+        ? []
+        : guardedReplaceTaxTargetStatements(
+            env.BILLING_DB,
+            auth.organizationId,
+            "plan",
+            plan.id,
+            nextTaxes,
+            now,
+            plan.version + 1,
+          )),
     ]);
     const insertedThresholdResults =
       replacementUsageThresholds === null
@@ -1749,7 +1875,7 @@ async function deletePlan(
 }
 
 function planSelect(): string {
-  return `SELECT id, parent_id, code, name, invoice_display_name, description, interval, amount_minor,
+  return `SELECT id, organization_id, parent_id, code, name, invoice_display_name, description, interval, amount_minor,
                  currency, trial_period, pay_in_advance, bill_charges_monthly,
                  bill_fixed_charges_monthly, metadata_json, request_sha256,
                  pending_deletion, version, created_at, updated_at FROM plans`;
@@ -1841,6 +1967,22 @@ async function serializePlan(
     )
     .bind(plan.id)
     .all<UsageThresholdRow>();
+  const [planTaxes, chargeTaxes, fixedChargeTaxes, commitmentTaxes] = await Promise.all([
+    taxesForTarget(database, plan.organization_id, "plan", plan.id),
+    Promise.all(
+      charges.results.map((charge) =>
+        taxesForTarget(database, plan.organization_id, "charge", charge.id),
+      ),
+    ),
+    Promise.all(
+      fixedCharges.results.map((charge) =>
+        taxesForTarget(database, plan.organization_id, "fixed_charge", charge.id),
+      ),
+    ),
+    commitment
+      ? taxesForTarget(database, plan.organization_id, "commitment", commitment.id)
+      : Promise.resolve([]),
+  ]);
   return {
     lago_id: plan.id,
     name: plan.name,
@@ -1862,12 +2004,16 @@ async function serializePlan(
     draft_invoices_count: 0,
     parent_id: null,
     pending_deletion: plan.pending_deletion === 1,
-    charges: charges.results.map(serializeCharge),
-    fixed_charges: fixedCharges.results.map(serializeFixedCharge),
+    charges: charges.results.map((charge, index) =>
+      serializeCharge(charge, chargeTaxes[index] ?? []),
+    ),
+    fixed_charges: fixedCharges.results.map((charge, index) =>
+      serializeFixedCharge(charge, fixedChargeTaxes[index] ?? []),
+    ),
     entitlements: [],
     usage_thresholds: usageThresholds.results.map(serializeUsageThreshold),
     applicable_usage_thresholds: usageThresholds.results.map(serializeUsageThreshold),
-    taxes: [],
+    taxes: serializeTaxes(planTaxes),
     metadata: parseObject(plan.metadata_json),
     minimum_commitment: commitment
       ? {
@@ -1878,13 +2024,16 @@ async function serializePlan(
           interval: plan.interval,
           created_at: commitment.created_at,
           updated_at: commitment.updated_at,
-          taxes: [],
+          taxes: serializeTaxes(commitmentTaxes),
         }
       : null,
   };
 }
 
-function serializeFixedCharge(charge: FixedChargeRow): Record<string, unknown> {
+function serializeFixedCharge(
+  charge: FixedChargeRow,
+  taxes: ResolvedTax[] = [],
+): Record<string, unknown> {
   return {
     lago_id: charge.id,
     lago_add_on_id: charge.add_on_id,
@@ -1898,7 +2047,7 @@ function serializeFixedCharge(charge: FixedChargeRow): Record<string, unknown> {
     properties: parseObject(charge.properties_json),
     units: charge.units,
     lago_parent_id: charge.parent_id,
-    taxes: [],
+    taxes: serializeTaxes(taxes),
   };
 }
 
@@ -2249,17 +2398,13 @@ function cascadeRequested(input: Record<string, unknown>): boolean {
 
 async function normalizeMinimumCommitment(
   value: unknown,
+  database: D1Database,
   organizationId: string,
   planCode: string,
 ): Promise<NormalizedCommitment | null> {
   if (value === undefined || value === null) return null;
   const input = optionalObject(value, "minimum_commitment");
-  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
-    throw new ApiError(
-      422,
-      "unsupported_tax_target",
-      "Commitment-specific tax targeting is not implemented",
-    );
+  const taxCodes = normalizeTaxCodes(input.tax_codes) ?? [];
   const amountMinor = nonNegativeInteger(input.amount_cents, "minimum_commitment.amount_cents");
   if (amountMinor === 0)
     throw new ApiError(422, "validation_error", "minimum_commitment.amount_cents must be positive");
@@ -2267,10 +2412,11 @@ async function normalizeMinimumCommitment(
     id: await deterministicUuid("minimum-commitment", `${organizationId}:${planCode}`),
     amountMinor,
     invoiceDisplayName: optionalString(input, "invoice_display_name"),
+    taxes: await resolveActiveTaxes(database, organizationId, taxCodes),
   };
 }
 
-function serializeCharge(charge: ChargeRow): Record<string, unknown> {
+function serializeCharge(charge: ChargeRow, taxes: ResolvedTax[] = []): Record<string, unknown> {
   return {
     lago_id: charge.id,
     lago_billable_metric_id: charge.billable_metric_id,
@@ -2291,10 +2437,26 @@ function serializeCharge(charge: ChargeRow): Record<string, unknown> {
       charge.charge_model,
       charge.id,
     ).map((filter) => serializeChargeFilter(filter, charge.code)),
-    taxes: [],
+    taxes: serializeTaxes(taxes),
     applied_pricing_unit: null,
     lago_parent_id: null,
   };
+}
+
+function serializeTaxes(taxes: ResolvedTax[]) {
+  return taxes.map((tax) => ({
+    lago_id: tax.id,
+    code: tax.code,
+    name: tax.name,
+    description: tax.description,
+    rate: Number(tax.rate),
+  }));
+}
+
+function sameTaxSets(left: ResolvedTax[], right: ResolvedTax[]): boolean {
+  const leftIds = left.map((tax) => tax.id).sort();
+  const rightIds = right.map((tax) => tax.id).sort();
+  return leftIds.length === rightIds.length && leftIds.every((id, index) => id === rightIds[index]);
 }
 
 async function normalizeCharges(
@@ -2315,6 +2477,7 @@ async function normalizeCharges(
     }
     const input = entry as Record<string, unknown>;
     rejectUnsupportedChargeFeatures(input);
+    const taxCodes = normalizeTaxCodes(input.tax_codes) ?? [];
     const metricId = requiredString(input, "billable_metric_id");
     const metric = await database
       .prepare(
@@ -2368,6 +2531,7 @@ async function normalizeCharges(
       minAmountMinor,
       acceptsTargetWallet,
       filters,
+      taxes: await resolveActiveTaxes(database, organizationId, taxCodes),
     });
   }
   return charges;
@@ -2384,12 +2548,6 @@ function rejectUnsupportedChargeFeatures(input: Record<string, unknown>): void {
       `${field} is not implemented by the Cloudflare charge catalog`,
     );
   }
-  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
-    throw new ApiError(
-      422,
-      "unsupported_tax_target",
-      "Charge-specific tax targeting is not implemented",
-    );
 }
 
 async function normalizeFixedCharges(
@@ -2421,12 +2579,7 @@ async function normalizeFixedCharges(
       typeof input.apply_units_immediately !== "boolean"
     )
       throw new ApiError(422, "validation_error", "apply_units_immediately must be boolean");
-    if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
-      throw new ApiError(
-        422,
-        "unsupported_tax_target",
-        "Fixed-charge tax targeting is not implemented; use organization-default taxes",
-      );
+    const taxCodes = normalizeTaxCodes(input.tax_codes) ?? [];
     const addOnId = requiredString(input, "add_on_id");
     const addOn = await database
       .prepare(
@@ -2462,6 +2615,7 @@ async function normalizeFixedCharges(
       payInAdvance,
       prorated,
       applyUnitsImmediately: input.apply_units_immediately === true,
+      taxes: await resolveActiveTaxes(database, organizationId, taxCodes),
     });
   }
   return fixedCharges;
@@ -2535,12 +2689,6 @@ function rejectUnsupportedFixedChargeMutation(
     typeof input.apply_units_immediately !== "boolean"
   )
     throw new ApiError(422, "validation_error", "apply_units_immediately must be boolean");
-  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
-    throw new ApiError(
-      422,
-      "unsupported_tax_target",
-      "Fixed-charge tax targeting is not implemented; use organization-default taxes",
-    );
   for (const field of ["add_on_id", "add_on_code"]) {
     if (input[field] !== undefined)
       throw new ApiError(
@@ -2608,7 +2756,7 @@ function nonNegativeDecimal(value: unknown, field: string): string {
 }
 
 function rejectUpdateGraph(input: Record<string, unknown>): void {
-  for (const field of ["charges", "fixed_charges", "minimum_commitment", "tax_codes"]) {
+  for (const field of ["charges", "fixed_charges", "minimum_commitment"]) {
     if (input[field] === undefined) continue;
     throw new ApiError(
       422,

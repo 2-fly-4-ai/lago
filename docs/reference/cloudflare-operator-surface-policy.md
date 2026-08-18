@@ -133,8 +133,8 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    implemented as one bounded family. The operator Worker reuses the canonical coupon handler,
    publishes through the existing Queue, and reaches the API Worker’s `BILLING_ACCOUNTS` Durable
    Object through a cross-script binding for the same per-customer command reservation boundary.
-   Coupon definitions are immutable after creation, and edit/delete plus plan, billable-metric, and
-   customer targeting are not exposed.
+   Coupon definitions are immutable after creation; plan- or billable-metric-targeted creation is
+   admitted through the canonical contract, while edit/delete and customer targeting are not exposed.
    Core plan list/show/create/edit/delete and nested add-on-backed fixed-charge lifecycle are also
    implemented. The BFF rejects embedded usage-charge graphs, thresholds, commitments, taxes, and
    metadata pending their own mapped editors. In-use plan deletion preserves the canonical durable
@@ -147,7 +147,7 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    sections, and usage-threshold overrides remain rejected at the BFF until separately admitted.
    Core invoice list/show plus admin one-off create, draft refresh/finalize, and unpaid-finalized
    void is implemented through the canonical D1, Queue, and Durable Object boundaries. One-off
-   creation is manual-only (`skip_psp: true`) and fee tax targeting is rejected. Document generation
+   creation is manual-only (`skip_psp: true`) and tenant-validated fee tax targeting is admitted. Document generation
    and download, payment URLs, provider payment retry, and email delivery remain separate actions
    and are not exposed by this family.
    Core wallet list/show/transaction reads plus admin manual granted-credit create/top-up/terminate

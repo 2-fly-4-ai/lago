@@ -1050,11 +1050,17 @@ describe("operator Worker disabled boundary", () => {
       add_on: { code: "priority", name: "Priority support", amount_cents: 3000 },
     });
 
-    const unsupported = await operatorMutation("PUT", "/add-ons/priority", {
+    const tax = await operatorMutation("POST", "/taxes", {
+      tax: { code: "vat", name: "VAT", rate: 20, applied_to_organization: false },
+    });
+    expect(tax.status).toBe(200);
+    const taxed = await operatorMutation("PUT", "/add-ons/priority", {
       add_on: { tax_codes: ["vat"] },
     });
-    expect(unsupported.status).toBe(422);
-    await expect(unsupported.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
+    expect(taxed.status).toBe(200);
+    await expect(taxed.json()).resolves.toMatchObject({
+      add_on: { taxes: [{ code: "vat", rate: 20 }] },
+    });
 
     const terminated = await operatorMutation("DELETE", "/add-ons/priority");
     expect(terminated.status).toBe(200);
@@ -1124,6 +1130,16 @@ describe("operator Worker disabled boundary", () => {
       },
     });
 
+    const targetPlan = await operatorMutation("POST", "/plans", {
+      plan: {
+        code: "targeted-plan",
+        name: "Targeted plan",
+        interval: "monthly",
+        amount_cents: 1000,
+        amount_currency: "USD",
+      },
+    });
+    expect(targetPlan.status).toBe(200);
     const targeted = await operatorMutation("POST", "/coupons", {
       coupon: {
         code: "targeted",
@@ -1131,11 +1147,13 @@ describe("operator Worker disabled boundary", () => {
         coupon_type: "percentage",
         percentage_rate: "10",
         frequency: "once",
-        applies_to: { plan_codes: ["plan"] },
+        applies_to: { plan_codes: ["targeted-plan"] },
       },
     });
-    expect(targeted.status).toBe(422);
-    await expect(targeted.json()).resolves.toMatchObject({ code: "unsupported_coupon_targets" });
+    expect(targeted.status).toBe(200);
+    await expect(targeted.json()).resolves.toMatchObject({
+      coupon: { limited_plans: true, plan_codes: ["targeted-plan"] },
+    });
 
     const applied = await operatorMutation("POST", "/applied-coupons", {
       applied_coupon: {

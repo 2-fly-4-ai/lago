@@ -45,6 +45,13 @@ beforeEach(async () => {
        VALUES ('tax-one-off', 'org-one-off', 'vat-20', 'VAT 20%', NULL, '20', 1,
                'active', 1, 'hash-tax', ?, ?)`,
     ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO taxes
+       (id, organization_id, code, name, description, rate, applied_to_organization,
+        status, version, request_sha256, created_at, updated_at)
+       VALUES ('tax-one-off-reduced', 'org-one-off', 'vat-5', 'VAT 5%', NULL, '5', 0,
+               'active', 1, 'hash-tax-reduced', ?, ?)`,
+    ).bind(now, now),
   ]);
 });
 
@@ -121,7 +128,7 @@ describe("one-off invoice ledger", () => {
     ).resolves.toEqual({ event_type: "invoice.one_off_created", total: 1 });
   });
 
-  it("rejects automatic payment and targeted fee taxes until those workflows are ported", async () => {
+  it("keeps automatic payment disabled while accepting explicit per-fee taxes", async () => {
     const automatic = await request({
       invoice: {
         external_customer_id: "customer-one-off",
@@ -138,11 +145,21 @@ describe("one-off invoice ledger", () => {
         external_customer_id: "customer-one-off",
         currency: "EUR",
         skip_psp: true,
-        fees: [{ add_on_code: "first", tax_codes: ["vat-20"] }],
+        fees: [
+          { add_on_code: "first", unit_amount_cents: 1000, tax_codes: ["vat-5"] },
+          { add_on_code: "second", unit_amount_cents: 1000, tax_codes: [] },
+        ],
       },
     });
-    expect(targetedTax.status).toBe(422);
-    await expect(targetedTax.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
+    expect(targetedTax.status).toBe(200);
+    await expect(targetedTax.json()).resolves.toMatchObject({
+      invoice: {
+        fees_amount_cents: 2000,
+        taxes_amount_cents: 50,
+        total_amount_cents: 2050,
+        applied_taxes: [{ tax_code: "vat-5", amount_cents: 50 }],
+      },
+    });
   });
 });
 

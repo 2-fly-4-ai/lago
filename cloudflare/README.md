@@ -335,8 +335,9 @@ remaining Lago feature inventory is dispositioned and ported.
   and customer applications; admins can create fixed or percentage coupons, apply them, and
   terminate active applications. The canonical handler retains D1/Queue persistence and uses the
   API Worker’s `BILLING_ACCOUNTS` Durable Object through a cross-script binding so apply/terminate
-  commands keep their existing idempotency and per-customer serialization. Coupon edit/delete and
-  plan, metric, or customer targeting remain unavailable.
+  commands keep their existing idempotency and per-customer serialization. Coupon creation now
+  admits one tenant-validated plan or billable-metric target family and persists exact per-line
+  discount allocations; coupon edit/delete and customer targeting remain unavailable.
   `/api/operator/v1/plans` and its nested `/fixed-charges` routes provide the next bounded catalog
   family. Viewers can inspect the active core plan/fixed-charge graph; admins can create, edit, and
   delete core recurring plans and add-on-backed fixed charges. The BFF rejects embedded usage
@@ -356,7 +357,7 @@ remaining Lago feature inventory is dispositioned and ported.
   `/api/operator/v1/invoices` provides the core invoice family. Viewers can list/show tenant-scoped
   invoices; admins can create a finalized manual one-off invoice from retained add-ons, refresh or
   finalize a draft, and void an unpaid finalized invoice. The BFF requires one-off creation to skip
-  provider collection and rejects fee tax targeting. PDF generation/download, payment URLs,
+  provider collection and accepts tenant-validated per-fee tax targeting. PDF generation/download, payment URLs,
   provider payment retry, and email delivery remain outside this family and unavailable until each
   receives its own bounded operator contract.
   `/api/operator/v1/wallets` and `/api/operator/v1/wallet-transactions` expose the core manual
@@ -405,8 +406,8 @@ remaining Lago feature inventory is dispositioned and ported.
   cascades use the same timing contract. In-arrears prorated charges rate the event-weighted units
   across customer-local calendar days. Advance increases use the same local-day window, charge only
   a positive delta against all current-period advance lines, and retain deterministic invoice IDs
-  for replay and repair; fixed-charge-specific tax targeting remains an explicit unsupported
-  boundary.
+  for replay and repair. Fixed-charge-specific taxes are retained across catalog and subscription
+  override graphs, including minimum-commitment and inherited plan targets.
 - Payment requests: authenticated create/list/show and customer-nested list routes persist one
   tenant-scoped request plus its overdue finalized invoices and `payment_request.created` outbox
   event in a guarded D1 batch. The amount is the exact remaining balance across one currency.

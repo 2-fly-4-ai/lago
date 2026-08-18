@@ -26,6 +26,13 @@ beforeEach(async () => {
        VALUES ('metric-plan-catalog', 'org-plan-catalog', 'requests', 'Requests',
                'count_agg', NULL, 0, '{}', 1, 1, ?, ?)`,
     ).bind(now, now),
+    env.BILLING_DB.prepare(
+      `INSERT OR IGNORE INTO taxes
+       (id, organization_id, code, name, description, rate, applied_to_organization,
+        status, version, request_sha256, created_at, updated_at)
+       VALUES ('tax-plan-catalog', 'org-plan-catalog', 'catalog-tax', 'Catalog tax', NULL,
+               '12.5', 0, 'active', 1, 'catalog-tax-hash', ?, ?)`,
+    ).bind(now, now),
   ]);
 });
 
@@ -41,6 +48,7 @@ describe("Lago-compatible plan catalog", () => {
         amount_cents: 1000,
         amount_currency: "usd",
         pay_in_advance: true,
+        tax_codes: ["catalog-tax"],
         metadata: { tier: "pro" },
         charges: [
           {
@@ -49,6 +57,7 @@ describe("Lago-compatible plan catalog", () => {
             charge_model: "standard",
             accepts_target_wallet: true,
             properties: { amount: "2.5" },
+            tax_codes: ["catalog-tax"],
           },
         ],
       },
@@ -63,6 +72,7 @@ describe("Lago-compatible plan catalog", () => {
         amount_cents: 1000,
         amount_currency: "USD",
         pay_in_advance: true,
+        taxes: [{ code: "catalog-tax", rate: 12.5 }],
         metadata: { tier: "pro" },
         charges: [
           {
@@ -71,6 +81,7 @@ describe("Lago-compatible plan catalog", () => {
             charge_model: "standard",
             accepts_target_wallet: true,
             properties: { amount: "2.5" },
+            taxes: [{ code: "catalog-tax", rate: 12.5 }],
           },
         ],
       },
@@ -391,14 +402,13 @@ describe("Lago-compatible plan catalog", () => {
       plan: {
         name: "Unsupported",
         code: "unsupported",
-        interval: "monthly",
+        interval: "one_time",
         amount_cents: 100,
         amount_currency: "USD",
-        tax_codes: ["vat"],
       },
     });
     expect(response.status).toBe(422);
-    await expect(response.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
+    await expect(response.json()).resolves.toMatchObject({ code: "unsupported_plan_feature" });
   });
 
   it("updates safe scalar fields, retires standalone plans, and reuses codes safely", async () => {
@@ -867,7 +877,7 @@ describe("Lago-compatible plan catalog", () => {
     });
   });
 
-  it("creates and serializes a minimum commitment while rejecting commitment tax targeting", async () => {
+  it("creates and serializes minimum commitments with targeted taxes", async () => {
     const payload = {
       plan: {
         name: "Committed",
@@ -899,11 +909,18 @@ describe("Lago-compatible plan catalog", () => {
       plan: {
         ...payload.plan,
         code: "committed-tax",
-        minimum_commitment: { amount_cents: 1000, tax_codes: ["tax"] },
+        minimum_commitment: { amount_cents: 1000, tax_codes: ["catalog-tax"] },
       },
     });
-    expect(targeted.status).toBe(422);
-    await expect(targeted.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
+    expect(targeted.status).toBe(200);
+    await expect(targeted.json()).resolves.toMatchObject({
+      plan: {
+        minimum_commitment: {
+          amount_cents: 1000,
+          taxes: [{ code: "catalog-tax", rate: 12.5 }],
+        },
+      },
+    });
   });
 });
 

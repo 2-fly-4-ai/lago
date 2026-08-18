@@ -126,7 +126,7 @@ export type SubscriptionInvoiceCalculation = {
 export type InvoiceAllocationOwner = Pick<
   BillableSubscription,
   "organization_id" | "customer_id" | "currency"
->;
+> & { plan_id?: string };
 
 export type InvoiceAllocationCalculation = Omit<
   SubscriptionInvoiceCalculation,
@@ -369,24 +369,49 @@ export async function calculateInvoiceAllocations(
     throw new Error("invalid_progressive_billing_credit");
   }
   const subtotalAfterProgressiveCredit = subtotalMinor - progressiveBillingCreditMinor;
+  const progressiveDiscounts = allocateInvoiceLineDiscounts(lines, progressiveBillingCreditMinor);
   const couponCredits = await calculateCouponCredits(
     database,
     owner.organization_id,
     owner.customer_id,
     invoiceId,
     owner.currency,
-    subtotalAfterProgressiveCredit,
+    lines.map((line) => ({
+      id: line.id,
+      amountMinor: line.rounded - (progressiveDiscounts.get(line.id) ?? 0),
+      billableMetricId: line.billableMetricId,
+    })),
+    owner.plan_id,
   );
   const couponsMinor = couponCredits.reduce(
     (total, credit) => safeAdd(total, credit.amountMinor),
     0,
   );
+  const couponDiscounts = new Map<string, number>();
+  for (const credit of couponCredits) {
+    for (const discount of credit.lineDiscounts) {
+      couponDiscounts.set(
+        discount.lineId,
+        safeAdd(couponDiscounts.get(discount.lineId) ?? 0, discount.amountMinor),
+      );
+    }
+  }
   const invoiceTaxes = await calculateManualTaxes(
     database,
     owner.organization_id,
+    owner.customer_id,
     invoiceId,
-    lines.map((candidate) => ({ id: candidate.id, amountMinor: candidate.rounded })),
-    safeAdd(couponsMinor, progressiveBillingCreditMinor),
+    lines.map((candidate) => ({
+      id: candidate.id,
+      amountMinor: candidate.rounded,
+      sourceType: candidate.sourceType,
+      sourceId: candidate.persistenceSourceId ?? candidate.sourceId,
+      couponDiscountMinor: safeAdd(
+        progressiveDiscounts.get(candidate.id) ?? 0,
+        couponDiscounts.get(candidate.id) ?? 0,
+      ),
+    })),
+    0,
   );
   const taxMinor = totalManualTaxMinor(invoiceTaxes);
   const creditNoteAllocations = await calculateCreditNoteAllocations(
@@ -1439,6 +1464,37 @@ function supportedAggregation(value: string): SupportedAggregationType {
     return value;
   }
   throw new Error(`unsupported_aggregation_type:${value}`);
+}
+
+function allocateInvoiceLineDiscounts(
+  lines: SubscriptionInvoiceLine[],
+  discountMinor: number,
+): Map<string, number> {
+  if (discountMinor === 0) return new Map();
+  const baseMinor = lines.reduce((sum, line) => safeAdd(sum, line.rounded), 0);
+  if (discountMinor < 0 || discountMinor > baseMinor) {
+    throw new Error("invalid_invoice_line_discount");
+  }
+  const allocations = lines.map((line) => {
+    const numerator = BigInt(discountMinor) * BigInt(line.rounded);
+    return {
+      lineId: line.id,
+      amountMinor: Number(numerator / BigInt(baseMinor)),
+      remainder: numerator % BigInt(baseMinor),
+    };
+  });
+  let undistributed =
+    discountMinor - allocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0);
+  allocations.sort((left, right) => {
+    if (left.remainder === right.remainder) return left.lineId.localeCompare(right.lineId);
+    return left.remainder > right.remainder ? -1 : 1;
+  });
+  for (const allocation of allocations) {
+    if (undistributed <= 0) break;
+    allocation.amountMinor += 1;
+    undistributed -= 1;
+  }
+  return new Map(allocations.map((allocation) => [allocation.lineId, allocation.amountMinor]));
 }
 
 function safeMinorInteger(value: Decimal): number {

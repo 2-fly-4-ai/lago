@@ -8,6 +8,14 @@ import { Decimal } from "../rating/decimal";
 import { parseChargeModel } from "../usage/charge-properties";
 import { createPayInAdvanceFixedChargeDeltaInvoice } from "../billing/pay-in-advance-fixed-charges";
 import {
+  guardedReplaceTaxTargetStatements,
+  normalizeTaxCodes,
+  replaceTaxTargetStatements,
+  resolveActiveTaxes,
+  taxesForTarget,
+  type ResolvedTax,
+} from "../billing/tax-targets";
+import {
   normalizeChargeFilters,
   parseStoredBillableMetricFilters,
   parseStoredChargeFilters,
@@ -77,6 +85,7 @@ type NormalizedFixedChargeOverride = {
   properties: Record<string, unknown>;
   units: string;
   applyUnitsImmediately: boolean;
+  taxCodes: string[] | undefined;
 };
 
 type FixedChargeUnitEventInput = {
@@ -118,11 +127,19 @@ type ClonedGraphFixedCharge = {
   prorated: number;
 };
 
+type ClonedMinimumCommitment = {
+  id: string;
+  parentId: string;
+  amountMinor: number;
+  invoiceDisplayName: string | null;
+};
+
 type PreparedPlanOverrideGraph = {
   childPlanId: string;
   nextVersion: number;
   clonedCharges: ClonedGraphCharge[];
   clonedFixedCharges: ClonedGraphFixedCharge[];
+  clonedCommitment: ClonedMinimumCommitment | null;
 };
 
 type OverrideGraphTransforms = {
@@ -253,7 +270,9 @@ async function listFixedCharges(
     .all<GraphFixedChargeRow>();
   return json(
     {
-      fixed_charges: result.results.map(serializeFixedCharge),
+      fixed_charges: await Promise.all(
+        result.results.map((charge) => serializeFixedCharge(database, auth.organizationId, charge)),
+      ),
       meta: pagination(count?.total ?? 0, page, perPage),
     },
     { requestId },
@@ -273,7 +292,10 @@ async function showFixedCharge(
     externalId,
     fixedChargeCode,
   );
-  return json({ fixed_charge: serializeFixedCharge(fixedCharge) }, { requestId });
+  return json(
+    { fixed_charge: await serializeFixedCharge(database, auth.organizationId, fixedCharge) },
+    { requestId },
+  );
 }
 
 async function updateSubscriptionFixedCharge(
@@ -437,6 +459,7 @@ async function createPlanOverride(
     chargeEvent,
     "charge",
     [],
+    null,
     now,
     env,
     auth,
@@ -470,6 +493,10 @@ async function createFixedChargePlanOverride(
   if (!childTargetId) {
     throw new ApiError(409, "fixed_charge_version_conflict", "Fixed charge changed concurrently");
   }
+  const targetTaxes =
+    normalized.taxCodes === undefined
+      ? null
+      : await resolveActiveTaxes(env.BILLING_DB, auth.organizationId, normalized.taxCodes);
   const now = new Date().toISOString();
   const unitEvents = await prepareFixedChargeUnitEvents(
     plan,
@@ -507,6 +534,7 @@ async function createFixedChargePlanOverride(
     fixedChargeEvent,
     "fixed_charge",
     unitEvents,
+    targetTaxes ? { targetId: childTargetId, taxes: targetTaxes } : null,
     now,
     env,
     auth,
@@ -520,7 +548,12 @@ async function createFixedChargePlanOverride(
     prepared.childPlanId,
     childTargetId,
   );
-  return json({ fixed_charge: serializeFixedCharge(persisted) }, { requestId });
+  return json(
+    {
+      fixed_charge: await serializeFixedCharge(env.BILLING_DB, auth.organizationId, persisted),
+    },
+    { requestId },
+  );
 }
 
 async function preparePlanOverrideGraph(
@@ -559,6 +592,23 @@ async function preparePlanOverrideGraph(
     "subscription-plan-override",
     `${plan.subscription_id}:${plan.plan_id}`,
   );
+  const commitment = await env.BILLING_DB.prepare(
+    `SELECT id, amount_minor, invoice_display_name
+     FROM minimum_commitments WHERE organization_id = ? AND plan_id = ? LIMIT 1`,
+  )
+    .bind(organizationId, plan.plan_id)
+    .first<{ id: string; amount_minor: number; invoice_display_name: string | null }>();
+  const clonedCommitment = commitment
+    ? {
+        id: await deterministicUuid(
+          "subscription-commitment-override",
+          `${childPlanId}:${commitment.id}`,
+        ),
+        parentId: commitment.id,
+        amountMinor: commitment.amount_minor,
+        invoiceDisplayName: commitment.invoice_display_name,
+      }
+    : null;
   const nextVersion = await nextPlanVersion(env.BILLING_DB, organizationId, plan.code);
   const clonedCharges: ClonedGraphCharge[] = [];
   for (const source of charges.results) {
@@ -617,7 +667,7 @@ async function preparePlanOverrideGraph(
       "Subscription plan override pricing data exceeds the supported size",
     );
   }
-  return { childPlanId, nextVersion, clonedCharges, clonedFixedCharges };
+  return { childPlanId, nextVersion, clonedCharges, clonedFixedCharges, clonedCommitment };
 }
 
 async function persistPlanOverrideGraph(
@@ -627,6 +677,7 @@ async function persistPlanOverrideGraph(
   mutationEvent: DomainEvent,
   mutationKind: "charge" | "fixed_charge",
   unitEvents: FixedChargeUnitEventInput[],
+  fixedChargeTaxOverride: { targetId: string; taxes: ResolvedTax[] } | null,
   now: string,
   env: Env,
   auth: AuthContext,
@@ -727,6 +778,25 @@ async function persistPlanOverrideGraph(
       plan.plan_id,
     ),
     env.BILLING_DB.prepare(
+      `INSERT INTO minimum_commitments
+       (id, organization_id, plan_id, amount_minor, invoice_display_name, created_at, updated_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?
+       WHERE ? IS NOT NULL AND EXISTS (
+         SELECT 1 FROM plans WHERE id = ? AND parent_id = ?
+       )`,
+    ).bind(
+      prepared.clonedCommitment?.id ?? null,
+      auth.organizationId,
+      prepared.childPlanId,
+      prepared.clonedCommitment?.amountMinor ?? null,
+      prepared.clonedCommitment?.invoiceDisplayName ?? null,
+      now,
+      now,
+      prepared.clonedCommitment?.id ?? null,
+      prepared.childPlanId,
+      plan.plan_id,
+    ),
+    env.BILLING_DB.prepare(
       `UPDATE subscriptions SET plan_id = ?, version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND plan_id = ? AND version = ?
          AND EXISTS (SELECT 1 FROM plans WHERE id = ? AND parent_id = ?)`,
@@ -750,15 +820,61 @@ async function persistPlanOverrideGraph(
       now,
     ),
     mutationOutbox,
+    env.BILLING_DB.prepare(
+      `INSERT INTO tax_targets
+       (organization_id, tax_id, target_type, target_id, created_at)
+       SELECT organization_id, tax_id, 'plan', ?, ? FROM tax_targets
+       WHERE organization_id = ? AND target_type = 'plan' AND target_id = ?`,
+    ).bind(prepared.childPlanId, now, auth.organizationId, plan.plan_id),
+    env.BILLING_DB.prepare(
+      `INSERT INTO tax_targets
+       (organization_id, tax_id, target_type, target_id, created_at)
+       SELECT target.organization_id, target.tax_id, 'charge', child.id, ?
+       FROM tax_targets target JOIN charges child ON child.parent_id = target.target_id
+       WHERE target.organization_id = ? AND target.target_type = 'charge'
+         AND child.organization_id = ? AND child.plan_id = ?`,
+    ).bind(now, auth.organizationId, auth.organizationId, prepared.childPlanId),
+    env.BILLING_DB.prepare(
+      `INSERT INTO tax_targets
+       (organization_id, tax_id, target_type, target_id, created_at)
+       SELECT target.organization_id, target.tax_id, 'fixed_charge', child.id, ?
+       FROM tax_targets target JOIN fixed_charges child ON child.parent_id = target.target_id
+       WHERE target.organization_id = ? AND target.target_type = 'fixed_charge'
+         AND child.organization_id = ? AND child.plan_id = ?`,
+    ).bind(now, auth.organizationId, auth.organizationId, prepared.childPlanId),
+    env.BILLING_DB.prepare(
+      `INSERT INTO tax_targets
+       (organization_id, tax_id, target_type, target_id, created_at)
+       SELECT organization_id, tax_id, 'commitment', ?, ? FROM tax_targets
+       WHERE organization_id = ? AND target_type = 'commitment' AND target_id = ?
+         AND ? IS NOT NULL`,
+    ).bind(
+      prepared.clonedCommitment?.id ?? "",
+      now,
+      auth.organizationId,
+      prepared.clonedCommitment?.parentId ?? "",
+      prepared.clonedCommitment?.id ?? null,
+    ),
+    ...(fixedChargeTaxOverride
+      ? replaceTaxTargetStatements(
+          env.BILLING_DB,
+          auth.organizationId,
+          "fixed_charge",
+          fixedChargeTaxOverride.targetId,
+          fixedChargeTaxOverride.taxes,
+          now,
+        )
+      : []),
   ]);
   if (
     results[0]?.meta.changes !== 1 ||
     results[1]?.meta.changes !== prepared.clonedCharges.length ||
     results[2]?.meta.changes !== prepared.clonedFixedCharges.length ||
-    results[3]?.meta.changes !== 1 ||
-    results[4]?.meta.changes !== unitEvents.length ||
-    results[5]?.meta.changes !== 1 ||
-    results[6]?.meta.changes !== 1
+    results[3]?.meta.changes !== (prepared.clonedCommitment ? 1 : 0) ||
+    results[4]?.meta.changes !== 1 ||
+    results[5]?.meta.changes !== unitEvents.length ||
+    results[6]?.meta.changes !== 1 ||
+    results[7]?.meta.changes !== 1
   ) {
     throw new ApiError(409, "subscription_version_conflict", "Subscription changed concurrently");
   }
@@ -841,6 +957,21 @@ async function mutateExistingFixedChargeOverride(
     now,
     { code: fixedCharge.code, planCode: plan.code, subscriptionId: plan.subscription_id },
   );
+  const targetTaxes =
+    normalized.taxCodes === undefined
+      ? null
+      : await resolveActiveTaxes(env.BILLING_DB, auth.organizationId, normalized.taxCodes);
+  const taxStatements = targetTaxes
+    ? guardedReplaceTaxTargetStatements(
+        env.BILLING_DB,
+        auth.organizationId,
+        "fixed_charge",
+        fixedCharge.id,
+        targetTaxes,
+        now,
+        nextVersion,
+      )
+    : [];
   const results = await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
       `UPDATE fixed_charges
@@ -857,6 +988,7 @@ async function mutateExistingFixedChargeOverride(
       plan.plan_id,
       fixedCharge.version,
     ),
+    ...taxStatements,
     fixedChargeUnitEventInsertStatement(env.BILLING_DB, auth.organizationId, unitEvents, now),
     conditionalFixedChargeOutboxStatement(
       env.BILLING_DB,
@@ -869,8 +1001,8 @@ async function mutateExistingFixedChargeOverride(
   ]);
   if (
     (results[0]?.meta.changes ?? 0) < 1 ||
-    (results[1]?.meta.changes ?? 0) < (unitEvents.length === 0 ? 0 : 1) ||
-    results[2]?.meta.changes !== 1
+    (results[1 + taxStatements.length]?.meta.changes ?? 0) < (unitEvents.length === 0 ? 0 : 1) ||
+    results[2 + taxStatements.length]?.meta.changes !== 1
   ) {
     throw new ApiError(409, "fixed_charge_version_conflict", "Fixed charge changed concurrently");
   }
@@ -884,7 +1016,12 @@ async function mutateExistingFixedChargeOverride(
     plan.plan_id,
     fixedCharge.id,
   );
-  return json({ fixed_charge: serializeFixedCharge(persisted) }, { requestId });
+  return json(
+    {
+      fixed_charge: await serializeFixedCharge(env.BILLING_DB, auth.organizationId, persisted),
+    },
+    { requestId },
+  );
 }
 
 async function applyMutation(
@@ -1163,7 +1300,12 @@ function graphFixedChargeSelect(): string {
           FROM fixed_charges fc JOIN add_ons ao ON ao.id = fc.add_on_id`;
 }
 
-function serializeFixedCharge(charge: GraphFixedChargeRow): Record<string, unknown> {
+async function serializeFixedCharge(
+  database: D1Database,
+  organizationId: string,
+  charge: GraphFixedChargeRow,
+): Promise<Record<string, unknown>> {
+  const taxes = await taxesForTarget(database, organizationId, "fixed_charge", charge.id);
   return {
     lago_id: charge.id,
     lago_add_on_id: charge.add_on_id,
@@ -1177,7 +1319,13 @@ function serializeFixedCharge(charge: GraphFixedChargeRow): Record<string, unkno
     properties: parseObject(charge.properties_json),
     units: charge.units,
     lago_parent_id: charge.parent_id,
-    taxes: [],
+    taxes: taxes.map((tax) => ({
+      lago_id: tax.id,
+      code: tax.code,
+      name: tax.name,
+      description: tax.description,
+      rate: Number(tax.rate),
+    })),
   };
 }
 
@@ -1191,16 +1339,7 @@ function normalizeFixedChargeOverride(
   ) {
     throw new ApiError(422, "validation_error", "apply_units_immediately must be boolean");
   }
-  if (input.tax_codes !== undefined && !Array.isArray(input.tax_codes)) {
-    throw new ApiError(422, "validation_error", "tax_codes must be an array");
-  }
-  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0) {
-    throw new ApiError(
-      422,
-      "unsupported_tax_target",
-      "Fixed-charge tax targeting is not implemented; use organization-default taxes",
-    );
-  }
+  const taxCodes = normalizeTaxCodes(input.tax_codes);
   for (const field of ["id", "parent_id", "code", "add_on_id", "add_on_code"]) {
     if (input[field] !== undefined && input[field] !== null) {
       throw new ApiError(
@@ -1255,6 +1394,7 @@ function normalizeFixedChargeOverride(
     properties,
     units,
     applyUnitsImmediately: input.apply_units_immediately === true,
+    taxCodes,
   };
 }
 

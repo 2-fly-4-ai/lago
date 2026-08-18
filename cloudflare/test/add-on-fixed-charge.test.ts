@@ -28,6 +28,18 @@ beforeEach(async () => {
 
 describe("Lago-compatible add-ons and recurring fixed charges", () => {
   it("maintains the add-on ledger and bills a fixed fee before commitment credits", async () => {
+    expect(
+      (
+        await api("/api/v1/taxes", "POST", {
+          tax: {
+            code: "fixed-tax",
+            name: "Fixed tax",
+            rate: "6",
+            applied_to_organization: false,
+          },
+        })
+      ).status,
+    ).toBe(200);
     const addOnPayload = {
       add_on: {
         name: "Seat",
@@ -36,6 +48,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
         amount_cents: 100,
         amount_currency: "usd",
         description: "Synthetic recurring seat",
+        tax_codes: ["fixed-tax"],
       },
     };
     const created = await api("/api/v1/add_ons", "POST", addOnPayload);
@@ -49,6 +62,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
         code: "seat",
         amount_cents: 100,
         amount_currency: "USD",
+        taxes: [{ code: "fixed-tax", rate: 6 }],
       },
     });
     await expect(apiJson("/api/v1/add_ons")).resolves.toMatchObject({
@@ -71,6 +85,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
             charge_model: "standard",
             units: "2.5",
             properties: { amount: "100" },
+            tax_codes: ["fixed-tax"],
           },
         ],
         minimum_commitment: {
@@ -94,6 +109,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
             pay_in_advance: false,
             prorated: false,
             properties: { amount: "100" },
+            taxes: [{ code: "fixed-tax", rate: 6 }],
           },
         ],
       },
@@ -118,6 +134,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
         code: "seat-fixed",
         charge_model: "standard",
         properties: { amount: "100" },
+        taxes: [{ code: "fixed-tax", rate: 6 }],
       },
     });
     const standalonePayload = {
@@ -150,6 +167,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
         charge_model: "standard",
         units: "2",
         properties: { amount: "100" },
+        tax_codes: [],
       },
     });
     expect(standaloneUpdate.status).toBe(200);
@@ -158,6 +176,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
         lago_id: standaloneId,
         code: "seat-extra-renamed",
         units: "2",
+        taxes: [],
       },
     });
     const updateReplay = await api(
@@ -285,7 +304,7 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
       subscription.subscription.current_billing_period_ending_at,
       "fixed-charge-close",
     );
-    expect(close).toMatchObject({ replayed: false, totalDueMinor: 1000, lineCount: 3 });
+    expect(close).toMatchObject({ replayed: false, totalDueMinor: 1015, lineCount: 3 });
     const lines = await env.BILLING_DB.prepare(
       `SELECT line_type, source_type, amount_minor, precise_amount_minor, quantity_decimal
        FROM invoice_lines WHERE invoice_id = ? ORDER BY line_type`,
@@ -321,6 +340,19 @@ describe("Lago-compatible add-ons and recurring fixed charges", () => {
         quantity_decimal: "1",
       },
     ]);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT tax_code, tax_rate, taxable_base_minor, amount_minor
+         FROM invoice_taxes WHERE invoice_id = ?`,
+      )
+        .bind(close.invoiceId)
+        .first(),
+    ).resolves.toEqual({
+      tax_code: "fixed-tax",
+      tax_rate: "6",
+      taxable_base_minor: 250,
+      amount_minor: 15,
+    });
 
     const usedDelete = await api("/api/v1/add_ons/seat", "DELETE");
     expect(usedDelete.status).toBe(422);

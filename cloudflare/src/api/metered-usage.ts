@@ -39,6 +39,14 @@ import {
 import { billingPeriodDurationDays, type BillingTime } from "../billing/periods";
 import { validatePayInAdvanceUsageConfiguration } from "../usage/pay-in-advance-validation";
 import { subscriptionActivityStatements } from "../usage/subscription-activity";
+import {
+  guardedReplaceTaxTargetStatements,
+  normalizeTaxCodes,
+  replaceTaxTargetStatements,
+  resolveActiveTaxes,
+  taxesForTarget,
+  type ResolvedTax,
+} from "../billing/tax-targets";
 
 type MetricRow = {
   id: string;
@@ -791,6 +799,8 @@ async function createCharge(
   const body = await parseJsonObject(request);
   const input = objectAt(body, "charge");
   rejectUnsupportedChargeInput(input);
+  const taxCodes = normalizeTaxCodes(input.tax_codes) ?? [];
+  const taxes = await resolveActiveTaxes(database, auth.organizationId, taxCodes);
   const cascade = cascadeRequested(input);
   const code = requiredString(input, "code");
   const metricId = requiredString(input, "billable_metric_id");
@@ -848,7 +858,15 @@ async function createCharge(
       existing.id,
     );
     if (sameCatalogCharge(existing, metric.id, chargeModel, properties, filters, normalized))
-      return json({ charge: serializeCatalogCharge(existing) }, { requestId });
+      return json(
+        {
+          charge: serializeCatalogCharge(
+            existing,
+            await taxesForTarget(database, auth.organizationId, "charge", existing.id),
+          ),
+        },
+        { requestId },
+      );
     throw new ApiError(422, "value_already_exist", "Charge code already exists");
   }
 
@@ -987,6 +1005,7 @@ async function createCharge(
         now,
         1,
       ),
+      ...replaceTaxTargetStatements(database, auth.organizationId, "charge", id, taxes, now),
     ]);
     if (
       (results[0]?.meta.changes ?? 0) < 1 ||
@@ -1003,7 +1022,15 @@ async function createCharge(
       concurrent &&
       sameCatalogCharge(concurrent, metric.id, chargeModel, properties, filters, normalized)
     )
-      return json({ charge: serializeCatalogCharge(concurrent) }, { requestId });
+      return json(
+        {
+          charge: serializeCatalogCharge(
+            concurrent,
+            await taxesForTarget(database, auth.organizationId, "charge", concurrent.id),
+          ),
+        },
+        { requestId },
+      );
     if (concurrent) throw new ApiError(422, "value_already_exist", "Charge code already exists");
     throw error;
   }
@@ -1011,7 +1038,7 @@ async function createCharge(
   for (const childEvent of childEvents) await env.DOMAIN_EVENTS.send(childEvent);
   const created = await findCatalogCharge(database, plan.id, code);
   if (!created) throw new ApiError(500, "persistence_error", "Charge was not persisted");
-  return json({ charge: serializeCatalogCharge(created) }, { requestId });
+  return json({ charge: serializeCatalogCharge(created, taxes) }, { requestId });
 }
 
 async function updateCharge(
@@ -1031,6 +1058,12 @@ async function updateCharge(
 
   const input = objectAt(await parseJsonObject(request), "charge");
   rejectUnsupportedChargeInput(input);
+  const taxCodes = normalizeTaxCodes(input.tax_codes);
+  const currentTaxes = await taxesForTarget(database, auth.organizationId, "charge", charge.id);
+  const nextTaxes =
+    taxCodes === undefined
+      ? currentTaxes
+      : await resolveActiveTaxes(database, auth.organizationId, taxCodes);
   const cascade = cascadeRequested(input);
 
   const attached = await database
@@ -1133,9 +1166,10 @@ async function updateCharge(
       nextFilters,
       next,
     ) &&
-    !cascade
+    !cascade &&
+    sameTaxSets(currentTaxes, nextTaxes)
   )
-    return json({ charge: serializeCatalogCharge(charge) }, { requestId });
+    return json({ charge: serializeCatalogCharge(charge, currentTaxes) }, { requestId });
 
   const now = new Date().toISOString();
   const chargeCascade = cascade
@@ -1298,6 +1332,17 @@ async function updateCharge(
         now,
         1,
       ),
+      ...(taxCodes === undefined
+        ? []
+        : guardedReplaceTaxTargetStatements(
+            database,
+            auth.organizationId,
+            "charge",
+            charge.id,
+            nextTaxes,
+            now,
+            charge.version + 1,
+          )),
     ]);
     if (
       (results[0]?.meta.changes ?? 0) < 1 ||
@@ -1314,7 +1359,7 @@ async function updateCharge(
   for (const childEvent of childEvents) await env.DOMAIN_EVENTS.send(childEvent);
   const updated = await findCatalogCharge(database, plan.id, next.code);
   if (!updated) throw new ApiError(500, "persistence_error", "Charge disappeared");
-  return json({ charge: serializeCatalogCharge(updated) }, { requestId });
+  return json({ charge: serializeCatalogCharge(updated, nextTaxes) }, { requestId });
 }
 
 async function deleteCharge(
@@ -1460,7 +1505,15 @@ async function deleteCharge(
     throw new ApiError(409, "charge_version_conflict", "Charge changed concurrently");
   await env.DOMAIN_EVENTS.send(event);
   for (const childEvent of childEvents) await env.DOMAIN_EVENTS.send(childEvent);
-  return json({ charge: serializeCatalogCharge(charge) }, { requestId });
+  return json(
+    {
+      charge: serializeCatalogCharge(
+        charge,
+        await taxesForTarget(database, auth.organizationId, "charge", charge.id),
+      ),
+    },
+    { requestId },
+  );
 }
 
 async function listCharges(
@@ -1486,7 +1539,14 @@ async function listCharges(
     .all<CatalogChargeRow>();
   return json(
     {
-      charges: result.results.map(serializeCatalogCharge),
+      charges: await Promise.all(
+        result.results.map(async (charge) =>
+          serializeCatalogCharge(
+            charge,
+            await taxesForTarget(database, auth.organizationId, "charge", charge.id),
+          ),
+        ),
+      ),
       meta: pagination(count?.total ?? 0, page, perPage),
     },
     { requestId },
@@ -1507,7 +1567,15 @@ async function showCharge(
     .bind(plan.id, chargeCode)
     .first<CatalogChargeRow>();
   if (!charge) throw new ApiError(404, "charge_not_found", "Charge was not found");
-  return json({ charge: serializeCatalogCharge(charge) }, { requestId });
+  return json(
+    {
+      charge: serializeCatalogCharge(
+        charge,
+        await taxesForTarget(database, auth.organizationId, "charge", charge.id),
+      ),
+    },
+    { requestId },
+  );
 }
 
 async function listChargeFilters(
@@ -2350,7 +2418,10 @@ function sameCatalogCharge(
   );
 }
 
-function serializeCatalogCharge(charge: CatalogChargeRow): Record<string, unknown> {
+function serializeCatalogCharge(
+  charge: CatalogChargeRow,
+  taxes: ResolvedTax[] = [],
+): Record<string, unknown> {
   return {
     lago_id: charge.id,
     lago_billable_metric_id: charge.metric_id,
@@ -2371,7 +2442,13 @@ function serializeCatalogCharge(charge: CatalogChargeRow): Record<string, unknow
       charge.charge_model,
       charge.id,
     ).map((filter) => serializeChargeFilter(filter, charge.code)),
-    taxes: [],
+    taxes: taxes.map((tax) => ({
+      lago_id: tax.id,
+      code: tax.code,
+      name: tax.name,
+      description: tax.description,
+      rate: Number(tax.rate),
+    })),
     applied_pricing_unit: null,
     lago_parent_id: null,
   };
@@ -3749,12 +3826,12 @@ function rejectUnsupportedChargeInput(input: Record<string, unknown>): void {
       `${field} is not implemented by the Cloudflare charge catalog`,
     );
   }
-  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
-    throw new ApiError(
-      422,
-      "unsupported_tax_target",
-      "Charge-specific tax targeting is not implemented",
-    );
+}
+
+function sameTaxSets(left: ResolvedTax[], right: ResolvedTax[]): boolean {
+  const leftIds = left.map((tax) => tax.id).sort();
+  const rightIds = right.map((tax) => tax.id).sort();
+  return leftIds.length === rightIds.length && leftIds.every((id, index) => id === rightIds[index]);
 }
 
 function assertStoredWeightedConfiguration(

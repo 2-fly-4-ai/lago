@@ -85,6 +85,15 @@ async function createTax(
         now,
         now,
       ),
+      ...(normalized.appliedToOrganization
+        ? [
+            env.BILLING_DB.prepare(
+              `INSERT INTO tax_targets
+               (organization_id, tax_id, target_type, target_id, created_at)
+               VALUES (?, ?, 'billing_entity', ?, ?)`,
+            ).bind(auth.organizationId, id, auth.organizationId, now),
+          ]
+        : []),
       outboxStatement(env.BILLING_DB, auth.organizationId, event),
     ]);
   } catch (error) {
@@ -178,6 +187,41 @@ async function updateTax(
         auth.organizationId,
         tax.version,
       ),
+      env.BILLING_DB.prepare(
+        `DELETE FROM tax_targets
+         WHERE organization_id = ? AND tax_id = ? AND target_type = 'billing_entity'
+           AND target_id = ? AND EXISTS (
+             SELECT 1 FROM taxes
+             WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?
+           )`,
+      ).bind(
+        auth.organizationId,
+        tax.id,
+        auth.organizationId,
+        tax.id,
+        auth.organizationId,
+        tax.version + 1,
+        now,
+      ),
+      ...(nextApplied
+        ? [
+            env.BILLING_DB.prepare(
+              `INSERT INTO tax_targets
+               (organization_id, tax_id, target_type, target_id, created_at)
+               SELECT ?, ?, 'billing_entity', ?, ? FROM taxes
+               WHERE id = ? AND organization_id = ? AND version = ? AND updated_at = ?`,
+            ).bind(
+              auth.organizationId,
+              tax.id,
+              auth.organizationId,
+              now,
+              tax.id,
+              auth.organizationId,
+              tax.version + 1,
+              now,
+            ),
+          ]
+        : []),
       conditionalOutboxStatement(
         env.BILLING_DB,
         auth.organizationId,

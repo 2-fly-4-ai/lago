@@ -47,6 +47,14 @@ import {
   manualTaxStatements,
   totalManualTaxMinor,
 } from "../billing/manual-taxes";
+import {
+  guardedReplaceTaxTargetStatements,
+  normalizeTaxCodes,
+  replaceTaxTargetStatements,
+  resolveActiveTaxes,
+  taxesForTarget,
+  type ResolvedTax,
+} from "../billing/tax-targets";
 import { paymentDueDate } from "../billing/payment-terms";
 import { createInitialPayInAdvanceFixedChargeInvoice } from "../billing/pay-in-advance-fixed-charges";
 import { finalizeInvoice } from "../billing/finalize-invoice";
@@ -321,8 +329,13 @@ async function upsertCustomer(
   const database = env.BILLING_DB;
   const body = await parseJsonObject(request);
   const input = objectAt(body, "customer");
-  rejectUnsupportedTaxTarget(input, "customer");
+  rejectUnsupportedTaxProvider(input);
   rejectUnsupportedCustomerFields(input);
+  const taxCodes = normalizeTaxCodes(input.tax_codes);
+  const resolvedTaxes =
+    taxCodes === undefined
+      ? undefined
+      : await resolveActiveTaxes(database, auth.organizationId, taxCodes);
   const bodyExternalId =
     input.external_id === undefined ? null : requiredString(input, "external_id");
   const externalId = pathExternalId ?? bodyExternalId;
@@ -411,6 +424,8 @@ async function upsertCustomer(
     customSectionIds: customSections.skip === true ? [] : customSectionIds,
     replaceCustomSections,
     clearAllCustomSections: customSections.skip === true,
+    taxes: resolvedTaxes,
+    replaceTaxes: taxCodes !== undefined,
   };
   validateCustomerProvider(normalized.paymentProvider, normalized.paymentProviderCode);
 
@@ -418,10 +433,20 @@ async function upsertCustomer(
     const currentSectionIds = replaceCustomSections
       ? await selectedCustomerCustomSectionIds(database, existing.id)
       : [];
+    const currentTaxCodes = normalized.replaceTaxes
+      ? (await taxesForTarget(database, auth.organizationId, "customer", existing.id)).map(
+          (tax) => tax.code,
+        )
+      : [];
     if (
       customerMatches(existing, normalized) &&
       (!replaceCustomSections ||
-        sameStringSets(currentSectionIds, normalized.customSectionIds ?? []))
+        sameStringSets(currentSectionIds, normalized.customSectionIds ?? [])) &&
+      (!normalized.replaceTaxes ||
+        sameStringSets(
+          currentTaxCodes,
+          (normalized.taxes ?? []).map((tax) => tax.code),
+        ))
     )
       return json(
         { customer: await serializeCustomer(database, existing, auth.organizationId) },
@@ -480,6 +505,16 @@ async function upsertCustomer(
         now,
         false,
       ),
+      ...(normalized.replaceTaxes
+        ? replaceTaxTargetStatements(
+            database,
+            auth.organizationId,
+            "customer",
+            id,
+            normalized.taxes ?? [],
+            now,
+          )
+        : []),
       customerOutboxStatement(database, auth.organizationId, event),
     ]);
   } catch (error) {
@@ -488,14 +523,26 @@ async function upsertCustomer(
       const concurrentSectionIds = replaceCustomSections
         ? await selectedCustomerCustomSectionIds(database, concurrent.id)
         : [];
+      const concurrentTaxCodes = normalized.replaceTaxes
+        ? (await taxesForTarget(database, auth.organizationId, "customer", concurrent.id)).map(
+            (tax) => tax.code,
+          )
+        : [];
       if (
         !replaceCustomSections ||
         sameStringSets(concurrentSectionIds, normalized.customSectionIds ?? [])
       )
-        return json(
-          { customer: await serializeCustomer(database, concurrent, auth.organizationId) },
-          { requestId },
-        );
+        if (
+          !normalized.replaceTaxes ||
+          sameStringSets(
+            concurrentTaxCodes,
+            (normalized.taxes ?? []).map((tax) => tax.code),
+          )
+        )
+          return json(
+            { customer: await serializeCustomer(database, concurrent, auth.organizationId) },
+            { requestId },
+          );
     }
     if (!concurrent) throw error;
     throw new ApiError(409, "customer_version_conflict", "Customer changed concurrently");
@@ -526,6 +573,8 @@ type NormalizedCustomer = {
   customSectionIds: string[] | undefined;
   replaceCustomSections: boolean;
   clearAllCustomSections: boolean;
+  taxes: ResolvedTax[] | undefined;
+  replaceTaxes: boolean;
 };
 
 async function updateCustomer(
@@ -590,6 +639,19 @@ async function updateCustomer(
         now,
         nextVersion,
         normalized.clearAllCustomSections,
+      ),
+    );
+  }
+  if (normalized.replaceTaxes) {
+    statements.push(
+      ...guardedReplaceTaxTargetStatements(
+        env.BILLING_DB,
+        auth.organizationId,
+        "customer",
+        customer.id,
+        normalized.taxes ?? [],
+        now,
+        nextVersion,
       ),
     );
   }
@@ -1658,13 +1720,7 @@ function shiftCalendarDate(value: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function rejectUnsupportedTaxTarget(input: Record<string, unknown>, target: string) {
-  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
-    throw new ApiError(
-      422,
-      "unsupported_tax_target",
-      `${target} tax targeting is not implemented; use organization-default taxes`,
-    );
+function rejectUnsupportedTaxProvider(input: Record<string, unknown>) {
   if (input.tax_provider_code !== undefined)
     throw new ApiError(
       422,
@@ -1835,16 +1891,9 @@ export async function createOneOffInvoice(
           "unsupported_one_off_invoice_feature",
           `fees[${index}].${unsupportedFee} is not implemented`,
         );
-      if (fee.tax_codes !== undefined) {
-        if (!Array.isArray(fee.tax_codes))
-          throw new ApiError(422, "validation_error", `fees[${index}].tax_codes must be an array`);
-        if (fee.tax_codes.length > 0)
-          throw new ApiError(
-            422,
-            "unsupported_tax_target",
-            "One-off fee tax targeting is not implemented; use organization-default taxes",
-          );
-      }
+      const taxCodes = normalizeTaxCodes(fee.tax_codes, `fees[${index}].tax_codes`);
+      if (taxCodes !== undefined)
+        await resolveActiveTaxes(env.BILLING_DB, auth.organizationId, taxCodes);
       const code = requiredString(fee, "add_on_code");
       const addOn = await env.BILLING_DB.prepare(
         `SELECT id, code, name, invoice_display_name, description, amount_minor, currency
@@ -1881,6 +1930,7 @@ export async function createOneOffInvoice(
         rounded,
         unitAmountMinor,
         units,
+        taxCodes,
       };
     }),
   );
@@ -1892,6 +1942,7 @@ export async function createOneOffInvoice(
       description: fee.description,
       invoiceDisplayName: fee.invoiceDisplayName,
       precise: fee.precise,
+      taxCodes: fee.taxCodes,
       unitAmountMinor: fee.unitAmountMinor,
       units: fee.units,
     })),
@@ -1923,8 +1974,15 @@ export async function createOneOffInvoice(
   const invoiceTaxes = await calculateManualTaxes(
     env.BILLING_DB,
     auth.organizationId,
+    customer.id,
     invoiceId,
-    lines.map((line) => ({ id: line.id, amountMinor: line.rounded })),
+    lines.map((line) => ({
+      id: line.id,
+      amountMinor: line.rounded,
+      sourceType: "add_on" as const,
+      sourceId: line.addOn.id,
+      taxCodes: line.taxCodes,
+    })),
     0,
   );
   const taxMinor = totalManualTaxMinor(invoiceTaxes);
@@ -2917,19 +2975,23 @@ async function serializeCustomers(
   customers: CustomerRow[],
   organizationId: string,
 ): Promise<Record<string, unknown>[]> {
-  const applicable = await applicableCustomSectionsForCustomers(
-    database,
-    customers,
-    organizationId,
-  );
-  return customers.map((customer) =>
-    serializeCustomerRow(customer, applicable.get(customer.id) ?? []),
+  const [applicable, customerTaxes] = await Promise.all([
+    applicableCustomSectionsForCustomers(database, customers, organizationId),
+    Promise.all(
+      customers.map((customer) =>
+        taxesForTarget(database, organizationId, "customer", customer.id),
+      ),
+    ),
+  ]);
+  return customers.map((customer, index) =>
+    serializeCustomerRow(customer, applicable.get(customer.id) ?? [], customerTaxes[index] ?? []),
   );
 }
 
 function serializeCustomerRow(
   customer: CustomerRow,
   applicableInvoiceCustomSections: SerializedCustomerCustomSection[],
+  taxes: ResolvedTax[],
 ): Record<string, unknown> {
   const metadata = parseCustomerMetadata(customer.metadata_json);
   return {
@@ -2946,6 +3008,13 @@ function serializeCustomerRow(
     last_dunning_campaign_attempt_at: customer.last_dunning_campaign_attempt_at,
     skip_invoice_custom_sections: customer.skip_invoice_custom_sections === 1,
     applicable_invoice_custom_sections: applicableInvoiceCustomSections,
+    taxes: taxes.map((tax) => ({
+      lago_id: tax.id,
+      code: tax.code,
+      name: tax.name,
+      description: tax.description,
+      rate: Number(tax.rate),
+    })),
     version_number: customer.version,
     created_at: customer.created_at,
     updated_at: customer.updated_at,

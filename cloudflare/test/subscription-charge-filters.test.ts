@@ -18,6 +18,10 @@ const originalFilter = {
 beforeEach(async () => {
   const now = "2026-08-15T00:00:00.000Z";
   await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare("DELETE FROM tax_targets WHERE organization_id = 'org-sub-filter'"),
+    env.BILLING_DB.prepare(
+      "DELETE FROM minimum_commitments WHERE organization_id = 'org-sub-filter'",
+    ),
     env.BILLING_DB.prepare(
       `UPDATE subscriptions SET plan_id = 'plan-sub-filter', version = 1, updated_at = ?
        WHERE id = 'subscription-sub-filter'`,
@@ -259,6 +263,86 @@ describe("subscription charge-filter overrides", () => {
               (SELECT version FROM charges WHERE parent_id = 'charge-sub-filter') AS child_version`,
     ).first();
     expect(counts).toEqual({ plans: 2, charges: 4, child_version: 2 });
+  });
+
+  it("preserves minimum commitments and targeted taxes when cloning an override graph", async () => {
+    const now = "2026-08-15T00:00:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT OR IGNORE INTO taxes
+         (id, organization_id, code, name, description, rate, applied_to_organization,
+          status, version, request_sha256, created_at, updated_at)
+         VALUES ('tax-sub-filter-clone', 'org-sub-filter', 'clone-vat', 'Clone VAT', NULL,
+                 '10', 0, 'active', 1, 'clone-vat-hash', ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO minimum_commitments
+         (id, organization_id, plan_id, amount_minor, invoice_display_name, created_at, updated_at)
+         VALUES ('commitment-sub-filter', 'org-sub-filter', 'plan-sub-filter', 2000,
+                 'Monthly minimum', ?, ?)`,
+      ).bind(now, now),
+      ...[
+        "plan:plan-sub-filter",
+        "charge:charge-sub-filter",
+        "fixed_charge:fixed-sub-filter",
+        "commitment:commitment-sub-filter",
+      ].map((target) => {
+        const [targetType, targetId] = target.split(":");
+        return env.BILLING_DB.prepare(
+          `INSERT INTO tax_targets
+             (organization_id, tax_id, target_type, target_id, created_at)
+             VALUES ('org-sub-filter', 'tax-sub-filter-clone', ?, ?, ?)`,
+        ).bind(targetType, targetId, now);
+      }),
+    ]);
+
+    const response = await api(
+      "/api/v1/subscriptions/subscription-sub-filter/charges/requests-charge/filters",
+      "POST",
+      {
+        filter: {
+          invoice_display_name: "Subscriber US",
+          properties: { amount: "7" },
+          values: { region: ["us"] },
+        },
+      },
+    );
+    expect(response.status, await response.clone().text()).toBe(200);
+
+    const graph = await env.BILLING_DB.prepare(
+      `SELECT child.id AS plan_id, commitment.id AS commitment_id,
+              (SELECT COUNT(*) FROM tax_targets target
+               WHERE target.organization_id = 'org-sub-filter' AND (
+                 (target.target_type = 'plan' AND target.target_id = child.id)
+                 OR (target.target_type = 'charge' AND target.target_id IN (
+                   SELECT id FROM charges WHERE plan_id = child.id
+                 ))
+                 OR (target.target_type = 'fixed_charge' AND target.target_id IN (
+                   SELECT id FROM fixed_charges WHERE plan_id = child.id
+                 ))
+                 OR (target.target_type = 'commitment' AND target.target_id = commitment.id)
+               )) AS targeted_rows
+       FROM subscriptions subscription JOIN plans child ON child.id = subscription.plan_id
+       JOIN minimum_commitments commitment ON commitment.plan_id = child.id
+       WHERE subscription.id = 'subscription-sub-filter'`,
+    ).first<{ plan_id: string; commitment_id: string; targeted_rows: number }>();
+    expect(graph).toMatchObject({ targeted_rows: 4 });
+
+    const subscription = await findBillableSubscription(env.BILLING_DB, "subscription-sub-filter");
+    expect(subscription).not.toBeNull();
+    const calculation = await calculateSubscriptionInvoice(
+      env.BILLING_DB,
+      subscription!,
+      "subscription-filter-clone-invoice",
+      "subscription-filter-clone-cycle",
+      "2026-08-01T00:00:00.000Z",
+      "2026-09-01T00:00:00.000Z",
+    );
+    expect(calculation.lines.find((line) => line.lineType === "commitment")).toBeDefined();
+    expect(calculation.subtotalMinor).toBe(2000);
+    expect(calculation.invoiceTaxes).toEqual([
+      expect.objectContaining({ code: "clone-vat", amountMinor: 200 }),
+    ]);
   });
 
   it("maps parent filter IDs onto fresh child IDs for update and delete", async () => {
@@ -835,6 +919,19 @@ describe("subscription charge-filter overrides", () => {
       fixed_charge: { lago_id: "fixed-sub-filter", lago_parent_id: null },
     });
 
+    expect(
+      (
+        await api("/api/v1/taxes", "POST", {
+          tax: {
+            code: "vat",
+            name: "VAT",
+            rate: 10,
+            applied_to_organization: false,
+          },
+        })
+      ).status,
+    ).toBe(200);
+
     const created = await api(
       "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
       "PUT",
@@ -845,7 +942,7 @@ describe("subscription charge-filter overrides", () => {
           properties: { amount: "750" },
           units: "2",
           apply_units_immediately: false,
-          tax_codes: [],
+          tax_codes: ["vat"],
         },
       },
     );
@@ -860,6 +957,7 @@ describe("subscription charge-filter overrides", () => {
       charge_model: "standard",
       properties: { amount: "750" },
       units: "2",
+      taxes: [{ code: "vat", rate: 10 }],
     });
     const overriddenSubscription = await findBillableSubscription(
       env.BILLING_DB,
@@ -919,6 +1017,7 @@ describe("subscription charge-filter overrides", () => {
         invoice_display_name: "Subscriber support",
         properties: { amount: "900" },
         units: "3",
+        taxes: [{ code: "vat", rate: 10 }],
       },
     });
     const currentAfterSecondUpdate = await calculateSubscriptionInvoice(
@@ -977,7 +1076,7 @@ describe("subscription charge-filter overrides", () => {
     });
   });
 
-  it("rejects unsupported subscription fixed-charge features before cloning the plan", async () => {
+  it("rejects invalid or immutable subscription fixed-charge fields before cloning the plan", async () => {
     const malformedImmediate = await api(
       "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
       "PUT",
@@ -985,13 +1084,6 @@ describe("subscription charge-filter overrides", () => {
     );
     expect(malformedImmediate.status).toBe(422);
     await expect(malformedImmediate.json()).resolves.toMatchObject({ code: "validation_error" });
-    const taxes = await api(
-      "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
-      "PUT",
-      { fixed_charge: { tax_codes: ["vat"] } },
-    );
-    expect(taxes.status).toBe(422);
-    await expect(taxes.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
     const identity = await api(
       "/api/v1/subscriptions/subscription-sub-filter/fixed_charges/support-fixed",
       "PUT",

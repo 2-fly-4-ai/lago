@@ -3,6 +3,14 @@ import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { stableJson } from "../json";
+import {
+  guardedReplaceTaxTargetStatements,
+  normalizeTaxCodes,
+  replaceTaxTargetStatements,
+  resolveActiveTaxes,
+  taxesForTarget,
+  type ResolvedTax,
+} from "../billing/tax-targets";
 
 type AddOnRow = {
   id: string;
@@ -47,7 +55,8 @@ async function createAddOn(
   requestId: string,
 ) {
   const input = objectAt(await parseJsonObject(request), "add_on");
-  rejectTaxCodes(input);
+  const taxCodes = normalizeTaxCodes(input.tax_codes) ?? [];
+  const taxes = await resolveActiveTaxes(env.BILLING_DB, auth.organizationId, taxCodes);
   const normalized = {
     code: requiredString(input, "code"),
     name: requiredString(input, "name"),
@@ -55,12 +64,16 @@ async function createAddOn(
     description: optionalString(input, "description"),
     amountMinor: positiveInteger(input.amount_cents, "amount_cents"),
     currency: currency(input.amount_currency),
+    taxCodes,
   };
   const requestHash = await sha256Hex(stableJson(normalized));
   const existing = await findActive(env.BILLING_DB, auth.organizationId, normalized.code);
   if (existing) {
     if (existing.request_sha256 === requestHash)
-      return json({ add_on: serializeAddOn(existing) }, { requestId });
+      return json(
+        { add_on: await serializeAddOn(env.BILLING_DB, auth.organizationId, existing) },
+        { requestId },
+      );
     throw new ApiError(422, "value_already_exist", "Add-on code already exists");
   }
   const now = new Date().toISOString();
@@ -89,18 +102,25 @@ async function createAddOn(
         now,
       ),
       outboxStatement(env.BILLING_DB, auth.organizationId, event),
+      ...replaceTaxTargetStatements(env.BILLING_DB, auth.organizationId, "add_on", id, taxes, now),
     ]);
   } catch (error) {
     const concurrent = await findActive(env.BILLING_DB, auth.organizationId, normalized.code);
     if (concurrent?.request_sha256 === requestHash)
-      return json({ add_on: serializeAddOn(concurrent) }, { requestId });
+      return json(
+        { add_on: await serializeAddOn(env.BILLING_DB, auth.organizationId, concurrent) },
+        { requestId },
+      );
     if (!concurrent) throw error;
     throw new ApiError(422, "value_already_exist", "Add-on code already exists");
   }
   await env.DOMAIN_EVENTS.send(event);
   const addOn = await findActive(env.BILLING_DB, auth.organizationId, normalized.code);
   if (!addOn) throw new ApiError(500, "persistence_error", "Add-on was not persisted");
-  return json({ add_on: serializeAddOn(addOn) }, { requestId });
+  return json(
+    { add_on: await serializeAddOn(env.BILLING_DB, auth.organizationId, addOn) },
+    { requestId },
+  );
 }
 
 async function listAddOns(url: URL, database: D1Database, auth: AuthContext, requestId: string) {
@@ -124,7 +144,9 @@ async function listAddOns(url: URL, database: D1Database, auth: AuthContext, req
   const pages = total === 0 ? 0 : Math.ceil(total / perPage);
   return json(
     {
-      add_ons: rows.results.map(serializeAddOn),
+      add_ons: await Promise.all(
+        rows.results.map((addOn) => serializeAddOn(database, auth.organizationId, addOn)),
+      ),
       meta: {
         current_page: total === 0 ? 0 : page,
         next_page: page < pages ? page + 1 : null,
@@ -140,7 +162,10 @@ async function listAddOns(url: URL, database: D1Database, auth: AuthContext, req
 async function showAddOn(code: string, database: D1Database, auth: AuthContext, requestId: string) {
   const addOn = await findActive(database, auth.organizationId, code);
   if (!addOn) throw new ApiError(404, "add_on_not_found", "Add-on was not found");
-  return json({ add_on: serializeAddOn(addOn) }, { requestId });
+  return json(
+    { add_on: await serializeAddOn(database, auth.organizationId, addOn) },
+    { requestId },
+  );
 }
 
 async function updateAddOn(
@@ -153,7 +178,11 @@ async function updateAddOn(
   const addOn = await findActive(env.BILLING_DB, auth.organizationId, code);
   if (!addOn) throw new ApiError(404, "add_on_not_found", "Add-on was not found");
   const input = objectAt(await parseJsonObject(request), "add_on");
-  rejectTaxCodes(input);
+  const taxCodes = normalizeTaxCodes(input.tax_codes);
+  const taxes =
+    taxCodes === undefined
+      ? await taxesForTarget(env.BILLING_DB, auth.organizationId, "add_on", addOn.id)
+      : await resolveActiveTaxes(env.BILLING_DB, auth.organizationId, taxCodes);
   const next = {
     code: input.code === undefined ? addOn.code : requiredString(input, "code"),
     name: input.name === undefined ? addOn.name : requiredString(input, "name"),
@@ -220,6 +249,17 @@ async function updateAddOn(
         addOn.version + 1,
         now,
       ),
+      ...(taxCodes === undefined
+        ? []
+        : guardedReplaceTaxTargetStatements(
+            env.BILLING_DB,
+            auth.organizationId,
+            "add_on",
+            addOn.id,
+            taxes,
+            now,
+            addOn.version + 1,
+          )),
     ]);
     if ((results[0]?.meta.changes ?? 0) < 1 || results[1]?.meta.changes !== 1)
       throw new ApiError(409, "add_on_version_conflict", "Add-on changed concurrently");
@@ -230,7 +270,10 @@ async function updateAddOn(
   await env.DOMAIN_EVENTS.send(event);
   const updated = await findActive(env.BILLING_DB, auth.organizationId, next.code);
   if (!updated) throw new ApiError(500, "persistence_error", "Add-on disappeared");
-  return json({ add_on: serializeAddOn(updated) }, { requestId });
+  return json(
+    { add_on: await serializeAddOn(env.BILLING_DB, auth.organizationId, updated) },
+    { requestId },
+  );
 }
 
 async function terminateAddOn(
@@ -277,7 +320,7 @@ async function terminateAddOn(
   await env.DOMAIN_EVENTS.send(event);
   return json(
     {
-      add_on: serializeAddOn({
+      add_on: await serializeAddOn(env.BILLING_DB, auth.organizationId, {
         ...addOn,
         status: "terminated",
         version: addOn.version + 1,
@@ -302,7 +345,8 @@ function addOnSelect() {
   return "SELECT id, code, name, invoice_display_name, description, amount_minor, currency, status, version, request_sha256, created_at, updated_at, terminated_at FROM add_ons";
 }
 
-function serializeAddOn(addOn: AddOnRow) {
+async function serializeAddOn(database: D1Database, organizationId: string, addOn: AddOnRow) {
+  const taxes = await taxesForTarget(database, organizationId, "add_on", addOn.id);
   return {
     lago_id: addOn.id,
     name: addOn.name,
@@ -312,13 +356,18 @@ function serializeAddOn(addOn: AddOnRow) {
     amount_currency: addOn.currency,
     created_at: addOn.created_at,
     description: addOn.description,
-    taxes: [],
+    taxes: serializeTaxes(taxes),
   };
 }
 
-function rejectTaxCodes(input: Record<string, unknown>) {
-  if (Array.isArray(input.tax_codes) && input.tax_codes.length > 0)
-    throw new ApiError(422, "unsupported_tax_target", "Add-on tax targeting is not implemented");
+function serializeTaxes(taxes: ResolvedTax[]) {
+  return taxes.map((tax) => ({
+    lago_id: tax.id,
+    code: tax.code,
+    name: tax.name,
+    description: tax.description,
+    rate: Number(tax.rate),
+  }));
 }
 
 function positiveInteger(value: unknown, field: string) {

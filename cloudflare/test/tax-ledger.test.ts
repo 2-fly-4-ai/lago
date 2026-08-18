@@ -165,12 +165,43 @@ describe("manual tax ledger", () => {
     expect((await request("/api/v1/taxes/sales-tax-updated")).status).toBe(404);
   });
 
-  it("rejects unproved targeted and provider tax modes", async () => {
+  it("applies customer-targeted taxes and keeps provider taxation disabled", async () => {
+    expect(
+      (
+        await request("/api/v1/taxes", "POST", {
+          tax: {
+            code: "customer-tax",
+            name: "Customer tax",
+            rate: "7.5",
+            applied_to_organization: false,
+          },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await request("/api/v1/taxes", "POST", {
+          tax: {
+            code: "plan-tax",
+            name: "Plan tax",
+            rate: "11",
+            applied_to_organization: false,
+          },
+        })
+      ).status,
+    ).toBe(200);
     const customer = await request("/api/v1/customers", "POST", {
-      customer: { external_id: "targeted-tax", tax_codes: ["sales-tax"] },
+      customer: { external_id: "targeted-tax", currency: "USD", tax_codes: ["customer-tax"] },
     });
-    expect(customer.status).toBe(422);
-    await expect(customer.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
+    expect(customer.status).toBe(200);
+    await expect(customer.json()).resolves.toMatchObject({
+      customer: { taxes: [{ code: "customer-tax", rate: 7.5 }] },
+    });
+    const provider = await request("/api/v1/customers", "POST", {
+      customer: { external_id: "provider-tax", tax_provider_code: "avalara" },
+    });
+    expect(provider.status).toBe(422);
+    await expect(provider.json()).resolves.toMatchObject({ code: "unsupported_tax_provider" });
     const plan = await request("/api/v1/plans", "POST", {
       plan: {
         code: "targeted-tax-plan",
@@ -178,11 +209,32 @@ describe("manual tax ledger", () => {
         interval: "monthly",
         amount_cents: 100,
         amount_currency: "USD",
-        tax_codes: ["sales-tax"],
+        pay_in_advance: true,
+        tax_codes: ["plan-tax"],
       },
     });
-    expect(plan.status).toBe(422);
-    await expect(plan.json()).resolves.toMatchObject({ code: "unsupported_tax_target" });
+    expect(plan.status).toBe(200);
+    await expect(plan.json()).resolves.toMatchObject({
+      plan: { taxes: [{ code: "plan-tax", rate: 11 }] },
+    });
+    expect(
+      (
+        await request("/api/v1/subscriptions", "POST", {
+          subscription: {
+            external_customer_id: "targeted-tax",
+            external_id: "targeted-tax-subscription",
+            plan_code: "targeted-tax-plan",
+          },
+        })
+      ).status,
+    ).toBe(200);
+    await expect(
+      request("/api/v1/invoices?external_customer_id=targeted-tax").then((response) =>
+        response.json(),
+      ),
+    ).resolves.toMatchObject({
+      invoices: [{ fees_amount_cents: 100, taxes_amount_cents: 11 }],
+    });
   });
 });
 
