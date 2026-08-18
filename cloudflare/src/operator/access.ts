@@ -21,6 +21,7 @@ export type OperatorEnv = {
 };
 
 export type OperatorContext = {
+  accessIssuer: string;
   membershipId: string;
   organizationId: string;
   organizationExternalId: string;
@@ -75,6 +76,7 @@ export async function authenticateOperatorAccess(
   }
 
   let subject: string;
+  let email: string | null = null;
   try {
     const verified = await jwtVerify(token, keySet ?? remoteKeySet(issuer), {
       algorithms: ["RS256"],
@@ -86,6 +88,7 @@ export async function authenticateOperatorAccess(
       throw new Error("missing_subject");
     }
     subject = verified.payload.sub;
+    email = typeof verified.payload.email === "string" ? verified.payload.email : null;
   } catch {
     throw new ApiError(401, "operator_unauthorized", "A valid Access session is required");
   }
@@ -108,6 +111,11 @@ export async function authenticateOperatorAccess(
   )
     .bind(issuer, subjectHash)
     .all<OperatorMembershipRow>();
+
+  if (membershipsResult.results.length === 0 && email) {
+    const claimed = await claimPendingInvitations(env.BILLING_DB, issuer, subjectHash, email);
+    if (claimed) return authenticateOperatorAccess(request, env, keySet);
+  }
 
   if (membershipsResult.results.length === 0) {
     throw new ApiError(
@@ -148,9 +156,66 @@ export async function authenticateOperatorAccess(
   }
 
   return {
+    accessIssuer: issuer,
     ...membership,
     memberships,
   };
+}
+
+async function claimPendingInvitations(
+  database: D1Database,
+  issuer: string,
+  subjectHash: string,
+  email: string,
+): Promise<boolean> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail || normalizedEmail.length > 320) return false;
+  const emailHash = await sha256Hex(normalizedEmail);
+  const invitations = await database
+    .prepare(
+      `SELECT id, organization_id, role FROM operator_invitations
+       WHERE access_issuer = ? AND email_sha256 = ? AND status = 'pending'
+         AND expires_at > ? ORDER BY created_at, id LIMIT 20`,
+    )
+    .bind(issuer, emailHash, new Date().toISOString())
+    .all<{ id: string; organization_id: string; role: OperatorRole }>();
+  let claimed = false;
+  for (const invitation of invitations.results) {
+    const now = new Date().toISOString();
+    const membershipId = crypto.randomUUID();
+    try {
+      await database.batch([
+        database
+          .prepare(
+            `INSERT INTO operator_memberships
+             (id, organization_id, access_issuer, access_subject_sha256, role, active,
+              version, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)`,
+          )
+          .bind(
+            membershipId,
+            invitation.organization_id,
+            issuer,
+            subjectHash,
+            invitation.role,
+            now,
+            now,
+          ),
+        database
+          .prepare(
+            `UPDATE operator_invitations
+             SET status = 'accepted', accepted_by_membership_id = ?, accepted_at = ?,
+                 updated_at = ?, version = version + 1
+             WHERE id = ? AND status = 'pending'`,
+          )
+          .bind(membershipId, now, now, invitation.id),
+      ]);
+      claimed = true;
+    } catch {
+      // Another request may have claimed the same invitation concurrently.
+    }
+  }
+  return claimed;
 }
 
 function toOperatorMembership(row: OperatorMembershipRow): OperatorMembership {

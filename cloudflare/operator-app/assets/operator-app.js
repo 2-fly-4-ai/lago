@@ -28,6 +28,14 @@ const endpoints = {
   billableMetrics: "/api/operator/v1/billable-metrics",
   features: "/api/operator/v1/features",
   aiConversations: "/api/operator/v1/ai/conversations",
+  activityLogs: "/api/operator/v1/observability/activity-logs",
+  apiLogs: "/api/operator/v1/observability/api-logs",
+  events: "/api/operator/v1/observability/events",
+  teamMembers: "/api/operator/v1/team/members",
+  teamInvitations: "/api/operator/v1/team/invitations",
+  teamRoles: "/api/operator/v1/team/roles",
+  teamAuthentication: "/api/operator/v1/team/authentication",
+  teamSecurityLogs: "/api/operator/v1/team/security-logs",
 };
 
 const routeDefinitions = {
@@ -54,6 +62,10 @@ const routeDefinitions = {
   "data-exports": { title: "Data exports", group: "Settings" },
   "webhook-endpoints": { title: "Webhook endpoints", group: "Settings" },
   "dunning-campaigns": { title: "Dunning campaigns", group: "Settings" },
+  "activity-logs": { title: "Activity logs", group: "Developer tools" },
+  "api-logs": { title: "API logs", group: "Developer tools" },
+  events: { title: "Events", group: "Developer tools" },
+  "team-security": { title: "Team & security", group: "Settings" },
 };
 
 const defaultRoute = "customers";
@@ -67,6 +79,50 @@ const customerDetailTabs = new Set([
 ]);
 
 const entityDetailDefinitions = {
+  "activity-logs": {
+    collection: "activityLogs",
+    singular: "Activity log",
+    id: (item) => item.lago_id,
+    label: (item) => humanize(item.event_type),
+    fields: [
+      ["Event", (item) => item.event_type],
+      ["Resource", (item) => `${item.resource_type} · ${item.resource_id}`],
+      ["Version", (item) => item.version],
+      ["Delivery", (item) => item.delivery_status],
+      ["Changes", (item) => JSON.stringify(item.changes, null, 2)],
+      ["Occurred", (item) => formatDate(item.occurred_at)],
+    ],
+  },
+  "api-logs": {
+    collection: "apiLogs",
+    singular: "API log",
+    id: (item) => item.lago_id,
+    label: (item) => `${item.method} ${item.path}`,
+    fields: [
+      ["Request ID", (item) => item.request_id],
+      ["Method", (item) => item.method],
+      ["Path", (item) => item.path],
+      ["Status", (item) => item.status],
+      ["Duration", (item) => `${item.duration_ms} ms`],
+      ["Request body", (item) => item.request_body],
+      ["Response body", (item) => item.response_body],
+      ["Occurred", (item) => formatDate(item.occurred_at)],
+    ],
+  },
+  events: {
+    collection: "events",
+    singular: "Event",
+    id: (item) => item.lago_id,
+    label: (item) => safeText(item.transaction_id, "Usage event"),
+    fields: [
+      ["Transaction", (item) => item.transaction_id],
+      ["Code", (item) => item.code],
+      ["Subscription", (item) => item.external_subscription_id],
+      ["Timestamp", (item) => formatDate(item.timestamp)],
+      ["Received", (item) => formatDate(item.received_at)],
+      ["Properties", (item) => item.properties],
+    ],
+  },
   "billable-metrics": {
     collection: "billableMetrics",
     singular: "Billable metric",
@@ -311,6 +367,7 @@ const entityDetailDefinitions = {
       ["Signature", (item) => item.signature_algo],
       ["Events", (item) => item.event_types],
       ["Created", (item) => formatDate(item.created_at)],
+      ["Delivery logs", (item) => webhookLogSummary(item.webhook_logs)],
       ["Mode", () => "Read only"],
     ],
   },
@@ -421,6 +478,26 @@ const elements = {
   aiForm: document.querySelector("#ai-form"),
   aiPrompt: document.querySelector("#ai-prompt"),
   sendAiMessage: document.querySelector("#send-ai-message"),
+  activityLogsEmpty: document.querySelector("#activity-logs-empty"),
+  activityLogsTableShell: document.querySelector("#activity-logs-table-shell"),
+  activityLogsTableBody: document.querySelector("#activity-logs-table-body"),
+  apiLogsEmpty: document.querySelector("#api-logs-empty"),
+  apiLogsTableShell: document.querySelector("#api-logs-table-shell"),
+  apiLogsTableBody: document.querySelector("#api-logs-table-body"),
+  eventsEmpty: document.querySelector("#events-empty"),
+  eventsTableShell: document.querySelector("#events-table-shell"),
+  eventsTableBody: document.querySelector("#events-table-body"),
+  openTeamInvite: document.querySelector("#open-team-invite"),
+  teamMembersBody: document.querySelector("#team-members-body"),
+  teamInvitationsBody: document.querySelector("#team-invitations-body"),
+  teamAuthentication: document.querySelector("#team-authentication"),
+  teamRoles: document.querySelector("#team-roles"),
+  teamInviteDialog: document.querySelector("#team-invite-dialog"),
+  teamInviteForm: document.querySelector("#team-invite-form"),
+  teamInviteEmail: document.querySelector("#team-invite-email"),
+  teamInviteRole: document.querySelector("#team-invite-role"),
+  teamInviteError: document.querySelector("#team-invite-error"),
+  submitTeamInvite: document.querySelector("#submit-team-invite"),
   organizationMonogram: document.querySelector("#organization-monogram"),
   organizationTitle: document.querySelector("#organization-title"),
   organizationSlug: document.querySelector("#organization-slug"),
@@ -873,6 +950,13 @@ const state = {
   aiConversations: [],
   activeAiConversationId: null,
   aiMessages: [],
+  activityLogs: [],
+  apiLogs: [],
+  events: [],
+  teamMembers: [],
+  teamInvitations: [],
+  teamRoles: [],
+  teamAuthentication: null,
 };
 
 for (const link of elements.navigationLinks) link.addEventListener("click", handleRouteNavigation);
@@ -964,6 +1048,8 @@ elements.closeAiPanel.addEventListener("click", closeAiPanel);
 elements.aiHistory.addEventListener("click", selectAiConversation);
 elements.aiShortcuts.addEventListener("click", useAiShortcut);
 elements.aiForm.addEventListener("submit", submitAiMessage);
+elements.openTeamInvite.addEventListener("click", openTeamInviteDialog);
+elements.teamInviteForm.addEventListener("submit", submitTeamInvitation);
 
 void initialize();
 
@@ -1020,6 +1106,13 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
       metricsPayload,
       featuresPayload,
       aiPayload,
+      activityLogsPayload,
+      apiLogsPayload,
+      eventsPayload,
+      teamMembersPayload,
+      teamInvitationsPayload,
+      teamRolesPayload,
+      teamAuthenticationPayload,
     ] = await Promise.all([
       requestJson(endpoints.organization),
       requestJson(endpoints.billingEntity),
@@ -1051,6 +1144,13 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
       requestJson(endpoints.billableMetrics),
       requestJson(endpoints.features),
       requestJson(`${endpoints.aiConversations}?limit=3`),
+      requestJson(endpoints.activityLogs),
+      requestJson(endpoints.apiLogs),
+      requestJson(endpoints.events),
+      requestJson(endpoints.teamMembers),
+      requestJson(endpoints.teamInvitations),
+      requestJson(endpoints.teamRoles),
+      requestJson(endpoints.teamAuthentication),
     ]);
     renderOperator(operator);
     renderOrganization(organizationPayload.organization);
@@ -1080,6 +1180,17 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
     renderFeatures(featuresPayload.features);
     renderAiHistory(aiPayload.conversations);
     renderAiMessages();
+    renderObservability(
+      activityLogsPayload.activity_logs,
+      apiLogsPayload.api_logs,
+      eventsPayload.events,
+    );
+    renderTeamSecurity(
+      teamMembersPayload.members,
+      teamInvitationsPayload.invitations,
+      teamRolesPayload.roles,
+      teamAuthenticationPayload.authentication,
+    );
     elements.aiRail.hidden = false;
     await hydrateSelectedCatalogDetail();
     renderOrganizationMenu();
@@ -3092,6 +3203,16 @@ async function handleEntityDetailNavigation(event) {
       return;
     }
   }
+  if (route === "webhook-endpoints") {
+    try {
+      const item = state.webhookEndpoints.find((candidate) => candidate.lago_id === identifier);
+      const payload = await requestJson(webhookLogsEndpoint(identifier));
+      if (item) item.webhook_logs = payload.webhook_logs ?? [];
+    } catch (error) {
+      showPageError(errorMessage(error));
+      return;
+    }
+  }
   state.route = route;
   state.detailId = identifier;
   state.detailTab = "overview";
@@ -3105,6 +3226,13 @@ async function handleEntityDetailNavigation(event) {
 }
 
 async function hydrateSelectedCatalogDetail() {
+  if (state.route === "webhook-endpoints" && state.detailId) {
+    const item = state.webhookEndpoints.find((candidate) => candidate.lago_id === state.detailId);
+    if (!item) return;
+    const payload = await requestJson(webhookLogsEndpoint(state.detailId));
+    item.webhook_logs = payload.webhook_logs ?? [];
+    return;
+  }
   if (!new Set(["features", "billable-metrics"]).has(state.route) || !state.detailId) return;
   const item =
     state.route === "features"
@@ -3175,12 +3303,182 @@ function detailValue(value) {
   return String(value);
 }
 
+function renderObservability(activityLogs, apiLogs, events) {
+  state.activityLogs = Array.isArray(activityLogs) ? activityLogs : [];
+  state.apiLogs = Array.isArray(apiLogs) ? apiLogs : [];
+  state.events = Array.isArray(events) ? events : [];
+  renderObservabilityTable(
+    "activity-logs",
+    state.activityLogs,
+    elements.activityLogsEmpty,
+    elements.activityLogsTableShell,
+    elements.activityLogsTableBody,
+    (item) => [
+      humanize(item.event_type),
+      `${safeText(item.resource_type, "resource")} · ${safeText(item.resource_id, "—")}`,
+      item.version,
+      humanize(item.delivery_status),
+      formatDate(item.occurred_at),
+    ],
+  );
+  renderObservabilityTable(
+    "api-logs",
+    state.apiLogs,
+    elements.apiLogsEmpty,
+    elements.apiLogsTableShell,
+    elements.apiLogsTableBody,
+    (item) => [
+      item.request_id,
+      item.method,
+      item.path,
+      item.status,
+      `${item.duration_ms} ms`,
+      formatDate(item.occurred_at),
+    ],
+  );
+  renderObservabilityTable(
+    "events",
+    state.events,
+    elements.eventsEmpty,
+    elements.eventsTableShell,
+    elements.eventsTableBody,
+    (item) => [
+      item.transaction_id,
+      item.code,
+      item.external_subscription_id,
+      formatDate(item.timestamp),
+      formatDate(item.received_at),
+    ],
+  );
+}
+
+function renderObservabilityTable(route, items, empty, shell, body, cellsFor) {
+  body.replaceChildren();
+  empty.hidden = items.length !== 0;
+  shell.hidden = items.length === 0;
+  const definition = entityDetailDefinitions[route];
+  for (const item of items) {
+    const row = document.createElement("tr");
+    for (const value of cellsFor(item)) {
+      const cell = document.createElement("td");
+      cell.textContent = detailValue(value);
+      row.append(cell);
+    }
+    body.append(row);
+  }
+  decorateEntityRows(body, items, route);
+  if (!definition) body.replaceChildren();
+}
+
+function renderTeamSecurity(members, invitations, roles, authentication) {
+  state.teamMembers = Array.isArray(members) ? members : [];
+  state.teamInvitations = Array.isArray(invitations) ? invitations : [];
+  state.teamRoles = Array.isArray(roles) ? roles : [];
+  state.teamAuthentication = authentication ?? null;
+  elements.openTeamInvite.hidden = state.role !== "admin";
+  renderSimpleRows(elements.teamMembersBody, state.teamMembers, (member) => [
+    member.identity,
+    humanize(member.role),
+    humanize(member.status),
+    formatDate(member.created_at),
+  ]);
+  renderSimpleRows(elements.teamInvitationsBody, state.teamInvitations, (invitation) => [
+    invitation.identity,
+    humanize(invitation.role),
+    humanize(invitation.status),
+    formatDate(invitation.expires_at),
+  ]);
+  elements.teamAuthentication.replaceChildren();
+  for (const [label, value] of [
+    ["Provider", "Cloudflare Access"],
+    ["Enforced", authentication?.enforced ? "Yes" : "No"],
+    ["Password login", authentication?.password_login ? "Enabled" : "Disabled"],
+    ["Configuration", authentication?.sso_configuration],
+  ]) {
+    const group = document.createElement("div");
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    term.textContent = label;
+    description.textContent = detailValue(value);
+    group.append(term, description);
+    elements.teamAuthentication.append(group);
+  }
+  elements.teamRoles.replaceChildren();
+  for (const role of state.teamRoles) {
+    const item = document.createElement("div");
+    const title = document.createElement("strong");
+    const copy = document.createElement("p");
+    title.textContent = role.name;
+    copy.textContent = role.description;
+    item.append(title, copy);
+    elements.teamRoles.append(item);
+  }
+}
+
+function renderSimpleRows(body, items, cellsFor) {
+  body.replaceChildren();
+  for (const item of items) {
+    const row = document.createElement("tr");
+    for (const value of cellsFor(item)) {
+      const cell = document.createElement("td");
+      cell.textContent = detailValue(value);
+      row.append(cell);
+    }
+    body.append(row);
+  }
+}
+
+function openTeamInviteDialog() {
+  elements.teamInviteForm.reset();
+  elements.teamInviteError.hidden = true;
+  elements.teamInviteDialog.showModal();
+}
+
+async function submitTeamInvitation(event) {
+  if (event.submitter?.value === "cancel") return;
+  event.preventDefault();
+  setBusy(elements.submitTeamInvite, true, "Creating…");
+  elements.teamInviteError.hidden = true;
+  try {
+    const payload = await requestJson(endpoints.teamInvitations, {
+      method: "POST",
+      body: {
+        email: elements.teamInviteEmail.value.trim(),
+        role: elements.teamInviteRole.value,
+      },
+    });
+    renderTeamSecurity(
+      state.teamMembers,
+      payload.invitations,
+      state.teamRoles,
+      state.teamAuthentication,
+    );
+    elements.teamInviteDialog.close();
+  } catch (error) {
+    elements.teamInviteError.textContent = errorMessage(error);
+    elements.teamInviteError.hidden = false;
+  } finally {
+    setBusy(elements.submitTeamInvite, false, "Create invitation");
+  }
+}
+
 function activitySummary(logs) {
   if (!Array.isArray(logs) || logs.length === 0) return "No recorded changes";
   return logs
     .slice(0, 6)
     .map(
       (log) => `${humanize(log.event_type.replaceAll(".", "_"))} · ${formatDate(log.occurred_at)}`,
+    )
+    .join("\n");
+}
+
+function webhookLogSummary(logs) {
+  if (!Array.isArray(logs) || logs.length === 0) return "No deliveries";
+  return logs
+    .slice(0, 6)
+    .map(
+      (log) =>
+        `${humanize(log.event_type)} · ${humanize(log.status)} · ${formatDate(log.updated_at)}`,
     )
     .join("\n");
 }
@@ -5970,6 +6268,10 @@ function aiConversationEndpoint(conversationId) {
 
 function aiMessagesEndpoint(conversationId) {
   return `${aiConversationEndpoint(conversationId)}/messages`;
+}
+
+function webhookLogsEndpoint(endpointId) {
+  return `${endpoints.webhookEndpoints}/${encodeURIComponent(endpointId)}/logs`;
 }
 
 function dunningEndpoint(code) {

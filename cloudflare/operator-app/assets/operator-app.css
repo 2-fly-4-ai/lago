@@ -6,6 +6,27 @@
   src: url("/assets/fonts/inter-latin.woff2") format("woff2");
 }
 
+.team-security-grid {
+  display: grid;
+  gap: 24px;
+}
+
+.settings-list {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-list > div {
+  padding: 16px;
+  border: 1px solid var(--lago-grey-300);
+  border-radius: 12px;
+}
+
+.settings-list p {
+  margin: 6px 0 0;
+  color: var(--lago-grey-600);
+}
+
 :root {
   color-scheme: light;
   font-family:

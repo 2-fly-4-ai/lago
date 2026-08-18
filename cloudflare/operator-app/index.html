@@ -125,6 +125,23 @@
             <a class="nav-item" href="/dunning-campaigns" data-route="dunning-campaigns">
               <img class="nav-icon" src="/assets/icons/warning-unfilled.svg" alt="" />Dunning
             </a>
+            <a class="nav-item" href="/team-security" data-route="team-security">
+              <img class="nav-icon" src="/assets/icons/user-multiple.svg" alt="" />Team &amp;
+              security
+            </a>
+          </div>
+
+          <div class="nav-section">
+            <p class="nav-label">Developer tools</p>
+            <a class="nav-item" href="/activity-logs" data-route="activity-logs">
+              <img class="nav-icon" src="/assets/icons/clock.svg" alt="" />Activity logs
+            </a>
+            <a class="nav-item" href="/api-logs" data-route="api-logs">
+              <img class="nav-icon" src="/assets/icons/document.svg" alt="" />API logs
+            </a>
+            <a class="nav-item" href="/events" data-route="events">
+              <img class="nav-icon" src="/assets/icons/pulse.svg" alt="" />Events
+            </a>
           </div>
         </nav>
 
@@ -664,6 +681,157 @@
                     queried.
                   </p>
                 </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="activity-logs" aria-labelledby="activity-logs-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Developer tools / Activity logs</p>
+                  <h2 id="activity-logs-title">Activity logs</h2>
+                  <p>Review tenant-scoped billing changes with sensitive fields redacted.</p>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="empty-state" id="activity-logs-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/clock.svg" alt="" />
+                  <h3>No activity yet</h3>
+                  <p>Billing changes for this organization will appear here.</p>
+                </div>
+                <div class="table-scroll" id="activity-logs-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Activity</th>
+                        <th>Resource</th>
+                        <th>Version</th>
+                        <th>Delivery</th>
+                        <th>Occurred</th>
+                      </tr>
+                    </thead>
+                    <tbody id="activity-logs-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="api-logs" aria-labelledby="api-logs-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Developer tools / API logs</p>
+                  <h2 id="api-logs-title">API logs</h2>
+                  <p>Inspect redacted operator request metadata retained for 30 days.</p>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="empty-state" id="api-logs-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/document.svg" alt="" />
+                  <h3>No API logs yet</h3>
+                  <p>Operator requests will appear here without bodies or query values.</p>
+                </div>
+                <div class="table-scroll" id="api-logs-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Request</th>
+                        <th>Method</th>
+                        <th>Path</th>
+                        <th>Status</th>
+                        <th>Duration</th>
+                        <th>Occurred</th>
+                      </tr>
+                    </thead>
+                    <tbody id="api-logs-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="events" aria-labelledby="events-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Developer tools / Events</p>
+                  <h2 id="events-title">Events</h2>
+                  <p>Trace received usage events without exposing their property payloads.</p>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="empty-state" id="events-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/pulse.svg" alt="" />
+                  <h3>No events yet</h3>
+                  <p>Usage events for this organization will appear here.</p>
+                </div>
+                <div class="table-scroll" id="events-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Transaction</th>
+                        <th>Code</th>
+                        <th>Subscription</th>
+                        <th>Timestamp</th>
+                        <th>Received</th>
+                      </tr>
+                    </thead>
+                    <tbody id="events-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="team-security" aria-labelledby="team-security-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Settings / Team &amp; security</p>
+                  <h2 id="team-security-title">Team &amp; security</h2>
+                  <p>
+                    Manage Cloudflare Access memberships, invitations, roles, and authentication.
+                  </p>
+                </div>
+                <button class="primary-button" id="open-team-invite" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Invite member
+                </button>
+              </div>
+              <div class="team-security-grid">
+                <section class="chart-card">
+                  <div class="chart-card-heading"><h3>Members</h3></div>
+                  <div class="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Identity</th>
+                          <th>Role</th>
+                          <th>Status</th>
+                          <th>Joined</th>
+                        </tr>
+                      </thead>
+                      <tbody id="team-members-body"></tbody>
+                    </table>
+                  </div>
+                </section>
+                <section class="chart-card">
+                  <div class="chart-card-heading"><h3>Pending invitations</h3></div>
+                  <div class="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Identity</th>
+                          <th>Role</th>
+                          <th>Status</th>
+                          <th>Expires</th>
+                        </tr>
+                      </thead>
+                      <tbody id="team-invitations-body"></tbody>
+                    </table>
+                  </div>
+                </section>
+                <section class="chart-card">
+                  <div class="chart-card-heading"><h3>Authentication</h3></div>
+                  <dl class="entity-detail-fields" id="team-authentication"></dl>
+                </section>
+                <section class="chart-card">
+                  <div class="chart-card-heading"><h3>Roles</h3></div>
+                  <div id="team-roles" class="settings-list"></div>
+                </section>
               </div>
             </section>
 
@@ -2749,6 +2917,38 @@
           <button class="secondary-button" value="cancel" type="submit">Cancel</button>
           <button class="danger-button" id="confirm-action" value="default" type="submit">
             Confirm
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="team-invite-dialog" aria-labelledby="team-invite-title">
+      <form method="dialog" id="team-invite-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Cloudflare Access</p>
+            <h2 id="team-invite-title">Invite member</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <label for="team-invite-email">Access email</label
+        ><input id="team-invite-email" type="email" maxlength="320" required />
+        <label for="team-invite-role">Role</label
+        ><select id="team-invite-role">
+          <option value="viewer">Viewer</option>
+          <option value="admin">Admin</option>
+        </select>
+        <p class="field-hint">
+          Only a SHA-256 email hash is stored. Cloudflare Access performs the identity challenge and
+          the first matching login claims the membership.
+        </p>
+        <p class="form-error" id="team-invite-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-team-invite" value="default" type="submit">
+            Create invitation
           </button>
         </div>
       </form>

@@ -78,6 +78,9 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/billable-metrics",
       "/api/operator/v1/features",
       "/api/operator/v1/ai/conversations",
+      "/api/operator/v1/observability/activity-logs",
+      "/api/operator/v1/observability/api-logs",
+      "/api/operator/v1/observability/events",
     ]) {
       expect(operatorScript).toContain(endpoint);
     }
@@ -98,6 +101,9 @@ describe("isolated operator app assets", () => {
       'id="features"',
       'id="ai-rail"',
       'id="ai-panel"',
+      'id="activity-logs"',
+      'id="api-logs"',
+      'id="events"',
     ]) {
       expect(operatorIndex).toContain(identifier);
     }
@@ -114,6 +120,8 @@ describe("isolated operator app assets", () => {
     expect(operatorScript).toContain("catalogActivityEndpoint");
     expect(operatorScript).toContain("planEntitlementsEndpoint");
     expect(operatorScript).toContain("navigateToUsageMetric");
+    expect(operatorScript).toContain("webhookLogsEndpoint");
+    expect(operatorScript).toContain("renderObservability");
     expect(operatorIndex).toContain('id="plan-entitlements"');
   });
 
@@ -157,6 +165,9 @@ describe("isolated operator app assets", () => {
       "data-exports",
       "webhook-endpoints",
       "dunning-campaigns",
+      "activity-logs",
+      "api-logs",
+      "events",
     ]) {
       expect(operatorIndex).toContain(`data-route="${route}"`);
     }

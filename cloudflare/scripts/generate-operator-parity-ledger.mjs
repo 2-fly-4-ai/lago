@@ -90,9 +90,12 @@ const surfaces = [
     name: "Activity, API, event, and webhook logs",
     sourcePatterns: [/activityLogs/i, /apiLogs/i, /WebhookLog/i, /EventDetails/i],
     routePatterns: [/ACTIVITY_LOG/i, /API_LOG/i, /WEBHOOK_LOG/i, /EVENT/i],
-    implementationStatus: "missing",
+    implementationStatus: "complete",
     contract: "Redacted tenant-scoped event and request projections with bounded retention",
-    notes: "Developer log routes were omitted rather than ported.",
+    notes:
+      "Activity, API, usage-event, and webhook delivery list/detail reads are tenant scoped. Bodies and sensitive fields are not retained in operator responses; API metadata expires after 30 days. Webhook retry stays disabled under the user's explicit external-action safety boundary.",
+    evidence:
+      "migration 0074; cloudflare/src/operator/observability.ts; cloudflare/operator-app; operator-parity-surfaces.test.ts",
   },
   {
     id: "customer-portal",
@@ -154,14 +157,15 @@ function surfaceForRoute(route) {
 const operations = originalOperations.map((operation) => {
   const surface = surfaceForOperation(operation);
   if (!surface) throw new Error(`No parity surface matched operation ${operation.name}`);
+  const safetyDisabled = operation.name === "retryWebhook";
   return {
     name: operation.name,
     kind: operation.kind,
     sources: operation.sources,
     surface: surface.id,
-    requirementStatus: "required",
+    requirementStatus: safetyDisabled ? "safety-disabled" : "required",
     implementationStatus: surface.implementationStatus,
-    approvalStatus: "not-requested",
+    approvalStatus: safetyDisabled ? "user-directed" : "not-requested",
     completionEligible: surface.implementationStatus === "complete",
     evidence: surface.evidence ?? null,
     previousDisposition: operation.disposition,

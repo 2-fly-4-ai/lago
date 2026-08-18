@@ -483,6 +483,131 @@ function previewApi(pathname, requestedSlug, method = "GET") {
         }
       : { conversations: [] };
   }
+  if (pathname === "/api/operator/v1/observability/activity-logs") {
+    return {
+      activity_logs: [
+        {
+          lago_id: "activity-preview-customer",
+          event_type: "customer.updated",
+          resource_type: "customer",
+          resource_id: "customer-preview-tammy",
+          version: 2,
+          changes: { status: "active", email: "[redacted]" },
+          occurred_at: "2026-08-18T01:24:00Z",
+          delivery_status: "published",
+        },
+      ],
+    };
+  }
+  if (pathname === "/api/operator/v1/observability/api-logs") {
+    return {
+      api_logs: [
+        {
+          lago_id: "api-log-preview-001",
+          request_id: "request-preview-001",
+          method: "GET",
+          path: "/api/operator/v1/customers",
+          status: 200,
+          duration_ms: 12,
+          occurred_at: "2026-08-18T01:25:00Z",
+          request_body: "Not retained",
+          response_body: "Not retained",
+        },
+      ],
+    };
+  }
+  if (pathname === "/api/operator/v1/observability/events") {
+    return {
+      events: [
+        {
+          lago_id: "event-preview-001",
+          transaction_id: "txn-preview-001",
+          code: "video_download",
+          external_subscription_id: "tammy-creator-monthly",
+          timestamp: "2026-08-18T01:22:00Z",
+          received_at: "2026-08-18T01:22:01Z",
+          properties: "Redacted from operator logs",
+        },
+      ],
+    };
+  }
+  if (pathname === "/api/operator/v1/team/members") {
+    return {
+      members: [
+        {
+          lago_id: "membership-preview-admin",
+          identity: "Access identity …a1b2c3d4e5f6",
+          role: "admin",
+          status: "active",
+          created_at: "2026-08-15T00:00:00Z",
+        },
+      ],
+    };
+  }
+  if (pathname === "/api/operator/v1/team/invitations") {
+    return {
+      invitations:
+        method === "POST"
+          ? [
+              {
+                lago_id: "invitation-preview",
+                identity: "Invited email …f6e5d4c3b2a1",
+                role: "viewer",
+                status: "pending",
+                expires_at: "2026-08-25T00:00:00Z",
+              },
+            ]
+          : [],
+    };
+  }
+  if (pathname === "/api/operator/v1/team/roles") {
+    return {
+      roles: [
+        {
+          code: "admin",
+          name: "Admin",
+          description: "Manage billing configuration and operator memberships",
+        },
+        {
+          code: "viewer",
+          name: "Viewer",
+          description: "Read tenant-scoped billing data and reports",
+        },
+      ],
+    };
+  }
+  if (pathname === "/api/operator/v1/team/authentication") {
+    return {
+      authentication: {
+        provider: "cloudflare_access",
+        enforced: true,
+        password_login: false,
+        social_login: false,
+        sso_configuration: "Managed by the Cloudflare Access application",
+      },
+    };
+  }
+  if (pathname === "/api/operator/v1/webhook-endpoints/webhook-preview-001/logs") {
+    return {
+      webhook_logs: [
+        {
+          lago_id: "webhook-log-preview-001",
+          webhook_endpoint_id: "webhook-preview-001",
+          event_id: "event-preview-invoice",
+          event_type: "invoice.created",
+          status: "succeeded",
+          attempts: 1,
+          http_status: 200,
+          last_attempted_at: "2026-08-18T01:26:00Z",
+          created_at: "2026-08-18T01:25:59Z",
+          updated_at: "2026-08-18T01:26:00Z",
+          payload: "Not retained in operator responses",
+          response: "Not retained in operator responses",
+          retry_available: false,
+        },
+      ],
+    };
+  }
   const activityMatch = pathname.match(
     /^\/api\/operator\/v1\/(features|billable-metrics)\/([^/]+)\/activity$/,
   );

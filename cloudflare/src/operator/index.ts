@@ -45,12 +45,30 @@ import {
 import { handleOperatorAiRequest } from "./ai";
 import { handleOperatorAnalyticsRequest } from "./analytics";
 import { handleOperatorFeaturesRequest } from "./features";
+import { handleOperatorObservabilityRequest, recordOperatorApiLog } from "./observability";
 import { handleOperatorProductParityRequest } from "./product-parity";
+import { handleOperatorTeamRequest } from "./team";
 
 export function createOperatorHandler(keySet?: JWTVerifyGetKey): ExportedHandler<OperatorEnv> {
   return {
     async fetch(request: Request, env: OperatorEnv, ctx: ExecutionContext): Promise<Response> {
-      return handleOperatorRequest(request, env, keySet, ctx);
+      const startedAt = Date.now();
+      const requestId = safeRequestId(request.headers.get("X-Request-Id"));
+      const headers = new Headers(request.headers);
+      headers.set("X-Request-Id", requestId);
+      const tracedRequest = new Request(request, { headers });
+      const response = await handleOperatorRequest(tracedRequest, env, keySet, ctx);
+      ctx.waitUntil(
+        recordOperatorApiLog(
+          tracedRequest,
+          env,
+          keySet,
+          requestId,
+          response.status,
+          Date.now() - startedAt,
+        ),
+      );
+      return response;
     },
   };
 }
@@ -131,6 +149,26 @@ export async function handleOperatorRequest(
         operator.organizationId,
         requestId,
       );
+      if (response) return response;
+    }
+
+    if (
+      url.pathname.startsWith("/api/operator/v1/observability/") ||
+      /^\/api\/operator\/v1\/webhook-endpoints\/[^/]+\/logs(?:\/|$)/.test(url.pathname)
+    ) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      const response = await handleOperatorObservabilityRequest(
+        request,
+        env.BILLING_DB,
+        operator.organizationId,
+        requestId,
+      );
+      if (response) return response;
+    }
+
+    if (url.pathname.startsWith("/api/operator/v1/team/")) {
+      const operator = await authenticateOperatorAccess(request, env, keySet);
+      const response = await handleOperatorTeamRequest(request, env, operator, requestId);
       if (response) return response;
     }
 
@@ -782,6 +820,11 @@ export async function handleOperatorRequest(
 }
 
 export default createOperatorHandler();
+
+function safeRequestId(value: string | null): string {
+  const candidate = value?.trim();
+  return candidate && candidate.length <= 128 ? candidate : crypto.randomUUID();
+}
 
 async function assertOperatorCustomerMutationPayload(request: Request): Promise<void> {
   if (request.method !== "POST" && request.method !== "PUT") return;

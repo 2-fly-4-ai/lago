@@ -5,7 +5,9 @@ import { handleOperatorAiRequest, type OperatorAiEnv } from "../src/operator/ai"
 import { handleOperatorAnalyticsRequest } from "../src/operator/analytics";
 import type { OperatorContext } from "../src/operator/access";
 import { handleOperatorFeaturesRequest } from "../src/operator/features";
+import { handleOperatorObservabilityRequest } from "../src/operator/observability";
 import { handleOperatorProductParityRequest } from "../src/operator/product-parity";
+import { handleOperatorTeamRequest } from "../src/operator/team";
 
 function jsonRequest(url: string, method: string, body: unknown): Request {
   return new Request(url, {
@@ -308,6 +310,155 @@ describe("operator analytics and forecasts", () => {
   });
 });
 
+describe("operator developer observability", () => {
+  it("returns redacted tenant activity and API logs without cross-tenant leakage", async () => {
+    const primary = await createOrganization("observability-primary");
+    const secondary = await createOrganization("observability-secondary");
+    const now = new Date().toISOString();
+    const eventId = crypto.randomUUID();
+    const membershipId = crypto.randomUUID();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO operator_memberships
+         (id, organization_id, access_issuer, access_subject_sha256, role, active, created_at, updated_at)
+         VALUES (?, ?, 'https://example.cloudflareaccess.com', ?, 'admin', 1, ?, ?)`,
+      ).bind(membershipId, primary.id, "a".repeat(64), now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO outbox_events
+         (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+          aggregate_version, correlation_id, payload_json, occurred_at)
+         VALUES (?, ?, 'customer.updated', 1, 'customer', 'customer-a', 1, ?, ?, ?)`,
+      ).bind(
+        eventId,
+        primary.id,
+        crypto.randomUUID(),
+        JSON.stringify({
+          customer_id: "customer-a",
+          email: "hidden@example.com",
+          status: "active",
+        }),
+        now,
+      ),
+      env.BILLING_DB.prepare(
+        `INSERT INTO operator_api_logs
+         (id, organization_id, membership_id, request_id, method, route_template,
+          response_status, duration_ms, occurred_at, expires_at)
+         VALUES ('api-log-a', ?, ?, 'request-a', 'GET', '/api/operator/v1/customers', 200, 12, ?, ?)`,
+      ).bind(primary.id, membershipId, now, "2099-01-01T00:00:00.000Z"),
+    ]);
+
+    const activity = await handleOperatorObservabilityRequest(
+      new Request("https://operator.test/api/operator/v1/observability/activity-logs"),
+      env.BILLING_DB,
+      primary.id,
+      "request-activity",
+    );
+    const activityBody = (await activity?.json()) as {
+      activity_logs: Array<{ lago_id: string; changes: Record<string, unknown> }>;
+    };
+    expect(activityBody.activity_logs).toEqual([
+      expect.objectContaining({
+        lago_id: eventId,
+        changes: expect.objectContaining({
+          customer_id: "customer-a",
+          email: "[redacted]",
+          status: "active",
+        }),
+      }),
+    ]);
+
+    const apiLogs = await handleOperatorObservabilityRequest(
+      new Request("https://operator.test/api/operator/v1/observability/api-logs"),
+      env.BILLING_DB,
+      primary.id,
+      "request-api-logs",
+    );
+    const apiBody = (await apiLogs?.json()) as {
+      api_logs: Array<{ request_body: string; path: string }>;
+    };
+    expect(apiBody.api_logs).toEqual([
+      expect.objectContaining({
+        path: "/api/operator/v1/customers",
+        request_body: "Not retained",
+      }),
+    ]);
+
+    const secondaryActivity = await handleOperatorObservabilityRequest(
+      new Request("https://operator.test/api/operator/v1/observability/activity-logs"),
+      env.BILLING_DB,
+      secondary.id,
+      "request-secondary-activity",
+    );
+    expect(await secondaryActivity?.json()).toMatchObject({ activity_logs: [] });
+  });
+});
+
+describe("operator Access team administration", () => {
+  it("stores invitation identity only as a hash and scopes membership reads", async () => {
+    const primary = await createOrganization("team-primary");
+    const secondary = await createOrganization("team-secondary");
+    const now = new Date().toISOString();
+    const adminMembership = crypto.randomUUID();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO operator_memberships
+       (id, organization_id, access_issuer, access_subject_sha256, role, active, version,
+        created_at, updated_at)
+       VALUES (?, ?, 'https://serp-test.cloudflareaccess.com', ?, 'admin', 1, 1, ?, ?)`,
+    )
+      .bind(adminMembership, primary.id, "b".repeat(64), now, now)
+      .run();
+    const operator = operatorContext(primary, adminMembership);
+    const invite = await handleOperatorTeamRequest(
+      new Request("https://operator.test/api/operator/v1/team/invitations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://operator.test",
+          "X-Operator-Request": "1",
+        },
+        body: JSON.stringify({ email: "new-admin@example.invalid", role: "admin" }),
+      }),
+      {
+        APP_ENV: "test",
+        BILLING_ACCOUNTS: env.BILLING_ACCOUNTS,
+        BILLING_DB: env.BILLING_DB,
+        DOMAIN_EVENTS: env.DOMAIN_EVENTS,
+        DOCUMENT_WORKFLOW: env.DOCUMENT_WORKFLOW,
+        PLAN_DELETION_WORKFLOW: env.PLAN_DELETION_WORKFLOW,
+        OPERATOR_ACCESS_ENABLED: "1",
+      },
+      operator,
+      "request-team-invite",
+    );
+    const inviteBody = (await invite?.json()) as {
+      invitations: Array<{ identity: string; role: string }>;
+    };
+    expect(inviteBody.invitations).toEqual([
+      expect.objectContaining({
+        identity: expect.stringContaining("Invited email …"),
+        role: "admin",
+      }),
+    ]);
+    expect(JSON.stringify(inviteBody)).not.toContain("new-admin@example.invalid");
+
+    const otherMembers = await handleOperatorTeamRequest(
+      new Request("https://operator.test/api/operator/v1/team/members"),
+      {
+        APP_ENV: "test",
+        BILLING_ACCOUNTS: env.BILLING_ACCOUNTS,
+        BILLING_DB: env.BILLING_DB,
+        DOMAIN_EVENTS: env.DOMAIN_EVENTS,
+        DOCUMENT_WORKFLOW: env.DOCUMENT_WORKFLOW,
+        PLAN_DELETION_WORKFLOW: env.PLAN_DELETION_WORKFLOW,
+        OPERATOR_ACCESS_ENABLED: "1",
+      },
+      operatorContext(secondary, crypto.randomUUID()),
+      "request-team-secondary",
+    );
+    expect(await otherMembers?.json()).toMatchObject({ members: [] });
+  });
+});
+
 describe("operator AI assistant", () => {
   it("persists streamed history per Access membership and organization", async () => {
     const organization = await createOrganization("ai");
@@ -401,6 +552,7 @@ function operatorContext(
   membershipId: string,
 ): OperatorContext {
   return {
+    accessIssuer: "https://serp-test.cloudflareaccess.com",
     membershipId,
     organizationId: organization.id,
     organizationExternalId: organization.externalId,

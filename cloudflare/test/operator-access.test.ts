@@ -38,9 +38,10 @@ async function accessToken(
     issuer?: string;
     subject?: string;
     expiration?: string;
+    email?: string;
   } = {},
 ): Promise<string> {
-  return new SignJWT({})
+  return new SignJWT(options.email ? { email: options.email } : {})
     .setProtectedHeader({ alg: "RS256", kid: "operator-test-key" })
     .setIssuer(options.issuer ?? issuer)
     .setAudience(options.audience ?? audience)
@@ -71,6 +72,12 @@ beforeAll(async () => {
 beforeEach(async () => {
   const subjectHash = await sha256Hex(`${issuer}\n${subject}`);
   await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      "DELETE FROM operator_api_logs WHERE organization_id = 'org-operator-access'",
+    ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM operator_invitations WHERE organization_id = 'org-operator-access'",
+    ),
     env.BILLING_DB.prepare("DELETE FROM ai_messages WHERE organization_id = 'org-operator-access'"),
     env.BILLING_DB.prepare(
       "DELETE FROM ai_conversations WHERE organization_id = 'org-operator-access'",
@@ -278,6 +285,32 @@ describe("operator Access authentication", () => {
         keySet,
       ),
     ).rejects.toMatchObject({ status: 403, code: "operator_membership_required" });
+  });
+
+  it("claims a hashed pending Access invitation on first authenticated login", async () => {
+    const invitedSubject = `invited-${crypto.randomUUID()}`;
+    const invitedEmail = `invited-${crypto.randomUUID()}@example.invalid`;
+    const now = new Date().toISOString();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO operator_invitations
+       (id, organization_id, access_issuer, email_sha256, role, status,
+        invited_by_membership_id, created_at, updated_at, expires_at)
+       VALUES (?, 'org-operator-access', ?, ?, 'admin', 'pending',
+               'membership-operator-access', ?, ?, '2099-01-01T00:00:00.000Z')`,
+    )
+      .bind(crypto.randomUUID(), issuer, await sha256Hex(invitedEmail), now, now)
+      .run();
+
+    const context = await authenticateOperatorAccess(
+      accessRequest(await accessToken({ subject: invitedSubject, email: invitedEmail })),
+      operatorEnv(),
+      keySet,
+    );
+    expect(context).toMatchObject({ organizationId: "org-operator-access", role: "admin" });
+    const invitation = await env.BILLING_DB.prepare(
+      "SELECT status FROM operator_invitations WHERE organization_id = 'org-operator-access'",
+    ).first<{ status: string }>();
+    expect(invitation?.status).toBe("accepted");
   });
 
   it("allows one Access identity in multiple organizations while keeping each membership unique and immutable", async () => {

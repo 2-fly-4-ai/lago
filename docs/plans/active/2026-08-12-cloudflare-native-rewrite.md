@@ -3383,3 +3383,12 @@ resource and mutation described.
   The full gate passes 343 tests across 62 files, strict formatting/lint/types/generated checks,
   migration replay, and both dry bundles. No production route, API Worker, provider/payment action,
   customer message, secret, or customer data changed.
+- 2026-08-18: Continued from the product-parity checkpoint into the authoritative backlog.
+  Migration `0074` adds 30-day, tenant-scoped operator API metadata without request/response bodies;
+  activity, usage-event, and webhook delivery list/detail reads redact payload fields and keep
+  webhook retry disabled under the approved external-action boundary. Migration `0075` adds hashed
+  Cloudflare Access invitations and first-login membership claiming. The Team & security surface
+  now exposes tenant members, pending invitations, fixed admin/viewer roles, and the enforced Access
+  authentication contract; membership and invitation mutation contracts enforce admin access,
+  same-origin requests, tenant scope, and a last-admin invariant. Focused parity/access/asset tests
+  pass 43 cases while this broader ledger reconciliation remains active.
