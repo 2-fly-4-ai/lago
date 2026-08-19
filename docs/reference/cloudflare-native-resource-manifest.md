@@ -1,6 +1,6 @@
 # Cloudflare-Native Lago Resource Manifest
 
-Last verified: 2026-08-18
+Last verified: 2026-08-19
 
 This manifest covers the isolated, non-production stack created for the Cloudflare-native rewrite.
 It is not a production inventory and contains no secrets or customer data.
@@ -11,12 +11,14 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `3259da96-654c-48ff-b293-bd5678bf37a8`
+- Latest verified version: `660cc5b6-1370-4d5a-a598-efc59db43b17`
 - Custom domains/routes: none
 - Payment provider secrets: none
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
 - `CREDIT_NOTE_REFUND_MODE`: `disabled`
+- `WALLET_FUNDING_MODE`: `disabled`
+- `EXTERNAL_TAX_MODE`: `disabled`
 - `PROVIDER_READS_ENABLED`: `0`
 - `STRIPE_NETWORK_MODE`: `disabled`
 - `STRIPE_WEBHOOKS_ENABLED`: `0`
@@ -39,11 +41,11 @@ It is not a production inventory and contains no secrets or customer data.
 | Cron              | `* * * * *`                                                              | Worker scheduled handler                | Deterministic legacy-schedule dispatch and activity fanout         |
 | Browser Rendering | account binding                                                          | `BROWSER`                               | Invoice HTML-to-PDF rendering                                      |
 | Static Assets     | `operator-ui`                                                            | direct asset delivery                   | Script-free operator migration shell and security headers          |
-| Worker            | `serp-dev-lago-operator` / `b5cc487d-1102-4d33-9a5d-1eda18b67d55`        | D1, R2, DO, Workflow, Queue, Workers AI | Access-protected synthetic-tenant operator BFF and Static Assets   |
+| Worker            | `serp-dev-lago-operator` / `29849390-7bde-4ff1-a9e1-ab84e83e3388`        | D1, R2, DO, Workflow, Queue, Workers AI | Access-protected synthetic-tenant operator BFF and Static Assets   |
 | Worker            | `serp-dev-lago-customer-portal` / `6bfeedea-636d-4af4-bcf0-3e20573ab3a0` | D1, R2                                  | Token-protected synthetic customer portal and Static Assets        |
 
 Applied D1 migrations: `0001_foundation.sql` through
-`0084_provider_financial_controls.sql`.
+`0090_provider_recurring_wallet_funding.sql`.
 
 ## Operator Access rollout
 
@@ -67,6 +69,25 @@ Applied D1 migrations: `0001_foundation.sql` through
   token is not required for the completed dashboard-provisioned application and policy.
 
 ## Verified behavior
+
+- API version `660cc5b6-1370-4d5a-a598-efc59db43b17` and operator version
+  `29849390-7bde-4ff1-a9e1-ab84e83e3388` complete the user-approved broader compatibility tranche.
+  Migrations `0085` through `0090` add idempotent Stripe-test refund execution, tenant-scoped
+  multiple billing entities, lost-dispute financial guards, direct and automatic provider wallet
+  funding, and persisted external-tax estimates. Automatic interval and threshold wallet funding
+  records the pending wallet transaction and provider operation before network I/O, separates the
+  provider charge from paid-plus-granted wallet credit, uses deterministic Stripe idempotency, and
+  settles from synchronous or signed-webhook evidence exactly once. The operator exposes the same
+  automatic-rule controls while retaining the original layout and Access boundary. Arbitrary Ruby
+  aggregators are replaced with validated `custom_agg` expressions and deterministic decimal
+  summation; no user code, Ruby runtime, or container is executed. The complete gate passes 382
+  tests across 69 files plus five Access reconciler tests, strict formatting/lint/types/inventory,
+  all 90 migrations from empty local D1, and all three dry bundles. Remote postflight reports no
+  pending migration, no foreign-key violations, and zero dispute, refund, wallet-funding,
+  recurring-funding-rule, or external-tax rows. API health is `200`, unauthenticated tax access is
+  `401`, and the operator receives Cloudflare Access `302`. The API has no secrets and every external
+  gate remains disabled; no Stripe request, production data/route, customer message, `store-new`, or
+  `serp-auth` change occurred during this deployment.
 
 - API version `3259da96-654c-48ff-b293-bd5678bf37a8` and operator version
   `20f56c71-e643-4c39-af07-d1276f13de03` deploy the disabled Stripe-compatible financial-control

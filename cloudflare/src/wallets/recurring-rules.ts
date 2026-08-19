@@ -25,7 +25,7 @@ export type RecurringRuleRow = {
   method: "fixed";
   trigger: "interval" | "threshold";
   storage_kind: "interval" | "threshold";
-  paid_credits: "0";
+  paid_credits: string;
   granted_credits: string;
   threshold_credits: string;
   started_at: string | null;
@@ -33,8 +33,9 @@ export type RecurringRuleRow = {
   status: "active" | "terminated";
   transaction_metadata_json: string;
   transaction_name: string | null;
-  invoice_requires_successful_payment: 0;
-  ignore_paid_top_up_limits: 0;
+  payment_method_id: string | null;
+  invoice_requires_successful_payment: number;
+  ignore_paid_top_up_limits: number;
   skip_invoice_custom_sections: number;
   version: number;
   created_at: string;
@@ -46,12 +47,16 @@ export type NormalizedRecurringRule = {
   lagoId: string | null;
   interval: RecurringRuleInterval;
   trigger: "interval" | "threshold";
+  paidCredits: string;
   grantedCredits: string;
   thresholdCredits: string;
   startedAt: string | null;
   expirationAt: string | null;
   transactionMetadata: Array<{ key?: string; value?: string }>;
   transactionName: string | null;
+  paymentMethodId: string | null;
+  invoiceRequiresSuccessfulPayment: boolean;
+  ignorePaidTopUpLimits: boolean;
   customSections: SubscriptionCustomSections | undefined;
 };
 
@@ -115,18 +120,30 @@ export function normalizeRecurringRule(
   if (method !== "fixed") unsupported("target method requires paid-credit processing");
 
   const paidCredits = decimalOrDefault(input.paid_credits, options.current?.paid_credits ?? "0");
-  if (Decimal.parse(paidCredits).compare(Decimal.zero()) !== 0)
-    unsupported("paid credits require the payment workflow");
   if (input.target_ongoing_balance !== undefined && input.target_ongoing_balance !== null)
     unsupported("target ongoing balance requires paid-credit processing");
-  if (input.payment_method !== undefined && input.payment_method !== null)
-    unsupported("payment methods require the payment workflow");
-  if (
-    booleanValue(input.invoice_requires_successful_payment, "invoice_requires_successful_payment")
-  )
-    unsupported("successful-payment requirements require the payment workflow");
-  if (booleanValue(input.ignore_paid_top_up_limits, "ignore_paid_top_up_limits"))
-    unsupported("paid top-up limits require the payment workflow");
+  const paymentMethodId =
+    input.payment_method === undefined
+      ? (options.current?.payment_method_id ?? null)
+      : paymentMethod(input.payment_method);
+  if (Decimal.parse(paidCredits).compare(Decimal.zero()) > 0 && !paymentMethodId)
+    throw new ApiError(
+      422,
+      "payment_method_required",
+      "Paid recurring credits require a payment method",
+    );
+  if (Decimal.parse(paidCredits).compare(Decimal.zero()) === 0 && paymentMethodId)
+    throw new ApiError(422, "invalid_recurring_rule", "A payment method requires paid credits");
+  const invoiceRequiresSuccessfulPayment = booleanOrCurrent(
+    input.invoice_requires_successful_payment,
+    "invoice_requires_successful_payment",
+    options.current?.invoice_requires_successful_payment === 1,
+  );
+  const ignorePaidTopUpLimits = booleanOrCurrent(
+    input.ignore_paid_top_up_limits,
+    "ignore_paid_top_up_limits",
+    options.current?.ignore_paid_top_up_limits === 1,
+  );
 
   const intervalValue =
     stringValue(input.interval, "interval") ?? options.current?.interval ?? "weekly";
@@ -154,6 +171,7 @@ export function normalizeRecurringRule(
     lagoId: nullableId(input.lago_id),
     interval: intervalValue as RecurringRuleInterval,
     trigger,
+    paidCredits,
     grantedCredits,
     thresholdCredits,
     startedAt,
@@ -166,6 +184,9 @@ export function normalizeRecurringRule(
       input.transaction_name === undefined
         ? (options.current?.transaction_name ?? null)
         : normalizeName(input.transaction_name),
+    paymentMethodId,
+    invoiceRequiresSuccessfulPayment,
+    ignorePaidTopUpLimits,
     customSections:
       input.invoice_custom_section === undefined
         ? undefined
@@ -198,26 +219,42 @@ export async function serializeRecurringRulesForWallets(
       `SELECT id, organization_id, wallet_id, interval, method, trigger, storage_kind,
               paid_credits, granted_credits, threshold_credits, started_at, expiration_at,
               status, transaction_metadata_json, transaction_name,
+              payment_method_id,
               invoice_requires_successful_payment, ignore_paid_top_up_limits,
               skip_invoice_custom_sections, version, created_at, updated_at, terminated_at
        FROM (
-         SELECT id, organization_id, wallet_id, interval, method, trigger,
-                'interval' AS storage_kind, paid_credits, granted_credits,
+         SELECT rule.id, rule.organization_id, rule.wallet_id, rule.interval, rule.method, rule.trigger,
+                'interval' AS storage_kind, COALESCE(funding.paid_credits, rule.paid_credits) AS paid_credits,
+                rule.granted_credits,
                 threshold_credits, started_at, expiration_at, status,
-                transaction_metadata_json, transaction_name, invoice_requires_successful_payment,
-                ignore_paid_top_up_limits, skip_invoice_custom_sections, version, created_at,
-                updated_at, terminated_at
-         FROM recurring_transaction_rules
-         WHERE wallet_id IN (${placeholders}) AND status = 'active'
+                transaction_metadata_json, transaction_name, funding.payment_method_id,
+                COALESCE(funding.invoice_requires_successful_payment, rule.invoice_requires_successful_payment)
+                  AS invoice_requires_successful_payment,
+                COALESCE(funding.ignore_paid_top_up_limits, rule.ignore_paid_top_up_limits)
+                  AS ignore_paid_top_up_limits,
+                skip_invoice_custom_sections, version, rule.created_at AS created_at,
+                rule.updated_at AS updated_at, terminated_at
+         FROM recurring_transaction_rules rule
+         LEFT JOIN provider_recurring_wallet_rule_funding funding
+           ON funding.rule_id = rule.id AND funding.storage_kind = 'interval'
+         WHERE rule.wallet_id IN (${placeholders}) AND status = 'active'
            AND (expiration_at IS NULL OR expiration_at > ?)
          UNION ALL
-         SELECT id, organization_id, wallet_id, interval, method, trigger,
-                'threshold' AS storage_kind, paid_credits, granted_credits, threshold_credits,
+         SELECT rule.id, rule.organization_id, rule.wallet_id, rule.interval, rule.method, rule.trigger,
+                'threshold' AS storage_kind, COALESCE(funding.paid_credits, rule.paid_credits) AS paid_credits,
+                rule.granted_credits, threshold_credits,
                 started_at, expiration_at, status, transaction_metadata_json, transaction_name,
-                invoice_requires_successful_payment, ignore_paid_top_up_limits,
-                skip_invoice_custom_sections, version, created_at, updated_at, terminated_at
-         FROM wallet_threshold_rules
-         WHERE wallet_id IN (${placeholders}) AND status = 'active'
+                funding.payment_method_id,
+                COALESCE(funding.invoice_requires_successful_payment, rule.invoice_requires_successful_payment)
+                  AS invoice_requires_successful_payment,
+                COALESCE(funding.ignore_paid_top_up_limits, rule.ignore_paid_top_up_limits)
+                  AS ignore_paid_top_up_limits,
+                skip_invoice_custom_sections, version, rule.created_at AS created_at,
+                rule.updated_at AS updated_at, terminated_at
+         FROM wallet_threshold_rules rule
+         LEFT JOIN provider_recurring_wallet_rule_funding funding
+           ON funding.rule_id = rule.id AND funding.storage_kind = 'threshold'
+         WHERE rule.wallet_id IN (${placeholders}) AND status = 'active'
            AND (expiration_at IS NULL OR expiration_at > ?)
        ) ORDER BY wallet_id, created_at, id`,
     )
@@ -271,32 +308,52 @@ function serializeRecurringRule(row: RecurringRuleRow, sections: SerializedAppli
     threshold_credits: row.threshold_credits,
     trigger: row.trigger,
     created_at: row.created_at,
-    invoice_requires_successful_payment: false,
+    invoice_requires_successful_payment: row.invoice_requires_successful_payment === 1,
     transaction_metadata: parseMetadata(row.transaction_metadata_json),
     transaction_name: row.transaction_name,
-    ignore_paid_top_up_limits: false,
+    ignore_paid_top_up_limits: row.ignore_paid_top_up_limits === 1,
     applied_invoice_custom_sections: sections,
-    payment_method: { payment_method_id: null, payment_method_type: "provider" },
+    payment_method: {
+      payment_method_id: row.payment_method_id,
+      payment_method_type: "provider",
+    },
   };
 }
 
 function recurringRuleUnion() {
-  return `SELECT id, organization_id, wallet_id, interval, method, trigger,
-                 'interval' AS storage_kind, paid_credits, granted_credits,
+  return `SELECT rule.id, rule.organization_id, rule.wallet_id, rule.interval, rule.method, rule.trigger,
+                 'interval' AS storage_kind,
+                 COALESCE(funding.paid_credits, rule.paid_credits) AS paid_credits,
+                 rule.granted_credits,
                  threshold_credits, started_at, expiration_at, status,
-                 transaction_metadata_json, transaction_name, invoice_requires_successful_payment,
-                 ignore_paid_top_up_limits, skip_invoice_custom_sections, version, created_at,
-                 updated_at, terminated_at
-          FROM recurring_transaction_rules
-          WHERE organization_id = ? AND wallet_id = ? AND status = 'active'
+                 transaction_metadata_json, transaction_name, funding.payment_method_id,
+                 COALESCE(funding.invoice_requires_successful_payment, rule.invoice_requires_successful_payment)
+                   AS invoice_requires_successful_payment,
+                 COALESCE(funding.ignore_paid_top_up_limits, rule.ignore_paid_top_up_limits)
+                   AS ignore_paid_top_up_limits,
+                 skip_invoice_custom_sections, version, rule.created_at AS created_at,
+                 rule.updated_at AS updated_at, terminated_at
+          FROM recurring_transaction_rules rule
+          LEFT JOIN provider_recurring_wallet_rule_funding funding
+            ON funding.rule_id = rule.id AND funding.storage_kind = 'interval'
+          WHERE rule.organization_id = ? AND rule.wallet_id = ? AND status = 'active'
           UNION ALL
-          SELECT id, organization_id, wallet_id, interval, method, trigger,
-                 'threshold' AS storage_kind, paid_credits, granted_credits, threshold_credits,
+          SELECT rule.id, rule.organization_id, rule.wallet_id, rule.interval, rule.method, rule.trigger,
+                 'threshold' AS storage_kind,
+                 COALESCE(funding.paid_credits, rule.paid_credits) AS paid_credits,
+                 rule.granted_credits, threshold_credits,
                  started_at, expiration_at, status, transaction_metadata_json, transaction_name,
-                 invoice_requires_successful_payment, ignore_paid_top_up_limits,
-                 skip_invoice_custom_sections, version, created_at, updated_at, terminated_at
-          FROM wallet_threshold_rules
-          WHERE organization_id = ? AND wallet_id = ? AND status = 'active'`;
+                 funding.payment_method_id,
+                 COALESCE(funding.invoice_requires_successful_payment, rule.invoice_requires_successful_payment)
+                   AS invoice_requires_successful_payment,
+                 COALESCE(funding.ignore_paid_top_up_limits, rule.ignore_paid_top_up_limits)
+                   AS ignore_paid_top_up_limits,
+                 skip_invoice_custom_sections, version, rule.created_at AS created_at,
+                 rule.updated_at AS updated_at, terminated_at
+          FROM wallet_threshold_rules rule
+          LEFT JOIN provider_recurring_wallet_rule_funding funding
+            ON funding.rule_id = rule.id AND funding.storage_kind = 'threshold'
+          WHERE rule.organization_id = ? AND rule.wallet_id = ? AND status = 'active'`;
 }
 
 function decimalOrDefault(value: unknown, fallback: string): string {
@@ -378,6 +435,23 @@ function booleanValue(value: unknown, field: string): boolean {
   if (typeof value !== "boolean")
     throw new ApiError(422, "invalid_recurring_rule", `${field} must be a boolean`);
   return value;
+}
+
+function booleanOrCurrent(value: unknown, field: string, current: boolean): boolean {
+  return value === undefined ? current : booleanValue(value, field);
+}
+
+function paymentMethod(value: unknown): string | null {
+  if (value === null) return null;
+  const candidate =
+    typeof value === "string"
+      ? value
+      : value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>).payment_method_id
+        : null;
+  if (typeof candidate !== "string" || !candidate.trim() || candidate.trim().length > 255)
+    throw new ApiError(422, "invalid_recurring_rule", "payment_method_id is invalid");
+  return candidate.trim();
 }
 
 function unsupported(message: string): never {

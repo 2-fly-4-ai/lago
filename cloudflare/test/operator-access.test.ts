@@ -1564,7 +1564,7 @@ describe("operator Worker disabled boundary", () => {
     await operatorMutation("POST", "/customers", {
       customer: { external_id: "wallet-customer", name: "Wallet Customer", currency: "USD" },
     });
-    const blockedRecurring = await operatorMutation("POST", "/wallets", {
+    const recurring = await operatorMutation("POST", "/wallets", {
       wallet: {
         external_customer_id: "wallet-customer",
         code: "blocked-wallet",
@@ -1573,9 +1573,13 @@ describe("operator Worker disabled boundary", () => {
         recurring_transaction_rules: [{ interval: "monthly", granted_credits: "10" }],
       },
     });
-    expect(blockedRecurring.status).toBe(422);
-    await expect(blockedRecurring.json()).resolves.toMatchObject({
-      code: "unsupported_operator_wallet_field",
+    expect(recurring.status).toBe(200);
+    await expect(recurring.json()).resolves.toMatchObject({
+      wallet: {
+        recurring_transaction_rules: [
+          { interval: "monthly", paid_credits: "0", granted_credits: "10" },
+        ],
+      },
     });
 
     const created = await operatorMutation("POST", "/wallets", {

@@ -7,6 +7,7 @@ import { stableJson } from "../json";
 import { createStripeWalletFunding } from "../providers/stripe";
 import { Decimal } from "../rating/decimal";
 import { WALLET_FEE_TYPES, type WalletFeeType } from "../billing/wallet-limitations";
+import { reconcileProviderWalletFunding } from "../wallets/provider-funding";
 import {
   normalizeSubscriptionCustomSections,
   resolveCustomSectionIds,
@@ -204,6 +205,7 @@ async function createWallet(
           fallbackGrantedCredits: grantedCredits,
           now: requestedAt,
         });
+  if (recurringRule) assertRecurringFundingAllowed(env, auth.organizationId, recurringRule);
   const customSectionIds = await resolveCustomSectionIds(
     env.BILLING_DB,
     auth.organizationId,
@@ -302,6 +304,14 @@ async function createWallet(
     const recurringRuleId = await deterministicUuid("wallet-recurring-rule", id);
     statements.push(
       recurringRuleInsertStatement(
+        env.BILLING_DB,
+        auth.organizationId,
+        id,
+        recurringRuleId,
+        recurringRule,
+        now,
+      ),
+      ...providerRecurringRuleFundingStatements(
         env.BILLING_DB,
         auth.organizationId,
         id,
@@ -591,7 +601,7 @@ async function createPaidTransaction(
         paymentMethodId,
         idempotencyKey: `stripe-wallet-funding:${operation.id}`,
       });
-      await reconcilePaidTransaction(
+      await reconcileProviderWalletFunding(
         env.BILLING_DB,
         operation.id,
         result,
@@ -664,7 +674,7 @@ async function createPaidTransaction(
       paymentMethodId,
       idempotencyKey: `stripe-wallet-funding:${operationId}`,
     });
-    await reconcilePaidTransaction(env.BILLING_DB, operationId, result, now);
+    await reconcileProviderWalletFunding(env.BILLING_DB, operationId, result, now);
   } catch (error) {
     await env.BILLING_DB.prepare(
       `UPDATE provider_wallet_funding_operations
@@ -699,67 +709,18 @@ function walletPaymentMethodId(value: unknown): string {
   return candidate.trim();
 }
 
-async function reconcilePaidTransaction(
-  database: D1Database,
-  operationId: string,
-  result: Awaited<ReturnType<typeof createStripeWalletFunding>>,
-  now: string,
-): Promise<void> {
-  const settled = result.status === "succeeded";
-  await database.batch([
-    database
-      .prepare(
-        `UPDATE provider_wallet_funding_operations
-       SET provider_payment_intent_id = ?, status = ?, client_secret = ?, failure_code = ?,
-           failure_message = ?, updated_at = ? WHERE id = ?`,
-      )
-      .bind(
-        result.id,
-        result.status,
-        result.clientSecret,
-        result.failureCode,
-        result.failureMessage,
-        now,
-        operationId,
-      ),
-    database
-      .prepare(
-        `UPDATE wallets SET balance_minor = balance_minor + (
-         SELECT amount_minor FROM provider_wallet_funding_operations WHERE id = ?
-       ), ongoing_balance_minor = ongoing_balance_minor + (
-         SELECT amount_minor FROM provider_wallet_funding_operations WHERE id = ?
-       ), version = version + 1, updated_at = ?
-       WHERE id = (SELECT wallet_id FROM provider_wallet_funding_operations WHERE id = ?)
-         AND ? = 1 AND EXISTS (
-           SELECT 1 FROM provider_wallet_funding_operations operation
-           JOIN wallet_transactions transaction_row
-             ON transaction_row.id = operation.wallet_transaction_id
-           WHERE operation.id = ? AND transaction_row.status = 'pending'
-         )`,
-      )
-      .bind(operationId, operationId, now, operationId, settled ? 1 : 0, operationId),
-    database
-      .prepare(
-        `UPDATE wallet_transactions
-       SET status = CASE WHEN ? = 1 THEN 'settled'
-                         WHEN ? = 1 THEN 'failed' ELSE status END,
-           settled_at = CASE WHEN ? = 1 THEN ? ELSE settled_at END,
-           failed_at = CASE WHEN ? = 1 THEN ? ELSE failed_at END,
-           updated_at = ?
-       WHERE id = (SELECT wallet_transaction_id FROM provider_wallet_funding_operations WHERE id = ?)
-         AND status = 'pending'`,
-      )
-      .bind(
-        settled ? 1 : 0,
-        result.status === "failed" || result.status === "canceled" ? 1 : 0,
-        settled ? 1 : 0,
-        now,
-        result.status === "failed" || result.status === "canceled" ? 1 : 0,
-        now,
-        now,
-        operationId,
-      ),
-  ]);
+function assertRecurringFundingAllowed(
+  env: WalletLedgerEnv,
+  organizationId: string,
+  rule: NormalizedRecurringRule,
+): void {
+  if (Decimal.parse(rule.paidCredits).compare(Decimal.zero()) === 0) return;
+  if (env.WALLET_FUNDING_MODE !== "stripe_test")
+    throw new ApiError(503, "wallet_funding_disabled", "Provider wallet funding is disabled");
+  if (env.STRIPE_ORGANIZATION_ID?.trim() !== organizationId)
+    throw new ApiError(503, "stripe_organization_mapping_invalid", "Stripe mapping is invalid");
+  if (!env.STRIPE_ACCOUNT_CODE?.trim())
+    throw new ApiError(503, "stripe_account_mapping_invalid", "Stripe account is not mapped");
 }
 
 async function listWallets(
@@ -897,6 +858,7 @@ async function updateWallet(
       now,
       current,
     });
+    assertRecurringFundingAllowed(env, auth.organizationId, rule);
     const ruleSectionIds = await resolveCustomSectionIds(
       env.BILLING_DB,
       auth.organizationId,
@@ -1212,16 +1174,53 @@ function canonicalRecurringRule(rule: NormalizedRecurringRule, sectionIds: strin
   return {
     interval: rule.interval,
     trigger: rule.trigger,
+    paidCredits: rule.paidCredits,
     grantedCredits: rule.grantedCredits,
     thresholdCredits: rule.thresholdCredits,
     startedAt: rule.startedAt,
     expirationAt: rule.expirationAt,
     transactionMetadata: rule.transactionMetadata,
     transactionName: rule.transactionName,
+    paymentMethodId: rule.paymentMethodId,
+    invoiceRequiresSuccessfulPayment: rule.invoiceRequiresSuccessfulPayment,
+    ignorePaidTopUpLimits: rule.ignorePaidTopUpLimits,
     invoiceCustomSection: rule.customSections
       ? { skip: rule.customSections.skip === true, sectionIds: sectionIds ?? null }
       : null,
   };
+}
+
+function providerRecurringRuleFundingStatements(
+  database: D1Database,
+  organizationId: string,
+  walletId: string,
+  ruleId: string,
+  rule: NormalizedRecurringRule,
+  now: string,
+): D1PreparedStatement[] {
+  if (Decimal.parse(rule.paidCredits).compare(Decimal.zero()) === 0) return [];
+  if (!rule.paymentMethodId) throw new Error("provider_recurring_payment_method_missing");
+  return [
+    database
+      .prepare(
+        `INSERT INTO provider_recurring_wallet_rule_funding
+         (rule_id, organization_id, wallet_id, storage_kind, paid_credits, payment_method_id,
+          invoice_requires_successful_payment, ignore_paid_top_up_limits, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        ruleId,
+        organizationId,
+        walletId,
+        rule.trigger,
+        rule.paidCredits,
+        rule.paymentMethodId,
+        rule.invoiceRequiresSuccessfulPayment ? 1 : 0,
+        rule.ignorePaidTopUpLimits ? 1 : 0,
+        now,
+        now,
+      ),
+  ];
 }
 
 function recurringRuleInsertStatement(
@@ -1441,6 +1440,14 @@ function recurringRuleMutationStatements(
         nextWalletVersion,
         now,
       ),
+      ...providerRecurringRuleFundingStatements(
+        database,
+        organizationId,
+        wallet.id,
+        mutation.ruleId,
+        mutation.rule,
+        now,
+      ),
     );
     const link = recurringRuleCustomSectionLink(mutation.rule.trigger);
     for (const sectionId of mutation.sectionIds) {
@@ -1491,6 +1498,14 @@ function recurringRuleMutationStatements(
         nextWalletVersion,
         now,
       ),
+      ...providerRecurringRuleFundingStatements(
+        database,
+        organizationId,
+        wallet.id,
+        mutation.ruleId,
+        mutation.rule,
+        now,
+      ),
     );
     const link = recurringRuleCustomSectionLink(mutation.rule.trigger);
     for (const sectionId of mutation.sectionIds) {
@@ -1539,6 +1554,44 @@ function recurringRuleMutationStatements(
           now,
         ),
     );
+    if (Decimal.parse(rule.paidCredits).compare(Decimal.zero()) === 0) {
+      statements.push(
+        database
+          .prepare(
+            `DELETE FROM provider_recurring_wallet_rule_funding
+             WHERE rule_id = ? AND organization_id = ? AND wallet_id = ?`,
+          )
+          .bind(mutation.current.id, organizationId, wallet.id),
+      );
+    } else {
+      if (!rule.paymentMethodId) throw new Error("provider_recurring_payment_method_missing");
+      statements.push(
+        database
+          .prepare(
+            `INSERT INTO provider_recurring_wallet_rule_funding
+             (rule_id, organization_id, wallet_id, storage_kind, paid_credits, payment_method_id,
+              invoice_requires_successful_payment, ignore_paid_top_up_limits, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(rule_id) DO UPDATE SET paid_credits = excluded.paid_credits,
+               payment_method_id = excluded.payment_method_id,
+               invoice_requires_successful_payment = excluded.invoice_requires_successful_payment,
+               ignore_paid_top_up_limits = excluded.ignore_paid_top_up_limits,
+               updated_at = excluded.updated_at`,
+          )
+          .bind(
+            mutation.current.id,
+            organizationId,
+            wallet.id,
+            mutation.current.trigger,
+            rule.paidCredits,
+            rule.paymentMethodId,
+            rule.invoiceRequiresSuccessfulPayment ? 1 : 0,
+            rule.ignorePaidTopUpLimits ? 1 : 0,
+            mutation.current.created_at,
+            now,
+          ),
+      );
+    }
     if (mutation.replaceSections) {
       const link = recurringRuleCustomSectionLink(mutation.current.trigger);
       statements.push(
@@ -1594,12 +1647,16 @@ function sameRecurringRule(
   return (
     current.interval === next.interval &&
     current.trigger === next.trigger &&
+    current.paid_credits === next.paidCredits &&
     current.granted_credits === next.grantedCredits &&
     current.threshold_credits === next.thresholdCredits &&
     current.started_at === next.startedAt &&
     current.expiration_at === next.expirationAt &&
     current.transaction_metadata_json === stableJson(next.transactionMetadata) &&
     current.transaction_name === next.transactionName &&
+    current.payment_method_id === next.paymentMethodId &&
+    (current.invoice_requires_successful_payment === 1) === next.invoiceRequiresSuccessfulPayment &&
+    (current.ignore_paid_top_up_limits === 1) === next.ignorePaidTopUpLimits &&
     (current.skip_invoice_custom_sections === 1) === skipSections
   );
 }

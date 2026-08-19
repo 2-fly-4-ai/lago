@@ -73,7 +73,6 @@ export async function createStripeWalletFunding(
     currency: input.currency.toLowerCase(),
     payment_method: input.paymentMethodId,
     confirm: "true",
-    "payment_method_types[]": "card",
     "metadata[lago_organization_id]": input.organizationId,
     "metadata[lago_wallet_id]": input.walletId,
     "metadata[lago_wallet_transaction_id]": input.walletTransactionId,

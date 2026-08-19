@@ -1129,6 +1129,7 @@ async function assertOperatorWalletMutationPayload(
         "priority",
         "expiration_at",
         "transaction_name",
+        "recurring_transaction_rules",
       ]);
   const unsupported = Object.keys(input).find((key) => !supported.has(key));
   if (unsupported) {

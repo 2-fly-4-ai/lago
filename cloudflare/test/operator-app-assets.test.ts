@@ -259,9 +259,9 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("Provider");
     expect(operatorIndex).toContain("payment methods, custom sections, and usage thresholds");
     expect(operatorIndex).toContain("Provider collection and fee tax targeting are unavailable");
-    expect(operatorIndex).toContain(
-      "Recurring rules, fee targeting, custom sections, paid credits",
-    );
+    expect(operatorIndex).toContain("Automatic top-up");
+    expect(operatorIndex).toContain("Recurring paid credits");
+    expect(operatorIndex).toContain("Live-mode credentials are always rejected");
     expect(operatorIndex).toContain("PDF generation and download are");
     expect(operatorIndex).toContain("Settlement ledger");
     expect(operatorIndex).toContain("payment-link");

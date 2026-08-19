@@ -834,7 +834,11 @@ Acceptance:
       PaymentIntent reconciliation, and settle the wallet exactly once. `WALLET_FUNDING_MODE`,
       Stripe network access, webhooks, and live mode remain disabled in committed configuration;
       tests use only an injected in-memory transport.
-- [ ] Complete provider-funded recurring/threshold wallet rules and operator controls.
+- [x] Complete provider-funded interval/threshold wallet rules and operator controls. Paid and
+      granted credits remain distinct; scheduled funding persists intent before provider I/O,
+      reuses deterministic Stripe idempotency, and settles the combined wallet credit exactly once
+      from synchronous or signed-webhook evidence. The operator exposes rule creation and provider
+      test-payment-method input while disabled gates reject every external action.
 - [x] Add executable external tax and payment adapter contracts without embedding provider secrets.
       Authorize.Net remains the retained checkout adapter; Stripe TEST-MODE owns refunds and wallet
       funding behind independent gates. External tax uses a versioned Cloudflare service-binding
@@ -845,8 +849,10 @@ Acceptance:
       expression parser and deterministic decimal summation. Custom metrics now run inside the
       Worker without `eval`, Ruby, a container, or user code; creation requires a validated
       expression and the metered-usage lifecycle test proves ingestion and rating behavior.
-- [ ] Remove remaining retained-surface placeholders, complete UI/API parity evidence, run every
-      gate, then apply only isolated non-production migrations and deployments after preflight.
+- [x] Remove remaining retained-surface placeholders, complete UI/API parity evidence, run every
+      gate, and apply only isolated non-production migrations and deployments after preflight.
+      The complete gate passes 382 tests across 69 files plus five Access reconciler tests; all 90
+      migrations replay locally and the isolated postflight is empty and foreign-key clean.
 - [ ] Provision a narrowly scoped Stripe restricted TEST key and webhook secret only after the
       browser/CLI pairing succeeds; run synthetic Stripe lifecycle evidence with no production data.
 
@@ -3527,3 +3533,20 @@ resource and mutation described.
   and zero dispute, provider-refund, or Stripe receipt rows. The API Worker has no secrets, every
   Stripe gate remains disabled, and no Stripe request, provider registration, production route/data,
   customer message, `store-new`, or `serp-auth` change occurred.
+- 2026-08-19: Completed and deployed the user-approved broader compatibility tranche to only the
+  isolated development stack. Migrations `0085`–`0090` now own Stripe-test refund execution,
+  tenant-scoped multiple billing entities, lost-dispute financial guards, direct and automatic
+  provider wallet funding, external-tax estimates, and provider-funded recurring-rule provenance.
+  Interval and threshold paid-credit rules stage pending transactions and provider operations before
+  network I/O, separate the provider charge from paid-plus-granted wallet credit, use deterministic
+  Stripe idempotency, and settle exactly once from synchronous or signed-webhook evidence. The
+  operator exposes the same rule controls while every external gate remains disabled. Deprecated
+  arbitrary Ruby aggregation is replaced by validated `custom_agg` expressions and exact decimal
+  summation without user code or containers. The full gate passes 382 tests across 69 files plus
+  five Access reconciler tests, strict formatting/lint/generated/type checks, all 90 migrations from
+  empty local D1, and all three dry bundles. API version
+  `660cc5b6-1370-4d5a-a598-efc59db43b17` and Access-protected operator version
+  `29849390-7bde-4ff1-a9e1-ab84e83e3388` pass health/auth/Access smoke checks. Remote postflight has
+  no pending migration, no foreign-key violations, zero new financial/tax/funding rows, and no
+  Worker secrets. No Stripe request, production route/data, customer message, `store-new`, or
+  `serp-auth` change occurred.

@@ -852,6 +852,12 @@ const elements = {
   walletCredits: document.querySelector("#wallet-credits"),
   walletPriority: document.querySelector("#wallet-priority"),
   walletExpiration: document.querySelector("#wallet-expiration"),
+  walletRecurringTrigger: document.querySelector("#wallet-recurring-trigger"),
+  walletRecurringInterval: document.querySelector("#wallet-recurring-interval"),
+  walletRecurringPaid: document.querySelector("#wallet-recurring-paid"),
+  walletRecurringGranted: document.querySelector("#wallet-recurring-granted"),
+  walletRecurringThreshold: document.querySelector("#wallet-recurring-threshold"),
+  walletRecurringPaymentMethod: document.querySelector("#wallet-recurring-payment-method"),
   walletFormError: document.querySelector("#wallet-form-error"),
   submitWalletForm: document.querySelector("#submit-wallet-form"),
   walletTopUpDialog: document.querySelector("#wallet-top-up-dialog"),
@@ -6171,6 +6177,18 @@ function renderWallets(wallets) {
     code.className = "key-id";
     code.textContent = safeText(wallet.code, "—");
     identity.append(name, code);
+    const recurringRule = Array.isArray(wallet.recurring_transaction_rules)
+      ? wallet.recurring_transaction_rules[0]
+      : null;
+    if (recurringRule) {
+      const recurring = document.createElement("span");
+      recurring.className = "key-id";
+      recurring.textContent = `${safeText(recurringRule.trigger, "automatic")} top-up · ${safeText(
+        recurringRule.paid_credits,
+        "0",
+      )} paid + ${safeText(recurringRule.granted_credits, "0")} granted`;
+      identity.append(recurring);
+    }
     row.append(identity);
     const values = [
       wallet.external_customer_id,
@@ -6248,6 +6266,12 @@ function openCreateWalletDialog() {
   elements.walletRate.value = "1";
   elements.walletCredits.value = "0";
   elements.walletPriority.value = "50";
+  elements.walletRecurringTrigger.value = "";
+  elements.walletRecurringInterval.value = "monthly";
+  elements.walletRecurringPaid.value = "0";
+  elements.walletRecurringGranted.value = "0";
+  elements.walletRecurringThreshold.value = "0";
+  elements.walletRecurringPaymentMethod.value = "";
   elements.walletFormError.hidden = true;
   elements.walletFormDialog.showModal();
 }
@@ -6258,6 +6282,23 @@ async function submitWalletForm(event) {
   if (!elements.walletForm.reportValidity()) return;
   setBusy(elements.submitWalletForm, true, "Creating…");
   try {
+    const recurringTrigger = elements.walletRecurringTrigger.value;
+    const paidCredits = elements.walletRecurringPaid.value;
+    const paymentMethodId = elements.walletRecurringPaymentMethod.value.trim();
+    const recurringRules = recurringTrigger
+      ? [
+          {
+            trigger: recurringTrigger,
+            interval: elements.walletRecurringInterval.value,
+            paid_credits: paidCredits,
+            granted_credits: elements.walletRecurringGranted.value,
+            threshold_credits: elements.walletRecurringThreshold.value,
+            ...(Number(paidCredits) > 0
+              ? { payment_method: { payment_method_id: paymentMethodId } }
+              : {}),
+          },
+        ]
+      : undefined;
     await requestJson(endpoints.wallets, {
       method: "POST",
       body: {
@@ -6270,6 +6311,7 @@ async function submitWalletForm(event) {
           granted_credits: elements.walletCredits.value,
           priority: Number(elements.walletPriority.value),
           expiration_at: isoFormValue(elements.walletExpiration.value),
+          ...(recurringRules ? { recurring_transaction_rules: recurringRules } : {}),
         },
       },
     });

@@ -1,7 +1,10 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
+import { handleWalletLedgerRequest } from "../src/api/wallet-ledger";
 import { calculateWalletAllocations } from "../src/billing/wallet-credits";
+import { topUpDueRecurringWallets } from "../src/schedules/recurring-wallets";
+import { refreshWalletOngoingBalances } from "../src/schedules/wallet-balances";
 
 const apiKey = "wallet-ledger-key";
 
@@ -493,7 +496,7 @@ describe("granted wallet ledger", () => {
     });
   });
 
-  it("rejects provider-funded recurring rules without creating a wallet", async () => {
+  it("requires a payment method for provider-funded recurring rules", async () => {
     const response = await request("/api/v1/wallets", "POST", {
       wallet: {
         external_customer_id: "customer-wallet-external",
@@ -507,13 +510,89 @@ describe("granted wallet ledger", () => {
     });
     expect(response.status).toBe(422);
     await expect(response.json()).resolves.toMatchObject({
-      code: "unsupported_recurring_wallet_feature",
+      code: "payment_method_required",
     });
     await expect(
       env.BILLING_DB.prepare(
         "SELECT COUNT(*) AS total FROM wallets WHERE code = 'recurring-paid'",
       ).first(),
     ).resolves.toEqual({ total: 0 });
+  });
+
+  it("funds interval and threshold recurring rules through Stripe test mode exactly once", async () => {
+    const interval = await fundedWalletRequest("recurring-paid-interval", {
+      trigger: "interval",
+      interval: "monthly",
+      paid_credits: "2",
+      granted_credits: "1",
+      payment_method: { payment_method_id: "pm_card_visa" },
+    });
+    expect(interval.status).toBe(200);
+    const intervalBody = await interval.json<{
+      wallet: {
+        lago_id: string;
+        recurring_transaction_rules: Array<Record<string, unknown>>;
+      };
+    }>();
+    expect(intervalBody.wallet.recurring_transaction_rules).toMatchObject([
+      {
+        paid_credits: "2",
+        granted_credits: "1",
+        payment_method: { payment_method_id: "pm_card_visa" },
+      },
+    ]);
+    await env.BILLING_DB.prepare(
+      `UPDATE wallets SET created_at = '2026-07-19T00:00:00.000Z'
+       WHERE id = ?`,
+    )
+      .bind(intervalBody.wallet.lago_id)
+      .run();
+    const stripeCalls: string[] = [];
+    const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      stripeCalls.push(String(init?.body));
+      return new Response(
+        JSON.stringify({ id: `pi_test_${stripeCalls.length}`, status: "succeeded" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+    const fundingEnv = fundedEnv();
+    await expect(
+      topUpDueRecurringWallets(fundingEnv, "2026-08-19T12:00:00.000Z", "interval-funded", fetcher),
+    ).resolves.toBe(1);
+    await expect(
+      topUpDueRecurringWallets(
+        fundingEnv,
+        "2026-08-19T12:05:00.000Z",
+        "interval-funded-replay",
+        fetcher,
+      ),
+    ).resolves.toBe(0);
+
+    const threshold = await fundedWalletRequest("recurring-paid-threshold", {
+      trigger: "threshold",
+      threshold_credits: "10",
+      paid_credits: "2",
+      granted_credits: "1",
+      payment_method: { payment_method_id: "pm_card_visa" },
+    });
+    expect(threshold.status).toBe(200);
+    const thresholdId = (await threshold.json<{ wallet: { lago_id: string } }>()).wallet.lago_id;
+    await expect(
+      refreshWalletOngoingBalances(
+        fundingEnv,
+        "2026-08-19T12:10:00.000Z",
+        "threshold-funded",
+        fetcher,
+      ),
+    ).resolves.toMatchObject({ thresholdTopUps: 1 });
+    const balances = await env.BILLING_DB.prepare(
+      `SELECT id, balance_minor FROM wallets WHERE id IN (?, ?) ORDER BY id`,
+    )
+      .bind(intervalBody.wallet.lago_id, thresholdId)
+      .all<{ id: string; balance_minor: number }>();
+    expect(balances.results.map((row) => row.balance_minor)).toEqual([300, 300]);
+    expect(stripeCalls).toHaveLength(2);
+    expect(stripeCalls.every((body) => !body.includes("payment_method_types"))).toBe(true);
   });
 
   it("creates, updates, and changes a fixed granted threshold rule", async () => {
@@ -953,6 +1032,46 @@ async function createLimitedWallet(
   });
   expect(response.status).toBe(200);
   return (await response.json<{ wallet: { lago_id: string } }>()).wallet.lago_id;
+}
+
+function fundedEnv() {
+  return {
+    BILLING_DB: env.BILLING_DB,
+    DOMAIN_EVENTS: env.DOMAIN_EVENTS,
+    WALLET_FUNDING_MODE: "stripe_test",
+    STRIPE_NETWORK_MODE: "enabled",
+    STRIPE_RESTRICTED_API_KEY: ["rk", "test", "synthetic_wallet_rules"].join("_"),
+    STRIPE_ACCOUNT_CODE: "synthetic-stripe-test",
+    STRIPE_ORGANIZATION_ID: "org-wallet",
+    STRIPE_LIVEMODE_ALLOWED: "0",
+  } as const;
+}
+
+async function fundedWalletRequest(code: string, rule: Record<string, unknown>): Promise<Response> {
+  const response = await handleWalletLedgerRequest(
+    new Request("https://lago.test/api/v1/wallets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        wallet: {
+          external_customer_id: "customer-wallet-external",
+          code,
+          currency: "USD",
+          rate_amount: "1",
+          recurring_transaction_rules: [rule],
+        },
+      }),
+    }),
+    fundedEnv(),
+    {
+      organizationId: "org-wallet",
+      organizationExternalId: "wallet-test",
+      apiKeyId: "key-wallet",
+    },
+    `request-${code}`,
+  );
+  if (!response) throw new Error("wallet_request_not_handled");
+  return response;
 }
 
 function request(

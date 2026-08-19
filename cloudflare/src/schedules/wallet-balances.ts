@@ -13,9 +13,18 @@ import {
 import type { DomainEvent } from "../domain-events";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import { createStripeWalletFunding } from "../providers/stripe";
 import { Decimal } from "../rating/decimal";
+import { reconcileProviderWalletFunding } from "../wallets/provider-funding";
 
-type ProjectionEnv = Pick<Env, "BILLING_DB">;
+type ProjectionEnv = Pick<Env, "BILLING_DB"> & {
+  WALLET_FUNDING_MODE?: string;
+  STRIPE_NETWORK_MODE?: string;
+  STRIPE_RESTRICTED_API_KEY?: string;
+  STRIPE_ACCOUNT_CODE?: string;
+  STRIPE_ORGANIZATION_ID?: string;
+  STRIPE_LIVEMODE_ALLOWED?: string;
+};
 
 type ProjectionCustomer = { id: string; organization_id: string };
 
@@ -30,6 +39,7 @@ type ProjectionWallet = {
   ongoing_balance_version: number;
   version: number;
   rate_amount: string;
+  currency: string;
   currency_exponent: number;
   priority: number;
   allowed_fee_types_json: string;
@@ -38,10 +48,23 @@ type ProjectionWallet = {
 type ThresholdRule = {
   id: string;
   wallet_id: string;
+  paid_credits: string;
   granted_credits: string;
   threshold_credits: string;
   transaction_metadata_json: string;
   transaction_name: string | null;
+  payment_method_id: string | null;
+};
+
+type StoredThresholdFunding = {
+  id: string;
+  organization_id: string;
+  wallet_id: string;
+  wallet_transaction_id: string;
+  idempotency_key: string;
+  provider_charge_minor: number;
+  currency: string;
+  payment_method_id: string;
 };
 
 export type WalletProjectionRun = {
@@ -54,8 +77,10 @@ export async function refreshWalletOngoingBalances(
   env: ProjectionEnv,
   refreshedAt: string,
   correlationId: string,
+  fetcher: typeof fetch = fetch,
 ): Promise<WalletProjectionRun> {
   if (!Number.isFinite(Date.parse(refreshedAt))) throw new Error("invalid_wallet_projection_time");
+  await resumeThresholdWalletFundings(env, refreshedAt, fetcher);
   const result: WalletProjectionRun = { customers: 0, wallets: 0, thresholdTopUps: 0 };
   let cursor = "";
   for (;;) {
@@ -74,10 +99,11 @@ export async function refreshWalletOngoingBalances(
     if (customers.results.length === 0) break;
     for (const customer of customers.results) {
       const projected = await projectCustomerWallets(
-        env.BILLING_DB,
+        env,
         customer,
         refreshedAt,
         correlationId,
+        fetcher,
       );
       result.customers += 1;
       result.wallets += projected.wallets;
@@ -129,15 +155,17 @@ export async function projectedCustomerLiabilityMinor(
 }
 
 async function projectCustomerWallets(
-  database: D1Database,
+  env: ProjectionEnv,
   customer: ProjectionCustomer,
   refreshedAt: string,
   correlationId: string,
+  fetcher: typeof fetch,
 ): Promise<{ wallets: number; thresholdTopUps: number }> {
+  const database = env.BILLING_DB;
   const wallets = await database
     .prepare(
       `SELECT id, organization_id, customer_id, balance_minor, ongoing_balance_minor,
-              depleted_ongoing_balance, ongoing_balance_version, version, rate_amount,
+              depleted_ongoing_balance, ongoing_balance_version, version, rate_amount, currency,
               currency_exponent, priority, code, allowed_fee_types_json
        FROM wallets
        WHERE customer_id = ? AND organization_id = ? AND status = 'active'
@@ -161,6 +189,13 @@ async function projectCustomerWallets(
   const usageByWallet = await projectedCustomerUsageByWallet(database, customer.id, applicability);
   const rules = await activeThresholdRules(database, customer, refreshedAt);
   const statements: D1PreparedStatement[] = [];
+  const providerFundings: Array<{
+    operationId: string;
+    transactionId: string;
+    wallet: ProjectionWallet;
+    rule: ThresholdRule;
+    providerChargeMinor: number;
+  }> = [];
   let thresholdTopUps = 0;
   for (const wallet of wallets.results) {
     const usageMinor = usageByWallet.get(wallet.id) ?? 0;
@@ -205,8 +240,16 @@ async function projectCustomerWallets(
 
     const rule = rules.get(wallet.id);
     if (rule && (await thresholdIsDue(database, wallet, rule, ongoingMinor))) {
+      const totalCredits = Decimal.parse(rule.paid_credits)
+        .add(Decimal.parse(rule.granted_credits))
+        .toString();
       const amountMinor = creditsToMinor(
-        rule.granted_credits,
+        totalCredits,
+        wallet.rate_amount,
+        wallet.currency_exponent,
+      );
+      const providerChargeMinor = creditsToMinor(
+        rule.paid_credits,
         wallet.rate_amount,
         wallet.currency_exponent,
       );
@@ -221,68 +264,139 @@ async function projectCustomerWallets(
             ruleId: rule.id,
             walletId: wallet.id,
             projectionVersion,
+            paidCredits: rule.paid_credits,
             grantedCredits: rule.granted_credits,
             amountMinor,
           }),
         );
-        statements.push(
-          database
-            .prepare(
-              `INSERT INTO wallet_transactions
+        if (
+          providerChargeMinor > 0 &&
+          thresholdFundingEnabled(env, customer.organization_id, rule)
+        ) {
+          const operationId = await deterministicUuid("wallet-funding", transactionId);
+          statements.push(
+            database
+              .prepare(
+                `INSERT INTO wallet_transactions
+                 (id, organization_id, wallet_id, transaction_type, transaction_status, status,
+                  source, amount_minor, credit_amount, remaining_minor, priority, wallet_version,
+                  idempotency_key, request_sha256, name, created_at, updated_at,
+                  skip_invoice_custom_sections, metadata_json, wallet_threshold_rule_id)
+                 VALUES (?, ?, ?, 'inbound', 'purchased', 'pending', 'threshold', ?, ?, ?, ?, ?, ?, ?,
+                         ?, ?, ?, 0, ?, ?)`,
+              )
+              .bind(
+                transactionId,
+                wallet.organization_id,
+                wallet.id,
+                amountMinor,
+                totalCredits,
+                amountMinor,
+                wallet.priority,
+                wallet.version,
+                idempotencyKey,
+                requestHash,
+                rule.transaction_name,
+                refreshedAt,
+                refreshedAt,
+                rule.transaction_metadata_json,
+                rule.id,
+              ),
+            database
+              .prepare(
+                `INSERT INTO provider_wallet_funding_operations
+                 (id, organization_id, wallet_id, wallet_transaction_id, provider,
+                  provider_account_code, payment_method_id, idempotency_key, request_sha256,
+                  amount_minor, credit_amount, currency, status, created_at, updated_at,
+                  recurring_rule_id, recurring_trigger, provider_charge_minor)
+                 VALUES (?, ?, ?, ?, 'stripe', ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, 'threshold', ?)`,
+              )
+              .bind(
+                operationId,
+                wallet.organization_id,
+                wallet.id,
+                transactionId,
+                env.STRIPE_ACCOUNT_CODE!.trim(),
+                rule.payment_method_id,
+                `stripe-wallet-funding:${operationId}`,
+                requestHash,
+                amountMinor,
+                totalCredits,
+                wallet.currency,
+                refreshedAt,
+                refreshedAt,
+                rule.id,
+                providerChargeMinor,
+              ),
+          );
+          providerFundings.push({
+            operationId,
+            transactionId,
+            wallet,
+            rule,
+            providerChargeMinor,
+          });
+        }
+        if (providerChargeMinor === 0) {
+          statements.push(
+            database
+              .prepare(
+                `INSERT INTO wallet_transactions
                (id, organization_id, wallet_id, transaction_type, transaction_status, status,
                 source, amount_minor, credit_amount, remaining_minor, priority, wallet_version,
                 idempotency_key, request_sha256, name, settled_at, created_at, updated_at,
                 skip_invoice_custom_sections, metadata_json, wallet_threshold_rule_id)
                VALUES (?, ?, ?, 'inbound', 'granted', 'settled', 'threshold', ?, ?, ?, ?, ?, ?, ?,
                        ?, ?, ?, ?, 0, ?, ?)`,
-            )
-            .bind(
-              transactionId,
-              wallet.organization_id,
-              wallet.id,
-              amountMinor,
-              rule.granted_credits,
-              amountMinor,
-              wallet.priority,
-              wallet.version,
-              idempotencyKey,
-              requestHash,
-              rule.transaction_name,
-              refreshedAt,
-              refreshedAt,
-              refreshedAt,
-              rule.transaction_metadata_json,
-              rule.id,
-            ),
-          database
-            .prepare(
-              `UPDATE wallets
+              )
+              .bind(
+                transactionId,
+                wallet.organization_id,
+                wallet.id,
+                amountMinor,
+                rule.granted_credits,
+                amountMinor,
+                wallet.priority,
+                wallet.version,
+                idempotencyKey,
+                requestHash,
+                rule.transaction_name,
+                refreshedAt,
+                refreshedAt,
+                refreshedAt,
+                rule.transaction_metadata_json,
+                rule.id,
+              ),
+            database
+              .prepare(
+                `UPDATE wallets
                SET balance_minor = balance_minor + ?, ongoing_balance_minor = ongoing_balance_minor + ?,
                    version = version + 1, updated_at = ?
                WHERE id = ? AND organization_id = ? AND status = 'active' AND version = ?`,
-            )
-            .bind(
-              amountMinor,
-              amountMinor,
-              refreshedAt,
-              wallet.id,
+              )
+              .bind(
+                amountMinor,
+                amountMinor,
+                refreshedAt,
+                wallet.id,
+                wallet.organization_id,
+                wallet.version,
+              ),
+            outboxStatement(
+              database,
               wallet.organization_id,
-              wallet.version,
+              thresholdTransactionEvent(
+                wallet,
+                rule,
+                transactionId,
+                amountMinor,
+                refreshedAt,
+                correlationId,
+              ),
             ),
-          outboxStatement(
-            database,
-            wallet.organization_id,
-            thresholdTransactionEvent(
-              wallet,
-              rule,
-              transactionId,
-              amountMinor,
-              refreshedAt,
-              correlationId,
-            ),
-          ),
-        );
-        thresholdTopUps += 1;
+          );
+          thresholdTopUps += 1;
+        }
       }
     }
     statements.push(
@@ -299,7 +413,119 @@ async function projectCustomerWallets(
       .bind(customer.id, customer.organization_id),
   );
   await database.batch(statements);
+  for (const funding of providerFundings) {
+    await executeThresholdWalletFunding(env, funding, refreshedAt, fetcher);
+    thresholdTopUps += 1;
+  }
   return { wallets: wallets.results.length, thresholdTopUps };
+}
+
+function thresholdFundingEnabled(
+  env: ProjectionEnv,
+  organizationId: string,
+  rule: ThresholdRule,
+): boolean {
+  return (
+    env.WALLET_FUNDING_MODE === "stripe_test" &&
+    env.STRIPE_NETWORK_MODE === "enabled" &&
+    env.STRIPE_LIVEMODE_ALLOWED !== "1" &&
+    env.STRIPE_ORGANIZATION_ID?.trim() === organizationId &&
+    Boolean(env.STRIPE_ACCOUNT_CODE?.trim()) &&
+    Boolean(rule.payment_method_id)
+  );
+}
+
+async function resumeThresholdWalletFundings(
+  env: ProjectionEnv,
+  now: string,
+  fetcher: typeof fetch,
+): Promise<void> {
+  if (env.WALLET_FUNDING_MODE !== "stripe_test" || env.STRIPE_NETWORK_MODE !== "enabled") return;
+  const operations = await env.BILLING_DB.prepare(
+    `SELECT operation.id, operation.organization_id, operation.wallet_id,
+            operation.wallet_transaction_id, operation.idempotency_key,
+            COALESCE(operation.provider_charge_minor, operation.amount_minor) AS provider_charge_minor,
+            operation.currency, operation.payment_method_id
+     FROM provider_wallet_funding_operations operation
+     JOIN wallet_transactions transaction_row ON transaction_row.id = operation.wallet_transaction_id
+     WHERE operation.recurring_trigger = 'threshold'
+       AND operation.status IN ('pending', 'failed') AND transaction_row.status = 'pending'
+     ORDER BY operation.created_at, operation.id LIMIT 100`,
+  ).all<StoredThresholdFunding>();
+  for (const operation of operations.results)
+    await executeStoredThresholdFunding(env, operation, now, fetcher);
+}
+
+async function executeThresholdWalletFunding(
+  env: ProjectionEnv,
+  funding: {
+    operationId: string;
+    transactionId: string;
+    wallet: ProjectionWallet;
+    rule: ThresholdRule;
+    providerChargeMinor: number;
+  },
+  now: string,
+  fetcher: typeof fetch,
+): Promise<void> {
+  if (!funding.rule.payment_method_id) return;
+  await executeStoredThresholdFunding(
+    env,
+    {
+      id: funding.operationId,
+      organization_id: funding.wallet.organization_id,
+      wallet_id: funding.wallet.id,
+      wallet_transaction_id: funding.transactionId,
+      idempotency_key: `stripe-wallet-funding:${funding.operationId}`,
+      provider_charge_minor: funding.providerChargeMinor,
+      currency: funding.wallet.currency,
+      payment_method_id: funding.rule.payment_method_id,
+    },
+    now,
+    fetcher,
+  );
+}
+
+async function executeStoredThresholdFunding(
+  env: ProjectionEnv,
+  operation: StoredThresholdFunding,
+  now: string,
+  fetcher: typeof fetch,
+): Promise<void> {
+  if (
+    env.STRIPE_ORGANIZATION_ID?.trim() !== operation.organization_id ||
+    !env.STRIPE_ACCOUNT_CODE?.trim()
+  )
+    return;
+  try {
+    const result = await createStripeWalletFunding(
+      env,
+      {
+        organizationId: operation.organization_id,
+        walletId: operation.wallet_id,
+        walletTransactionId: operation.wallet_transaction_id,
+        amountMinor: operation.provider_charge_minor,
+        currency: operation.currency,
+        paymentMethodId: operation.payment_method_id,
+        idempotencyKey: operation.idempotency_key,
+      },
+      fetcher,
+    );
+    await reconcileProviderWalletFunding(env.BILLING_DB, operation.id, result, now);
+  } catch (error) {
+    await env.BILLING_DB.prepare(
+      `UPDATE provider_wallet_funding_operations
+       SET status = 'failed', failure_code = 'stripe_request_failed', failure_message = ?,
+           updated_at = ? WHERE id = ? AND status IN ('pending', 'failed')`,
+    )
+      .bind(
+        error instanceof Error ? error.message.slice(0, 500) : "Stripe request failed",
+        now,
+        operation.id,
+      )
+      .run();
+    throw error;
+  }
 }
 
 async function projectedCustomerUsageByWallet(
@@ -457,11 +683,16 @@ async function activeThresholdRules(
 ): Promise<Map<string, ThresholdRule>> {
   const rows = await database
     .prepare(
-      `SELECT rule.id, rule.wallet_id, rule.granted_credits, rule.threshold_credits,
-              rule.transaction_metadata_json, rule.transaction_name
-       FROM wallet_threshold_rules rule JOIN wallets wallet ON wallet.id = rule.wallet_id
+      `SELECT rule.id, rule.wallet_id,
+              COALESCE(funding.paid_credits, rule.paid_credits) AS paid_credits,
+              rule.granted_credits, rule.threshold_credits,
+              rule.transaction_metadata_json, rule.transaction_name, funding.payment_method_id
+       FROM wallet_threshold_rules rule
+       LEFT JOIN provider_recurring_wallet_rule_funding funding
+         ON funding.rule_id = rule.id AND funding.storage_kind = 'threshold'
+       JOIN wallets wallet ON wallet.id = rule.wallet_id
        WHERE wallet.customer_id = ? AND rule.organization_id = ? AND rule.status = 'active'
-         AND rule.method = 'fixed' AND rule.paid_credits = '0'
+         AND rule.method = 'fixed'
          AND (rule.started_at IS NULL OR rule.started_at <= ?)
          AND (rule.expiration_at IS NULL OR rule.expiration_at > ?)`,
     )

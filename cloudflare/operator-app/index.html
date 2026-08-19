@@ -3024,10 +3024,44 @@
             <label for="wallet-expiration">Expiration (optional)</label
             ><input id="wallet-expiration" type="datetime-local" />
           </div>
+          <div>
+            <label for="wallet-recurring-trigger">Automatic top-up</label
+            ><select id="wallet-recurring-trigger">
+              <option value="">None</option>
+              <option value="interval">Interval</option>
+              <option value="threshold">Threshold</option>
+            </select>
+          </div>
+          <div>
+            <label for="wallet-recurring-interval">Top-up interval</label
+            ><select id="wallet-recurring-interval">
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="semiannual">Semiannual</option>
+              <option value="yearly">Yearly</option>
+            </select>
+          </div>
+          <div>
+            <label for="wallet-recurring-paid">Recurring paid credits</label
+            ><input id="wallet-recurring-paid" type="number" min="0" step="any" value="0" />
+          </div>
+          <div>
+            <label for="wallet-recurring-granted">Recurring granted credits</label
+            ><input id="wallet-recurring-granted" type="number" min="0" step="any" value="0" />
+          </div>
+          <div>
+            <label for="wallet-recurring-threshold">Threshold credits</label
+            ><input id="wallet-recurring-threshold" type="number" min="0" step="any" value="0" />
+          </div>
+          <div>
+            <label for="wallet-recurring-payment-method">Stripe test payment method ID</label
+            ><input id="wallet-recurring-payment-method" maxlength="255" placeholder="pm_…" />
+          </div>
         </div>
         <p class="field-hint">
-          Recurring rules, fee targeting, custom sections, paid credits, and provider funding are
-          unavailable.
+          Paid automatic top-ups stay disabled unless the isolated Stripe test-mode gates and exact
+          synthetic tenant mapping are enabled. Live-mode credentials are always rejected.
         </p>
         <p class="form-error" id="wallet-form-error" role="alert" hidden></p>
         <div class="modal-actions">

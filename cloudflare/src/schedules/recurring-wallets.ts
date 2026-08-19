@@ -2,7 +2,9 @@ import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import { createStripeWalletFunding } from "../providers/stripe";
 import { Decimal } from "../rating/decimal";
+import { reconcileProviderWalletFunding } from "../wallets/provider-funding";
 import type { RecurringRuleInterval } from "../wallets/recurring-rules";
 
 type DueRecurringRule = {
@@ -10,6 +12,7 @@ type DueRecurringRule = {
   organization_id: string;
   wallet_id: string;
   interval: RecurringRuleInterval;
+  paid_credits: string;
   granted_credits: string;
   started_at: string | null;
   expiration_at: string | null;
@@ -18,9 +21,20 @@ type DueRecurringRule = {
   wallet_created_at: string;
   wallet_version: number;
   rate_amount: string;
+  currency: string;
   currency_exponent: number;
   priority: number;
   timezone: string;
+  payment_method_id: string | null;
+};
+
+type RecurringWalletFundingEnv = Pick<Env, "BILLING_DB"> & {
+  WALLET_FUNDING_MODE?: string;
+  STRIPE_NETWORK_MODE?: string;
+  STRIPE_RESTRICTED_API_KEY?: string;
+  STRIPE_ACCOUNT_CODE?: string;
+  STRIPE_ORGANIZATION_ID?: string;
+  STRIPE_LIVEMODE_ALLOWED?: string;
 };
 
 type ExpiringRecurringRule = {
@@ -96,25 +110,32 @@ export async function expireRecurringWalletRules(
 }
 
 export async function topUpDueRecurringWallets(
-  env: Pick<Env, "BILLING_DB">,
+  env: RecurringWalletFundingEnv,
   triggeredAt: string,
   correlationId: string,
+  fetcher: typeof fetch = fetch,
 ): Promise<number> {
   const triggeredDate = new Date(triggeredAt);
   if (!Number.isFinite(triggeredDate.getTime()))
     throw new Error("invalid_recurring_wallet_timestamp");
   const rows = await env.BILLING_DB.prepare(
-    `SELECT rule.id, rule.organization_id, rule.wallet_id, rule.interval, rule.granted_credits,
+    `SELECT rule.id, rule.organization_id, rule.wallet_id, rule.interval,
+            COALESCE(funding.paid_credits, rule.paid_credits) AS paid_credits,
+            rule.granted_credits,
             rule.started_at, rule.expiration_at, rule.transaction_metadata_json,
             rule.transaction_name, wallet.created_at AS wallet_created_at,
-            wallet.version AS wallet_version, wallet.rate_amount, wallet.currency_exponent,
-            wallet.priority, COALESCE(customer.timezone, organization.timezone, 'UTC') AS timezone
+            wallet.version AS wallet_version, wallet.rate_amount, wallet.currency,
+            wallet.currency_exponent, wallet.priority,
+            COALESCE(customer.timezone, organization.timezone, 'UTC') AS timezone,
+            funding.payment_method_id
      FROM recurring_transaction_rules rule
+     LEFT JOIN provider_recurring_wallet_rule_funding funding
+       ON funding.rule_id = rule.id AND funding.storage_kind = 'interval'
      JOIN wallets wallet ON wallet.id = rule.wallet_id
      JOIN customers customer ON customer.id = wallet.customer_id
      JOIN organizations organization ON organization.id = rule.organization_id
      WHERE rule.status = 'active' AND rule.trigger = 'interval' AND rule.method = 'fixed'
-       AND rule.paid_credits = '0' AND wallet.status = 'active'
+       AND wallet.status = 'active'
        AND (wallet.expiration_at IS NULL OR wallet.expiration_at > ?)
        AND (rule.expiration_at IS NULL OR rule.expiration_at > ?)
      ORDER BY rule.created_at, rule.id LIMIT 500`,
@@ -131,10 +152,36 @@ export async function topUpDueRecurringWallets(
     const anchor = localDate(anchorInstant, row.timezone);
     if (!isRecurringDateDue(row.interval, anchor, localToday)) continue;
 
-    const amountMinor = creditsToMinor(row.granted_credits, row.rate_amount, row.currency_exponent);
+    const paid = Decimal.parse(row.paid_credits);
+    const granted = Decimal.parse(row.granted_credits);
+    const totalCredits = paid.add(granted).toString();
+    const amountMinor = creditsToMinor(totalCredits, row.rate_amount, row.currency_exponent);
+    const providerChargeMinor = creditsToMinor(
+      row.paid_credits,
+      row.rate_amount,
+      row.currency_exponent,
+    );
     if (amountMinor === 0) continue;
     const localDateKey = formatLocalDate(localToday);
     const idempotencyKey = `wallet-interval:${row.wallet_id}:${localDateKey}`;
+    const replay = await env.BILLING_DB.prepare(
+      `SELECT id, status FROM wallet_transactions
+       WHERE organization_id = ? AND idempotency_key = ? LIMIT 1`,
+    )
+      .bind(row.organization_id, idempotencyKey)
+      .first<{ id: string; status: string }>();
+    if (replay) {
+      if (providerChargeMinor > 0 && replay.status === "pending")
+        await executeRecurringWalletFunding(
+          env,
+          row,
+          replay.id,
+          providerChargeMinor,
+          triggeredAt,
+          fetcher,
+        );
+      continue;
+    }
     const recentIntervalTransactions = await env.BILLING_DB.prepare(
       `SELECT id, created_at FROM wallet_transactions
        WHERE organization_id = ? AND wallet_id = ? AND source = 'interval'
@@ -159,6 +206,7 @@ export async function topUpDueRecurringWallets(
         ruleId: row.id,
         walletId: row.wallet_id,
         localDate: localDateKey,
+        paidCredits: row.paid_credits,
         grantedCredits: row.granted_credits,
         amountMinor,
       }),
@@ -170,6 +218,72 @@ export async function topUpDueRecurringWallets(
       triggeredAt,
       correlationId,
     );
+    if (providerChargeMinor > 0) {
+      if (!recurringFundingEnabled(env, row)) continue;
+      const operationId = await deterministicUuid("wallet-funding", transactionId);
+      const providerAccountCode = env.STRIPE_ACCOUNT_CODE!.trim();
+      await env.BILLING_DB.batch([
+        env.BILLING_DB.prepare(
+          `INSERT INTO wallet_transactions
+           (id, organization_id, wallet_id, transaction_type, transaction_status, status, source,
+            amount_minor, credit_amount, remaining_minor, priority, wallet_version,
+            idempotency_key, request_sha256, name, created_at, updated_at,
+            skip_invoice_custom_sections, metadata_json, recurring_transaction_rule_id)
+           VALUES (?, ?, ?, 'inbound', 'purchased', 'pending', 'interval', ?, ?, ?, ?, ?, ?, ?, ?,
+                   ?, ?, 0, ?, ?)`,
+        ).bind(
+          transactionId,
+          row.organization_id,
+          row.wallet_id,
+          amountMinor,
+          totalCredits,
+          amountMinor,
+          row.priority,
+          row.wallet_version,
+          idempotencyKey,
+          requestHash,
+          row.transaction_name,
+          triggeredAt,
+          triggeredAt,
+          row.transaction_metadata_json,
+          row.id,
+        ),
+        env.BILLING_DB.prepare(
+          `INSERT INTO provider_wallet_funding_operations
+           (id, organization_id, wallet_id, wallet_transaction_id, provider,
+            provider_account_code, payment_method_id, idempotency_key, request_sha256,
+            amount_minor, credit_amount, currency, status, created_at, updated_at,
+            recurring_rule_id, recurring_trigger, provider_charge_minor)
+           VALUES (?, ?, ?, ?, 'stripe', ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, 'interval', ?)`,
+        ).bind(
+          operationId,
+          row.organization_id,
+          row.wallet_id,
+          transactionId,
+          providerAccountCode,
+          row.payment_method_id,
+          `stripe-wallet-funding:${operationId}`,
+          requestHash,
+          amountMinor,
+          totalCredits,
+          row.currency,
+          triggeredAt,
+          triggeredAt,
+          row.id,
+          providerChargeMinor,
+        ),
+      ]);
+      await executeRecurringWalletFunding(
+        env,
+        row,
+        transactionId,
+        providerChargeMinor,
+        triggeredAt,
+        fetcher,
+      );
+      created += 1;
+      continue;
+    }
     try {
       const results = await env.BILLING_DB.batch([
         env.BILLING_DB.prepare(
@@ -215,16 +329,74 @@ export async function topUpDueRecurringWallets(
       ]);
       if ((results[1]?.meta.changes ?? 0) > 0) created += 1;
     } catch (error) {
-      const replay = await env.BILLING_DB.prepare(
+      const concurrent = await env.BILLING_DB.prepare(
         `SELECT id FROM wallet_transactions
          WHERE organization_id = ? AND idempotency_key = ? LIMIT 1`,
       )
         .bind(row.organization_id, idempotencyKey)
         .first<{ id: string }>();
-      if (!replay) throw error;
+      if (!concurrent) throw error;
     }
   }
   return created;
+}
+
+function recurringFundingEnabled(env: RecurringWalletFundingEnv, row: DueRecurringRule): boolean {
+  return (
+    env.WALLET_FUNDING_MODE === "stripe_test" &&
+    env.STRIPE_NETWORK_MODE === "enabled" &&
+    env.STRIPE_LIVEMODE_ALLOWED !== "1" &&
+    env.STRIPE_ORGANIZATION_ID?.trim() === row.organization_id &&
+    Boolean(env.STRIPE_ACCOUNT_CODE?.trim()) &&
+    Boolean(row.payment_method_id)
+  );
+}
+
+async function executeRecurringWalletFunding(
+  env: RecurringWalletFundingEnv,
+  row: DueRecurringRule,
+  transactionId: string,
+  providerChargeMinor: number,
+  now: string,
+  fetcher: typeof fetch,
+): Promise<void> {
+  if (!recurringFundingEnabled(env, row)) return;
+  const operation = await env.BILLING_DB.prepare(
+    `SELECT id, status, idempotency_key FROM provider_wallet_funding_operations
+     WHERE organization_id = ? AND wallet_transaction_id = ? LIMIT 1`,
+  )
+    .bind(row.organization_id, transactionId)
+    .first<{ id: string; status: string; idempotency_key: string }>();
+  if (!operation || operation.status === "succeeded") return;
+  try {
+    const result = await createStripeWalletFunding(
+      env,
+      {
+        organizationId: row.organization_id,
+        walletId: row.wallet_id,
+        walletTransactionId: transactionId,
+        amountMinor: providerChargeMinor,
+        currency: row.currency,
+        paymentMethodId: row.payment_method_id!,
+        idempotencyKey: operation.idempotency_key,
+      },
+      fetcher,
+    );
+    await reconcileProviderWalletFunding(env.BILLING_DB, operation.id, result, now);
+  } catch (error) {
+    await env.BILLING_DB.prepare(
+      `UPDATE provider_wallet_funding_operations
+       SET status = 'failed', failure_code = 'stripe_request_failed', failure_message = ?,
+           updated_at = ? WHERE id = ? AND status IN ('pending', 'failed')`,
+    )
+      .bind(
+        error instanceof Error ? error.message.slice(0, 500) : "Stripe request failed",
+        now,
+        operation.id,
+      )
+      .run();
+    throw error;
+  }
 }
 
 export function isRecurringDateDue(
