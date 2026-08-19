@@ -422,12 +422,21 @@ describe("invoice custom sections", () => {
         invoice_custom_sections: [{ code: "organization-default" }],
       },
     });
-    const unsupportedBillingEntity = await api(
+    const createdEntity = await api("/api/v1/billing_entities", "POST", {
+      billing_entity: { code: "not-default", name: "Not Default" },
+    });
+    expect(createdEntity.status).toBe(200);
+    const entitySections = await api(
       "/api/v1/billing_entities/not-default/invoice_custom_sections",
+      "PUT",
+      { billing_entity: { invoice_custom_section_codes: ["resource-override"] } },
     );
-    expect(unsupportedBillingEntity.status).toBe(422);
-    await expect(unsupportedBillingEntity.json()).resolves.toMatchObject({
-      code: "unsupported_billing_entity",
+    expect(entitySections.status).toBe(200);
+    await expect(entitySections.json()).resolves.toMatchObject({
+      billing_entity: {
+        code: "not-default",
+        invoice_custom_sections: [{ code: "resource-override" }],
+      },
     });
     await expect(apiJson("/api/v1/customers/customer-sections")).resolves.toMatchObject({
       customer: {
@@ -535,7 +544,7 @@ describe("invoice custom sections", () => {
          WHERE organization_id = 'org-sections'
            AND event_type = 'billing_entity.invoice_custom_sections_updated'`,
       ).first(),
-    ).resolves.toEqual({ count: 1 });
+    ).resolves.toEqual({ count: 2 });
     expect(organizationDefault.lago_id).toBeTruthy();
   });
 

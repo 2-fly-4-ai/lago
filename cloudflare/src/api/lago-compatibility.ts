@@ -82,6 +82,8 @@ import {
 
 export type CustomerRow = {
   id: string;
+  billing_entity_id: string;
+  billing_entity_code: string;
   external_id: string;
   email: string | null;
   name: string | null;
@@ -105,6 +107,8 @@ export type CustomerRow = {
 type SubscriptionRow = {
   id: string;
   organization_id: string;
+  billing_entity_id: string;
+  billing_entity_code: string;
   external_id: string;
   customer_id: string;
   customer_external_id: string;
@@ -143,6 +147,8 @@ type SubscriptionRow = {
 
 export type InvoiceRow = {
   id: string;
+  billing_entity_id: string;
+  billing_entity_code: string;
   customer_id: string;
   customer_external_id: string;
   customer_email?: string | null;
@@ -347,6 +353,13 @@ async function upsertCustomer(
       "Customer external_id must match the request path",
     );
   const existing = await findCustomer(database, auth.organizationId, externalId);
+  const billingEntity = await resolveBillingEntity(
+    database,
+    auth.organizationId,
+    input.billing_entity_id,
+    input.billing_entity_code,
+    existing?.billing_entity_id ?? auth.organizationId,
+  );
   const customSections = normalizeCustomerCustomSections(input);
   const customSectionIds = await resolveCustomSectionIds(
     database,
@@ -376,6 +389,8 @@ async function upsertCustomer(
     await assertDunningCampaign(database, auth.organizationId, appliedDunningCampaignId);
   }
   const normalized = {
+    billingEntityId: billingEntity.id,
+    billingEntityCode: billingEntity.code,
     name: input.name === undefined ? (existing?.name ?? null) : optionalString(input, "name"),
     email:
       input.email === undefined
@@ -472,15 +487,16 @@ async function upsertCustomer(
       database
         .prepare(
           `INSERT INTO customers
-           (id, organization_id, external_id, email, name, currency, metadata_json,
+           (id, organization_id, billing_entity_id, external_id, email, name, currency, metadata_json,
             payment_provider, payment_provider_code, net_payment_term, invoice_grace_period,
             timezone, skip_invoice_custom_sections, applied_dunning_campaign_id,
             exclude_from_dunning_campaign, version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .bind(
           id,
           auth.organizationId,
+          normalized.billingEntityId,
           externalId,
           normalized.email,
           normalized.name,
@@ -558,6 +574,8 @@ async function upsertCustomer(
 }
 
 type NormalizedCustomer = {
+  billingEntityId: string;
+  billingEntityCode: string;
   name: string | null;
   email: string | null;
   currency: string | null;
@@ -602,13 +620,14 @@ async function updateCustomer(
   const statements: D1PreparedStatement[] = [
     env.BILLING_DB.prepare(
       `UPDATE customers
-       SET email = ?, name = ?, currency = ?, metadata_json = ?, payment_provider = ?,
+       SET billing_entity_id = ?, email = ?, name = ?, currency = ?, metadata_json = ?, payment_provider = ?,
            payment_provider_code = ?, net_payment_term = ?, invoice_grace_period = ?, timezone = ?,
            skip_invoice_custom_sections = ?, applied_dunning_campaign_id = ?,
            exclude_from_dunning_campaign = ?, last_dunning_campaign_attempt = ?,
            last_dunning_campaign_attempt_at = ?, version = version + 1, updated_at = ?
        WHERE id = ? AND organization_id = ? AND version = ?`,
     ).bind(
+      normalized.billingEntityId,
       normalized.email,
       normalized.name,
       normalized.currency,
@@ -759,7 +778,10 @@ async function listCustomers(
     .first<{ total: number }>();
   const result = await database
     .prepare(
-      `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
+      `SELECT id, billing_entity_id,
+              (SELECT code FROM billing_entities WHERE id = customers.billing_entity_id)
+                AS billing_entity_code,
+              external_id, email, name, currency, metadata_json, payment_provider,
               payment_provider_code, net_payment_term, invoice_grace_period, timezone, version,
               skip_invoice_custom_sections, applied_dunning_campaign_id,
               exclude_from_dunning_campaign, last_dunning_campaign_attempt,
@@ -832,6 +854,10 @@ export async function createSubscription(
   if (paymentMethod !== undefined) requestIdentity.paymentMethod = paymentMethod;
   if (customSections !== undefined) requestIdentity.invoiceCustomSection = customSections;
   if (input.usage_thresholds !== undefined) requestIdentity.usageThresholds = usageThresholdInputs;
+  if (input.billing_entity_id !== undefined)
+    requestIdentity.billingEntityId = input.billing_entity_id;
+  if (input.billing_entity_code !== undefined)
+    requestIdentity.billingEntityCode = input.billing_entity_code;
   const requestHash = await sha256Hex(JSON.stringify(requestIdentity));
 
   const existing = await findSubscription(database, auth.organizationId, externalId);
@@ -839,6 +865,13 @@ export async function createSubscription(
 
   const customer = await findCustomer(database, auth.organizationId, externalCustomerId);
   if (!customer) throw new ApiError(404, "customer_not_found", "Customer was not found");
+  const billingEntity = await resolveBillingEntity(
+    database,
+    auth.organizationId,
+    input.billing_entity_id,
+    input.billing_entity_code,
+    existing?.billing_entity_id ?? customer.billing_entity_id,
+  );
   const organizationBilling = await database
     .prepare(
       `SELECT net_payment_term, invoice_grace_period, timezone
@@ -1029,17 +1062,18 @@ export async function createSubscription(
         database
           .prepare(
             `INSERT INTO subscriptions
-             (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
+             (id, organization_id, billing_entity_id, customer_id, plan_id, external_id, status, subscription_at,
               ending_at, on_termination_credit_note, on_termination_invoice,
               started_at, current_period_start, current_period_end, version, created_at,
               updated_at, name, request_sha256, billing_time, billing_timezone,
               trial_started_at, trial_end_at, payment_method_type, payment_method_id,
               skip_invoice_custom_sections)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, NULL, NULL, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, NULL, NULL, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             subscriptionId,
             auth.organizationId,
+            billingEntity.id,
             customer.id,
             plan.id,
             externalId,
@@ -1179,17 +1213,18 @@ export async function createSubscription(
         database
           .prepare(
             `INSERT INTO subscriptions
-             (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
+             (id, organization_id, billing_entity_id, customer_id, plan_id, external_id, status, subscription_at,
               ending_at, on_termination_credit_note, on_termination_invoice,
               started_at, current_period_start, current_period_end, version, created_at,
               updated_at, name, request_sha256, billing_time, billing_timezone,
               trial_started_at, trial_end_at, payment_method_type, payment_method_id,
               skip_invoice_custom_sections)
-             VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             subscriptionId,
             auth.organizationId,
+            billingEntity.id,
             customer.id,
             plan.id,
             externalId,
@@ -1381,17 +1416,18 @@ export async function createSubscription(
       database
         .prepare(
           `INSERT INTO subscriptions
-          (id, organization_id, customer_id, plan_id, external_id, status, subscription_at,
+          (id, organization_id, billing_entity_id, customer_id, plan_id, external_id, status, subscription_at,
           ending_at, on_termination_credit_note, on_termination_invoice,
           started_at,
           current_period_start, current_period_end, version, created_at, updated_at,
           name, request_sha256, billing_time, billing_timezone, payment_method_type,
           payment_method_id, skip_invoice_custom_sections)
-         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           subscriptionId,
           auth.organizationId,
+          billingEntity.id,
           customer.id,
           plan.id,
           externalId,
@@ -1416,18 +1452,19 @@ export async function createSubscription(
       database
         .prepare(
           `INSERT INTO invoices
-         (id, organization_id, customer_id, subscription_id, number, status, payment_status,
+         (id, organization_id, billing_entity_id, customer_id, subscription_id, number, status, payment_status,
           currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
           finalized_at, issuing_date, created_at, updated_at, coupons_minor, prepaid_credit_minor,
           credit_notes_minor, net_payment_term, payment_due_date, payment_overdue,
           expected_finalization_date, applied_grace_period, ready_to_be_refreshed,
           last_refreshed_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0,
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0,
                  ?, ?, 0, ?)`,
         )
         .bind(
           invoiceId,
           auth.organizationId,
+          billingEntity.id,
           customer.id,
           subscriptionId,
           invoiceNumber,
@@ -1631,13 +1668,7 @@ function rejectUnsupportedSubscriptionCreate(
   input: Record<string, unknown>,
   body: Record<string, unknown>,
 ): void {
-  for (const field of [
-    "billing_entity_code",
-    "billing_entity_id",
-    "progressive_billing_disabled",
-    "activation_rules",
-    "plan_overrides",
-  ]) {
+  for (const field of ["progressive_billing_disabled", "activation_rules", "plan_overrides"]) {
     if (input[field] === undefined || input[field] === null) continue;
     throw new ApiError(
       422,
@@ -1738,16 +1769,28 @@ export async function listInvoices(
   const externalCustomerId =
     url.searchParams.get("external_customer_id")?.trim() ||
     url.searchParams.get("customer_external_id")?.trim();
+  const billingEntityIds = [
+    ...url.searchParams.getAll("billing_entity_ids[]"),
+    ...url.searchParams.getAll("billing_entity_ids"),
+  ]
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
   const page = positiveInteger(url.searchParams.get("page"), 1);
   const perPage = Math.min(positiveInteger(url.searchParams.get("per_page"), 100), 100);
   const offset = (page - 1) * perPage;
 
-  const where = externalCustomerId
-    ? "i.organization_id = ? AND c.external_id = ?"
-    : "i.organization_id = ?";
-  const bindings = externalCustomerId
-    ? [auth.organizationId, externalCustomerId]
-    : [auth.organizationId];
+  const predicates = ["i.organization_id = ?"];
+  const bindings: unknown[] = [auth.organizationId];
+  if (externalCustomerId) {
+    predicates.push("c.external_id = ?");
+    bindings.push(externalCustomerId);
+  }
+  if (billingEntityIds.length > 0) {
+    predicates.push(`i.billing_entity_id IN (${billingEntityIds.map(() => "?").join(", ")})`);
+    bindings.push(...billingEntityIds);
+  }
+  const where = predicates.join(" AND ");
   const count = await database
     .prepare(
       `SELECT COUNT(*) AS total
@@ -1759,7 +1802,10 @@ export async function listInvoices(
 
   const result = await database
     .prepare(
-      `SELECT i.id, i.customer_id, c.external_id AS customer_external_id,
+      `SELECT i.id, i.billing_entity_id,
+              (SELECT code FROM billing_entities WHERE id = i.billing_entity_id)
+                AS billing_entity_code,
+              i.customer_id, c.external_id AS customer_external_id,
               c.payment_provider, c.payment_provider_code, i.number, i.status,
               i.payment_status, i.invoice_type, i.currency, i.subtotal_minor, i.tax_minor,
               i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
@@ -1840,7 +1886,14 @@ export async function createOneOffInvoice(
   requestId: string,
 ): Promise<Response> {
   const input = objectAt(await parseJsonObject(request), "invoice");
-  const supported = new Set(["external_customer_id", "currency", "skip_psp", "fees"]);
+  const supported = new Set([
+    "external_customer_id",
+    "billing_entity_id",
+    "billing_entity_code",
+    "currency",
+    "skip_psp",
+    "fees",
+  ]);
   const unsupported = Object.keys(input).find((key) => !supported.has(key));
   if (unsupported)
     throw new ApiError(
@@ -1857,6 +1910,13 @@ export async function createOneOffInvoice(
   const externalCustomerId = requiredString(input, "external_customer_id");
   const customer = await findCustomer(env.BILLING_DB, auth.organizationId, externalCustomerId);
   if (!customer) throw new ApiError(404, "customer_not_found", "Customer was not found");
+  const billingEntity = await resolveBillingEntity(
+    env.BILLING_DB,
+    auth.organizationId,
+    input.billing_entity_id,
+    input.billing_entity_code,
+    customer.billing_entity_id,
+  );
   const requestedCurrency = optionalString(input, "currency")?.toUpperCase() ?? customer.currency;
   if (!requestedCurrency)
     throw new ApiError(422, "currency_required", "Customer or invoice currency is required");
@@ -1935,6 +1995,7 @@ export async function createOneOffInvoice(
     }),
   );
   const normalized = {
+    billingEntityId: billingEntity.id,
     currency: requestedCurrency,
     externalCustomerId,
     fees: normalizedFees.map((fee) => ({
@@ -2002,14 +2063,15 @@ export async function createOneOffInvoice(
   const statements: D1PreparedStatement[] = [
     env.BILLING_DB.prepare(
       `INSERT INTO invoices
-       (id, organization_id, customer_id, subscription_id, number, status, payment_status,
+       (id, organization_id, billing_entity_id, customer_id, subscription_id, number, status, payment_status,
         currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
         finalized_at, issuing_date, created_at, updated_at, invoice_type, request_sha256,
         net_payment_term, payment_due_date, payment_overdue)
-       VALUES (?, ?, ?, NULL, ?, 'finalized', ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, ?, 'one_off', ?, ?, ?, 0)`,
+       VALUES (?, ?, ?, ?, NULL, ?, 'finalized', ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, ?, 'one_off', ?, ?, ?, 0)`,
     ).bind(
       invoiceId,
       auth.organizationId,
+      billingEntity.id,
       customer.id,
       `INV-${invoiceId.slice(0, 8).toUpperCase()}`,
       paymentStatus,
@@ -2418,7 +2480,10 @@ export async function findInvoice(
 ): Promise<InvoiceRow | null> {
   return database
     .prepare(
-      `SELECT i.id, i.customer_id, c.external_id AS customer_external_id,
+      `SELECT i.id, i.billing_entity_id,
+              (SELECT code FROM billing_entities WHERE id = i.billing_entity_id)
+                AS billing_entity_code,
+              i.customer_id, c.external_id AS customer_external_id,
               c.email AS customer_email, c.payment_provider, c.payment_provider_code,
               i.number, i.status, i.payment_status, i.invoice_type, i.currency, i.subtotal_minor,
               i.tax_minor, i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
@@ -2688,7 +2753,10 @@ async function generateInvoicePaymentUrl(
   requestId: string,
 ): Promise<Response> {
   const invoice = await env.BILLING_DB.prepare(
-    `SELECT i.id, i.customer_id, c.external_id AS customer_external_id,
+    `SELECT i.id, i.billing_entity_id,
+            (SELECT code FROM billing_entities WHERE id = i.billing_entity_id)
+              AS billing_entity_code,
+            i.customer_id, c.external_id AS customer_external_id,
             c.email AS customer_email,
             c.payment_provider, c.payment_provider_code, i.number, i.status,
             i.payment_status, i.invoice_type, i.currency, i.subtotal_minor, i.tax_minor,
@@ -2866,7 +2934,10 @@ export async function findCustomer(
 ): Promise<CustomerRow | null> {
   return database
     .prepare(
-      `SELECT id, external_id, email, name, currency, metadata_json, payment_provider,
+      `SELECT id, billing_entity_id,
+              (SELECT code FROM billing_entities WHERE id = customers.billing_entity_id)
+                AS billing_entity_code,
+              external_id, email, name, currency, metadata_json, payment_provider,
               payment_provider_code, net_payment_term, invoice_grace_period, timezone, version,
               skip_invoice_custom_sections, applied_dunning_campaign_id,
               exclude_from_dunning_campaign, last_dunning_campaign_attempt,
@@ -2884,7 +2955,10 @@ async function findSubscription(
 ): Promise<SubscriptionRow | null> {
   return database
     .prepare(
-      `SELECT s.id, s.organization_id, s.external_id, s.customer_id, s.plan_id,
+      `SELECT s.id, s.organization_id, s.billing_entity_id,
+              (SELECT code FROM billing_entities WHERE id = s.billing_entity_id)
+                AS billing_entity_code,
+              s.external_id, s.customer_id, s.plan_id,
               c.external_id AS customer_external_id,
               p.code AS plan_code, p.amount_minor AS plan_amount_minor,
               p.currency AS plan_currency, p.interval AS plan_interval,
@@ -2926,7 +3000,10 @@ async function findSubscriptionById(
 ): Promise<SubscriptionRow | null> {
   return database
     .prepare(
-      `SELECT s.id, s.organization_id, s.external_id, s.customer_id, s.plan_id,
+      `SELECT s.id, s.organization_id, s.billing_entity_id,
+              (SELECT code FROM billing_entities WHERE id = s.billing_entity_id)
+                AS billing_entity_code,
+              s.external_id, s.customer_id, s.plan_id,
               c.external_id AS customer_external_id,
               p.code AS plan_code, p.amount_minor AS plan_amount_minor,
               p.currency AS plan_currency, p.interval AS plan_interval,
@@ -2989,6 +3066,8 @@ function serializeCustomerRow(
   const metadata = parseCustomerMetadata(customer.metadata_json);
   return {
     lago_id: customer.id,
+    lago_billing_entity_id: customer.billing_entity_id,
+    billing_entity_code: customer.billing_entity_code,
     external_id: customer.external_id,
     name: customer.name,
     email: customer.email,
@@ -3056,9 +3135,10 @@ async function applicableCustomSectionsForCustomers(
     .all<CustomerCustomSectionRow>();
   const defaults = await database
     .prepare(
-      `SELECT '' AS customer_id, cs.id AS lago_id, cs.organization_id, cs.code, cs.name,
+      `SELECT link.billing_entity_id AS customer_id, cs.id AS lago_id, cs.organization_id,
+              cs.code, cs.name,
               cs.description, cs.details, cs.display_name, cs.section_type
-       FROM organization_invoice_custom_sections link
+       FROM billing_entity_invoice_custom_sections link
        JOIN invoice_custom_sections cs ON cs.id = link.invoice_custom_section_id
        WHERE link.organization_id = ? AND cs.status = 'active' AND cs.section_type = 'manual'
        ORDER BY cs.name, cs.code`,
@@ -3066,10 +3146,16 @@ async function applicableCustomSectionsForCustomers(
     .bind(organizationId)
     .all<CustomerCustomSectionRow>();
   const grouped = new Map<string, CustomerCustomSectionRow[]>();
+  const defaultsByEntity = new Map<string, CustomerCustomSectionRow[]>();
   for (const section of selected.results) {
     const sections = grouped.get(section.customer_id) ?? [];
     sections.push(section);
     grouped.set(section.customer_id, sections);
+  }
+  for (const section of defaults.results) {
+    const sections = defaultsByEntity.get(section.customer_id) ?? [];
+    sections.push(section);
+    defaultsByEntity.set(section.customer_id, sections);
   }
   for (const customer of customers) {
     if (customer.skip_invoice_custom_sections === 1) {
@@ -3081,7 +3167,10 @@ async function applicableCustomSectionsForCustomers(
     const systemGenerated = customerSections.filter(
       (section) => section.section_type === "system_generated",
     );
-    const applicable = [...(manual.length > 0 ? manual : defaults.results), ...systemGenerated]
+    const applicable = [
+      ...(manual.length > 0 ? manual : (defaultsByEntity.get(customer.billing_entity_id) ?? [])),
+      ...systemGenerated,
+    ]
       .filter(
         (section, index, sections) =>
           sections.findIndex((candidate) => candidate.lago_id === section.lago_id) === index,
@@ -3112,6 +3201,8 @@ async function serializeSubscription(
   ]);
   return {
     lago_id: subscription.id,
+    lago_billing_entity_id: subscription.billing_entity_id,
+    billing_entity_code: subscription.billing_entity_code,
     external_id: subscription.external_id,
     lago_customer_id: subscription.customer_id,
     external_customer_id: subscription.customer_external_id,
@@ -3189,6 +3280,8 @@ export async function serializeInvoice(
     }>();
   return {
     lago_id: invoice.id,
+    lago_billing_entity_id: invoice.billing_entity_id,
+    billing_entity_code: invoice.billing_entity_code,
     number: invoice.number,
     issuing_date: invoice.issuing_date,
     expected_finalization_date: invoice.expected_finalization_date,
@@ -3322,6 +3415,8 @@ function readCustomerBillingConfiguration(value: unknown): Record<string, unknow
 function rejectUnsupportedCustomerFields(input: Record<string, unknown>): void {
   const supported = new Set([
     "external_id",
+    "billing_entity_id",
+    "billing_entity_code",
     "name",
     "email",
     "currency",
@@ -3389,6 +3484,41 @@ async function assertDunningCampaign(
   }
 }
 
+async function resolveBillingEntity(
+  database: D1Database,
+  organizationId: string,
+  requestedId: unknown,
+  requestedCode: unknown,
+  fallbackId: string,
+): Promise<{ id: string; code: string }> {
+  if (requestedId !== undefined && requestedId !== null && typeof requestedId !== "string")
+    throw new ApiError(422, "validation_error", "billing_entity_id must be a string");
+  if (requestedCode !== undefined && requestedCode !== null && typeof requestedCode !== "string")
+    throw new ApiError(422, "validation_error", "billing_entity_code must be a string");
+  const id = typeof requestedId === "string" ? requestedId.trim() : "";
+  const code = typeof requestedCode === "string" ? requestedCode.trim() : "";
+  if ((requestedId !== undefined && !id) || (requestedCode !== undefined && !code))
+    throw new ApiError(422, "validation_error", "Billing entity identifiers cannot be empty");
+  const entity = await database
+    .prepare(
+      `SELECT id, code FROM billing_entities
+       WHERE organization_id = ? AND archived_at IS NULL
+         AND ((? <> '' AND id = ?) OR (? <> '' AND code = ?)
+              OR (? = '' AND ? = '' AND id = ?))
+       ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1`,
+    )
+    .bind(organizationId, id, id, code, code, id, code, fallbackId, id || fallbackId)
+    .first<{ id: string; code: string }>();
+  if (!entity) throw new ApiError(404, "billing_entity_not_found", "Billing entity was not found");
+  if ((id && entity.id !== id) || (code && entity.code !== code))
+    throw new ApiError(
+      422,
+      "billing_entity_mismatch",
+      "billing_entity_id and billing_entity_code must identify the same billing entity",
+    );
+  return entity;
+}
+
 function normalizeBillingTimezone(value: string | null): string | null {
   if (value === null) return null;
   try {
@@ -3407,6 +3537,7 @@ function normalizeBillingTime(value: unknown): BillingTime {
 
 function customerMatches(customer: CustomerRow, normalized: NormalizedCustomer): boolean {
   return (
+    customer.billing_entity_id === normalized.billingEntityId &&
     customer.name === normalized.name &&
     customer.email === normalized.email &&
     customer.currency === normalized.currency &&

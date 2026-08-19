@@ -161,6 +161,38 @@ describe("one-off invoice ledger", () => {
       },
     });
   });
+
+  it("pins an explicitly selected billing entity on the invoice", async () => {
+    const entity = await SELF.fetch("https://lago.test/api/v1/billing_entities", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ billing_entity: { code: "europe", name: "Europe" } }),
+    });
+    expect(entity.status).toBe(200);
+    const entityBody = await entity.json<{ billing_entity: { lago_id: string } }>();
+    const response = await request({
+      invoice: {
+        external_customer_id: "customer-one-off",
+        billing_entity_code: "europe",
+        currency: "EUR",
+        skip_psp: true,
+        fees: [{ add_on_code: "first" }],
+      },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json<{
+      invoice: { lago_id: string; lago_billing_entity_id: string; billing_entity_code: string };
+    }>();
+    expect(body.invoice).toMatchObject({
+      lago_billing_entity_id: entityBody.billing_entity.lago_id,
+      billing_entity_code: "europe",
+    });
+    await expect(
+      env.BILLING_DB.prepare("SELECT billing_entity_id FROM invoices WHERE id = ?")
+        .bind(body.invoice.lago_id)
+        .first(),
+    ).resolves.toEqual({ billing_entity_id: entityBody.billing_entity.lago_id });
+  });
 });
 
 function request(body: unknown) {

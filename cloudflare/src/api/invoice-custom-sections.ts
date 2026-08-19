@@ -38,14 +38,11 @@ export async function handleInvoiceCustomSectionRequest(
     /^\/api\/v1\/billing_entities\/([^/]+)\/invoice_custom_sections$/,
   );
   if (billingEntityMatch?.[1]) {
-    if (decodeURIComponent(billingEntityMatch[1]) !== "default")
-      throw new ApiError(
-        422,
-        "unsupported_billing_entity",
-        "Multiple billing entities are not implemented by the Cloudflare billing subset",
-      );
-    if (request.method === "GET") return showDefaultSections(env.BILLING_DB, auth, requestId);
-    if (request.method === "PUT") return updateDefaultSections(request, env, auth, requestId);
+    const code = decodeURIComponent(billingEntityMatch[1]);
+    if (request.method === "GET")
+      return showBillingEntitySections(env.BILLING_DB, auth, requestId, code);
+    if (request.method === "PUT")
+      return updateBillingEntitySections(code, request, env, auth, requestId);
   }
   if (url.pathname === "/api/v1/invoice_custom_sections") {
     if (request.method === "POST") return createSection(request, env, auth, requestId);
@@ -58,6 +55,139 @@ export async function handleInvoiceCustomSectionRequest(
   if (request.method === "PUT") return updateSection(code, request, env, auth, requestId);
   if (request.method === "DELETE") return terminateSection(code, env, auth, requestId);
   return null;
+}
+
+async function showBillingEntitySections(
+  database: D1Database,
+  auth: AuthContext,
+  requestId: string,
+  code: string,
+) {
+  if (code === "default") return showDefaultSections(database, auth, requestId);
+  const entity = await findBillingEntitySectionVersion(database, auth.organizationId, code);
+  if (!entity) throw new ApiError(404, "billing_entity_not_found", "Billing entity was not found");
+  const sections = await listBillingEntityLinkedSections(database, entity.id, auth.organizationId);
+  return json(
+    {
+      billing_entity: {
+        lago_id: entity.id,
+        code: entity.code,
+        invoice_custom_sections: sections,
+        version_number: entity.invoice_custom_section_version,
+      },
+    },
+    { requestId },
+  );
+}
+
+async function updateBillingEntitySections(
+  code: string,
+  request: Request,
+  env: InvoiceCustomSectionEnv,
+  auth: AuthContext,
+  requestId: string,
+) {
+  if (code === "default") return updateDefaultSections(request, env, auth, requestId);
+  const input = objectAt(await parseJsonObject(request), "billing_entity");
+  rejectUnsupported(input, ["invoice_custom_section_codes"]);
+  const codes = normalizeCustomSectionCodes(input.invoice_custom_section_codes);
+  if (codes === undefined)
+    throw new ApiError(422, "validation_error", "invoice_custom_section_codes is required");
+  const sectionIds =
+    (await resolveCustomSectionIds(env.BILLING_DB, auth.organizationId, codes)) ?? [];
+  const entity = await findBillingEntitySectionVersion(env.BILLING_DB, auth.organizationId, code);
+  if (!entity) throw new ApiError(404, "billing_entity_not_found", "Billing entity was not found");
+  const currentIds = await linkedBillingEntitySectionIds(env.BILLING_DB, entity.id);
+  if (sameIds(currentIds, sectionIds))
+    return showBillingEntitySections(env.BILLING_DB, auth, requestId, code);
+
+  const now = new Date().toISOString();
+  const nextVersion = entity.invoice_custom_section_version + 1;
+  const event: DomainEvent = {
+    id: `billing-entity-invoice-custom-sections-updated:${entity.id}:v${nextVersion}`,
+    type: "billing_entity.invoice_custom_sections_updated",
+    version: 1,
+    aggregateType: "billing_entity",
+    aggregateId: entity.id,
+    aggregateVersion: nextVersion,
+    occurredAt: now,
+    causationId: requestId,
+    correlationId: requestId,
+    payload: {
+      organizationId: auth.organizationId,
+      code: entity.code,
+      invoiceCustomSectionIds: sectionIds,
+    },
+  };
+  const statements: D1PreparedStatement[] = [
+    env.BILLING_DB.prepare(
+      `UPDATE billing_entities
+       SET invoice_custom_section_version = invoice_custom_section_version + 1, updated_at = ?
+       WHERE id = ? AND organization_id = ? AND invoice_custom_section_version = ?
+         AND archived_at IS NULL`,
+    ).bind(now, entity.id, auth.organizationId, entity.invoice_custom_section_version),
+    env.BILLING_DB.prepare(
+      `DELETE FROM billing_entity_invoice_custom_sections
+       WHERE billing_entity_id = ? AND organization_id = ?
+         AND EXISTS (SELECT 1 FROM billing_entities WHERE id = ?
+                     AND invoice_custom_section_version = ? AND updated_at = ?)`,
+    ).bind(entity.id, auth.organizationId, entity.id, nextVersion, now),
+  ];
+  for (const sectionId of sectionIds) {
+    statements.push(
+      env.BILLING_DB.prepare(
+        `INSERT OR IGNORE INTO billing_entity_invoice_custom_sections
+         (billing_entity_id, invoice_custom_section_id, organization_id, created_at)
+         SELECT ?, ?, ?, ? FROM billing_entities
+         WHERE id = ? AND organization_id = ?
+           AND invoice_custom_section_version = ? AND updated_at = ?`,
+      ).bind(
+        entity.id,
+        sectionId,
+        auth.organizationId,
+        now,
+        entity.id,
+        auth.organizationId,
+        nextVersion,
+        now,
+      ),
+    );
+  }
+  statements.push(
+    env.BILLING_DB.prepare(
+      `INSERT INTO outbox_events
+       (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+        aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL FROM billing_entities
+       WHERE id = ? AND organization_id = ? AND invoice_custom_section_version = ?
+         AND updated_at = ?`,
+    ).bind(
+      event.id,
+      auth.organizationId,
+      event.type,
+      event.version,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateVersion,
+      event.causationId,
+      event.correlationId,
+      stableJson(event.payload),
+      event.occurredAt,
+      entity.id,
+      auth.organizationId,
+      nextVersion,
+      now,
+    ),
+  );
+  const results = await env.BILLING_DB.batch(statements);
+  if ((results[0]?.meta.changes ?? 0) < 1 || results.at(-1)?.meta.changes !== 1)
+    throw new ApiError(
+      409,
+      "billing_entity_version_conflict",
+      "Billing entity changed concurrently",
+    );
+  await env.DOMAIN_EVENTS.send(event);
+  return showBillingEntitySections(env.BILLING_DB, auth, requestId, code);
 }
 
 async function showDefaultSections(database: D1Database, auth: AuthContext, requestId: string) {
@@ -393,6 +523,11 @@ async function terminateSection(
          AND EXISTS (SELECT 1 FROM invoice_custom_sections WHERE id = ? AND version = ?)`,
     ).bind(section.id, auth.organizationId, section.id, section.version + 1),
     env.BILLING_DB.prepare(
+      `DELETE FROM billing_entity_invoice_custom_sections
+       WHERE invoice_custom_section_id = ? AND organization_id = ?
+         AND EXISTS (SELECT 1 FROM invoice_custom_sections WHERE id = ? AND version = ?)`,
+    ).bind(section.id, auth.organizationId, section.id, section.version + 1),
+    env.BILLING_DB.prepare(
       `DELETE FROM organization_invoice_custom_sections
        WHERE invoice_custom_section_id = ? AND organization_id = ?
          AND EXISTS (SELECT 1 FROM invoice_custom_sections WHERE id = ? AND version = ?)`,
@@ -406,7 +541,7 @@ async function terminateSection(
       now,
     ),
   ]);
-  if ((results[0]?.meta.changes ?? 0) < 1 || results[7]?.meta.changes !== 1)
+  if ((results[0]?.meta.changes ?? 0) < 1 || results[8]?.meta.changes !== 1)
     throw new ApiError(
       409,
       "invoice_custom_section_version_conflict",
@@ -432,6 +567,55 @@ function findOrganizationSectionVersion(database: D1Database, organizationId: st
     .prepare("SELECT invoice_custom_section_version FROM organizations WHERE id = ? LIMIT 1")
     .bind(organizationId)
     .first<{ invoice_custom_section_version: number }>();
+}
+
+function findBillingEntitySectionVersion(
+  database: D1Database,
+  organizationId: string,
+  code: string,
+) {
+  return database
+    .prepare(
+      `SELECT id, code, invoice_custom_section_version
+       FROM billing_entities
+       WHERE organization_id = ? AND code = ? AND archived_at IS NULL LIMIT 1`,
+    )
+    .bind(organizationId, code)
+    .first<{ id: string; code: string; invoice_custom_section_version: number }>();
+}
+
+async function linkedBillingEntitySectionIds(database: D1Database, billingEntityId: string) {
+  const rows = await database
+    .prepare(
+      `SELECT invoice_custom_section_id FROM billing_entity_invoice_custom_sections
+       WHERE billing_entity_id = ? ORDER BY invoice_custom_section_id`,
+    )
+    .bind(billingEntityId)
+    .all<{ invoice_custom_section_id: string }>();
+  return rows.results.map((row) => row.invoice_custom_section_id);
+}
+
+async function listBillingEntityLinkedSections(
+  database: D1Database,
+  billingEntityId: string,
+  organizationId: string,
+) {
+  const rows = await database
+    .prepare(
+      `SELECT section.id, section.organization_id, section.code, section.name,
+              section.description, section.details, section.display_name,
+              section.section_type, section.status, section.version, section.request_sha256,
+              section.created_at, section.updated_at, section.terminated_at
+       FROM invoice_custom_sections section
+       JOIN billing_entity_invoice_custom_sections link
+         ON link.invoice_custom_section_id = section.id
+       WHERE link.billing_entity_id = ? AND link.organization_id = ?
+         AND section.status = 'active'
+       ORDER BY section.name, section.code`,
+    )
+    .bind(billingEntityId, organizationId)
+    .all<SectionRow>();
+  return rows.results.map(serializeSection);
 }
 
 async function linkedSectionIds(

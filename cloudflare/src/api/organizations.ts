@@ -275,7 +275,7 @@ async function updateOrganization(
         ),
       organizationEvent(database, current.id, nextVersion, requestId, now, changedFields),
     ]);
-    if (result[0]?.meta.changes !== 1) {
+    if ((result[0]?.meta.changes ?? 0) < 1) {
       throw new ApiError(409, "stale_organization", "Organization changed concurrently");
     }
   } catch (error) {

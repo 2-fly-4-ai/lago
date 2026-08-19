@@ -174,15 +174,22 @@ describe("single billing entity compatibility API", () => {
     ).resolves.toEqual({ total: 1 });
   });
 
-  it("makes unsupported multi-entity and side-effecting behavior explicit", async () => {
+  it("creates independent entities while rejecting side-effecting provider configuration", async () => {
+    const created = await api("/api/v1/billing_entities", "POST", {
+      billing_entity: { code: "second", name: "Second Entity", default_currency: "EUR" },
+    });
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      billing_entity: { code: "second", name: "Second Entity", is_default: false },
+    });
+    expect((await api("/api/v1/billing_entities/second")).status).toBe(200);
+    const duplicate = await api("/api/v1/billing_entities", "POST", {
+      billing_entity: { code: "second", name: "Duplicate" },
+    });
+    expect(duplicate.status).toBe(422);
+    await expect(duplicate.json()).resolves.toMatchObject({ code: "value_already_exist" });
+
     const cases: Array<[string, string, unknown, string]> = [
-      [
-        "/api/v1/billing_entities",
-        "POST",
-        { billing_entity: { code: "second" } },
-        "multiple_billing_entities_unsupported",
-      ],
-      ["/api/v1/billing_entities/second", "GET", undefined, "unsupported_billing_entity"],
       [
         "/api/v1/billing_entities/default",
         "PUT",

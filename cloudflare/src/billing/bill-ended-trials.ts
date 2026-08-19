@@ -258,7 +258,7 @@ async function billEndedTrialSubscription(
   );
   try {
     const results = await env.BILLING_DB.batch(statements);
-    if (results[0]?.meta.changes !== 1 || results[1]?.meta.changes !== 1)
+    if (results[0]?.meta.changes !== 1 || (results[1]?.meta.changes ?? 0) < 1)
       throw new Error("trial_billing_conflict");
   } catch (error) {
     const current = await currentTrialState(env.BILLING_DB, subscription.id);

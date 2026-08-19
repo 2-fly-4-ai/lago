@@ -580,7 +580,7 @@ async function scheduleDowngrade(
   const linkCount = input.customSectionIds?.length ?? 0;
   const updateIndex = insertIndex + 1 + linkCount + nextUsageThresholds.length;
   if (
-    results[insertIndex]?.meta.changes !== 1 ||
+    (results[insertIndex]?.meta.changes ?? 0) < 1 ||
     (results[updateIndex]?.meta.changes ?? 0) < 1 ||
     results[updateIndex + 1]?.meta.changes !== 1
   ) {
