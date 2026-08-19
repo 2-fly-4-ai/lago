@@ -1459,7 +1459,8 @@ function supportedAggregation(value: string): SupportedAggregationType {
     value === "max_agg" ||
     value === "unique_count_agg" ||
     value === "weighted_sum_agg" ||
-    value === "latest_agg"
+    value === "latest_agg" ||
+    value === "custom_agg"
   ) {
     return value;
   }

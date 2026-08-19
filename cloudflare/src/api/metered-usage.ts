@@ -216,6 +216,7 @@ const SUPPORTED_AGGREGATIONS = new Set<SupportedAggregationType>([
   "unique_count_agg",
   "weighted_sum_agg",
   "latest_agg",
+  "custom_agg",
 ]);
 const SUPPORTED_CHARGE_MODELS = new Set([
   "standard",
@@ -3796,6 +3797,12 @@ function validateMetricConfiguration(
       throw new ApiError(422, "invalid_expression", "expression is invalid");
     }
   }
+  if (aggregationType === "custom_agg" && !expression)
+    throw new ApiError(
+      422,
+      "custom_aggregator_required",
+      "custom_agg requires a deterministic expression",
+    );
   if (aggregationType === "weighted_sum_agg") {
     if (weightedInterval !== "seconds")
       throw new ApiError(422, "validation_error", "weighted_interval is required");

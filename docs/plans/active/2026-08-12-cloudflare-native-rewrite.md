@@ -820,6 +820,31 @@ Acceptance:
       version `b5cc487d-1102-4d33-9a5d-1eda18b67d55` retain all disabled external-action gates and
       pass unauthenticated fail-closed plus authenticated synthetic browser QA.
 
+## User-approved broader compatibility tranche — 2026-08-19
+
+- [x] Replace the single-billing-entity compatibility view with tenant-scoped entities and persist
+      entity ownership through customers, subscription generations, invoices, taxes, numbering
+      configuration, and invoice custom-section defaults. Migration `0086` replays from empty D1;
+      the complete suite passes 376 tests.
+- [x] Add an operator-declared lost-dispute command with immutable audit evidence and database-level
+      prevention of new or advancing refunds after a lost dispute. This command does not submit
+      provider evidence or contact a provider.
+- [x] Add paid wallet funding as a fail-closed Stripe TEST-MODE operation: persist the pending lot
+      and provider operation before network I/O, use deterministic idempotency, accept signed
+      PaymentIntent reconciliation, and settle the wallet exactly once. `WALLET_FUNDING_MODE`,
+      Stripe network access, webhooks, and live mode remain disabled in committed configuration;
+      tests use only an injected in-memory transport.
+- [ ] Complete provider-funded recurring/threshold wallet rules and operator controls.
+- [ ] Add executable external tax and payment adapter contracts without embedding provider secrets.
+- [x] Replace deprecated arbitrary Ruby execution with `custom_agg` backed by the bounded usage
+      expression parser and deterministic decimal summation. Custom metrics now run inside the
+      Worker without `eval`, Ruby, a container, or user code; creation requires a validated
+      expression and the metered-usage lifecycle test proves ingestion and rating behavior.
+- [ ] Remove remaining retained-surface placeholders, complete UI/API parity evidence, run every
+      gate, then apply only isolated non-production migrations and deployments after preflight.
+- [ ] Provision a narrowly scoped Stripe restricted TEST key and webhook secret only after the
+      browser/CLI pairing succeeds; run synthetic Stripe lifecycle evidence with no production data.
+
 ## Verification Matrix
 
 | Risk                 | Required evidence                                                   |

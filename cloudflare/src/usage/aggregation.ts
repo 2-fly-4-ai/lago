@@ -6,7 +6,8 @@ export type SupportedAggregationType =
   | "max_agg"
   | "unique_count_agg"
   | "weighted_sum_agg"
-  | "latest_agg";
+  | "latest_agg"
+  | "custom_agg";
 
 export type UsageAggregationEvent = {
   id: string;
@@ -61,7 +62,7 @@ export function aggregateUsageResult(
   }
   if (!fieldName) throw new Error("aggregation_field_name_required");
 
-  if (type === "sum_agg") {
+  if (type === "sum_agg" || type === "custom_agg") {
     const units = events.reduce(
       (total, event) => total.add(decimalProperty(event, fieldName)),
       Decimal.zero(),

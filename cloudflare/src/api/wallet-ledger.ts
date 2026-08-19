@@ -575,8 +575,32 @@ async function createPaidTransaction(
   if (replay) {
     if (replay.request_sha256 !== requestHash)
       throw new ApiError(409, "idempotency_conflict", "Idempotency key input changed");
+    const operation = await env.BILLING_DB.prepare(
+      `SELECT id, status FROM provider_wallet_funding_operations
+       WHERE organization_id = ? AND wallet_transaction_id = ? LIMIT 1`,
+    )
+      .bind(auth.organizationId, replay.id)
+      .first<{ id: string; status: string }>();
+    if (operation && (operation.status === "pending" || operation.status === "failed")) {
+      const result = await createStripeWalletFunding(env, {
+        organizationId: auth.organizationId,
+        walletId: wallet.id,
+        walletTransactionId: replay.id,
+        amountMinor,
+        currency: wallet.currency,
+        paymentMethodId,
+        idempotencyKey: `stripe-wallet-funding:${operation.id}`,
+      });
+      await reconcilePaidTransaction(
+        env.BILLING_DB,
+        operation.id,
+        result,
+        new Date().toISOString(),
+      );
+    }
+    const resumed = await findTransaction(env.BILLING_DB, auth.organizationId, replay.id);
     return json(
-      { wallet_transactions: [await serializeTransaction(env.BILLING_DB, replay)] },
+      { wallet_transactions: [await serializeTransaction(env.BILLING_DB, resumed ?? replay)] },
       { requestId },
     );
   }
@@ -1732,20 +1756,59 @@ async function serializeTransaction(database: D1Database, row: WalletTransaction
 }
 
 async function serializeTransactions(database: D1Database, rows: WalletTransactionRow[]) {
-  const sections = await serializeAppliedCustomSectionsForResources(
-    database,
-    {
-      table: "wallet_transactions_invoice_custom_sections",
-      ownerColumn: "wallet_transaction_id",
-    },
-    rows.map((row) => row.id),
+  const ids = rows.map((row) => row.id);
+  const [sections, operations] = await Promise.all([
+    serializeAppliedCustomSectionsForResources(
+      database,
+      {
+        table: "wallet_transactions_invoice_custom_sections",
+        ownerColumn: "wallet_transaction_id",
+      },
+      ids,
+    ),
+    ids.length === 0
+      ? Promise.resolve({
+          results: [] as Array<{
+            wallet_transaction_id: string;
+            provider: string;
+            provider_payment_intent_id: string | null;
+            payment_method_id: string;
+            status: string;
+          }>,
+        })
+      : database
+          .prepare(
+            `SELECT wallet_transaction_id, provider, provider_payment_intent_id,
+                    payment_method_id, status
+             FROM provider_wallet_funding_operations
+             WHERE wallet_transaction_id IN (${ids.map(() => "?").join(", ")})`,
+          )
+          .bind(...ids)
+          .all<{
+            wallet_transaction_id: string;
+            provider: string;
+            provider_payment_intent_id: string | null;
+            payment_method_id: string;
+            status: string;
+          }>(),
+  ]);
+  const funding = new Map(
+    operations.results.map((operation) => [operation.wallet_transaction_id, operation]),
   );
-  return rows.map((row) => serializeTransactionRow(row, sections.get(row.id) ?? []));
+  return rows.map((row) =>
+    serializeTransactionRow(row, sections.get(row.id) ?? [], funding.get(row.id) ?? null),
+  );
 }
 
 function serializeTransactionRow(
   row: WalletTransactionRow,
   sections: SerializedAppliedCustomSection[],
+  funding: {
+    provider: string;
+    provider_payment_intent_id: string | null;
+    payment_method_id: string;
+    status: string;
+  } | null,
 ) {
   return {
     lago_id: row.id,
@@ -1774,7 +1837,12 @@ function serializeTransactionRow(
     metadata: parseJsonArray(row.metadata_json),
     name: row.name,
     applied_invoice_custom_sections: sections,
-    payment_method: { payment_method_id: null, payment_method_type: null },
+    provider_payment_intent_id: funding?.provider_payment_intent_id ?? null,
+    provider_status: funding?.status ?? null,
+    payment_method: {
+      payment_method_id: funding?.payment_method_id ?? null,
+      payment_method_type: funding?.provider ?? null,
+    },
   };
 }
 

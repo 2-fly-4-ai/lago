@@ -500,7 +500,7 @@ describe("Lago-compatible metered usage", () => {
         billable_metric: {
           name: "Expression tokens",
           code: "expression_tokens",
-          aggregation_type: "sum_agg",
+          aggregation_type: "custom_agg",
           field_name: "result",
           expression: "event.properties.left + event.properties.right",
         },
@@ -514,7 +514,7 @@ describe("Lago-compatible metered usage", () => {
         billable_metric: {
           name: "Expression tokens",
           code: "expression_tokens",
-          aggregation_type: "sum_agg",
+          aggregation_type: "custom_agg",
           field_name: "result",
           expression: "event.properties.left + event.properties.right",
         },
@@ -824,6 +824,21 @@ describe("Lago-compatible metered usage", () => {
   });
 
   it("rejects metric options the current usage engine cannot honor", async () => {
+    const missingCustomProgram = await api("/api/v1/billable_metrics", {
+      method: "POST",
+      body: {
+        billable_metric: {
+          name: "Missing custom program",
+          code: "missing_custom_program",
+          aggregation_type: "custom_agg",
+          field_name: "result",
+        },
+      },
+    });
+    expect(missingCustomProgram.status).toBe(422);
+    await expect(missingCustomProgram.json()).resolves.toMatchObject({
+      code: "custom_aggregator_required",
+    });
     for (const [suffix, unsupported] of [["recurring", { recurring: true }]] as const) {
       const response = await api("/api/v1/billable_metrics", {
         method: "POST",
