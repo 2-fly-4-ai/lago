@@ -7,6 +7,7 @@ const MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024;
 export type StripeRefundEnv = {
   STRIPE_NETWORK_MODE?: string;
   STRIPE_RESTRICTED_API_KEY?: string;
+  STRIPE_LIVEMODE_ALLOWED?: string;
 };
 
 export type StripeRefundInput = {
@@ -45,11 +46,18 @@ export async function createStripeRefund(
   if (!apiKey) {
     throw new ApiError(503, "stripe_not_configured", "Stripe restricted API key is not configured");
   }
-  if (!apiKey.startsWith("rk_")) {
+  if (!apiKey.startsWith("rk_test_")) {
     throw new ApiError(
       503,
-      "stripe_restricted_key_required",
-      "Stripe refund execution requires a restricted API key",
+      "stripe_test_restricted_key_required",
+      "Stripe refund execution requires a test-mode restricted API key",
+    );
+  }
+  if (env.STRIPE_LIVEMODE_ALLOWED === "1") {
+    throw new ApiError(
+      503,
+      "stripe_livemode_forbidden",
+      "This isolated integration never permits live-mode Stripe execution",
     );
   }
   validateRefundInput(input);

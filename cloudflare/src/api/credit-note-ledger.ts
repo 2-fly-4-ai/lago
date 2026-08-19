@@ -4,6 +4,7 @@ import type { DomainEvent } from "../domain-events";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import { createStripeRefund } from "../providers/stripe";
 import { Decimal } from "../rating/decimal";
 
 type CreditNoteRow = {
@@ -45,6 +46,11 @@ type CreditNoteMutationEnv = {
   BILLING_DB: D1Database;
   DOMAIN_EVENTS: Queue;
   CREDIT_NOTE_REFUND_MODE?: string;
+  STRIPE_NETWORK_MODE?: string;
+  STRIPE_RESTRICTED_API_KEY?: string;
+  STRIPE_ACCOUNT_CODE?: string;
+  STRIPE_ORGANIZATION_ID?: string;
+  STRIPE_LIVEMODE_ALLOWED?: string;
 };
 export type CalculatedCreditNoteItem = CreditNoteInputItem & {
   couponAdjustmentMinor: number;
@@ -116,6 +122,7 @@ export async function createCreditNote(
   env: CreditNoteMutationEnv,
   auth: AuthContext,
   requestId: string,
+  providerFetcher: typeof fetch = fetch,
 ): Promise<Response> {
   const input = objectAt(await parseJsonObject(request), "credit_note");
   rejectUnsupportedFields(input);
@@ -156,11 +163,23 @@ export async function createCreditNote(
         "idempotency_conflict",
         "Idempotency-Key was already used with different credit note values",
       );
+    await resumeStripeRefundIfNeeded(
+      env,
+      auth.organizationId,
+      existing.id,
+      reason,
+      providerFetcher,
+    );
+    const reconciled = await findCreditNoteByIdempotencyKey(
+      env.BILLING_DB,
+      auth.organizationId,
+      idempotencyKey,
+    );
     return json(
       {
         credit_note: await serializeCreditNote(
           env.BILLING_DB,
-          existing,
+          reconciled ?? existing,
           new URL(request.url).origin,
         ),
       },
@@ -225,11 +244,11 @@ export async function createCreditNote(
         "A provider refund cannot be issued after the invoice dispute was lost",
       );
     }
-    if (env.CREDIT_NOTE_REFUND_MODE !== "sandbox")
+    if (env.CREDIT_NOTE_REFUND_MODE !== "sandbox" && env.CREDIT_NOTE_REFUND_MODE !== "stripe_test")
       throw new ApiError(
         503,
         "credit_note_refunds_disabled",
-        "Credit note refunds are disabled unless the isolated sandbox adapter is enabled",
+        "Credit note refunds are disabled unless an isolated test adapter is enabled",
       );
     const refundable = await refundableAmount(env.BILLING_DB, auth.organizationId, invoice.id);
     if (requestedRefund > refundable)
@@ -254,6 +273,35 @@ export async function createCreditNote(
       "refund_payment_source_not_found",
       "Refund execution requires one successful payment that covers the requested amount",
     );
+  }
+  if (requestedRefund > 0 && env.CREDIT_NOTE_REFUND_MODE === "stripe_test") {
+    if (refundPayment?.provider !== "stripe") {
+      throw new ApiError(
+        422,
+        "stripe_refund_payment_required",
+        "Stripe test-mode refunds require a successful Stripe payment",
+      );
+    }
+    if (
+      !env.STRIPE_ACCOUNT_CODE?.trim() ||
+      refundPayment.provider_account_code !== env.STRIPE_ACCOUNT_CODE.trim()
+    ) {
+      throw new ApiError(
+        503,
+        "stripe_account_mapping_invalid",
+        "The payment does not match the configured Stripe test account",
+      );
+    }
+    if (
+      !env.STRIPE_ORGANIZATION_ID?.trim() ||
+      auth.organizationId !== env.STRIPE_ORGANIZATION_ID.trim()
+    ) {
+      throw new ApiError(
+        503,
+        "stripe_organization_mapping_invalid",
+        "The request does not match the configured synthetic Stripe organization",
+      );
+    }
   }
   const paidAmount = await successfulPaymentAmount(env.BILLING_DB, invoice.id);
   const outstandingAmount = Math.max(invoice.total_due_minor - paidAmount, 0);
@@ -292,7 +340,12 @@ export async function createCreditNote(
     .flatMap((item) => item.taxes)
     .reduce((sum, tax) => sum.add(Decimal.parse(tax.preciseAmountMinor)), Decimal.zero())
     .toString();
-  const refundStatus = requestedRefund > 0 ? "succeeded" : null;
+  const refundStatus =
+    requestedRefund > 0
+      ? env.CREDIT_NOTE_REFUND_MODE === "stripe_test"
+        ? "pending"
+        : "succeeded"
+      : null;
   const statements: D1PreparedStatement[] = [
     env.BILLING_DB.prepare(
       `INSERT INTO credit_notes
@@ -444,16 +497,20 @@ export async function createCreditNote(
           env.BILLING_DB.prepare(
             `INSERT INTO credit_note_refunds
              (id, organization_id, credit_note_id, invoice_id, provider_mode,
-              provider_refund_id, amount_minor, currency, status, created_at)
-             VALUES (?, ?, ?, ?, 'sandbox', ?, ?, ?, 'succeeded', ?)`,
+              provider_refund_id, amount_minor, currency, status, failure_message,
+              created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
           ).bind(
             await deterministicUuid("credit-note-refund", id),
             auth.organizationId,
             id,
             invoice.id,
-            `sandbox-refund:${id}`,
+            env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ? "stripe_test" : "sandbox",
+            env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ? null : `sandbox-refund:${id}`,
             requestedRefund,
             invoice.currency,
+            refundStatus,
+            now,
             now,
           ),
           env.BILLING_DB.prepare(
@@ -461,7 +518,7 @@ export async function createCreditNote(
              (id, organization_id, credit_note_id, invoice_id, payment_attempt_id, provider,
               provider_account_code, provider_payment_id, provider_refund_id, idempotency_key,
               request_sha256, amount_minor, currency, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'succeeded', ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).bind(
             await deterministicUuid("provider-refund-operation", id),
             auth.organizationId,
@@ -471,11 +528,14 @@ export async function createCreditNote(
             refundPayment!.provider,
             refundPayment!.provider_account_code,
             refundPayment!.provider_transaction_id,
-            `sandbox-refund:${id}`,
-            `sandbox:${idempotencyKey}`,
+            env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ? null : `sandbox-refund:${id}`,
+            env.CREDIT_NOTE_REFUND_MODE === "stripe_test"
+              ? `stripe-refund:${id}`
+              : `sandbox:${idempotencyKey}`,
             requestHash,
             requestedRefund,
             invoice.currency,
+            refundStatus,
             now,
             now,
           ),
@@ -512,6 +572,9 @@ export async function createCreditNote(
     );
   }
   await env.DOMAIN_EVENTS.send(event);
+  if (requestedRefund > 0 && env.CREDIT_NOTE_REFUND_MODE === "stripe_test") {
+    await resumeStripeRefundIfNeeded(env, auth.organizationId, id, reason, providerFetcher);
+  }
   const note = await findCreditNote(env.BILLING_DB, auth.organizationId, id);
   if (!note) throw new ApiError(500, "persistence_error", "Credit note was not persisted");
   return json(
@@ -1018,6 +1081,126 @@ async function refundablePaymentAttempt(
       provider_account_code: string;
       provider_transaction_id: string;
     }>();
+}
+
+async function resumeStripeRefundIfNeeded(
+  env: CreditNoteMutationEnv,
+  organizationId: string,
+  creditNoteId: string,
+  reason: string,
+  providerFetcher: typeof fetch,
+): Promise<void> {
+  if (env.CREDIT_NOTE_REFUND_MODE !== "stripe_test") return;
+  const operation = await env.BILLING_DB.prepare(
+    `SELECT id, invoice_id, provider_account_code, provider_payment_id, idempotency_key,
+            amount_minor, currency, status
+     FROM provider_refund_operations
+     WHERE organization_id = ? AND credit_note_id = ? AND provider = 'stripe'
+     LIMIT 1`,
+  )
+    .bind(organizationId, creditNoteId)
+    .first<{
+      id: string;
+      invoice_id: string;
+      provider_account_code: string;
+      provider_payment_id: string;
+      idempotency_key: string;
+      amount_minor: number;
+      currency: string;
+      status: string;
+    }>();
+  if (!operation || operation.status === "succeeded") return;
+  if (
+    operation.provider_account_code !== env.STRIPE_ACCOUNT_CODE?.trim() ||
+    organizationId !== env.STRIPE_ORGANIZATION_ID?.trim()
+  ) {
+    throw new ApiError(
+      503,
+      "stripe_refund_mapping_changed",
+      "The pending refund no longer matches the configured synthetic Stripe boundary",
+    );
+  }
+
+  try {
+    const result = await createStripeRefund(
+      env,
+      {
+        organizationId,
+        invoiceId: operation.invoice_id,
+        creditNoteId,
+        paymentIntentId: operation.provider_payment_id,
+        amountMinor: operation.amount_minor,
+        currency: operation.currency,
+        idempotencyKey: operation.idempotency_key,
+        reason: stripeRefundReason(reason),
+      },
+      providerFetcher,
+    );
+    const now = new Date().toISOString();
+    const financialStatus =
+      result.status === "succeeded"
+        ? "succeeded"
+        : result.status === "failed" || result.status === "canceled"
+          ? "failed"
+          : "pending";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE provider_refund_operations
+         SET provider_refund_id = ?, status = ?, failure_code = ?, failure_message = ?,
+             updated_at = ?
+         WHERE id = ? AND organization_id = ? AND status <> 'succeeded'`,
+      ).bind(
+        result.id,
+        result.status,
+        result.failureReason,
+        result.failureReason,
+        now,
+        operation.id,
+        organizationId,
+      ),
+      env.BILLING_DB.prepare(
+        `UPDATE credit_note_refunds
+         SET provider_refund_id = ?, status = ?, failure_message = ?, updated_at = ?
+         WHERE organization_id = ? AND credit_note_id = ? AND status <> 'succeeded'`,
+      ).bind(result.id, result.status, result.failureReason, now, organizationId, creditNoteId),
+      env.BILLING_DB.prepare(
+        `UPDATE credit_note_financials SET refund_status = ?
+         WHERE organization_id = ? AND credit_note_id = ? AND refund_status <> 'succeeded'`,
+      ).bind(financialStatus, organizationId, creditNoteId),
+    ]);
+  } catch (error) {
+    const now = new Date().toISOString();
+    const message = boundedProviderFailure(error);
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE provider_refund_operations
+         SET status = 'failed', failure_code = 'stripe_request_failed', failure_message = ?,
+             updated_at = ?
+         WHERE id = ? AND organization_id = ? AND status <> 'succeeded'`,
+      ).bind(message, now, operation.id, organizationId),
+      env.BILLING_DB.prepare(
+        `UPDATE credit_note_refunds
+         SET status = 'failed', failure_message = ?, updated_at = ?
+         WHERE organization_id = ? AND credit_note_id = ? AND status <> 'succeeded'`,
+      ).bind(message, now, organizationId, creditNoteId),
+      env.BILLING_DB.prepare(
+        `UPDATE credit_note_financials SET refund_status = 'failed'
+         WHERE organization_id = ? AND credit_note_id = ? AND refund_status <> 'succeeded'`,
+      ).bind(organizationId, creditNoteId),
+    ]);
+    throw error;
+  }
+}
+
+function stripeRefundReason(reason: string): "duplicate" | "fraudulent" | "requested_by_customer" {
+  if (reason === "duplicated_charge") return "duplicate";
+  if (reason === "fraudulent_charge") return "fraudulent";
+  return "requested_by_customer";
+}
+
+function boundedProviderFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Stripe refund request failed";
+  return message.slice(0, 500);
 }
 function requiredIdempotencyKey(request: Request) {
   const value = request.headers.get("Idempotency-Key")?.trim();

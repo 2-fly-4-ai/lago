@@ -20,7 +20,7 @@ describe("Stripe provider boundary", () => {
       createStripeRefund(
         {
           STRIPE_NETWORK_MODE: "disabled",
-          STRIPE_RESTRICTED_API_KEY: ["rk", "synthetic"].join("_"),
+          STRIPE_RESTRICTED_API_KEY: ["rk", "test", "synthetic"].join("_"),
         },
         refundInput,
         fetcher,
@@ -35,7 +35,7 @@ describe("Stripe provider boundary", () => {
       const headers = new Headers(init?.headers);
       expect(headers.get("Stripe-Version")).toBe(STRIPE_API_VERSION);
       expect(headers.get("Idempotency-Key")).toBe(refundInput.idempotencyKey);
-      expect(headers.get("Authorization")).toBe(`Bearer ${["rk", "synthetic"].join("_")}`);
+      expect(headers.get("Authorization")).toBe(`Bearer ${["rk", "test", "synthetic"].join("_")}`);
       const body = new URLSearchParams(String(init?.body));
       expect(Object.fromEntries(body)).toMatchObject({
         payment_intent: "pi_synthetic",
@@ -60,7 +60,7 @@ describe("Stripe provider boundary", () => {
       createStripeRefund(
         {
           STRIPE_NETWORK_MODE: "enabled",
-          STRIPE_RESTRICTED_API_KEY: ["rk", "synthetic"].join("_"),
+          STRIPE_RESTRICTED_API_KEY: ["rk", "test", "synthetic"].join("_"),
         },
         refundInput,
         fetcher,
@@ -91,7 +91,7 @@ describe("Stripe provider boundary", () => {
       createStripeRefund(
         {
           STRIPE_NETWORK_MODE: "enabled",
-          STRIPE_RESTRICTED_API_KEY: ["rk", "synthetic"].join("_"),
+          STRIPE_RESTRICTED_API_KEY: ["rk", "test", "synthetic"].join("_"),
         },
         refundInput,
         fetcher,

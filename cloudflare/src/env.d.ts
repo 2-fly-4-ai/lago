@@ -6,7 +6,7 @@ declare namespace Cloudflare {
     AUTHORIZE_NET_ENVIRONMENT?: "sandbox" | "production";
     AUTHORIZE_NET_SUCCESS_REDIRECT_URL?: string;
     PUBLIC_BASE_URL?: string;
-    CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox";
+    CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test";
     STRIPE_NETWORK_MODE?: "disabled" | "enabled";
     STRIPE_RESTRICTED_API_KEY?: string;
     STRIPE_WEBHOOKS_ENABLED?: string;
@@ -25,7 +25,7 @@ interface Env {
   AUTHORIZE_NET_ENVIRONMENT?: "sandbox" | "production";
   AUTHORIZE_NET_SUCCESS_REDIRECT_URL?: string;
   PUBLIC_BASE_URL?: string;
-  CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox";
+  CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test";
   STRIPE_NETWORK_MODE?: "disabled" | "enabled";
   STRIPE_RESTRICTED_API_KEY?: string;
   STRIPE_WEBHOOKS_ENABLED?: string;

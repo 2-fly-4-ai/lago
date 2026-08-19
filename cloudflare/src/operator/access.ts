@@ -19,7 +19,7 @@ export type OperatorEnv = {
   TEST_MIGRATIONS?: Env["TEST_MIGRATIONS"];
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
-  CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox";
+  CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test";
 };
 
 export type OperatorContext = {

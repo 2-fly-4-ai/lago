@@ -161,7 +161,7 @@ export async function handleStripeWebhook(
   }
   if (REFUND_EVENT_TYPES.has(event.type)) {
     statements.push(
-      refundUpdateStatement(env.BILLING_DB, organizationId, providerAccountCode, event, now),
+      ...refundUpdateStatements(env.BILLING_DB, organizationId, providerAccountCode, event, now),
     );
   }
 
@@ -314,32 +314,70 @@ async function disputeStatements(
   return statements;
 }
 
-function refundUpdateStatement(
+function refundUpdateStatements(
   database: D1Database,
   organizationId: string,
   providerAccountCode: string,
   event: StripeEvent,
   now: string,
-): D1PreparedStatement {
+): D1PreparedStatement[] {
   const refund = event.data.object;
   const providerRefundId = requiredText(refund.id, "refund.id");
   const status = normalizeRefundStatus(optionalText(refund.status));
-  return database
-    .prepare(
-      `UPDATE provider_refund_operations
+  const failureReason = optionalText(refund.failure_reason);
+  const financialStatus =
+    status === "succeeded"
+      ? "succeeded"
+      : status === "failed" || status === "canceled"
+        ? "failed"
+        : "pending";
+  return [
+    database
+      .prepare(
+        `UPDATE provider_refund_operations
        SET status = ?, failure_code = ?, failure_message = ?, updated_at = ?
        WHERE organization_id = ? AND provider = 'stripe' AND provider_account_code = ?
          AND provider_refund_id = ?`,
-    )
-    .bind(
-      status,
-      optionalText(refund.failure_reason),
-      optionalText(refund.failure_reason),
-      now,
-      organizationId,
-      providerAccountCode,
-      providerRefundId,
-    );
+      )
+      .bind(
+        status,
+        failureReason,
+        failureReason,
+        now,
+        organizationId,
+        providerAccountCode,
+        providerRefundId,
+      ),
+    database
+      .prepare(
+        `UPDATE credit_note_refunds
+         SET status = ?, failure_message = ?, updated_at = ?
+         WHERE organization_id = ? AND credit_note_id = (
+           SELECT credit_note_id FROM provider_refund_operations
+           WHERE organization_id = ? AND provider = 'stripe' AND provider_account_code = ?
+             AND provider_refund_id = ?
+         )`,
+      )
+      .bind(
+        status,
+        failureReason,
+        now,
+        organizationId,
+        organizationId,
+        providerAccountCode,
+        providerRefundId,
+      ),
+    database
+      .prepare(
+        `UPDATE credit_note_financials SET refund_status = ?
+         WHERE organization_id = ? AND credit_note_id = (
+           SELECT credit_note_id FROM provider_refund_operations
+           WHERE organization_id = ? AND provider = 'stripe' AND provider_account_code = ?
+             AND provider_refund_id = ?
+         )`,
+      )
+      .bind(financialStatus, organizationId, organizationId, providerAccountCode, providerRefundId),
+  ];
 }
 
 async function findPaymentAttempt(

@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
 import { createCreditNote } from "../src/api/credit-note-ledger";
 
@@ -444,6 +444,148 @@ describe("credit-note ledger", () => {
       status: "succeeded",
       amount_minor: 1000,
     });
+  });
+
+  it("persists a Stripe test refund intent before transport and reconciles idempotently", async () => {
+    expect(
+      (
+        await request("/api/v1/plans", "POST", {
+          plan: {
+            code: "credit-note-stripe-refund-plan",
+            name: "Stripe test refund plan",
+            interval: "monthly",
+            amount_cents: 1000,
+            amount_currency: "USD",
+            pay_in_advance: true,
+            tax_codes: [],
+          },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await createSubscription(
+          "credit-note-stripe-refund-source",
+          "credit-note-stripe-refund-plan",
+        )
+      ).status,
+    ).toBe(200);
+    const source = await sourceInvoice("credit-note-stripe-refund-source");
+    const now = new Date().toISOString();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO payment_attempts
+       (id, organization_id, invoice_id, provider, provider_account_code,
+        provider_transaction_id, idempotency_key, amount_minor, currency, status,
+        payment_type, version, created_at, updated_at)
+       VALUES ('credit-note-stripe-paid-attempt', 'org-credit-note', ?, 'stripe',
+               'stripe-test-account', 'pi_synthetic_refund', 'stripe-paid-attempt',
+               1000, 'USD', 'succeeded', 'provider', 1, ?, ?)`,
+    )
+      .bind(source.invoice_id, now, now)
+      .run();
+
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      await expect(
+        env.BILLING_DB.prepare(
+          `SELECT operation.status AS operation_status, refund.status AS refund_status,
+                  financial.refund_status AS financial_status
+           FROM provider_refund_operations operation
+           JOIN credit_note_refunds refund ON refund.credit_note_id = operation.credit_note_id
+           JOIN credit_note_financials financial
+             ON financial.credit_note_id = operation.credit_note_id
+           WHERE operation.invoice_id = ?`,
+        )
+          .bind(source.invoice_id)
+          .first(),
+      ).resolves.toEqual({
+        financial_status: "pending",
+        operation_status: "pending",
+        refund_status: "pending",
+      });
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Idempotency-Key")).toMatch(/^stripe-refund:/);
+      return Response.json({
+        id: "re_synthetic_refund",
+        payment_intent: "pi_synthetic_refund",
+        amount: 1000,
+        currency: "usd",
+        status: "succeeded",
+        failure_reason: null,
+      });
+    });
+    const stripeEnv = {
+      ...env,
+      CREDIT_NOTE_REFUND_MODE: "stripe_test",
+      STRIPE_NETWORK_MODE: "enabled",
+      STRIPE_RESTRICTED_API_KEY: ["rk", "test", "synthetic"].join("_"),
+      STRIPE_ACCOUNT_CODE: "stripe-test-account",
+      STRIPE_ORGANIZATION_ID: "org-credit-note",
+      STRIPE_LIVEMODE_ALLOWED: "0",
+    };
+    const stripeRequest = () =>
+      new Request("https://lago.test/api/v1/credit_notes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "stripe-test-refund",
+        },
+        body: JSON.stringify({
+          credit_note: {
+            invoice_id: source.invoice_id,
+            refund_amount_cents: 1000,
+            items: [{ fee_id: source.line_id, amount_cents: 1000 }],
+          },
+        }),
+      });
+    const auth = {
+      organizationId: "org-credit-note",
+      organizationExternalId: "credit-note-test",
+      apiKeyId: "key-credit-note",
+    };
+
+    const response = await createCreditNote(
+      stripeRequest(),
+      stripeEnv,
+      auth,
+      "stripe-test-refund-request",
+      fetcher,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      credit_note: { refund_status: "succeeded", refund_amount_cents: 1000 },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT operation.provider_refund_id, operation.status,
+                refund.provider_mode, refund.provider_refund_id AS projected_refund_id,
+                refund.status AS projected_status
+         FROM provider_refund_operations operation
+         JOIN credit_note_refunds refund ON refund.credit_note_id = operation.credit_note_id
+         WHERE operation.invoice_id = ?`,
+      )
+        .bind(source.invoice_id)
+        .first(),
+    ).resolves.toEqual({
+      provider_mode: "stripe_test",
+      provider_refund_id: "re_synthetic_refund",
+      projected_refund_id: "re_synthetic_refund",
+      projected_status: "succeeded",
+      status: "succeeded",
+    });
+
+    expect(
+      (
+        await createCreditNote(
+          stripeRequest(),
+          stripeEnv,
+          auth,
+          "stripe-test-refund-replay",
+          fetcher,
+        )
+      ).status,
+    ).toBe(200);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("refuses a provider refund after the invoice dispute was lost", async () => {
