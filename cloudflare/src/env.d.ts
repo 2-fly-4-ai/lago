@@ -8,6 +8,8 @@ declare namespace Cloudflare {
     PUBLIC_BASE_URL?: string;
     CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test";
     WALLET_FUNDING_MODE?: "disabled" | "stripe_test";
+    EXTERNAL_TAX_MODE?: "disabled" | "service_binding";
+    EXTERNAL_TAX_ADAPTER?: Fetcher;
     STRIPE_NETWORK_MODE?: "disabled" | "enabled";
     STRIPE_RESTRICTED_API_KEY?: string;
     STRIPE_WEBHOOKS_ENABLED?: string;
@@ -28,6 +30,8 @@ interface Env {
   PUBLIC_BASE_URL?: string;
   CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test";
   WALLET_FUNDING_MODE?: "disabled" | "stripe_test";
+  EXTERNAL_TAX_MODE?: "disabled" | "service_binding";
+  EXTERNAL_TAX_ADAPTER?: Fetcher;
   STRIPE_NETWORK_MODE?: "disabled" | "enabled";
   STRIPE_RESTRICTED_API_KEY?: string;
   STRIPE_WEBHOOKS_ENABLED?: string;

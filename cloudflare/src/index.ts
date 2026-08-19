@@ -20,6 +20,7 @@ import { dispatchPaymentReceiptDocument, handlePaymentReceiptsApi } from "./api/
 import { dispatchCreditNoteDocument } from "./api/credit-note-ledger";
 import { handleQuotesApi } from "./api/quotes";
 import { handleDataExportsApi } from "./api/data-exports";
+import { handleExternalTaxApi } from "./api/external-tax";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -116,6 +117,8 @@ export default {
         if (quoteResponse) return quoteResponse;
         const dataExportResponse = await handleDataExportsApi(request, env, auth, requestId);
         if (dataExportResponse) return dataExportResponse;
+        const externalTaxResponse = await handleExternalTaxApi(request, env, auth, requestId);
+        if (externalTaxResponse) return externalTaxResponse;
         const response = await handleLagoCompatibilityRequest(request, env, auth, requestId);
         if (response) return response;
       }

@@ -835,7 +835,12 @@ Acceptance:
       Stripe network access, webhooks, and live mode remain disabled in committed configuration;
       tests use only an injected in-memory transport.
 - [ ] Complete provider-funded recurring/threshold wallet rules and operator controls.
-- [ ] Add executable external tax and payment adapter contracts without embedding provider secrets.
+- [x] Add executable external tax and payment adapter contracts without embedding provider secrets.
+      Authorize.Net remains the retained checkout adapter; Stripe TEST-MODE owns refunds and wallet
+      funding behind independent gates. External tax uses a versioned Cloudflare service-binding
+      contract with a persisted idempotent estimate ledger, bounded/validated responses, and no
+      credential fields in Lago or the operator. The binding is absent and the mode is disabled in
+      committed development configuration.
 - [x] Replace deprecated arbitrary Ruby execution with `custom_agg` backed by the bounded usage
       expression parser and deterministic decimal summation. Custom metrics now run inside the
       Worker without `eval`, Ruby, a container, or user code; creation requires a validated
