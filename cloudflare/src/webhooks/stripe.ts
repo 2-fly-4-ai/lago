@@ -14,6 +14,12 @@ const REFUND_EVENT_TYPES = new Set([
   "refund.failed",
   "refund.canceled",
 ]);
+const WALLET_FUNDING_EVENT_TYPES = new Set([
+  "payment_intent.succeeded",
+  "payment_intent.processing",
+  "payment_intent.payment_failed",
+  "payment_intent.canceled",
+]);
 const DISPUTE_STATUSES = new Set([
   "warning_needs_response",
   "warning_under_review",
@@ -164,6 +170,17 @@ export async function handleStripeWebhook(
       ...refundUpdateStatements(env.BILLING_DB, organizationId, providerAccountCode, event, now),
     );
   }
+  if (WALLET_FUNDING_EVENT_TYPES.has(event.type)) {
+    statements.push(
+      ...(await walletFundingStatements(
+        env.BILLING_DB,
+        organizationId,
+        providerAccountCode,
+        event,
+        now,
+      )),
+    );
+  }
 
   try {
     await env.BILLING_DB.batch(statements);
@@ -188,6 +205,101 @@ export async function handleStripeWebhook(
     throw error;
   }
   return json({ received: true, replayed: false }, { requestId });
+}
+
+async function walletFundingStatements(
+  database: D1Database,
+  organizationId: string,
+  providerAccountCode: string,
+  event: StripeEvent,
+  now: string,
+): Promise<D1PreparedStatement[]> {
+  const intent = event.data.object;
+  const providerPaymentIntentId = requiredText(intent.id, "payment_intent.id");
+  const metadata = recordValue(intent.metadata);
+  const walletTransactionId = optionalText(metadata.lago_wallet_transaction_id);
+  const operation = await database
+    .prepare(
+      `SELECT id, wallet_id, wallet_transaction_id FROM provider_wallet_funding_operations
+       WHERE organization_id = ? AND provider = 'stripe' AND provider_account_code = ?
+         AND (provider_payment_intent_id = ? OR (? IS NOT NULL AND wallet_transaction_id = ?))
+       LIMIT 1`,
+    )
+    .bind(
+      organizationId,
+      providerAccountCode,
+      providerPaymentIntentId,
+      walletTransactionId,
+      walletTransactionId,
+    )
+    .first<{ id: string; wallet_id: string; wallet_transaction_id: string }>();
+  if (!operation) return [];
+  const status =
+    event.type === "payment_intent.succeeded"
+      ? "succeeded"
+      : event.type === "payment_intent.processing"
+        ? "processing"
+        : event.type === "payment_intent.canceled"
+          ? "canceled"
+          : "failed";
+  const failed = status === "failed" || status === "canceled";
+  const lastError = recordValue(intent.last_payment_error);
+  return [
+    database
+      .prepare(
+        `UPDATE provider_wallet_funding_operations
+         SET provider_payment_intent_id = COALESCE(provider_payment_intent_id, ?), status = ?,
+             client_secret = COALESCE(?, client_secret), failure_code = ?, failure_message = ?,
+             updated_at = ? WHERE id = ?`,
+      )
+      .bind(
+        providerPaymentIntentId,
+        status,
+        optionalText(intent.client_secret),
+        optionalText(lastError.code),
+        optionalText(lastError.message),
+        now,
+        operation.id,
+      ),
+    database
+      .prepare(
+        `UPDATE wallets SET balance_minor = balance_minor + (
+           SELECT amount_minor FROM provider_wallet_funding_operations WHERE id = ?
+         ), ongoing_balance_minor = ongoing_balance_minor + (
+           SELECT amount_minor FROM provider_wallet_funding_operations WHERE id = ?
+         ), version = version + 1, updated_at = ?
+         WHERE id = ? AND ? = 1 AND EXISTS (
+           SELECT 1 FROM wallet_transactions WHERE id = ? AND status = 'pending'
+         )`,
+      )
+      .bind(
+        operation.id,
+        operation.id,
+        now,
+        operation.wallet_id,
+        status === "succeeded" ? 1 : 0,
+        operation.wallet_transaction_id,
+      ),
+    database
+      .prepare(
+        `UPDATE wallet_transactions
+         SET status = CASE WHEN ? = 1 THEN 'settled' WHEN ? = 1 THEN 'failed' ELSE status END,
+             settled_at = CASE WHEN ? = 1 THEN ? ELSE settled_at END,
+             failed_at = CASE WHEN ? = 1 THEN ? ELSE failed_at END,
+             updated_at = ?
+         WHERE id = ? AND status = 'pending'`,
+      )
+      .bind(
+        status === "succeeded" ? 1 : 0,
+        failed ? 1 : 0,
+        status === "succeeded" ? 1 : 0,
+        now,
+        failed ? 1 : 0,
+        now,
+        now,
+        operation.wallet_transaction_id,
+      ),
+  ];
 }
 
 export async function validStripeSignature(

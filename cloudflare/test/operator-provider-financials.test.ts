@@ -119,4 +119,39 @@ describe("operator provider financials", () => {
     );
     await expect(response?.json()).resolves.toMatchObject({ payment_disputes: [] });
   });
+
+  it("records an operator-declared lost dispute and blocks later refunds", async () => {
+    const response = await handleOperatorProviderFinancialsRequest(
+      new Request(
+        "https://operator.test/api/operator/v1/payment-disputes/dispute-provider-financials/lose",
+        { method: "POST" },
+      ),
+      env.BILLING_DB,
+      organizationId,
+      "request-lose-dispute",
+    );
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toMatchObject({
+      payment_dispute: { lago_id: "dispute-provider-financials", status: "lost" },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT payment_dispute_lost_at FROM invoices
+         WHERE id = 'invoice-provider-financials'`,
+      ).first<{ payment_dispute_lost_at: string }>(),
+    ).resolves.toMatchObject({ payment_dispute_lost_at: expect.any(String) });
+    await expect(
+      env.BILLING_DB.prepare(
+        `INSERT INTO provider_refund_operations
+         (id, organization_id, invoice_id, payment_attempt_id, provider, provider_account_code,
+          provider_payment_id, idempotency_key, request_sha256, amount_minor, currency, status,
+          created_at, updated_at)
+         VALUES ('refund-after-lost', ?, 'invoice-provider-financials',
+                 'payment-provider-financials', 'stripe', 'stripe-synthetic',
+                 'pi_provider_financials', 'refund-after-lost', ?, 100, 'USD', 'pending', ?, ?)`,
+      )
+        .bind(organizationId, "c".repeat(64), new Date().toISOString(), new Date().toISOString())
+        .run(),
+    ).rejects.toThrow(/refund_unavailable_after_lost_dispute/);
+  });
 });

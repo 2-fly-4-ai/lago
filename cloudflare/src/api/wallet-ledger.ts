@@ -4,6 +4,7 @@ import type { DomainEvent } from "../domain-events";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import { createStripeWalletFunding } from "../providers/stripe";
 import { Decimal } from "../rating/decimal";
 import { WALLET_FEE_TYPES, type WalletFeeType } from "../billing/wallet-limitations";
 import {
@@ -108,7 +109,14 @@ type RecurringRuleMutation =
       skipSections: boolean;
     };
 
-type WalletLedgerEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">;
+type WalletLedgerEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS"> & {
+  WALLET_FUNDING_MODE?: string;
+  STRIPE_NETWORK_MODE?: string;
+  STRIPE_RESTRICTED_API_KEY?: string;
+  STRIPE_ACCOUNT_CODE?: string;
+  STRIPE_ORGANIZATION_ID?: string;
+  STRIPE_LIVEMODE_ALLOWED?: string;
+};
 
 export async function handleWalletLedgerRequest(
   request: Request,
@@ -387,11 +395,9 @@ async function createTransaction(
 ): Promise<Response> {
   const input = objectAt(await parseJsonObject(request), "wallet_transaction");
   const customSections = normalizeSubscriptionCustomSections(input.invoice_custom_section);
-  if (
-    input.paid_credits !== undefined ||
-    input.voided_credits !== undefined ||
-    input.payment_method !== undefined
-  )
+  if (input.paid_credits !== undefined)
+    return createPaidTransaction(input, request, env, auth, requestId);
+  if (input.voided_credits !== undefined || input.payment_method !== undefined)
     throw new ApiError(
       422,
       "unsupported_wallet_payment",
@@ -534,6 +540,202 @@ async function createTransaction(
     { wallet_transactions: [await serializeTransaction(env.BILLING_DB, transaction)] },
     { requestId },
   );
+}
+
+async function createPaidTransaction(
+  input: Record<string, unknown>,
+  request: Request,
+  env: WalletLedgerEnv,
+  auth: AuthContext,
+  requestId: string,
+): Promise<Response> {
+  if (env.WALLET_FUNDING_MODE !== "stripe_test")
+    throw new ApiError(503, "wallet_funding_disabled", "Provider wallet funding is disabled");
+  if (env.STRIPE_ORGANIZATION_ID?.trim() !== auth.organizationId)
+    throw new ApiError(503, "stripe_organization_mapping_invalid", "Stripe mapping is invalid");
+  const providerAccountCode = env.STRIPE_ACCOUNT_CODE?.trim();
+  if (!providerAccountCode)
+    throw new ApiError(503, "stripe_account_mapping_invalid", "Stripe account is not mapped");
+  if (input.granted_credits !== undefined || input.voided_credits !== undefined)
+    throw new ApiError(422, "wallet_funding_mix_invalid", "Paid credits must be funded separately");
+  const walletId = requiredString(input, "wallet_id");
+  const credits = positiveDecimal(input.paid_credits, "paid_credits");
+  const paymentMethodId = walletPaymentMethodId(input.payment_method);
+  const wallet = await findWallet(env.BILLING_DB, auth.organizationId, walletId);
+  if (!wallet || wallet.status !== "active")
+    throw new ApiError(404, "wallet_not_found", "Active wallet was not found");
+  const idempotencyKey = request.headers.get("Idempotency-Key")?.trim();
+  if (!idempotencyKey)
+    throw new ApiError(422, "idempotency_key_required", "Idempotency-Key is required");
+  const amountMinor = creditsToMinor(credits, wallet.rate_amount, wallet.currency_exponent);
+  const requestHash = await sha256Hex(
+    stableJson({ amountMinor, credits, paymentMethodId, walletId }),
+  );
+  const replay = await findTransactionByKey(env.BILLING_DB, auth.organizationId, idempotencyKey);
+  if (replay) {
+    if (replay.request_sha256 !== requestHash)
+      throw new ApiError(409, "idempotency_conflict", "Idempotency key input changed");
+    return json(
+      { wallet_transactions: [await serializeTransaction(env.BILLING_DB, replay)] },
+      { requestId },
+    );
+  }
+  const now = new Date().toISOString();
+  const id = await deterministicUuid(
+    "wallet-transaction",
+    `${auth.organizationId}:${idempotencyKey}`,
+  );
+  const operationId = await deterministicUuid("wallet-funding", id);
+  await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `INSERT INTO wallet_transactions
+       (id, organization_id, wallet_id, transaction_type, transaction_status, status, source,
+        amount_minor, credit_amount, remaining_minor, priority, wallet_version, idempotency_key,
+        request_sha256, name, created_at, updated_at, skip_invoice_custom_sections, metadata_json)
+       VALUES (?, ?, ?, 'inbound', 'purchased', 'pending', 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '[]')`,
+    ).bind(
+      id,
+      auth.organizationId,
+      wallet.id,
+      amountMinor,
+      credits,
+      amountMinor,
+      wallet.priority,
+      wallet.version,
+      idempotencyKey,
+      requestHash,
+      optionalString(input, "name"),
+      now,
+      now,
+    ),
+    env.BILLING_DB.prepare(
+      `INSERT INTO provider_wallet_funding_operations
+       (id, organization_id, wallet_id, wallet_transaction_id, provider,
+        provider_account_code, payment_method_id, idempotency_key, request_sha256,
+        amount_minor, credit_amount, currency, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'stripe', ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+    ).bind(
+      operationId,
+      auth.organizationId,
+      wallet.id,
+      id,
+      providerAccountCode,
+      paymentMethodId,
+      `stripe-wallet-funding:${operationId}`,
+      requestHash,
+      amountMinor,
+      credits,
+      wallet.currency,
+      now,
+      now,
+    ),
+  ]);
+  try {
+    const result = await createStripeWalletFunding(env, {
+      organizationId: auth.organizationId,
+      walletId: wallet.id,
+      walletTransactionId: id,
+      amountMinor,
+      currency: wallet.currency,
+      paymentMethodId,
+      idempotencyKey: `stripe-wallet-funding:${operationId}`,
+    });
+    await reconcilePaidTransaction(env.BILLING_DB, operationId, result, now);
+  } catch (error) {
+    await env.BILLING_DB.prepare(
+      `UPDATE provider_wallet_funding_operations
+       SET status = 'failed', failure_code = 'stripe_request_failed', failure_message = ?, updated_at = ?
+       WHERE id = ? AND status = 'pending'`,
+    )
+      .bind(
+        error instanceof Error ? error.message.slice(0, 500) : "Stripe request failed",
+        now,
+        operationId,
+      )
+      .run();
+    throw error;
+  }
+  const transaction = await findTransaction(env.BILLING_DB, auth.organizationId, id);
+  if (!transaction) throw new ApiError(500, "persistence_error", "Wallet funding disappeared");
+  return json(
+    { wallet_transactions: [await serializeTransaction(env.BILLING_DB, transaction)] },
+    { requestId },
+  );
+}
+
+function walletPaymentMethodId(value: unknown): string {
+  const candidate =
+    typeof value === "string"
+      ? value
+      : value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>).payment_method_id
+        : null;
+  if (typeof candidate !== "string" || !candidate.trim())
+    throw new ApiError(422, "payment_method_required", "payment_method_id is required");
+  return candidate.trim();
+}
+
+async function reconcilePaidTransaction(
+  database: D1Database,
+  operationId: string,
+  result: Awaited<ReturnType<typeof createStripeWalletFunding>>,
+  now: string,
+): Promise<void> {
+  const settled = result.status === "succeeded";
+  await database.batch([
+    database
+      .prepare(
+        `UPDATE provider_wallet_funding_operations
+       SET provider_payment_intent_id = ?, status = ?, client_secret = ?, failure_code = ?,
+           failure_message = ?, updated_at = ? WHERE id = ?`,
+      )
+      .bind(
+        result.id,
+        result.status,
+        result.clientSecret,
+        result.failureCode,
+        result.failureMessage,
+        now,
+        operationId,
+      ),
+    database
+      .prepare(
+        `UPDATE wallets SET balance_minor = balance_minor + (
+         SELECT amount_minor FROM provider_wallet_funding_operations WHERE id = ?
+       ), ongoing_balance_minor = ongoing_balance_minor + (
+         SELECT amount_minor FROM provider_wallet_funding_operations WHERE id = ?
+       ), version = version + 1, updated_at = ?
+       WHERE id = (SELECT wallet_id FROM provider_wallet_funding_operations WHERE id = ?)
+         AND ? = 1 AND EXISTS (
+           SELECT 1 FROM provider_wallet_funding_operations operation
+           JOIN wallet_transactions transaction_row
+             ON transaction_row.id = operation.wallet_transaction_id
+           WHERE operation.id = ? AND transaction_row.status = 'pending'
+         )`,
+      )
+      .bind(operationId, operationId, now, operationId, settled ? 1 : 0, operationId),
+    database
+      .prepare(
+        `UPDATE wallet_transactions
+       SET status = CASE WHEN ? = 1 THEN 'settled'
+                         WHEN ? = 1 THEN 'failed' ELSE status END,
+           settled_at = CASE WHEN ? = 1 THEN ? ELSE settled_at END,
+           failed_at = CASE WHEN ? = 1 THEN ? ELSE failed_at END,
+           updated_at = ?
+       WHERE id = (SELECT wallet_transaction_id FROM provider_wallet_funding_operations WHERE id = ?)
+         AND status = 'pending'`,
+      )
+      .bind(
+        settled ? 1 : 0,
+        result.status === "failed" || result.status === "canceled" ? 1 : 0,
+        settled ? 1 : 0,
+        now,
+        result.status === "failed" || result.status === "canceled" ? 1 : 0,
+        now,
+        now,
+        operationId,
+      ),
+  ]);
 }
 
 async function listWallets(

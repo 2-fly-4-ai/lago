@@ -1,4 +1,5 @@
 import { ApiError, json } from "../http";
+import { stableJson } from "../json";
 
 type DisputeRow = {
   id: string;
@@ -47,9 +48,18 @@ export async function handleOperatorProviderFinancialsRequest(
   requestId: string,
 ): Promise<Response | null> {
   const pathname = new URL(request.url).pathname;
+  const loseDisputeMatch = pathname.match(/^\/api\/operator\/v1\/payment-disputes\/([^/]+)\/lose$/);
   const disputeMatch = pathname.match(/^\/api\/operator\/v1\/payment-disputes(?:\/([^/]+))?$/);
   const refundMatch = pathname.match(/^\/api\/operator\/v1\/provider-refunds(?:\/([^/]+))?$/);
-  if (!disputeMatch && !refundMatch) return null;
+  if (!loseDisputeMatch && !disputeMatch && !refundMatch) return null;
+  if (loseDisputeMatch?.[1] && request.method === "POST") {
+    return loseDispute(
+      database,
+      organizationId,
+      decodeURIComponent(loseDisputeMatch[1]),
+      requestId,
+    );
+  }
   if (request.method !== "GET") {
     throw new ApiError(
       405,
@@ -71,6 +81,70 @@ export async function handleOperatorProviderFinancialsRequest(
     refundMatch?.[1] ? decodeURIComponent(refundMatch[1]) : null,
     requestId,
   );
+}
+
+async function loseDispute(
+  database: D1Database,
+  organizationId: string,
+  id: string,
+  requestId: string,
+): Promise<Response> {
+  const current = await database
+    .prepare(
+      `SELECT id, invoice_id, status FROM payment_disputes
+       WHERE id = ? AND organization_id = ? LIMIT 1`,
+    )
+    .bind(id, organizationId)
+    .first<{ id: string; invoice_id: string | null; status: string }>();
+  if (!current)
+    throw new ApiError(404, "payment_dispute_not_found", "Payment dispute was not found");
+  if (!current.invoice_id)
+    throw new ApiError(422, "payment_dispute_unmatched", "Payment dispute has no matched invoice");
+  if (current.status !== "lost") {
+    const now = new Date().toISOString();
+    const eventId = `payment-dispute-lost:${id}`;
+    const results = await database.batch([
+      database
+        .prepare(
+          `UPDATE payment_disputes SET status = 'lost', updated_at = ?
+           WHERE id = ? AND organization_id = ? AND status != 'lost'`,
+        )
+        .bind(now, id, organizationId),
+      database
+        .prepare(
+          `UPDATE invoices
+           SET payment_dispute_lost_at = COALESCE(payment_dispute_lost_at, ?),
+               version = version + CASE WHEN payment_dispute_lost_at IS NULL THEN 1 ELSE 0 END,
+               updated_at = CASE WHEN payment_dispute_lost_at IS NULL THEN ? ELSE updated_at END
+           WHERE id = ? AND organization_id = ?`,
+        )
+        .bind(now, now, current.invoice_id, organizationId),
+      database
+        .prepare(
+          `INSERT INTO outbox_events
+           (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
+            aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
+           SELECT ?, ?, 'payment_dispute.lost', 1, 'payment_dispute', ?, 1, ?, ?, ?, ?, NULL
+           WHERE EXISTS (SELECT 1 FROM payment_disputes WHERE id = ? AND organization_id = ?
+                         AND status = 'lost')
+           ON CONFLICT(event_id) DO NOTHING`,
+        )
+        .bind(
+          eventId,
+          organizationId,
+          id,
+          requestId,
+          requestId,
+          stableJson({ disputeId: id, invoiceId: current.invoice_id, source: "operator" }),
+          now,
+          id,
+          organizationId,
+        ),
+    ]);
+    if ((results[0]?.meta.changes ?? 0) < 1 || (results[1]?.meta.changes ?? 0) < 1)
+      throw new ApiError(409, "payment_dispute_conflict", "Payment dispute changed concurrently");
+  }
+  return disputes(database, organizationId, id, requestId);
 }
 
 async function disputes(

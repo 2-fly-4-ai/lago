@@ -10,6 +10,15 @@ const signingSecret = "synthetic-webhook-signing-secret";
 beforeEach(async () => {
   const now = "2026-08-18T00:00:00.000Z";
   await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare("DELETE FROM provider_refund_operations WHERE organization_id = ?").bind(
+      organizationId,
+    ),
+    env.BILLING_DB.prepare("DELETE FROM payment_disputes WHERE organization_id = ?").bind(
+      organizationId,
+    ),
+    env.BILLING_DB.prepare(
+      "UPDATE invoices SET payment_dispute_lost_at = NULL WHERE organization_id = ?",
+    ).bind(organizationId),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO organizations (id, external_id, name, created_at, updated_at)
        VALUES (?, 'stripe-webhook-test', 'Stripe Webhook Test', ?, ?)`,
@@ -180,6 +189,69 @@ describe("Stripe webhooks", () => {
         "SELECT status, failure_code FROM provider_refund_operations WHERE id = 'refund-operation-synthetic'",
       ).first(),
     ).resolves.toEqual({ status: "succeeded", failure_code: null });
+  });
+
+  it("settles a pending purchased wallet lot exactly once from a signed PaymentIntent", async () => {
+    const now = new Date().toISOString();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO wallets
+         (id, organization_id, customer_id, code, currency, currency_exponent, rate_amount,
+          priority, balance_minor, consumed_minor, status, version, request_sha256,
+          created_at, updated_at)
+         VALUES ('wallet-stripe-funding', ?, 'customer-stripe-webhook', 'stripe-funding',
+                 'USD', 2, '1', 50, 0, 0, 'active', 1, ?, ?, ?)`,
+      ).bind(organizationId, "d".repeat(64), now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO wallet_transactions
+         (id, organization_id, wallet_id, transaction_type, transaction_status, status, source,
+          amount_minor, credit_amount, remaining_minor, priority, wallet_version,
+          idempotency_key, request_sha256, created_at, updated_at)
+         VALUES ('wallet-transaction-stripe-funding', ?, 'wallet-stripe-funding', 'inbound',
+                 'purchased', 'pending', 'manual', 2500, '25', 2500, 50, 1,
+                 'wallet-funding-request', ?, ?, ?)`,
+      ).bind(organizationId, "e".repeat(64), now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO provider_wallet_funding_operations
+         (id, organization_id, wallet_id, wallet_transaction_id, provider,
+          provider_account_code, payment_method_id, idempotency_key, request_sha256,
+          amount_minor, credit_amount, currency, status, created_at, updated_at)
+         VALUES ('wallet-funding-operation', ?, 'wallet-stripe-funding',
+                 'wallet-transaction-stripe-funding', 'stripe', ?, 'pm_card_visa',
+                 'wallet-funding-operation-key', ?, 2500, '25', 'USD', 'pending', ?, ?)`,
+      ).bind(organizationId, accountCode, "f".repeat(64), now, now),
+    ]);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const body = JSON.stringify({
+      id: "evt_wallet_funding_succeeded",
+      type: "payment_intent.succeeded",
+      created: timestamp,
+      livemode: false,
+      data: {
+        object: {
+          id: "pi_wallet_funding_synthetic",
+          status: "succeeded",
+          metadata: { lago_wallet_transaction_id: "wallet-transaction-stripe-funding" },
+        },
+      },
+    });
+    expect((await receive(body, timestamp, "request-wallet-funding")).status).toBe(200);
+    expect((await receive(body, timestamp, "request-wallet-funding-replay")).status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT wallet.balance_minor, transaction_row.status AS transaction_status,
+                operation.status AS operation_status
+         FROM wallets wallet
+         JOIN wallet_transactions transaction_row ON transaction_row.wallet_id = wallet.id
+         JOIN provider_wallet_funding_operations operation
+           ON operation.wallet_transaction_id = transaction_row.id
+         WHERE wallet.id = 'wallet-stripe-funding'`,
+      ).first(),
+    ).resolves.toEqual({
+      balance_minor: 2500,
+      transaction_status: "settled",
+      operation_status: "succeeded",
+    });
   });
 
   it("enforces the five-minute signature tolerance", async () => {

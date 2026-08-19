@@ -452,6 +452,10 @@ export async function handleOperatorRequest(
 
     if (/^\/api\/operator\/v1\/(?:payment-disputes|provider-refunds)(?:\/|$)/.test(url.pathname)) {
       const operator = await authenticateOperatorAccess(request, env, keySet);
+      if (request.method !== "GET") {
+        assertOperatorAdmin(operator);
+        assertOperatorMutationRequest(request);
+      }
       const response = await handleOperatorProviderFinancialsRequest(
         request,
         env.BILLING_DB,

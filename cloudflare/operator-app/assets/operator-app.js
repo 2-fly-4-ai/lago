@@ -6435,6 +6435,30 @@ function renderPaymentDisputes(disputes) {
       cell.textContent = safeText(value, "—");
       row.append(cell);
     }
+    const actions = document.createElement("td");
+    actions.className = "actions-column";
+    if (state.role === "admin" && dispute.invoice_id && dispute.status !== "lost") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "row-action danger";
+      button.textContent = "Mark lost";
+      button.addEventListener("click", async () => {
+        if (!window.confirm("Mark this dispute as lost and block new provider refunds?")) return;
+        button.disabled = true;
+        try {
+          await requestJson(
+            `${endpoints.paymentDisputes}/${encodeURIComponent(dispute.lago_id)}/lose`,
+            { method: "POST" },
+          );
+          await loadWorkspace();
+        } catch (error) {
+          showPageError(errorMessage(error));
+          button.disabled = false;
+        }
+      });
+      actions.append(button);
+    } else actions.textContent = state.role === "admin" ? "No action" : "Read only";
+    row.append(actions);
     elements.paymentDisputesTableBody.append(row);
   }
 }

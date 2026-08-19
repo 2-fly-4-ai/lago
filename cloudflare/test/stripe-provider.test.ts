@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createStripeRefund, STRIPE_API_VERSION } from "../src/providers/stripe";
+import {
+  createStripeRefund,
+  createStripeWalletFunding,
+  STRIPE_API_VERSION,
+} from "../src/providers/stripe";
 
 const refundInput = {
   organizationId: "org-synthetic",
@@ -97,6 +101,46 @@ describe("Stripe provider boundary", () => {
         fetcher,
       ),
     ).resolves.toMatchObject({ status: "requires_action" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("builds a test-only wallet PaymentIntent with deterministic metadata", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe("https://api.stripe.com/v1/payment_intents");
+      const body = new URLSearchParams(String(init?.body));
+      expect(Object.fromEntries(body)).toMatchObject({
+        amount: "2500",
+        currency: "usd",
+        payment_method: "pm_card_visa",
+        confirm: "true",
+        "metadata[lago_organization_id]": "org-synthetic",
+        "metadata[lago_wallet_id]": "wallet-synthetic",
+        "metadata[lago_wallet_transaction_id]": "transaction-synthetic",
+      });
+      return Response.json({
+        id: "pi_wallet_synthetic",
+        status: "succeeded",
+        client_secret: "pi_wallet_synthetic_secret_synthetic",
+      });
+    });
+    await expect(
+      createStripeWalletFunding(
+        {
+          STRIPE_NETWORK_MODE: "enabled",
+          STRIPE_RESTRICTED_API_KEY: ["rk", "test", "synthetic"].join("_"),
+        },
+        {
+          organizationId: "org-synthetic",
+          walletId: "wallet-synthetic",
+          walletTransactionId: "transaction-synthetic",
+          amountMinor: 2500,
+          currency: "USD",
+          paymentMethodId: "pm_card_visa",
+          idempotencyKey: "wallet-funding-synthetic",
+        },
+        fetcher,
+      ),
+    ).resolves.toMatchObject({ id: "pi_wallet_synthetic", status: "succeeded" });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
