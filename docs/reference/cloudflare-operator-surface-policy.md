@@ -1,6 +1,6 @@
 # Cloudflare Operator Surface Policy
 
-Verified: 2026-08-18
+Verified: 2026-08-22
 
 This policy controls which parts of the pinned Lago React/Apollo console may become visible from
 the container-free Cloudflare Worker. It is evidence for M8, not authorization to expose a screen,
@@ -16,9 +16,35 @@ The complete item-level inventory remains generated in
 The deployed API Worker still serves the script-free migration shell. The separate operator Worker
 is deployed behind its approved Cloudflare Access application. Its native module app uses 22 tested
 membership-scoped REST route families and has no GraphQL client or browser credential input/storage.
-The generated inventory classifies every legacy operation as disabled, blocked, external, not-used,
-retired, or deferred and records the REST replacements separately. The legacy React application
-must not be built or uploaded wholesale.
+The generated inventory preserves each legacy operation's historical migration classification and
+records the REST replacements separately. The authoritative parity ledger now maps all 503 original
+operations and all 159 original route constants to executable Cloudflare behavior and evidence. The
+legacy React application must not be built or uploaded wholesale.
+
+## Approved product decision: no screen retirement
+
+On 2026-08-22, the product owner selected the retain-by-default policy: no original Lago product
+screen or workflow is approved for retirement. Historical `blocked`, `external`, `not-used`,
+`retired`, or `deferred` inventory labels are implementation-history evidence only and cannot be
+used to omit a product surface.
+
+This decision means:
+
+- every original product route stays represented by an executable Cloudflare-native surface or a
+  named Cloudflare-native replacement;
+- a disabled external action remains visibly safety-disabled on its retained surface rather than
+  making the screen disappear;
+- Cloudflare Access may replace Lago password/social/Okta credential handling, but the identity,
+  invitation, team, role, authentication-settings, and security-log workflows remain product
+  surfaces;
+- the development-only design-system route remains available as source/reference tooling and is
+  not classified as a retired customer/operator product screen;
+- future removal of any named product screen requires a new explicit product decision and a
+  rollback entry. Silence, lack of a current consumer, or an unavailable provider is not approval.
+
+The generated authoritative ledger in `cloudflare-operator-parity-ledger.md` is the enforcement
+record: all 503 operations and 159 routes are completion-eligible only through executable evidence,
+not through an omission classification.
 
 ## Screen admission rule
 
@@ -87,16 +113,17 @@ Current platform references:
 | Customer portal                                                                                                                                                   | Retained as a separate Worker       | Operator-created, hashed, expiring portal tokens reach a customer-safe projection Worker; tokenless requests fail closed and no operator Access credential is reused.                              |
 | Login, signup, invitation, password reset, Okta, team, role, and authentication settings                                                                          | Replaced by Access-native identity  | Cloudflare Access handles authentication; D1 owns membership/invitation/role policy, while password and Okta credential screens are intentionally not duplicated.                                  |
 | Feature and entitlement screens                                                                                                                                   | Retained Lago catalog               | Lago-owned feature, privilege, and plan-entitlement configuration is tenant-scoped in D1. `serp-auth` remains only a future projection consumer and is not modified here.                          |
-| Adyen, Cashfree, Flutterwave, GoCardless, MoneyHash, and Lago-managed Stripe screens                                                                              | Not used for verified SERP scope    | Read-only consumer audit found direct provider ownership outside Lago and no Lago API dependency. Reintroduction requires a new verified consumer contract and disabled-by-default provider slice. |
-| Anrok, Avalara, HubSpot, NetSuite, Salesforce, Xero, Lago tax management, and Lago-managed email screens                                                          | Not used for verified SERP scope    | A secret-safe integration registry preserves visible configuration structure, but no unverified external side effect is enabled.                                                                   |
+| Adyen, Cashfree, Flutterwave, GoCardless, MoneyHash, and Lago-managed Stripe screens                                                                              | Retained, safety-disabled           | Their configuration families remain represented in the secret-safe integration registry and settings UI. Provider calls remain disabled until separately approved.                                |
+| Anrok, Avalara, HubSpot, NetSuite, Salesforce, Xero, Lago tax management, and Lago-managed email screens                                                          | Retained, safety-disabled           | The secret-safe integration registry preserves their visible configuration structure, while unverified external side effects remain disabled.                                                      |
 | Lago Assistant                                                                                                                                                    | Retained read-only                  | Workers AI streaming chat and D1 history are Access- and tenant-scoped; aggregate context is read-only and no billing mutation tools are exposed.                                                  |
-| Authorize.Net configuration                                                                                                                                       | Blocked, provider behavior retained | Checkout/reconciliation behavior is retained behind safety gates, but browser secret entry and provider credential storage are not configured or approved.                                         |
-| Usage alerts and entitlement/progressive-billing editor routes                                                                                                    | Not used until separately retained  | Core progressive invoice behavior exists; the premium alert/entitlement UI contracts do not have a verified SERP consumer.                                                                         |
-| Development design-system route                                                                                                                                   | Retire from deployed build          | It is explicitly development-only and is not an operator workflow. Source may remain as legacy visual reference.                                                                                   |
+| Authorize.Net configuration                                                                                                                                       | Retained, safety-disabled           | Configuration structure and checkout/reconciliation behavior are retained behind safety gates; browser secret entry and provider credential storage are not configured or approved.                |
+| Usage alerts and entitlement/progressive-billing editor routes                                                                                                    | Retained                            | Alert, feature, privilege, plan-entitlement, and progressive-billing surfaces remain represented by tested Cloudflare-native contracts; external actions remain gated.                             |
+| Development design-system route                                                                                                                                   | Retained as development reference   | It is not a customer/operator production workflow and is not deployed in the protected operator bundle, but its source/reference role is preserved rather than classified as product retirement.    |
 | Error, forbidden, and migration status states                                                                                                                     | Retain                              | These are local static UI states and must not call a backend operation merely to render.                                                                                                           |
 
-`not used` is a scoped evidence statement, not an irreversible deletion. It means the Cloudflare
-operator bundle omits the route and code until a verified SERP consumer changes the disposition.
+Historical `not used` labels remain useful discovery evidence, but the approved product policy does
+not permit them to remove a product route. Disabled provider operations stay fail-closed while their
+screen-level structure remains represented.
 
 ## Rollout order
 
@@ -184,8 +211,8 @@ operator bundle omits the route and code until a verified SERP consumer changes 
    bounded screen.
 6. Add analytics/logging only after their bounded read models and retention/redaction contracts
    exist.
-7. Remove a legacy screen from the product map only after its `not used`, `external`, or `retire`
-   rationale has explicit product approval.
+7. Do not remove a legacy product screen. Any future exception requires a new explicit product
+   decision naming the screen, rationale, replacement or user impact, evidence, and rollback path.
 
 ## Rollback
 

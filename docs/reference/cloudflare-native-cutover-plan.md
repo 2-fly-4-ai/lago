@@ -127,6 +127,8 @@ the canary API key. Never delete production Worker/D1/R2 evidence during rollbac
 
 Legacy Rails, PostgreSQL, Redis, Sidekiq, and containers remain recoverable until a separately
 approved retirement review confirms: two production-authority cycles after full cutover, zero
-reverse-journal lag, completed provider settlement/reconciliation, expired rollback window, and an
-approved screen/feature retirement ledger. Synthetic cycles prove staging readiness but do not by
-themselves authorize legacy deletion.
+reverse-journal lag, completed provider settlement/reconciliation, and an expired rollback window.
+The approved product baseline retires no original Lago screen or workflow, so the Cloudflare-native
+surface ledger must remain complete at retirement time. Any future screen exception requires a new
+explicit product decision. Synthetic cycles prove staging readiness but do not by themselves
+authorize legacy deletion.

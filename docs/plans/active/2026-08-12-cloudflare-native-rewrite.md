@@ -675,12 +675,15 @@ Acceptance:
       memory, and contains no GraphQL, bearer-login, browser credential storage, or auth bypass.
       Remote deployment remains gated on the approved Access policy and synthetic membership proof.
 - [x] Replace ActionCable subscriptions with Durable Object WebSockets or SSE where retained. The
-      only pinned frontend GraphQL subscription belongs to the non-retained AI-agent integration;
-      no retained operator workflow requires ActionCable, WebSockets, or SSE.
-- [ ] Mark retired screens explicitly with approved product rationale. The proposed retain,
-      blocked, external-owner, not-used, and retirement policy plus screen admission/rollback rules
-      is documented in `docs/reference/cloudflare-operator-surface-policy.md`; final legacy-screen
-      retirement remains pending explicit product approval.
+      only pinned frontend GraphQL subscription belongs to the retained AI assistant and is replaced
+      by its tenant-scoped Workers AI streaming contract; no retained workflow depends on
+      ActionCable.
+- [x] Resolve the legacy-screen retirement decision. The approved product policy is to retire no
+      original Lago product screen or workflow. Every original route remains represented by an
+      executable Cloudflare-native surface or named replacement; disabled external actions remain
+      visible and fail closed. Any future exception requires a new explicit screen-specific product
+      decision and rollback entry. The decision and enforcement rule are recorded in
+      `docs/reference/cloudflare-operator-surface-policy.md` and the authoritative parity ledger.
 
 Acceptance:
 
@@ -3609,3 +3612,8 @@ resource and mutation described.
   discovery, provider metadata, hosted-URL shape, and token hashing with an in-memory sandbox
   transport. No legacy containers or provider network were required. Production-like shadowing
   remains separately approval-gated; no production data or authority was accessed.
+- 2026-08-22: Product decision recorded: no original Lago product screen or workflow is approved
+  for retirement. Historical blocked/external/not-used/retired/deferred labels no longer authorize
+  omission. All original routes must remain executable Cloudflare-native surfaces or named
+  Cloudflare-native replacements, with unavailable external actions shown as safety-disabled. Any
+  future exception requires a new screen-specific approval and rollback entry.
