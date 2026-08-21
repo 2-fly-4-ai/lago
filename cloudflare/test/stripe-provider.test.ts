@@ -110,6 +110,8 @@ describe("Stripe provider boundary", () => {
       const body = new URLSearchParams(String(init?.body));
       expect(Object.fromEntries(body)).toMatchObject({
         amount: "2500",
+        "automatic_payment_methods[allow_redirects]": "never",
+        "automatic_payment_methods[enabled]": "true",
         currency: "usd",
         payment_method: "pm_card_visa",
         confirm: "true",
@@ -117,6 +119,7 @@ describe("Stripe provider boundary", () => {
         "metadata[lago_wallet_id]": "wallet-synthetic",
         "metadata[lago_wallet_transaction_id]": "transaction-synthetic",
       });
+      expect(body.has("payment_method_types")).toBe(false);
       return Response.json({
         id: "pi_wallet_synthetic",
         status: "succeeded",

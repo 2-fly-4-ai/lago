@@ -1,6 +1,6 @@
 # Cloudflare-Native Lago Resource Manifest
 
-Last verified: 2026-08-19
+Last verified: 2026-08-21
 
 This manifest covers the isolated, non-production stack created for the Cloudflare-native rewrite.
 It is not a production inventory and contains no secrets or customer data.
@@ -11,18 +11,21 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `660cc5b6-1370-4d5a-a598-efc59db43b17`
+- Latest verified version: `785e0d67-e489-44aa-b2e1-5e296f58d848`
 - Custom domains/routes: none
-- Payment provider secrets: none
+- Payment provider secrets: `STRIPE_RESTRICTED_API_KEY` and
+  `STRIPE_WEBHOOK_SIGNING_SECRET` in Cloudflare secret storage; values are never documented
 - `PUBLIC_BASE_URL`: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - `PAYMENT_MUTATIONS_ENABLED`: `0`
 - `CREDIT_NOTE_REFUND_MODE`: `disabled`
-- `WALLET_FUNDING_MODE`: `disabled`
+- `WALLET_FUNDING_MODE`: `stripe_test`
 - `EXTERNAL_TAX_MODE`: `disabled`
 - `PROVIDER_READS_ENABLED`: `0`
-- `STRIPE_NETWORK_MODE`: `disabled`
-- `STRIPE_WEBHOOKS_ENABLED`: `0`
+- `STRIPE_NETWORK_MODE`: `enabled`
+- `STRIPE_WEBHOOKS_ENABLED`: `1`
 - `STRIPE_LIVEMODE_ALLOWED`: `0`
+- `STRIPE_ACCOUNT_CODE`: isolated Stripe test account mapping
+- `STRIPE_ORGANIZATION_ID`: `org-synthetic-e2e-20260815-001`
 - `OUTBOUND_WEBHOOKS_ENABLED`: `0`
 
 ## Resources
@@ -69,6 +72,15 @@ Applied D1 migrations: `0001_foundation.sql` through
   token is not required for the completed dashboard-provisioned application and policy.
 
 ## Verified behavior
+
+- API version `785e0d67-e489-44aa-b2e1-5e296f58d848` keeps the isolated development Worker
+  connected to Stripe test mode for repeatable synthetic testing. The dedicated restricted test key
+  has only Payment Intents and Charges/Refunds write permission; the webhook endpoint is tenant
+  scoped to `/webhooks/stripe/org-synthetic-e2e-20260815-001`. A 100-minor-unit wallet funding
+  settled exactly once, command replay returned the same transaction, and signed webhook ingestion
+  produced one valid receipt plus one idempotent replay. Live mode, general payment mutations,
+  credit-note refunds, provider reads, external tax, and outbound webhooks remain disabled. No
+  production data, route, credential, or provider operation is permitted by this configuration.
 
 - API version `660cc5b6-1370-4d5a-a598-efc59db43b17` and operator version
   `29849390-7bde-4ff1-a9e1-ab84e83e3388` complete the user-approved broader compatibility tranche.

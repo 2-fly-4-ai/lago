@@ -853,7 +853,7 @@ Acceptance:
       gate, and apply only isolated non-production migrations and deployments after preflight.
       The complete gate passes 382 tests across 69 files plus five Access reconciler tests; all 90
       migrations replay locally and the isolated postflight is empty and foreign-key clean.
-- [ ] Provision a narrowly scoped Stripe restricted TEST key and webhook secret only after the
+- [x] Provision a narrowly scoped Stripe restricted TEST key and webhook secret only after the
       browser/CLI pairing succeeds; run synthetic Stripe lifecycle evidence with no production data.
 
 ## Verification Matrix
@@ -3550,3 +3550,19 @@ resource and mutation described.
   no pending migration, no foreign-key violations, zero new financial/tax/funding rows, and no
   Worker secrets. No Stripe request, production route/data, customer message, `store-new`, or
   `serp-auth` change occurred.
+- 2026-08-21: Completed the synthetic Stripe lifecycle against only
+  `org-synthetic-e2e-20260815-001`. A dedicated restricted test key with Payment Intents and
+  Charges/Refunds write permission funded one synthetic USD wallet by 100 minor units using
+  `pm_card_visa`. The first safe attempt exposed Stripe's server-side redirect-policy requirement;
+  the provider now enables automatic payment methods with redirects forbidden and continues to
+  omit `payment_method_types`. The corrected command settled once, and an identical replay returned
+  the same transaction ID without a second provider operation or wallet credit. The tenant-scoped
+  Stripe webhook accepted one valid signed success event and one idempotent replay; D1 retained one
+  valid receipt, one normalized event, one succeeded provider operation, the original failed
+  pre-fix operation, and no foreign-key violations. The disposable Lago API key was revoked. Per
+  the user's final development policy, Worker version `785e0d67-e489-44aa-b2e1-5e296f58d848`
+  retains the narrowly scoped Stripe test key and webhook secret in Cloudflare, enables only
+  Stripe-test wallet funding/network/webhooks for the fixed synthetic organization/account mapping,
+  and keeps live mode, payment mutations, refunds, provider reads, external tax, and outbound
+  webhooks disabled. No production data/route, live Stripe operation, customer message,
+  `store-new`, or `serp-auth` change occurred.

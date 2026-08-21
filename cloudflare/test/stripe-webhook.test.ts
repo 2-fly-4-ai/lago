@@ -48,14 +48,14 @@ beforeEach(async () => {
 });
 
 describe("Stripe webhooks", () => {
-  it("rejects disabled ingestion and never reads or persists the body", async () => {
+  it("fails closed when unconfigured or disabled without persisting the body", async () => {
     const routed = await SELF.fetch(`https://lago.test/webhooks/stripe/${organizationId}`, {
       method: "POST",
       headers: { "Stripe-Signature": "t=1,v1=invalid" },
       body: "not-forwarded",
     });
     expect(routed.status).toBe(503);
-    await expect(routed.json()).resolves.toMatchObject({ code: "stripe_webhooks_disabled" });
+    await expect(routed.json()).resolves.toMatchObject({ code: "stripe_not_configured" });
 
     const responsePromise = handleStripeWebhook(
       new Request(`https://lago.test/webhooks/stripe/${organizationId}`, {

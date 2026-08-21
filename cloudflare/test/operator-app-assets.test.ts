@@ -14,10 +14,11 @@ import { describe, expect, it } from "vitest";
 describe("isolated operator app assets", () => {
   it("keeps the API shell separate from the Access-protected operator app", () => {
     expect(apiConfig).toContain('"directory": "operator-ui"');
-    expect(apiConfig).toContain('"STRIPE_NETWORK_MODE": "disabled"');
-    expect(apiConfig).toContain('"WALLET_FUNDING_MODE": "disabled"');
-    expect(apiConfig).toContain('"STRIPE_WEBHOOKS_ENABLED": "0"');
+    expect(apiConfig).toContain('"STRIPE_NETWORK_MODE": "enabled"');
+    expect(apiConfig).toContain('"WALLET_FUNDING_MODE": "stripe_test"');
+    expect(apiConfig).toContain('"STRIPE_WEBHOOKS_ENABLED": "1"');
     expect(apiConfig).toContain('"STRIPE_LIVEMODE_ALLOWED": "0"');
+    expect(apiConfig).toContain('"PAYMENT_MUTATIONS_ENABLED": "0"');
     expect(apiConfig).not.toContain('"directory": "operator-app"');
     expect(operatorConfig).toContain('"directory": "operator-app"');
     expect(operatorConfig).not.toContain('"directory": "operator-ui"');

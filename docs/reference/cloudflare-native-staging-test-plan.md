@@ -75,10 +75,22 @@ mechanism, callback URL, and temporary flag change.
   run produced no payment link or provider request, passed the foreign-key check, and ended with its
   one-time API key revoked. Provider sandbox, Queue failure injection, restart, and full billing-
   cycle phases remain pending.
+- `stripe-synthetic-20260821-001`: completed Stripe-test wallet funding on Worker version
+  `785e0d67-e489-44aa-b2e1-5e296f58d848` for the existing synthetic organization only. The first
+  non-charging failure identified the missing server-side redirect policy. After adding
+  `automatic_payment_methods[enabled]=true` and `allow_redirects=never`, a 100-minor-unit
+  `pm_card_visa` funding operation settled exactly once and command replay returned the same
+  transaction. A signed `payment_intent.succeeded` event was accepted once and replayed once without
+  a second credit. The run ended with its Lago API key revoked and no foreign-key violations. The
+  user elected to retain the narrowly scoped Stripe test key, webhook secret, tenant mapping, and
+  test-only network/webhook gates in the isolated development Worker for repeatable testing; live
+  mode and all unrelated external-action gates remain disabled.
 
 ## Cleanup and rollback
 
-Prefer a disposable D1 database for destructive scenarios. Deleting synthetic rows from the shared
+Prefer a disposable D1 database for destructive scenarios. The isolated Stripe test connection is
+retained until the user explicitly requests teardown; future agents must not remove its Cloudflare
+secrets or disable its test-only gates merely as routine test cleanup. Deleting synthetic rows from the shared
 isolated D1, deleting any Cloudflare resource, or removing sandbox provider objects requires an
 explicit human approval naming the exact targets. A failed run leaves its prefixed records and
 audit evidence intact for inspection; do not issue broad or wildcard deletion commands.

@@ -70,6 +70,8 @@ export async function createStripeWalletFunding(
       throw new ApiError(422, "invalid_stripe_wallet_funding", "Funding identifier is invalid");
   const body = new URLSearchParams({
     amount: String(input.amountMinor),
+    "automatic_payment_methods[allow_redirects]": "never",
+    "automatic_payment_methods[enabled]": "true",
     currency: input.currency.toLowerCase(),
     payment_method: input.paymentMethodId,
     confirm: "true",
