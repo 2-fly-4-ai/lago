@@ -101,6 +101,11 @@ mechanism, callback URL, and temporary flag change.
   document replay. The run API key was revoked and its plaintext removed; zero active Lago API
   keys and zero foreign-key violations remain. The persistent restricted Stripe TEST connection
   was not removed.
+  A second period was then advanced only for this synthetic subscription and closed through direct
+  Workflow instance `synthetic-resilience-20260822-001-cycle-2`. The instance completed in seven
+  seconds and left two closed cycles/two distinct invoices with aggregate subtotal 1,830 minor
+  units, wallet credits 500, total due 1,330, subscription version 3, zero active API keys, and zero
+  foreign-key violations.
 
 The API portions of the resilience run are reproducible with `pnpm run staging:resilience --
 <setup|events|verify>`. The runner requires `LAGO_SYNTHETIC_RUN_ID` and a run-scoped

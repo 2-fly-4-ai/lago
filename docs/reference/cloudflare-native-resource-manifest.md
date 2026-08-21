@@ -82,6 +82,10 @@ Applied D1 migrations: `0001_foundation.sql` through
   `2142f5f40a802cda420c16bcddd0476c0afb58a4dbd0639dd15979e37363c0fb`. The disposable run key
   is revoked; zero active API keys and zero foreign-key violations remain. Stripe TEST secrets stay
   connected and every live/production or unrelated external-action gate remains disabled.
+  Follow-up Workflow instance `synthetic-resilience-20260822-001-cycle-2` completed a second
+  synthetic period in seven seconds. The tenant now has two closed cycles/two distinct invoices,
+  aggregate subtotal 1,830 minor units, wallet credits 500, total due 1,330, subscription version 3,
+  zero active API keys, and zero foreign-key violations.
 
 - API version `785e0d67-e489-44aa-b2e1-5e296f58d848` keeps the isolated development Worker
   connected to Stripe test mode for repeatable synthetic testing. The dedicated restricted test key

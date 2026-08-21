@@ -721,13 +721,18 @@ Acceptance:
 
 ### M11: Cutover proposal, separately approved
 
-- [ ] Compare Rails and Worker results against non-private approved fixtures and, only with explicit
-      approval, shadow production-like traffic without changing authority.
-- [ ] Define data migration, checksums, dual-write or event-capture strategy, freeze window,
+- [x] Compare the Rails source contract and Worker results against checked-in non-private fixtures.
+      The four-call checkout comparison and its limits are recorded in
+      `docs/reference/cloudflare-native-rails-worker-fixture-parity.md`.
+- [ ] Only with action-time approval, compare read-only production-like shadow traffic without
+      changing authority or calling a provider.
+- [x] Define data migration, checksums, dual-write or event-capture strategy, freeze window,
       reverse replication, and rollback thresholds.
-- [ ] Define the consumer endpoint switch without requiring a `store-new` code change where
+- [x] Define the consumer endpoint switch without requiring a `store-new` code change where
       possible.
-- [ ] Require at least two complete reconciled billing cycles before legacy retirement.
+- [x] Require at least two complete reconciled billing cycles before legacy retirement. Two
+      isolated synthetic cycles are complete; production-authority cycles remain mandatory in the
+      separately approved retirement gate.
 
 Acceptance:
 
@@ -3584,3 +3589,23 @@ resource and mutation described.
   keys and zero foreign-key violations remain. The persistent Stripe TEST secrets and fixed
   synthetic mapping remain connected. No production data/route, live Stripe operation, customer
   message, `store-new`, or `serp-auth` change occurred.
+- 2026-08-22: Completed a second cycle for the same isolated synthetic subscription through an
+  explicitly triggered `serp-dev-lago-reconciliation` Workflow instance
+  `synthetic-resilience-20260822-001-cycle-2`. The instance completed every repair,
+  reconciliation, close, wallet-projection, outbox, and audit step in seven seconds. D1 now retains
+  two closed cycles with two distinct invoices: aggregate subtotal 1,830 minor units, wallet
+  credits 500, and total due 1,330. The subscription advanced to version 3; zero active API keys and
+  zero foreign-key violations remain. Added
+  `docs/reference/cloudflare-native-cutover-plan.md`, which defines production resource separation,
+  snapshot/transform manifests, canonical checksums, ordered legacy event capture, the required
+  Worker reverse journal, freeze/final-delta procedure, configuration-only `LAGO_API_URL` and
+  `LAGO_API_KEY` switch, rollback thresholds/order, and the production-cycle retirement gate. This
+  is design and synthetic evidence only; no production read/write, route, DNS, secret, provider,
+  `store-new`, or `serp-auth` change was performed.
+- 2026-08-22: Completed the safe Rails-to-Worker checkout comparison against the four checked-in
+  non-private `store-new` fixtures. Legacy routes, permitted parameters, serializer roots, and the
+  retained customer/subscription/invoice/payment-URL fields match the executable Worker contract.
+  The Worker compatibility suite verifies replay identity, divergent-reuse conflicts, invoice
+  discovery, provider metadata, hosted-URL shape, and token hashing with an in-memory sandbox
+  transport. No legacy containers or provider network were required. Production-like shadowing
+  remains separately approval-gated; no production data or authority was accessed.
