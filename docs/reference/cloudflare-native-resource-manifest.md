@@ -1,6 +1,6 @@
 # Cloudflare-Native Lago Resource Manifest
 
-Last verified: 2026-08-21
+Last verified: 2026-08-22
 
 This manifest covers the isolated, non-production stack created for the Cloudflare-native rewrite.
 It is not a production inventory and contains no secrets or customer data.
@@ -11,7 +11,7 @@ It is not a production inventory and contains no secrets or customer data.
 - Worker: `serp-dev-lago-native`
 - workers.dev URL: `https://serp-dev-lago-native.serpcompany.workers.dev`
 - Initial deployed version: `c1b38acd-70bc-4997-862a-fde3761d2a2c`
-- Latest verified version: `785e0d67-e489-44aa-b2e1-5e296f58d848`
+- Latest verified version: `5f8a09d6-c296-4256-b1fa-4b324966a35c`
 - Custom domains/routes: none
 - Payment provider secrets: `STRIPE_RESTRICTED_API_KEY` and
   `STRIPE_WEBHOOK_SIGNING_SECRET` in Cloudflare secret storage; values are never documented
@@ -72,6 +72,16 @@ Applied D1 migrations: `0001_foundation.sql` through
   token is not required for the completed dashboard-provisioned application and policy.
 
 ## Verified behavior
+
+- API version `5f8a09d6-c296-4256-b1fa-4b324966a35c` completed a real restart/reconciliation
+  exercise with synthetic run `synthetic-resilience-20260822-001`. Exact create and event replay
+  across the deploy preserved one plan/customer/subscription/wallet, two out-of-order usage events,
+  and one transition per aggregate. The real UTC `:30` recovery schedule closed one overdue cycle
+  into one 430-cent finalized invoice with two lines. Document Workflow and Browser Rendering stored
+  one 37,415-byte R2 PDF whose repeated download retained SHA-256
+  `2142f5f40a802cda420c16bcddd0476c0afb58a4dbd0639dd15979e37363c0fb`. The disposable run key
+  is revoked; zero active API keys and zero foreign-key violations remain. Stripe TEST secrets stay
+  connected and every live/production or unrelated external-action gate remains disabled.
 
 - API version `785e0d67-e489-44aa-b2e1-5e296f58d848` keeps the isolated development Worker
   connected to Stripe test mode for repeatable synthetic testing. The dedicated restricted test key

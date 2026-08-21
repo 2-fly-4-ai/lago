@@ -1,6 +1,6 @@
 # Cloudflare-Native Lago Staging Test Plan
 
-Last reviewed: 2026-08-15
+Last reviewed: 2026-08-22
 
 This plan applies only to the isolated `serp-dev-lago-native` stack documented in
 `cloudflare-native-resource-manifest.md`. It does not authorize production traffic, customer data,
@@ -85,12 +85,33 @@ mechanism, callback URL, and temporary flag change.
   user elected to retain the narrowly scoped Stripe test key, webhook secret, tenant mapping, and
   test-only network/webhook gates in the isolated development Worker for repeatable testing; live
   mode and all unrelated external-action gates remain disabled.
+- `synthetic-resilience-20260822-001`: completed provider-free replay, restart, recovery,
+  reconciliation, Queue, and document evidence on Worker version
+  `5f8a09d6-c296-4256-b1fa-4b324966a35c`. The run created a fresh synthetic tenant plus one
+  metric/plan/customer/in-arrears subscription/granted wallet and two out-of-order usage events.
+  Exact replay before and after a real Worker redeploy preserved every ID and row cardinality;
+  divergent plan, subscription, and event reuse failed explicitly. The actual UTC `:30` recovery
+  schedule closed one overdue cycle into one 430-cent finalized invoice with two lines after a
+  500-cent granted-wallet allocation. Document Workflow produced one immutable 37,415-byte PDF;
+  replay retained SHA-256
+  `2142f5f40a802cda420c16bcddd0476c0afb58a4dbd0639dd15979e37363c0fb`. An invalid Stripe
+  signature returned `401` and left the receipt count unchanged. The focused failure suite passed
+  59 tests across eight files, including Queue deduplication, stale/retry cycle recovery, retained
+  R2 cleanup after injected deletion failure, Workflow idempotency, malformed receipts, and
+  document replay. The run API key was revoked and its plaintext removed; zero active Lago API
+  keys and zero foreign-key violations remain. The persistent restricted Stripe TEST connection
+  was not removed.
+
+The API portions of the resilience run are reproducible with `pnpm run staging:resilience --
+<setup|events|verify>`. The runner requires `LAGO_SYNTHETIC_RUN_ID` and a run-scoped
+`LAGO_SYNTHETIC_API_KEY` in the process environment, locks its target to the isolated workers.dev
+hostname, and never prints the key.
 
 ## Cleanup and rollback
 
 Prefer a disposable D1 database for destructive scenarios. The isolated Stripe test connection is
 retained until the user explicitly requests teardown; future agents must not remove its Cloudflare
-secrets or disable its test-only gates merely as routine test cleanup. Deleting synthetic rows from the shared
-isolated D1, deleting any Cloudflare resource, or removing sandbox provider objects requires an
-explicit human approval naming the exact targets. A failed run leaves its prefixed records and
-audit evidence intact for inspection; do not issue broad or wildcard deletion commands.
+secrets or disable its test-only gates merely as routine test cleanup. Deleting synthetic rows from
+the shared isolated D1, deleting any Cloudflare resource, or removing sandbox provider objects
+requires an explicit human approval naming the exact targets. A failed run leaves its prefixed
+records and audit evidence intact for inspection; do not issue broad or wildcard deletion commands.

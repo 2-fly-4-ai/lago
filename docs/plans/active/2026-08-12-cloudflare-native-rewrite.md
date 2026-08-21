@@ -710,8 +710,8 @@ Acceptance:
 - [x] Create isolated `serp-dev-*` D1, R2, Queue/DLQ, Workflow, and Worker resources.
 - [x] Apply only the new D1 migrations.
 - [x] Deploy to a workers.dev staging hostname with no production routes.
-- [ ] Configure only sandbox/test provider secrets through an approved secret mechanism.
-- [ ] Run synthetic end-to-end, replay, restart, retry, and reconciliation tests.
+- [x] Configure only sandbox/test provider secrets through an approved secret mechanism.
+- [x] Run synthetic end-to-end, replay, restart, retry, and reconciliation tests.
 
 Acceptance:
 
@@ -3566,3 +3566,21 @@ resource and mutation described.
   and keeps live mode, payment mutations, refunds, provider reads, external tax, and outbound
   webhooks disabled. No production data/route, live Stripe operation, customer message,
   `store-new`, or `serp-auth` change occurred.
+- 2026-08-22: Completed isolated staging resilience run
+  `synthetic-resilience-20260822-001` on API Worker version
+  `5f8a09d6-c296-4256-b1fa-4b324966a35c`. A fresh synthetic tenant and run-scoped API key created
+  one metric, plan, customer, in-arrears subscription, granted wallet, and two deliberately
+  out-of-order usage events. Exact replay before and after a real Worker redeploy preserved every
+  identity and cardinality; divergent plan/subscription/event reuse failed explicitly. The actual
+  UTC `:30` recovery schedule selected `retry_generating_subscription_invoices`, closed exactly one
+  overdue billing cycle, and produced one 430-cent finalized invoice with two lines after a
+  500-cent granted-wallet allocation. The deployed Document Workflow produced one immutable
+  37,415-byte PDF artifact; repeat download returned the identical SHA-256
+  `2142f5f40a802cda420c16bcddd0476c0afb58a4dbd0639dd15979e37363c0fb`. An invalid Stripe
+  signature returned `401` without adding a receipt. The focused retry/failure matrix passed 59
+  tests across eight Workers-runtime suites, covering Queue deduplication, stale/retry billing
+  cycles, R2 cleanup failure retention, Workflow idempotency, malformed provider evidence, and
+  document replay. The run key was revoked and its local plaintext removed; zero active Lago API
+  keys and zero foreign-key violations remain. The persistent Stripe TEST secrets and fixed
+  synthetic mapping remain connected. No production data/route, live Stripe operation, customer
+  message, `store-new`, or `serp-auth` change occurred.

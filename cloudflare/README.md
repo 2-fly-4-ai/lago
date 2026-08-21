@@ -558,10 +558,13 @@ unsupported.
   redirects; it is not a provider endpoint, credential, custom domain, or production route.
 - `PAYMENT_MUTATIONS_ENABLED=0` prevents hosted-payment token creation.
 - `PROVIDER_READS_ENABLED=0` defers provider reconciliation.
-- `STRIPE_NETWORK_MODE=disabled` fails before transport selection, so the Worker cannot call Stripe.
-- `STRIPE_WEBHOOKS_ENABLED=0` rejects Stripe payloads before reading or persisting their bodies.
+- `STRIPE_NETWORK_MODE=enabled` permits only the retained, restricted-key Stripe TEST wallet
+  funding seam for the fixed synthetic tenant/account mapping. It does not enable general payment
+  mutations or live-mode traffic.
+- `STRIPE_WEBHOOKS_ENABLED=1` accepts only signature-verified Stripe TEST events for that exact
+  synthetic tenant mapping. Invalid signatures fail before persistence.
 - `STRIPE_LIVEMODE_ALLOWED=0` independently rejects live-mode events if webhook ingestion is later
-  approved for an isolated test account.
+  misroutes one to the isolated test endpoint.
 - `OUTBOUND_WEBHOOKS_ENABLED=0` prevents endpoint creation/update and outbound delivery until an
   approved HMAC signing secret is configured. No signing key is committed or deployed.
 - Provider credentials are secrets and are never stored in `wrangler.jsonc`.

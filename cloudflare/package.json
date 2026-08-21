@@ -21,6 +21,7 @@
     "lint": "oxlint --deny-warnings --deny typescript/no-floating-promises src test scripts vitest.config.ts",
     "migrate:local": "wrangler d1 migrations apply serp-dev-lago-native-d1 --local",
     "preview:operator": "node scripts/operator-preview-server.mjs",
+    "staging:resilience": "node scripts/run-staging-resilience.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
