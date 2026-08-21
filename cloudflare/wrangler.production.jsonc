@@ -1,0 +1,92 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "serp-prod-lago-native",
+  "account_id": "cec5f04e1d18bcc65f2be0aefb04f059",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+  "assets": {
+    "directory": "operator-ui",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/health", "/ready", "/authorize_net/*", "/webhooks/*"],
+  },
+  "vars": {
+    "APP_ENV": "production",
+    "PUBLIC_BASE_URL": "https://serp-prod-lago-native.serpcompany.workers.dev",
+    "PAYMENT_MUTATIONS_ENABLED": "0",
+    "CREDIT_NOTE_REFUND_MODE": "disabled",
+    "WALLET_FUNDING_MODE": "disabled",
+    "EXTERNAL_TAX_MODE": "disabled",
+    "PROVIDER_READS_ENABLED": "0",
+    "STRIPE_NETWORK_MODE": "disabled",
+    "STRIPE_WEBHOOKS_ENABLED": "0",
+    "STRIPE_LIVEMODE_ALLOWED": "0",
+    "OUTBOUND_WEBHOOKS_ENABLED": "0",
+  },
+  "d1_databases": [
+    {
+      "binding": "BILLING_DB",
+      "database_name": "serp-prod-lago-native-d1",
+      "database_id": "a0274eda-6f03-429a-896f-a1e0121a9f21",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BILLING_ARTIFACTS",
+      "bucket_name": "serp-prod-lago-native-billing-artifacts",
+    },
+  ],
+  "browser": {
+    "binding": "BROWSER",
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BILLING_ACCOUNTS",
+        "class_name": "BillingAccount",
+      },
+    ],
+  },
+  "exports": {
+    "BillingAccount": {
+      "type": "durable-object",
+      "storage": "sqlite",
+    },
+  },
+  "queues": {
+    "producers": [
+      {
+        "binding": "DOMAIN_EVENTS",
+        "queue": "serp-prod-lago-domain-events",
+      },
+    ],
+  },
+  "workflows": [
+    {
+      "name": "serp-prod-lago-checkout",
+      "binding": "CHECKOUT_WORKFLOW",
+      "class_name": "CheckoutWorkflow",
+    },
+    {
+      "name": "serp-prod-lago-reconciliation",
+      "binding": "RECONCILIATION_WORKFLOW",
+      "class_name": "ReconciliationWorkflow",
+    },
+    {
+      "name": "serp-prod-lago-documents",
+      "binding": "DOCUMENT_WORKFLOW",
+      "class_name": "DocumentWorkflow",
+    },
+    {
+      "name": "serp-prod-lago-plan-deletion",
+      "binding": "PLAN_DELETION_WORKFLOW",
+      "class_name": "PlanDeletionWorkflow",
+    },
+  ],
+}

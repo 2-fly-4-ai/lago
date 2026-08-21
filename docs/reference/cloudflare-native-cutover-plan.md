@@ -1,12 +1,13 @@
 # Cloudflare-Native Lago Production Cutover Plan
 
-Status: design complete; production execution not authorized
+Status: production foundation deployed fail-closed; consumer canary pending
 
 Last reviewed: 2026-08-22
 
-This document defines the future production migration and endpoint switch. It does not authorize
-production data access, a production Cloudflare deployment, DNS or route changes, secret loading,
-provider mutations, `store-new` or `serp-auth` changes, shadow traffic, or legacy retirement.
+This document defines the production rollout and endpoint switch. The production foundation was
+explicitly approved and deployed on 2026-08-22 with external actions disabled. Consumer canary,
+provider activation, and retirement remain governed by the gates below; the execution inventory is
+recorded in `cloudflare-native-production-resource-manifest.md`.
 
 ## Authority and contract owners
 
