@@ -24,7 +24,7 @@
   "vars": {
     "APP_ENV": "development",
     "PUBLIC_BASE_URL": "https://serp-dev-lago-native.serpcompany.workers.dev",
-    "PAYMENT_MUTATIONS_ENABLED": "1",
+    "PAYMENT_MUTATIONS_ENABLED": "0",
     "EASY_PAY_DIRECT_NETWORK_MODE": "test",
     "EASY_PAY_DIRECT_LIVEMODE_ALLOWED": "0",
     "EASY_PAY_DIRECT_ACCOUNT_CODE": "easy-pay-direct",
