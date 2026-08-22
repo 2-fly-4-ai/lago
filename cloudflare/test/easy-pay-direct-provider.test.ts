@@ -7,6 +7,7 @@ import {
   createEasyPayDirectOrder,
   createEasyPayDirectProduct,
   easyPayDirectPaymentForm,
+  getEasyPayDirectOrder,
   refundEasyPayDirectOrder,
   vaultEasyPayDirectCard,
   verifyEasyPayDirectCheckoutToken,
@@ -137,6 +138,27 @@ describe("Easy Pay Direct provider", () => {
     ).toBe(true);
     expect(calls.every((call) => call.headers.get("EPD-Version") === "2026-02-11")).toBe(true);
     expect(calls[3]?.body).not.toHaveProperty("amount");
+  });
+
+  it("reads an order from the versioned Commerce API for reconciliation", async () => {
+    const providerFetch = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input).endsWith("/orders/order-1")).toBe(true);
+      expect(init?.method).toBe("GET");
+      expect(init?.body).toBeUndefined();
+      expect(new Headers(init?.headers).get("EPD-Version")).toBe("2026-02-11");
+      return Response.json({
+        id: "order-1",
+        status: "succeeded",
+        total: 1999,
+        currency: "usd",
+      });
+    });
+    await expect(getEasyPayDirectOrder(providerEnv, "order-1", providerFetch)).resolves.toEqual({
+      id: "order-1",
+      status: "succeeded",
+      total: 1999,
+      currency: "usd",
+    });
   });
 
   it("fails closed for disabled networking and key-environment mismatch", async () => {

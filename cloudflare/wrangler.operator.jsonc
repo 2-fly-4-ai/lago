@@ -63,6 +63,13 @@
       "script_name": "serp-dev-lago-native",
     },
   ],
+  "services": [
+    {
+      "binding": "PROVIDER_FINANCIALS",
+      "service": "serp-dev-lago-native",
+      "entrypoint": "ProviderFinancialService",
+    },
+  ],
   "queues": {
     "producers": [
       {

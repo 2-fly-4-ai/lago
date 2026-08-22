@@ -1,5 +1,8 @@
 import { reconcilePaymentRequest, type PendingReceipt } from "./authorize-net";
+import { sha256Hex } from "../auth/api-key";
 import { deterministicUuid } from "../identifiers";
+import { stableJson } from "../json";
+import { getEasyPayDirectOrder, type CommerceOrder } from "../providers/easy-pay-direct";
 
 type EasyPayDirectEvent = {
   id?: string;
@@ -18,6 +21,114 @@ type EasyPayDirectEvent = {
     };
   };
 };
+
+type EasyPayDirectExecution = {
+  id: string;
+  organization_id: string;
+  payment_request_id: string;
+  provider_account_code: string;
+  provider_transaction_id: string;
+};
+
+export async function reconcileEasyPayDirectExecution(
+  env: Env,
+  executionId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<"processed" | "deferred"> {
+  const execution = await env.BILLING_DB.prepare(
+    `SELECT id, organization_id, payment_request_id, provider_account_code,
+            provider_transaction_id
+     FROM easy_pay_direct_payment_executions
+     WHERE id = ? AND status IN ('processing', 'unknown')
+       AND provider_transaction_id IS NOT NULL
+     LIMIT 1`,
+  )
+    .bind(executionId)
+    .first<EasyPayDirectExecution>();
+  if (!execution) return "processed";
+  if (String(env.PROVIDER_READS_ENABLED) !== "1") return "deferred";
+
+  const order = await getEasyPayDirectOrder(env, execution.provider_transaction_id, fetcher);
+  if (order.id !== execution.provider_transaction_id) {
+    throw new Error("easy_pay_direct_order_identity_mismatch");
+  }
+  const normalizedStatus = normalizeOrderStatus(order.status);
+  if (normalizedStatus === "pending" || normalizedStatus === "unknown") return "deferred";
+
+  const payload = stableJson(order);
+  const payloadHash = await sha256Hex(payload);
+  const receiptId = await deterministicUuid(
+    "easy-pay-direct-provider-read",
+    `${execution.provider_account_code}:${order.id}:${order.status}`,
+  );
+  const providerEventId = `reconciliation:${order.id}:${order.status}`;
+  const timestamp = new Date().toISOString();
+  await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `INSERT INTO webhook_receipts
+       (id, provider, provider_account_code, provider_event_id, signature_valid,
+        payload_sha256, received_at, processed_at, processing_error_code)
+       VALUES (?, 'easy_pay_direct_reconciliation', ?, ?, 0, ?, ?, NULL, NULL)
+       ON CONFLICT(provider, provider_account_code, provider_event_id) DO NOTHING`,
+    ).bind(receiptId, execution.provider_account_code, providerEventId, payloadHash, timestamp),
+    env.BILLING_DB.prepare(
+      `INSERT INTO provider_webhook_events
+       (receipt_id, organization_id, event_type, provider_transaction_id, invoice_id,
+        normalized_status, normalized_at, payment_request_id)
+       VALUES (?, ?, 'order.reconciled', ?, NULL, NULL, NULL, NULL)
+       ON CONFLICT(receipt_id) DO NOTHING`,
+    ).bind(receiptId, execution.organization_id, order.id),
+  ]);
+
+  const receipt: PendingReceipt = {
+    receipt_id: receiptId,
+    organization_id: execution.organization_id,
+    provider_account_code: execution.provider_account_code,
+    event_type: "order.reconciled",
+    provider_transaction_id: order.id,
+    archive_key: null,
+    processed_at: null,
+  };
+  await reconcilePaymentRequest(
+    env.BILLING_DB,
+    receipt,
+    execution.payment_request_id,
+    {
+      id: order.id,
+      amountMinor: Number.isSafeInteger(order.total) ? order.total : null,
+      failureCode: normalizedStatus === "failed" ? "easy_pay_direct_order_failed" : null,
+      failureMessage: normalizedStatus === "failed" ? order.failure_reason?.trim() || null : null,
+    },
+    normalizedStatus,
+    "easy_pay_direct",
+  );
+  await env.BILLING_DB.prepare(
+    `UPDATE easy_pay_direct_payment_executions
+     SET status = ?, failure_code = ?, failure_message = ?, updated_at = ?, completed_at = ?
+     WHERE id = ? AND status IN ('processing', 'unknown')`,
+  )
+    .bind(
+      normalizedStatus,
+      normalizedStatus === "failed" ? "easy_pay_direct_order_failed" : null,
+      normalizedStatus === "failed" ? order.failure_reason?.trim().slice(0, 500) || null : null,
+      timestamp,
+      timestamp,
+      execution.id,
+    )
+    .run();
+  return "processed";
+}
+
+function normalizeOrderStatus(
+  status: CommerceOrder["status"],
+): "pending" | "succeeded" | "failed" | "unknown" {
+  if (status === "pending") return "pending";
+  if (status === "succeeded" || status === "partially_refunded" || status === "refunded") {
+    return "succeeded";
+  }
+  if (status === "failed" || status === "voided" || status === "refund_failed") return "failed";
+  return "unknown";
+}
 
 export async function reconcileEasyPayDirectReceipt(
   env: Env,

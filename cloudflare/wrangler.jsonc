@@ -32,7 +32,7 @@
     "CREDIT_NOTE_REFUND_MODE": "disabled",
     "WALLET_FUNDING_MODE": "stripe_test",
     "EXTERNAL_TAX_MODE": "disabled",
-    "PROVIDER_READS_ENABLED": "0",
+    "PROVIDER_READS_ENABLED": "1",
     "STRIPE_NETWORK_MODE": "enabled",
     "STRIPE_WEBHOOKS_ENABLED": "1",
     "STRIPE_LIVEMODE_ALLOWED": "0",

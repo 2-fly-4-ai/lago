@@ -1,5 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { reconcileAuthorizeNetReceipt } from "../reconciliation/authorize-net";
+import { reconcileEasyPayDirectExecution } from "../reconciliation/easy-pay-direct";
 import type { DomainEvent } from "../domain-events";
 import { closeBillingPeriod } from "../billing/close-period";
 import { activatePendingSubscriptions } from "../billing/activate-pending-subscriptions";
@@ -282,6 +283,39 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         else deferredReceipts += 1;
       }
 
+      const easyPayDirectExecutionIds = await step.do(
+        "load pending Easy Pay Direct executions",
+        async () => {
+          if (
+            !executors.has("reconcile_provider_receipts") ||
+            String(this.env.PROVIDER_READS_ENABLED) !== "1"
+          ) {
+            return [];
+          }
+          const result = await this.env.BILLING_DB.prepare(
+            `SELECT id FROM easy_pay_direct_payment_executions
+             WHERE status IN ('processing', 'unknown')
+               AND provider_transaction_id IS NOT NULL
+             ORDER BY created_at ASC LIMIT 100`,
+          ).all<{ id: string }>();
+          return result.results.map((row) => row.id);
+        },
+      );
+      let reconciledEasyPayDirectExecutions = 0;
+      let deferredEasyPayDirectExecutions = 0;
+      for (const executionId of easyPayDirectExecutionIds) {
+        const outcome = await step.do(
+          `reconcile Easy Pay Direct execution ${executionId}`,
+          {
+            retries: { limit: 5, delay: "10 seconds", backoff: "exponential" },
+            timeout: "1 minute",
+          },
+          async () => reconcileEasyPayDirectExecution(this.env, executionId),
+        );
+        if (outcome === "processed") reconciledEasyPayDirectExecutions += 1;
+        else deferredEasyPayDirectExecutions += 1;
+      }
+
       const dueBillingPeriods = await step.do("load due billing periods", async () => {
         if (!executors.has("close_billing_periods")) return [];
         const result = await this.env.BILLING_DB.prepare(
@@ -470,6 +504,9 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         pendingReceipts: pendingReceiptIds.length,
         processedReceipts,
         deferredReceipts,
+        pendingEasyPayDirectExecutions: easyPayDirectExecutionIds.length,
+        reconciledEasyPayDirectExecutions,
+        deferredEasyPayDirectExecutions,
         dueBillingPeriods: dueBillingPeriods.length,
         closedBillingPeriods,
         expiredCoupons,

@@ -158,7 +158,9 @@ describe("isolated operator app assets", () => {
     expect(operatorScript).toContain("invoice?.customer?.external_id");
     expect(operatorIndex).toContain("Issue a credit note");
     expect(operatorIndex).toContain("Offset amount (minor units)");
-    expect(operatorIndex).toContain("Provider refunds remain disabled in this environment");
+    expect(operatorIndex).toContain(
+      "Provider refunds are submitted only when an isolated test adapter is enabled",
+    );
     expect(operatorIndex).toContain("Payment disputes");
     expect(operatorIndex).toContain("Stripe network access remains disabled");
   });

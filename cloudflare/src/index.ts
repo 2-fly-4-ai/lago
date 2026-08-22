@@ -31,6 +31,7 @@ export { CheckoutWorkflow } from "./workflows/checkout";
 export { ReconciliationWorkflow } from "./workflows/reconciliation";
 export { DocumentWorkflow } from "./workflows/documents";
 export { PlanDeletionWorkflow } from "./workflows/plan-deletion";
+export { ProviderFinancialService } from "./provider-financial-service";
 
 function jsonError(status: number, code: string, requestId: string): Response {
   return Response.json(
@@ -149,7 +150,20 @@ export default {
 
       return jsonError(404, "not_found", requestId);
     } catch (error) {
-      if (error instanceof ApiError) return apiErrorResponse(error, requestId);
+      if (error instanceof ApiError) {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "handled_request_error",
+            requestId,
+            method: request.method,
+            path: url.pathname,
+            status: error.status,
+            code: error.code,
+          }),
+        );
+        return apiErrorResponse(error, requestId);
+      }
       console.error(
         JSON.stringify({ level: "error", event: "unhandled_request_error", requestId }),
       );

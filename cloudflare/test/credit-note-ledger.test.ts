@@ -2,6 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
 import { createCreditNote } from "../src/api/credit-note-ledger";
+import type { EasyPayDirectRefundRpcInput } from "../src/provider-financial-service";
 
 const apiKey = "credit-note-ledger-key";
 
@@ -586,6 +587,107 @@ describe("credit-note ledger", () => {
       ).status,
     ).toBe(200);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("executes an Easy Pay Direct test refund through the private provider service binding", async () => {
+    expect(
+      (
+        await request("/api/v1/plans", "POST", {
+          plan: {
+            code: "credit-note-epd-refund-plan",
+            name: "EPD test refund plan",
+            interval: "monthly",
+            amount_cents: 1000,
+            amount_currency: "USD",
+            pay_in_advance: true,
+            tax_codes: [],
+          },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (await createSubscription("credit-note-epd-refund-source", "credit-note-epd-refund-plan"))
+        .status,
+    ).toBe(200);
+    const source = await sourceInvoice("credit-note-epd-refund-source");
+    const now = new Date().toISOString();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO payment_attempts
+       (id, organization_id, invoice_id, provider, provider_account_code,
+        provider_transaction_id, idempotency_key, amount_minor, currency, status,
+        payment_type, version, created_at, updated_at)
+       VALUES ('credit-note-epd-paid-attempt', 'org-credit-note', ?, 'easy_pay_direct',
+               'easy-pay-direct', 'epd-order-synthetic-refund', 'epd-paid-attempt',
+               1000, 'USD', 'succeeded', 'provider', 1, ?, ?)`,
+    )
+      .bind(source.invoice_id, now, now)
+      .run();
+
+    const providerFinancials = {
+      refundEasyPayDirect: vi.fn(async (input: EasyPayDirectRefundRpcInput) => {
+        expect(input).toMatchObject({
+          organizationId: "org-credit-note",
+          providerAccountCode: "easy-pay-direct",
+          orderId: "epd-order-synthetic-refund",
+          amountMinor: 1000,
+          currency: "USD",
+          idempotencyKey: expect.any(String),
+        });
+        return {
+          id: "epd-refund-synthetic",
+          status: "succeeded" as const,
+          responseText: "partially_refunded",
+        };
+      }),
+    };
+    const response = await createCreditNote(
+      new Request("https://lago.test/api/v1/credit_notes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "epd-service-binding-refund",
+        },
+        body: JSON.stringify({
+          credit_note: {
+            invoice_id: source.invoice_id,
+            refund_amount_cents: 1000,
+            items: [{ fee_id: source.line_id, amount_cents: 1000 }],
+          },
+        }),
+      }),
+      {
+        ...env,
+        CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_test",
+        PROVIDER_FINANCIALS: providerFinancials,
+      },
+      {
+        organizationId: "org-credit-note",
+        organizationExternalId: "credit-note-test",
+        apiKeyId: "key-credit-note",
+      },
+      "epd-service-binding-refund-request",
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      credit_note: { refund_status: "succeeded", refund_amount_cents: 1000 },
+    });
+    expect(providerFinancials.refundEasyPayDirect).toHaveBeenCalledOnce();
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT operation.provider_refund_id, operation.status,
+                refund.provider_mode, refund.status AS projected_status
+         FROM provider_refund_operations operation
+         JOIN credit_note_refunds refund ON refund.credit_note_id = operation.credit_note_id
+         WHERE operation.invoice_id = ?`,
+      )
+        .bind(source.invoice_id)
+        .first(),
+    ).resolves.toEqual({
+      provider_mode: "easy_pay_direct_test",
+      provider_refund_id: "epd-refund-synthetic",
+      projected_status: "succeeded",
+      status: "succeeded",
+    });
   });
 
   it("refuses a provider refund after the invoice dispute was lost", async () => {

@@ -277,6 +277,20 @@ export async function createEasyPayDirectOrder(
   );
 }
 
+export async function getEasyPayDirectOrder(
+  env: EasyPayDirectEnv,
+  orderId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<CommerceOrder> {
+  validateIdentifier(orderId, "orderId");
+  return commerceRequest<CommerceOrder>(
+    env,
+    `/orders/${encodeURIComponent(orderId)}`,
+    { method: "GET" },
+    fetcher,
+  );
+}
+
 export async function refundEasyPayDirectOrder(
   env: EasyPayDirectEnv,
   input: { orderId: string; amountMinor: number; currency: string; idempotencyKey?: string },

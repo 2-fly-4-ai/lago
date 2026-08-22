@@ -31,6 +31,7 @@ export async function handleEasyPayDirectWebhook(
     throw new ApiError(401, "webhook_signature_missing", "Webhook signature is required");
   }
   const signingKey = env.EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY?.trim();
+  const previousSigningKey = env.EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY_PREVIOUS?.trim();
   if (!signingKey) {
     throw new ApiError(
       503,
@@ -58,7 +59,13 @@ export async function handleEasyPayDirectWebhook(
 
   const rawBody = await readBoundedText(request, 1024 * 1024);
   if (!rawBody) throw new ApiError(400, "webhook_body_missing", "Webhook body is required");
-  if (!(await validEasyPayDirectSignature(rawBody, signature, signingKey))) {
+  if (
+    !(await validEasyPayDirectSignatureForAnyKey(
+      rawBody,
+      signature,
+      previousSigningKey ? [signingKey, previousSigningKey] : [signingKey],
+    ))
+  ) {
     throw new ApiError(401, "webhook_signature_invalid", "Webhook signature is invalid");
   }
 
@@ -179,6 +186,23 @@ export async function validEasyPayDirectSignature(
   }
   const expected = await hmacSha256Hex(signingKey, `${timestamp}.${rawBody}`);
   return constantTimeEqual(match[2].toLowerCase(), expected);
+}
+
+export async function validEasyPayDirectSignatureForAnyKey(
+  rawBody: string,
+  providedSignature: string,
+  signingKeys: string[],
+  now = Date.now(),
+): Promise<boolean> {
+  for (const signingKey of signingKeys) {
+    if (
+      signingKey &&
+      (await validEasyPayDirectSignature(rawBody, providedSignature, signingKey, now))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function hmacSha256Hex(secret: string, value: string): Promise<string> {

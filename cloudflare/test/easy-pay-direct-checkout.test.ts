@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleEasyPayDirectCheckoutSubmission } from "../src/api/easy-pay-direct-checkout";
 import { sha256Hex } from "../src/auth/api-key";
 import { verifyEasyPayDirectCheckoutToken } from "../src/providers/easy-pay-direct";
-import { reconcileEasyPayDirectReceipt } from "../src/reconciliation/easy-pay-direct";
+import {
+  reconcileEasyPayDirectExecution,
+  reconcileEasyPayDirectReceipt,
+} from "../src/reconciliation/easy-pay-direct";
 import { runCheckoutWorkflow } from "../src/workflows/checkout";
 
 const organizationId = "org-easy-pay-direct-checkout";
@@ -142,6 +145,36 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       gateway_customer_vault_id: "card_visa",
     });
 
+    const execution = await env.BILLING_DB.prepare(
+      `SELECT id FROM easy_pay_direct_payment_executions WHERE payment_request_id = ?`,
+    )
+      .bind(paymentRequestId)
+      .first<{ id: string }>();
+    const orderRead = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input).endsWith("/orders/epd-order-1")).toBe(true);
+      expect(init?.method).toBe("GET");
+      return Response.json({
+        id: "epd-order-1",
+        status: "succeeded",
+        total: 1999,
+        currency: "usd",
+      });
+    });
+    await expect(
+      reconcileEasyPayDirectExecution(runtimeEnv, execution!.id, orderRead),
+    ).resolves.toBe("processed");
+    expect(orderRead).toHaveBeenCalledOnce();
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT provider, signature_valid, processed_at IS NOT NULL AS processed
+         FROM webhook_receipts WHERE provider = 'easy_pay_direct_reconciliation'`,
+      ).first(),
+    ).resolves.toEqual({
+      provider: "easy_pay_direct_reconciliation",
+      signature_valid: 0,
+      processed: 1,
+    });
+
     const successPayload = JSON.stringify({
       id: "evt-order-succeeded-1",
       object: "event",
@@ -275,6 +308,7 @@ function enabledEnv(): Env {
       if (property === "EASY_PAY_DIRECT_LIVEMODE_ALLOWED") return "0";
       if (property === "EASY_PAY_DIRECT_ACCOUNT_CODE") return "epd-synthetic";
       if (property === "EASY_PAY_DIRECT_ORGANIZATION_ID") return organizationId;
+      if (property === "PROVIDER_READS_ENABLED") return "1";
       return Reflect.get(target, property, receiver) as unknown;
     },
   }) as Env;

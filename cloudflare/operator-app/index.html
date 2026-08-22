@@ -3149,20 +3149,13 @@
           </div>
           <div>
             <label for="credit-note-refund-amount">Refund amount (minor units)</label
-            ><input
-              id="credit-note-refund-amount"
-              type="number"
-              min="0"
-              step="1"
-              value="0"
-              disabled
-            />
+            ><input id="credit-note-refund-amount" type="number" min="0" step="1" value="0" />
           </div>
         </div>
         <p class="field-hint">
           Allocate the adjusted total between customer credit and the unpaid invoice balance.
-          Provider refunds remain disabled in this environment; PDF generation and download are
-          available from the detail page.
+          Provider refunds are submitted only when an isolated test adapter is enabled; otherwise
+          the backend rejects them. PDF generation and download are available from the detail page.
         </p>
         <p class="form-error" id="credit-note-form-error" role="alert" hidden></p>
         <div class="modal-actions">

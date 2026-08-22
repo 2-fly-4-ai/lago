@@ -4,6 +4,7 @@ import type { DomainEvent } from "../domain-events";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import type { ProviderFinancialServiceBinding } from "../provider-financial-service";
 import { refundEasyPayDirectOrder } from "../providers/easy-pay-direct";
 import { createStripeRefund } from "../providers/stripe";
 import { Decimal } from "../rating/decimal";
@@ -57,6 +58,7 @@ type CreditNoteMutationEnv = {
   EASY_PAY_DIRECT_LIVEMODE_ALLOWED?: string;
   EASY_PAY_DIRECT_ACCOUNT_CODE?: string;
   EASY_PAY_DIRECT_ORGANIZATION_ID?: string;
+  PROVIDER_FINANCIALS?: ProviderFinancialServiceBinding;
 };
 export type CalculatedCreditNoteItem = CreditNoteInputItem & {
   couponAdjustmentMinor: number;
@@ -322,8 +324,9 @@ export async function createCreditNote(
       );
     }
     if (
-      !env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim() ||
-      refundPayment.provider_account_code !== env.EASY_PAY_DIRECT_ACCOUNT_CODE.trim()
+      !env.PROVIDER_FINANCIALS &&
+      (!env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim() ||
+        refundPayment.provider_account_code !== env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim())
     ) {
       throw new ApiError(
         503,
@@ -332,8 +335,9 @@ export async function createCreditNote(
       );
     }
     if (
-      !env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
-      auth.organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID.trim()
+      !env.PROVIDER_FINANCIALS &&
+      (!env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
+        auth.organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim())
     ) {
       throw new ApiError(
         503,
@@ -1277,9 +1281,10 @@ async function resumeEasyPayDirectRefundIfNeeded(
     }>();
   if (!operation || operation.status === "succeeded") return;
   if (
-    operation.provider_account_code !== env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim() ||
-    organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
-    env.EASY_PAY_DIRECT_NETWORK_MODE !== "test"
+    !env.PROVIDER_FINANCIALS &&
+    (operation.provider_account_code !== env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim() ||
+      organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
+      env.EASY_PAY_DIRECT_NETWORK_MODE !== "test")
   ) {
     throw new ApiError(
       503,
@@ -1298,16 +1303,25 @@ async function resumeEasyPayDirectRefundIfNeeded(
         .bind(providerIdempotencyKey, new Date().toISOString(), operation.id)
         .run();
     }
-    const result = await refundEasyPayDirectOrder(
-      env as Env,
-      {
-        orderId: operation.provider_payment_id,
-        amountMinor: operation.amount_minor,
-        currency: operation.currency,
-        idempotencyKey: providerIdempotencyKey,
-      },
-      providerFetcher,
-    );
+    const result = env.PROVIDER_FINANCIALS
+      ? await env.PROVIDER_FINANCIALS.refundEasyPayDirect({
+          organizationId,
+          providerAccountCode: operation.provider_account_code,
+          orderId: operation.provider_payment_id,
+          amountMinor: operation.amount_minor,
+          currency: operation.currency,
+          idempotencyKey: providerIdempotencyKey,
+        })
+      : await refundEasyPayDirectOrder(
+          env as Env,
+          {
+            orderId: operation.provider_payment_id,
+            amountMinor: operation.amount_minor,
+            currency: operation.currency,
+            idempotencyKey: providerIdempotencyKey,
+          },
+          providerFetcher,
+        );
     const now = new Date().toISOString();
     const status = result.status === "unknown" ? "pending" : result.status;
     const failureMessage = result.status === "succeeded" ? null : result.responseText.slice(0, 500);
