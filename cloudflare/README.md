@@ -428,8 +428,10 @@ remaining Lago feature inventory is dispositioned and ported.
 - Payment requests: authenticated create/list/show and customer-nested list routes persist one
   tenant-scoped request plus its overdue finalized invoices and `payment_request.created` outbox
   event in a guarded D1 batch. The amount is the exact remaining balance across one currency.
-  Signed Authorize.Net callbacks carrying `PaymentRequest` metadata reconcile to one request-level
-  provider payment and immutable per-invoice allocations. Settlement requires the provider amount,
+  Signed Authorize.Net callbacks and signed Easy Pay Direct webhooks reconcile to one request-level
+  provider payment and immutable per-invoice allocations. Easy Pay Direct sandbox checkout uses
+  documented synthetic tokens; live card fields use hosted Collect.js iframes and Lago receives
+  only the one-use token. Settlement requires the provider amount,
   request amount, and current linked-invoice balances to agree; version guards, status monotonicity,
   dunning-counter reset, invoice/request status changes, and outbox evidence share one atomic D1
   batch. Those payments are visible through the retained `/api/v1/payments` list/show contract,
@@ -508,10 +510,11 @@ Multi-billing-entity routing and provider-created system sections remain explici
 
 ### Retained payment-provider scope
 
-The Cloudflare rewrite retains Authorize.Net as the only active provider adapter used by the pinned
-Lago compatibility contract. A read-only audit of committed `store-new` and `serp-auth` sources
-found that those systems own Stripe checkout and subscription billing directly; neither calls Lago
-for provider execution. Their ownership remains unchanged. Lago-managed Stripe checkout, Adyen,
+The Cloudflare rewrite retains Authorize.Net and adds Easy Pay Direct as active provider adapters
+used by the pinned Lago compatibility contract. Easy Pay Direct uses Commerce customers, payment
+methods, products, orders, refunds, and signed webhook-first reconciliation. EPD Gateway remains
+only for live Collect.js Customer Vault setup. Store checkout can select it explicitly while its
+independent rollout switch remains off. Lago-managed Stripe checkout, Adyen,
 GoCardless, Cashfree, Flutterwave, and MoneyHash remain explicit `not-used` feature-inventory
 entries.
 
@@ -557,6 +560,12 @@ unsupported.
 - `PUBLIC_BASE_URL` is the isolated workers.dev hostname used to construct hosted-payment form
   redirects; it is not a provider endpoint, credential, custom domain, or production route.
 - `PAYMENT_MUTATIONS_ENABLED=0` prevents hosted-payment token creation.
+- `EASY_PAY_DIRECT_NETWORK_MODE=disabled` and `EASY_PAY_DIRECT_LIVEMODE_ALLOWED=0` independently
+  reject EPD Commerce/Gateway calls and live-mode activation. Sandbox requires a Commerce key
+  carrying EPD's `_test_` environment marker; production requires a key carrying the
+  `_live_` marker, the separate live gate, and Gateway vault credentials. A live key can never run
+  under the sandbox flag. The account and organization mapping must match before a signed webhook
+  or test refund is accepted.
 - `PROVIDER_READS_ENABLED=0` defers provider reconciliation.
 - `STRIPE_NETWORK_MODE=enabled` permits only the retained, restricted-key Stripe TEST wallet
   funding seam for the fixed synthetic tenant/account mapping. It does not enable general payment

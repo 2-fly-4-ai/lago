@@ -4,6 +4,7 @@ import type { DomainEvent } from "../domain-events";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import { refundEasyPayDirectOrder } from "../providers/easy-pay-direct";
 import { createStripeRefund } from "../providers/stripe";
 import { Decimal } from "../rating/decimal";
 
@@ -51,6 +52,11 @@ type CreditNoteMutationEnv = {
   STRIPE_ACCOUNT_CODE?: string;
   STRIPE_ORGANIZATION_ID?: string;
   STRIPE_LIVEMODE_ALLOWED?: string;
+  EASY_PAY_DIRECT_COMMERCE_API_KEY?: string;
+  EASY_PAY_DIRECT_NETWORK_MODE?: string;
+  EASY_PAY_DIRECT_LIVEMODE_ALLOWED?: string;
+  EASY_PAY_DIRECT_ACCOUNT_CODE?: string;
+  EASY_PAY_DIRECT_ORGANIZATION_ID?: string;
 };
 export type CalculatedCreditNoteItem = CreditNoteInputItem & {
   couponAdjustmentMinor: number;
@@ -163,7 +169,7 @@ export async function createCreditNote(
         "idempotency_conflict",
         "Idempotency-Key was already used with different credit note values",
       );
-    await resumeStripeRefundIfNeeded(
+    await resumeProviderRefundIfNeeded(
       env,
       auth.organizationId,
       existing.id,
@@ -244,7 +250,11 @@ export async function createCreditNote(
         "A provider refund cannot be issued after the invoice dispute was lost",
       );
     }
-    if (env.CREDIT_NOTE_REFUND_MODE !== "sandbox" && env.CREDIT_NOTE_REFUND_MODE !== "stripe_test")
+    if (
+      env.CREDIT_NOTE_REFUND_MODE !== "sandbox" &&
+      env.CREDIT_NOTE_REFUND_MODE !== "stripe_test" &&
+      env.CREDIT_NOTE_REFUND_MODE !== "easy_pay_direct_test"
+    )
       throw new ApiError(
         503,
         "credit_note_refunds_disabled",
@@ -303,6 +313,35 @@ export async function createCreditNote(
       );
     }
   }
+  if (requestedRefund > 0 && env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test") {
+    if (refundPayment?.provider !== "easy_pay_direct") {
+      throw new ApiError(
+        422,
+        "easy_pay_direct_refund_payment_required",
+        "Easy Pay Direct test refunds require a successful Easy Pay Direct payment",
+      );
+    }
+    if (
+      !env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim() ||
+      refundPayment.provider_account_code !== env.EASY_PAY_DIRECT_ACCOUNT_CODE.trim()
+    ) {
+      throw new ApiError(
+        503,
+        "easy_pay_direct_account_mapping_invalid",
+        "The payment does not match the configured Easy Pay Direct test account",
+      );
+    }
+    if (
+      !env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
+      auth.organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID.trim()
+    ) {
+      throw new ApiError(
+        503,
+        "easy_pay_direct_organization_mapping_invalid",
+        "The request does not match the configured Easy Pay Direct synthetic organization",
+      );
+    }
+  }
   const paidAmount = await successfulPaymentAmount(env.BILLING_DB, invoice.id);
   const outstandingAmount = Math.max(invoice.total_due_minor - paidAmount, 0);
   if (requestedOffset > outstandingAmount)
@@ -342,7 +381,8 @@ export async function createCreditNote(
     .toString();
   const refundStatus =
     requestedRefund > 0
-      ? env.CREDIT_NOTE_REFUND_MODE === "stripe_test"
+      ? env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ||
+        env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test"
         ? "pending"
         : "succeeded"
       : null;
@@ -505,8 +545,15 @@ export async function createCreditNote(
             auth.organizationId,
             id,
             invoice.id,
-            env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ? "stripe_test" : "sandbox",
-            env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ? null : `sandbox-refund:${id}`,
+            env.CREDIT_NOTE_REFUND_MODE === "stripe_test"
+              ? "stripe_test"
+              : env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test"
+                ? "easy_pay_direct_test"
+                : "sandbox",
+            env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ||
+              env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test"
+              ? null
+              : `sandbox-refund:${id}`,
             requestedRefund,
             invoice.currency,
             refundStatus,
@@ -528,10 +575,15 @@ export async function createCreditNote(
             refundPayment!.provider,
             refundPayment!.provider_account_code,
             refundPayment!.provider_transaction_id,
-            env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ? null : `sandbox-refund:${id}`,
+            env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ||
+              env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test"
+              ? null
+              : `sandbox-refund:${id}`,
             env.CREDIT_NOTE_REFUND_MODE === "stripe_test"
               ? `stripe-refund:${id}`
-              : `sandbox:${idempotencyKey}`,
+              : env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test"
+                ? `easy-pay-direct-refund:${id}`
+                : `sandbox:${idempotencyKey}`,
             requestHash,
             requestedRefund,
             invoice.currency,
@@ -572,8 +624,12 @@ export async function createCreditNote(
     );
   }
   await env.DOMAIN_EVENTS.send(event);
-  if (requestedRefund > 0 && env.CREDIT_NOTE_REFUND_MODE === "stripe_test") {
-    await resumeStripeRefundIfNeeded(env, auth.organizationId, id, reason, providerFetcher);
+  if (
+    requestedRefund > 0 &&
+    (env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ||
+      env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test")
+  ) {
+    await resumeProviderRefundIfNeeded(env, auth.organizationId, id, reason, providerFetcher);
   }
   const note = await findCreditNote(env.BILLING_DB, auth.organizationId, id);
   if (!note) throw new ApiError(500, "persistence_error", "Credit note was not persisted");
@@ -1083,13 +1139,17 @@ async function refundablePaymentAttempt(
     }>();
 }
 
-async function resumeStripeRefundIfNeeded(
+async function resumeProviderRefundIfNeeded(
   env: CreditNoteMutationEnv,
   organizationId: string,
   creditNoteId: string,
   reason: string,
   providerFetcher: typeof fetch,
 ): Promise<void> {
+  if (env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test") {
+    await resumeEasyPayDirectRefundIfNeeded(env, organizationId, creditNoteId, providerFetcher);
+    return;
+  }
   if (env.CREDIT_NOTE_REFUND_MODE !== "stripe_test") return;
   const operation = await env.BILLING_DB.prepare(
     `SELECT id, invoice_id, provider_account_code, provider_payment_id, idempotency_key,
@@ -1181,6 +1241,117 @@ async function resumeStripeRefundIfNeeded(
       env.BILLING_DB.prepare(
         `UPDATE credit_note_refunds
          SET status = 'failed', failure_message = ?, updated_at = ?
+         WHERE organization_id = ? AND credit_note_id = ? AND status <> 'succeeded'`,
+      ).bind(message, now, organizationId, creditNoteId),
+      env.BILLING_DB.prepare(
+        `UPDATE credit_note_financials SET refund_status = 'failed'
+         WHERE organization_id = ? AND credit_note_id = ? AND refund_status <> 'succeeded'`,
+      ).bind(organizationId, creditNoteId),
+    ]);
+    throw error;
+  }
+}
+
+async function resumeEasyPayDirectRefundIfNeeded(
+  env: CreditNoteMutationEnv,
+  organizationId: string,
+  creditNoteId: string,
+  providerFetcher: typeof fetch,
+): Promise<void> {
+  const operation = await env.BILLING_DB.prepare(
+    `SELECT id, provider_account_code, provider_payment_id, provider_idempotency_key,
+            amount_minor, currency, status
+     FROM provider_refund_operations
+     WHERE organization_id = ? AND credit_note_id = ? AND provider = 'easy_pay_direct'
+     LIMIT 1`,
+  )
+    .bind(organizationId, creditNoteId)
+    .first<{
+      id: string;
+      provider_account_code: string;
+      provider_payment_id: string;
+      provider_idempotency_key: string | null;
+      amount_minor: number;
+      currency: string;
+      status: string;
+    }>();
+  if (!operation || operation.status === "succeeded") return;
+  if (
+    operation.provider_account_code !== env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim() ||
+    organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
+    env.EASY_PAY_DIRECT_NETWORK_MODE !== "test"
+  ) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_refund_mapping_changed",
+      "The pending refund no longer matches the configured Easy Pay Direct test boundary",
+    );
+  }
+
+  try {
+    const providerIdempotencyKey = operation.provider_idempotency_key ?? crypto.randomUUID();
+    if (!operation.provider_idempotency_key) {
+      await env.BILLING_DB.prepare(
+        `UPDATE provider_refund_operations SET provider_idempotency_key = ?, updated_at = ?
+         WHERE id = ? AND provider_idempotency_key IS NULL`,
+      )
+        .bind(providerIdempotencyKey, new Date().toISOString(), operation.id)
+        .run();
+    }
+    const result = await refundEasyPayDirectOrder(
+      env as Env,
+      {
+        orderId: operation.provider_payment_id,
+        amountMinor: operation.amount_minor,
+        currency: operation.currency,
+        idempotencyKey: providerIdempotencyKey,
+      },
+      providerFetcher,
+    );
+    const now = new Date().toISOString();
+    const status = result.status === "unknown" ? "pending" : result.status;
+    const failureMessage = result.status === "succeeded" ? null : result.responseText.slice(0, 500);
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE provider_refund_operations
+         SET provider_refund_id = ?, status = ?, failure_code = ?, failure_message = ?,
+             updated_at = ?
+         WHERE id = ? AND organization_id = ? AND status <> 'succeeded'`,
+      ).bind(
+        result.id,
+        status,
+        result.status === "failed" ? "easy_pay_direct_refund_failed" : null,
+        failureMessage,
+        now,
+        operation.id,
+        organizationId,
+      ),
+      env.BILLING_DB.prepare(
+        `UPDATE credit_note_refunds
+         SET provider_refund_id = ?, status = ?, failure_message = ?, updated_at = ?
+         WHERE organization_id = ? AND credit_note_id = ? AND status <> 'succeeded'`,
+      ).bind(result.id, status, failureMessage, now, organizationId, creditNoteId),
+      env.BILLING_DB.prepare(
+        `UPDATE credit_note_financials SET refund_status = ?
+         WHERE organization_id = ? AND credit_note_id = ? AND refund_status <> 'succeeded'`,
+      ).bind(
+        status === "succeeded" ? "succeeded" : status === "failed" ? "failed" : "pending",
+        organizationId,
+        creditNoteId,
+      ),
+    ]);
+  } catch (error) {
+    const now = new Date().toISOString();
+    const message = boundedProviderFailure(error);
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE provider_refund_operations
+         SET status = 'failed', failure_code = 'easy_pay_direct_request_failed',
+             failure_message = ?, updated_at = ?
+         WHERE id = ? AND organization_id = ? AND status <> 'succeeded'`,
+      ).bind(message, now, operation.id, organizationId),
+      env.BILLING_DB.prepare(
+        `UPDATE credit_note_refunds SET status = 'failed', failure_message = ?, updated_at = ?
          WHERE organization_id = ? AND credit_note_id = ? AND status <> 'succeeded'`,
       ).bind(message, now, organizationId, creditNoteId),
       env.BILLING_DB.prepare(

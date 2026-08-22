@@ -13,6 +13,17 @@ This file records the remaining premium-adjacent features that still depend on c
 
 ## Remaining self-hosted setup requirements
 
+### Easy Pay Direct adapter
+
+The Cloudflare-native adapter uses EPD Commerce for customers, payment methods, products, orders,
+refunds, and authoritative webhooks. Sandbox needs a Demo Company Commerce key carrying EPD's
+`_test_` environment marker,
+a checkout-signing secret, and the endpoint's one-time `whsec_...` signing secret. Live card entry
+additionally needs the EPD Gateway Payment API security key and Collect.js tokenization key because
+Gateway still owns card vaulting. Enable `EASY_PAY_DIRECT_NETWORK_MODE=test` first and keep
+`EASY_PAY_DIRECT_LIVEMODE_ALLOWED=0` independent. The Worker rejects a live key in sandbox mode and
+a test key in production mode. Only a verified `order.*` webhook marks the local payment paid.
+
 ### Nango-backed integrations
 These integrations still require local Nango configuration:
 

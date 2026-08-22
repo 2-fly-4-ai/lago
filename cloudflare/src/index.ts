@@ -3,9 +3,12 @@ import { authenticateApiKey } from "./auth/api-key";
 import { handleLagoCompatibilityRequest } from "./api/lago-compatibility";
 import { ApiError, apiErrorResponse } from "./http";
 import { authorizeNetPaymentForm } from "./providers/authorize-net";
+import { easyPayDirectPaymentForm } from "./providers/easy-pay-direct";
 import { handleAuthorizeNetWebhook } from "./webhooks/authorize-net";
+import { handleEasyPayDirectWebhook } from "./webhooks/easy-pay-direct";
 import { handleStripeWebhook } from "./webhooks/stripe";
 import { reconcileAuthorizeNetReceipt } from "./reconciliation/authorize-net";
+import { reconcileEasyPayDirectReceipt } from "./reconciliation/easy-pay-direct";
 import { deliverOutboundWebhooks } from "./webhooks/outbound";
 import { scheduleInstanceId } from "./schedules/registry";
 import { processPayInAdvanceUsageEvent } from "./billing/pay-in-advance-usage";
@@ -21,6 +24,7 @@ import { dispatchCreditNoteDocument } from "./api/credit-note-ledger";
 import { handleQuotesApi } from "./api/quotes";
 import { handleDataExportsApi } from "./api/data-exports";
 import { handleExternalTaxApi } from "./api/external-tax";
+import { handleEasyPayDirectCheckoutSubmission } from "./api/easy-pay-direct-checkout";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -67,12 +71,32 @@ export default {
         return authorizeNetPaymentForm(url);
       }
 
+      if (request.method === "GET" && url.pathname === "/easy_pay_direct/payment_form") {
+        return await easyPayDirectPaymentForm(url, env);
+      }
+
+      if (request.method === "POST" && url.pathname === "/easy_pay_direct/payment_form") {
+        return await handleEasyPayDirectCheckoutSubmission(request, env, requestId);
+      }
+
       const authorizeNetWebhookMatch = url.pathname.match(/^\/webhooks\/authorize_net\/([^/]+)$/);
       if (request.method === "POST" && authorizeNetWebhookMatch?.[1]) {
         return await handleAuthorizeNetWebhook(
           request,
           env,
           decodeURIComponent(authorizeNetWebhookMatch[1]),
+          requestId,
+        );
+      }
+
+      const easyPayDirectWebhookMatch = url.pathname.match(
+        /^\/webhooks\/easy_pay_direct\/([^/]+)$/,
+      );
+      if (request.method === "POST" && easyPayDirectWebhookMatch?.[1]) {
+        return await handleEasyPayDirectWebhook(
+          request,
+          env,
+          decodeURIComponent(easyPayDirectWebhookMatch[1]),
           requestId,
         );
       }
@@ -186,6 +210,14 @@ export default {
 
         if (event.type === "authorize_net.webhook.received") {
           const outcome = await reconcileAuthorizeNetReceipt(env, event.aggregateId);
+          if (outcome === "deferred") {
+            message.ack();
+            continue;
+          }
+        }
+
+        if (event.type === "easy_pay_direct.webhook.received") {
+          const outcome = await reconcileEasyPayDirectReceipt(env, event.aggregateId);
           if (outcome === "deferred") {
             message.ack();
             continue;

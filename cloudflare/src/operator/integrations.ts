@@ -4,6 +4,7 @@ const PROVIDERS = [
   ["stripe", "Stripe", "payments"],
   ["adyen", "Adyen", "payments"],
   ["authorize_net", "Authorize.Net", "payments"],
+  ["easy_pay_direct", "Easy Pay Direct", "payments"],
   ["cashfree", "Cashfree", "payments"],
   ["flutterwave", "Flutterwave", "payments"],
   ["gocardless", "GoCardless", "payments"],

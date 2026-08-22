@@ -14,7 +14,7 @@ const SUPPORTED_PAYMENT_EVENTS = new Set([
   "net.authorize.payment.void.created",
 ]);
 
-type PendingReceipt = {
+export type PendingReceipt = {
   receipt_id: string;
   organization_id: string;
   provider_account_code: string;
@@ -55,12 +55,18 @@ export async function reconcileAuthorizeNetReceipt(
     const normalizedStatus = normalizeAuthorizeNetPaymentStatus(transaction.status);
     const paymentRequestId = authorizeNetPaymentRequestId(transaction.metadata);
     if (paymentRequestId) {
-      await reconcileAuthorizeNetPaymentRequest(
+      await reconcilePaymentRequest(
         env.BILLING_DB,
         receipt,
         paymentRequestId,
-        transaction,
+        {
+          id: transaction.id,
+          amountMinor: transaction.amountMinor,
+          failureCode: transaction.failureCode,
+          failureMessage: transaction.failureMessage,
+        },
         normalizedStatus,
+        "authorize_net",
       );
       return "processed";
     }
@@ -289,12 +295,18 @@ type PaymentRequestPaymentRow = {
   version: number;
 };
 
-async function reconcileAuthorizeNetPaymentRequest(
+export async function reconcilePaymentRequest(
   database: D1Database,
   receipt: PendingReceipt,
   paymentRequestId: string,
-  transaction: Awaited<ReturnType<typeof getAuthorizeNetTransaction>>,
-  normalizedStatus: ReturnType<typeof normalizeAuthorizeNetPaymentStatus>,
+  transaction: {
+    id: string;
+    amountMinor: number | null;
+    failureCode: string | null;
+    failureMessage: string | null;
+  },
+  normalizedStatus: "pending" | "succeeded" | "failed" | "unknown",
+  provider: "authorize_net" | "easy_pay_direct",
 ): Promise<void> {
   const paymentRequest = await database
     .prepare(
@@ -310,10 +322,10 @@ async function reconcileAuthorizeNetPaymentRequest(
   const existingPayment = await database
     .prepare(
       `SELECT status, version FROM payment_request_payments
-       WHERE provider = 'authorize_net' AND provider_account_code = ?
+       WHERE provider = ? AND provider_account_code = ?
          AND provider_transaction_id = ? LIMIT 1`,
     )
-    .bind(receipt.provider_account_code, transaction.id)
+    .bind(provider, receipt.provider_account_code, transaction.id)
     .first<PaymentRequestPaymentRow>();
   const effectiveStatus =
     existingPayment?.status === "succeeded" && normalizedStatus !== "succeeded"
@@ -394,7 +406,7 @@ async function reconcileAuthorizeNetPaymentRequest(
   }
 
   const paymentId = await deterministicUuid(
-    "authorize-net-payment-request",
+    `${provider}-payment-request`,
     `${receipt.provider_account_code}:${transaction.id}`,
   );
   const paymentVersion = existingPayment
@@ -403,7 +415,7 @@ async function reconcileAuthorizeNetPaymentRequest(
       : existingPayment.version + 1
     : 1;
   const failureCode =
-    effectiveStatus === "failed" ? (transaction.failureCode ?? transaction.status) : null;
+    effectiveStatus === "failed" ? (transaction.failureCode ?? `${provider}_failed`) : null;
   const failureMessage = effectiveStatus === "failed" ? transaction.failureMessage : null;
   const invoiceIds = linked.results.map((invoice) => invoice.id);
   const paymentEvent: DomainEvent = {
@@ -421,7 +433,7 @@ async function reconcileAuthorizeNetPaymentRequest(
       paymentRequestId: paymentRequest.id,
       invoiceIds,
       paymentId,
-      provider: "authorize_net",
+      provider,
       providerTransactionId: transaction.id,
       amountMinor: paymentRequest.amount_minor,
       currency: paymentRequest.currency,
@@ -472,7 +484,7 @@ async function reconcileAuthorizeNetPaymentRequest(
          (id, organization_id, payment_request_id, provider, provider_account_code,
           provider_transaction_id, idempotency_key, amount_minor, currency, status,
           failure_code, failure_message, version, created_at, updated_at)
-         VALUES (?, ?, ?, 'authorize_net', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
          ON CONFLICT(provider, provider_account_code, provider_transaction_id) DO UPDATE SET
            status = CASE WHEN payment_request_payments.status = 'succeeded'
                          THEN 'succeeded' ELSE excluded.status END,
@@ -490,9 +502,10 @@ async function reconcileAuthorizeNetPaymentRequest(
         paymentId,
         receipt.organization_id,
         paymentRequest.id,
+        provider,
         receipt.provider_account_code,
         transaction.id,
-        `authorize-net:${receipt.provider_account_code}:${transaction.id}`,
+        `${provider}:${receipt.provider_account_code}:${transaction.id}`,
         paymentRequest.amount_minor,
         paymentRequest.currency,
         effectiveStatus,
@@ -502,6 +515,55 @@ async function reconcileAuthorizeNetPaymentRequest(
         timestamp,
       ),
   );
+
+  // Credit-note provider refunds are anchored to the invoice payment ledger. A payment request
+  // can span several invoices, but the Store checkout path creates a single-invoice request; keep
+  // that common case represented in both ledgers without inventing an ambiguous multi-invoice
+  // payment attempt.
+  if (linked.results.length === 1) {
+    const invoice = linked.results[0]!;
+    const paymentAttemptId = await deterministicUuid(
+      "payment-request-invoice-attempt",
+      `${provider}:${receipt.provider_account_code}:${transaction.id}:${invoice.id}`,
+    );
+    statements.push(
+      database
+        .prepare(
+          `INSERT INTO payment_attempts
+           (id, organization_id, invoice_id, provider, provider_account_code,
+            provider_transaction_id, idempotency_key, amount_minor, currency, status,
+            failure_code, failure_message, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+           ON CONFLICT(provider, provider_account_code, provider_transaction_id) DO UPDATE SET
+             status = CASE WHEN payment_attempts.status = 'succeeded'
+                           THEN 'succeeded' ELSE excluded.status END,
+             failure_code = CASE WHEN payment_attempts.status = 'succeeded'
+                                 THEN NULL ELSE excluded.failure_code END,
+             failure_message = CASE WHEN payment_attempts.status = 'succeeded'
+                                    THEN NULL ELSE excluded.failure_message END,
+             version = CASE WHEN payment_attempts.status = excluded.status
+                            OR payment_attempts.status = 'succeeded'
+                            THEN payment_attempts.version ELSE payment_attempts.version + 1 END,
+             updated_at = excluded.updated_at`,
+        )
+        .bind(
+          paymentAttemptId,
+          receipt.organization_id,
+          invoice.id,
+          provider,
+          receipt.provider_account_code,
+          transaction.id,
+          `${provider}:${receipt.provider_account_code}:${transaction.id}`,
+          paymentRequest.amount_minor,
+          paymentRequest.currency,
+          effectiveStatus,
+          failureCode,
+          failureMessage,
+          timestamp,
+          timestamp,
+        ),
+    );
+  }
 
   if (effectiveStatus === "succeeded") {
     for (const allocation of allocations) {

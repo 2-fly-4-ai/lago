@@ -4,6 +4,7 @@ import { ApiError } from "../http";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { createAuthorizeNetPaymentRequestUrl } from "../providers/authorize-net";
+import { createEasyPayDirectCheckoutUrl } from "../providers/easy-pay-direct";
 
 export type CheckoutWorkflowParams = {
   organizationId: string;
@@ -22,6 +23,7 @@ type PreparedCheckout = {
   externalCustomerId: string;
   customerEmail: string | null;
   providerAccountCode: string;
+  provider: "authorize_net" | "easy_pay_direct";
   amountMinor: number;
   currency: string;
   correlationId: string;
@@ -90,26 +92,30 @@ export async function runCheckoutWorkflow(
 
   try {
     const generated = await step.do(
-      "create Authorize.Net payment request URL",
+      `create ${prepared.provider} payment request URL`,
       {
         retries: { limit: 2, delay: "5 seconds", backoff: "exponential" },
         timeout: "1 minute",
         sensitive: "output",
       },
       async () =>
-        createAuthorizeNetPaymentRequestUrl(
-          env,
-          {
-            paymentRequestId: prepared.paymentRequestId,
-            customerId: prepared.customerId,
-            externalCustomerId: prepared.externalCustomerId,
-            organizationId: prepared.organizationId,
-            amountMinor: prepared.amountMinor,
-            currency: prepared.currency,
-            customerEmail: prepared.customerEmail,
-          },
-          fetcher,
-        ),
+        prepared.provider === "easy_pay_direct"
+          ? createEasyPayDirectCheckoutUrl(env, {
+              checkoutIntentId: prepared.checkoutIntentId,
+            })
+          : createAuthorizeNetPaymentRequestUrl(
+              env,
+              {
+                paymentRequestId: prepared.paymentRequestId,
+                customerId: prepared.customerId,
+                externalCustomerId: prepared.externalCustomerId,
+                organizationId: prepared.organizationId,
+                amountMinor: prepared.amountMinor,
+                currency: prepared.currency,
+                customerEmail: prepared.customerEmail,
+              },
+              fetcher,
+            ),
     );
     await step.do("record payment request checkout success", async () => {
       await completePaymentRequestCheckout(env.BILLING_DB, prepared, generated);
@@ -153,12 +159,12 @@ export async function dispatchPendingPaymentRequestCheckouts(
      JOIN customers customer ON customer.id = request.customer_id
      WHERE request.payment_status <> 'succeeded'
        AND request.ready_for_payment_processing = 1
-       AND customer.payment_provider = 'authorize_net'
+       AND customer.payment_provider IN ('authorize_net', 'easy_pay_direct')
        AND NOT EXISTS (
          SELECT 1 FROM payment_request_checkout_intents intent
          WHERE intent.payment_request_id = request.id
            AND intent.payment_request_version = request.version
-           AND intent.provider = 'authorize_net'
+           AND intent.provider = customer.payment_provider
        )
      ORDER BY request.created_at, request.id LIMIT 100`,
   ).all<{ id: string; organization_id: string; version: number }>();
@@ -217,7 +223,10 @@ async function preparePaymentRequestCheckout(
   ) {
     throw new Error("payment_request_checkout_state_changed");
   }
-  if (paymentRequest.payment_provider !== "authorize_net") {
+  if (
+    paymentRequest.payment_provider !== "authorize_net" &&
+    paymentRequest.payment_provider !== "easy_pay_direct"
+  ) {
     throw new Error("unsupported_payment_request_provider");
   }
   const balance = await env.BILLING_DB.prepare(
@@ -254,7 +263,7 @@ async function preparePaymentRequestCheckout(
       organizationId: paymentRequest.organization_id,
       paymentRequestId: paymentRequest.id,
       paymentRequestVersion: paymentRequest.version,
-      provider: "authorize_net",
+      provider: paymentRequest.payment_provider,
       providerAccountCode,
     }),
   );
@@ -268,7 +277,7 @@ async function preparePaymentRequestCheckout(
      (id, organization_id, payment_request_id, customer_id, provider,
       provider_account_code, idempotency_key, request_sha256, amount_minor, currency,
       payment_request_version, status, version, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'authorize_net', ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?)
      ON CONFLICT(organization_id, idempotency_key) DO NOTHING`,
   )
     .bind(
@@ -276,6 +285,7 @@ async function preparePaymentRequestCheckout(
       paymentRequest.organization_id,
       paymentRequest.id,
       paymentRequest.customer_id,
+      paymentRequest.payment_provider,
       providerAccountCode,
       payload.idempotencyKey,
       requestSha256,
@@ -305,6 +315,7 @@ async function preparePaymentRequestCheckout(
     externalCustomerId: paymentRequest.external_customer_id,
     customerEmail: paymentRequest.customer_email,
     providerAccountCode,
+    provider: paymentRequest.payment_provider,
     amountMinor: paymentRequest.amount_minor,
     currency: paymentRequest.currency,
     correlationId: payload.correlationId,
@@ -324,7 +335,7 @@ async function completePaymentRequestCheckout(
     organizationId: prepared.organizationId,
     paymentRequestId: prepared.paymentRequestId,
     checkoutIntentId: prepared.checkoutIntentId,
-    provider: "authorize_net",
+    provider: prepared.provider,
     expiresAt: generated.expiresAt,
   });
   await database.batch([
@@ -430,7 +441,7 @@ async function failPaymentRequestCheckout(
           organizationId: prepared.organizationId,
           paymentRequestId: prepared.paymentRequestId,
           checkoutIntentId: prepared.checkoutIntentId,
-          provider: "authorize_net",
+          provider: prepared.provider,
           failureCode,
         }),
         now,
