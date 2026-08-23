@@ -4624,15 +4624,18 @@ function renderIntegrations(integrations) {
       status.className = "role-pill";
       status.textContent = humanize(integration.status);
       const copy = document.createElement("p");
-      copy.textContent = integration.external_actions_enabled
-        ? "External actions enabled"
-        : "Credentials and external actions disabled";
+      copy.textContent =
+        integration.status_message ||
+        (integration.external_actions_enabled
+          ? "External actions enabled"
+          : "Credentials and external actions disabled");
       const button = document.createElement("button");
       button.type = "button";
       button.className = "secondary-button";
       button.dataset.integrationCode = integration.provider_code;
-      button.textContent =
-        integration.status === "disabled" ? "Prepare configuration" : "Edit configuration";
+      button.textContent = ["disabled", "disconnected"].includes(integration.status)
+        ? "Prepare configuration"
+        : "Edit configuration";
       if (state.role !== "admin") button.disabled = true;
       card.append(name, status, copy, button);
       grid.append(card);

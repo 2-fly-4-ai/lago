@@ -7,6 +7,7 @@ import type { OperatorContext } from "../src/operator/access";
 import { handleOperatorConfigurationRequest } from "../src/operator/configuration";
 import { handleOperatorFeaturesRequest } from "../src/operator/features";
 import { handleOperatorIntegrationsRequest } from "../src/operator/integrations";
+import { integrationRuntimeStatuses } from "../src/provider-financial-service";
 import { handleOperatorObservabilityRequest } from "../src/operator/observability";
 import { handleOperatorProductParityRequest } from "../src/operator/product-parity";
 import { handlePortalAdminRequest } from "../src/operator/portal-admin";
@@ -502,6 +503,66 @@ describe("operator integration registry", () => {
         "request-integration-secret",
       ),
     ).rejects.toMatchObject({ code: "secret_not_admitted" });
+  });
+
+  it("reports configured sandbox adapters without exposing provider credentials", async () => {
+    const organization = await createOrganization("integration-runtime");
+    const runtimeStatuses = integrationRuntimeStatuses(
+      {
+        STRIPE_NETWORK_MODE: "enabled",
+        STRIPE_RESTRICTED_API_KEY: "synthetic-stripe-key",
+        STRIPE_ACCOUNT_CODE: "synthetic-stripe-account",
+        STRIPE_ORGANIZATION_ID: organization.id,
+        STRIPE_LIVEMODE_ALLOWED: "0",
+        EASY_PAY_DIRECT_NETWORK_MODE: "test",
+        EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
+        EASY_PAY_DIRECT_COMMERCE_API_KEY: "synthetic-epd-key",
+        EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET: "synthetic-checkout-secret",
+        EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY: "synthetic-webhook-key",
+        EASY_PAY_DIRECT_ACCOUNT_CODE: "synthetic-epd-account",
+        EASY_PAY_DIRECT_ORGANIZATION_ID: organization.id,
+        PAYMENT_MUTATIONS_ENABLED: "0",
+      } as Env,
+      organization.id,
+    );
+    const response = await handleOperatorIntegrationsRequest(
+      new Request("https://operator.test/api/operator/v1/integrations"),
+      env.BILLING_DB,
+      organization.id,
+      "request-integration-runtime",
+      runtimeStatuses,
+    );
+    const payload = (await response?.json()) as {
+      integrations: Array<Record<string, unknown>>;
+    };
+    expect(payload.integrations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider_code: "stripe",
+          status: "connected",
+          secret_ready: true,
+          external_actions_enabled: false,
+          environment: "sandbox",
+          status_message: "Sandbox connected; payment writes are paused",
+        }),
+        expect.objectContaining({
+          provider_code: "easy_pay_direct",
+          status: "connected",
+          secret_ready: true,
+          external_actions_enabled: false,
+          environment: "sandbox",
+          status_message: "Sandbox connected; payment writes are paused",
+        }),
+        expect.objectContaining({
+          provider_code: "adyen",
+          status: "disabled",
+          secret_ready: false,
+          status_message: "Not configured",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(payload)).not.toContain("synthetic-stripe-key");
+    expect(JSON.stringify(payload)).not.toContain("synthetic-epd-key");
   });
 });
 

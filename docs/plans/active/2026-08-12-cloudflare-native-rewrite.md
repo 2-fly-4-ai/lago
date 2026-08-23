@@ -3617,3 +3617,16 @@ resource and mutation described.
   omission. All original routes must remain executable Cloudflare-native surfaces or named
   Cloudflare-native replacements, with unavailable external actions shown as safety-disabled. Any
   future exception requires a new screen-specific approval and rollback entry.
+- 2026-08-23: Corrected the operator integration registry so its badges reflect the billing
+  Worker's actual secret-safe runtime state instead of hardcoding every provider as disabled. The
+  Access-protected operator obtains only readiness booleans, sandbox mode, and payment-write gate
+  state through the existing private `PROVIDER_FINANCIALS` service-binding RPC; it never receives
+  credential values. Authenticated browser verification now shows Stripe and Easy Pay Direct as
+  `Connected` with `Sandbox connected; payment writes are paused`, while providers without a
+  configured runtime remain `Disabled / Not configured`. API Worker version
+  `ecd77f65-d44c-4797-9867-3d2bcb495185` and operator Worker version
+  `768202db-ac01-49cb-8744-96b3a6add8c4` are deployed only to isolated development. Focused tests,
+  typechecking, lint, formatting, generated type checks, and both dev dry builds pass. The complete
+  suite remains at the known baseline of 393/395 tests, with only the two unrelated trial-billing
+  assertions failing. Payment mutations and live modes remain disabled; no production,
+  `store-new`, or `serp-auth` change occurred.

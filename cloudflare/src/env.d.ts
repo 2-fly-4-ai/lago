@@ -28,6 +28,7 @@ declare namespace Cloudflare {
     STRIPE_ACCOUNT_CODE?: string;
     STRIPE_ORGANIZATION_ID?: string;
     STRIPE_LIVEMODE_ALLOWED?: string;
+    PAYMENT_MUTATIONS_ENABLED?: string;
     TEST_MIGRATIONS?: Array<{ name: string; queries: string[] }>;
   }
 }
@@ -61,6 +62,7 @@ interface Env {
   STRIPE_ACCOUNT_CODE?: string;
   STRIPE_ORGANIZATION_ID?: string;
   STRIPE_LIVEMODE_ALLOWED?: string;
+  PAYMENT_MUTATIONS_ENABLED?: string;
   PROVIDER_READS_ENABLED?: string;
   TEST_MIGRATIONS?: Array<{ name: string; queries: string[] }>;
 }

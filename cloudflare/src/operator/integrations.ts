@@ -1,4 +1,5 @@
 import { ApiError, json, parseJsonObject } from "../http";
+import type { ProviderRuntimeStatus } from "../provider-financial-service";
 
 const PROVIDERS = [
   ["stripe", "Stripe", "payments"],
@@ -35,6 +36,7 @@ export async function handleOperatorIntegrationsRequest(
   database: D1Database,
   organizationId: string,
   requestId: string,
+  runtimeStatuses: ProviderRuntimeStatus[] = [],
 ): Promise<Response | null> {
   const match = new URL(request.url).pathname.match(
     /^\/api\/operator\/v1\/integrations(?:\/([^/]+))?$/,
@@ -42,7 +44,7 @@ export async function handleOperatorIntegrationsRequest(
   if (!match) return null;
   const code = match[1] ? decodeURIComponent(match[1]) : null;
   if (request.method === "GET") {
-    const integrations = await list(database, organizationId);
+    const integrations = await list(database, organizationId, runtimeStatuses);
     if (!code) return json({ integrations }, { requestId });
     const integration = integrations.find((item) => item.provider_code === code);
     if (!integration) throw new ApiError(404, "integration_not_found", "Integration was not found");
@@ -98,7 +100,7 @@ export async function handleOperatorIntegrationsRequest(
     .run();
   return json(
     {
-      integration: (await list(database, organizationId)).find(
+      integration: (await list(database, organizationId, runtimeStatuses)).find(
         (item) => item.provider_code === code,
       ),
     },
@@ -106,7 +108,11 @@ export async function handleOperatorIntegrationsRequest(
   );
 }
 
-async function list(database: D1Database, organizationId: string) {
+async function list(
+  database: D1Database,
+  organizationId: string,
+  runtimeStatuses: ProviderRuntimeStatus[],
+) {
   const result = await database
     .prepare(`SELECT id, provider_code, integration_group, display_name, status,
     settings_json, version, created_at, updated_at FROM operator_integration_connections
@@ -114,18 +120,24 @@ async function list(database: D1Database, organizationId: string) {
     .bind(organizationId)
     .all<Row>();
   const rows = new Map(result.results.map((row) => [row.provider_code, row]));
+  const runtime = new Map(runtimeStatuses.map((status) => [status.providerCode, status]));
   return PROVIDERS.map(([code, name, group]) => {
     const row = rows.get(code);
+    const providerRuntime = runtime.get(code as ProviderRuntimeStatus["providerCode"]);
     return {
       lago_id: row?.id ?? null,
       provider_code: code,
       name,
       integration_group: group,
       display_name: row?.display_name ?? null,
-      status: row?.status ?? "disabled",
+      status: providerRuntime?.connectionState ?? row?.status ?? "disabled",
       settings: row ? safeSettings(row.settings_json) : {},
-      secret_ready: false,
-      external_actions_enabled: false,
+      secret_ready: providerRuntime?.secretReady ?? false,
+      external_actions_enabled: providerRuntime?.externalActionsEnabled ?? false,
+      environment: providerRuntime?.environment ?? null,
+      status_message:
+        providerRuntime?.message ??
+        (row ? "Configuration saved; credentials are not connected" : "Not configured"),
       version: row?.version ?? 0,
       created_at: row?.created_at ?? null,
       updated_at: row?.updated_at ?? null,

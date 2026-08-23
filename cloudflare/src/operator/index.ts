@@ -185,11 +185,31 @@ export async function handleOperatorRequest(
         assertOperatorAdmin(operator);
         assertOperatorMutationRequest(request);
       }
+      let runtimeStatuses: Awaited<
+        ReturnType<NonNullable<OperatorEnv["PROVIDER_FINANCIALS"]>["getIntegrationRuntimeStatuses"]>
+      > = [];
+      if (request.method === "GET" && env.PROVIDER_FINANCIALS) {
+        try {
+          runtimeStatuses = await env.PROVIDER_FINANCIALS.getIntegrationRuntimeStatuses(
+            operator.organizationId,
+          );
+        } catch {
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "provider_runtime_status_unavailable",
+              requestId,
+              organizationId: operator.organizationId,
+            }),
+          );
+        }
+      }
       const response = await handleOperatorIntegrationsRequest(
         request,
         env.BILLING_DB,
         operator.organizationId,
         requestId,
+        runtimeStatuses,
       );
       if (response) return response;
     }

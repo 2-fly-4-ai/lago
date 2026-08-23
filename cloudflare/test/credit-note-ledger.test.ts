@@ -624,6 +624,7 @@ describe("credit-note ledger", () => {
       .run();
 
     const providerFinancials = {
+      getIntegrationRuntimeStatuses: vi.fn(async () => []),
       refundEasyPayDirect: vi.fn(async (input: EasyPayDirectRefundRpcInput) => {
         expect(input).toMatchObject({
           organizationId: "org-credit-note",
