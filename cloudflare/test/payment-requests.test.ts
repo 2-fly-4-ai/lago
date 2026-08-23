@@ -196,6 +196,22 @@ describe("payment requests", () => {
     ).resolves.toEqual({ total: 0 });
   });
 
+  it("allows immediate checkout collection for a finalized zero-term invoice", async () => {
+    await env.BILLING_DB.prepare(
+      `UPDATE invoices
+       SET payment_overdue = 0, net_payment_term = 0, payment_due_date = '2026-08-15'
+       WHERE id = 'invoice-payment-request-one'`,
+    ).run();
+    const response = await createRequest(["invoice-payment-request-one"], "checkout");
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      payment_request: {
+        amount_cents: 1000,
+        payment_status: "pending",
+      },
+    });
+  });
+
   it("rolls back a request if a linked invoice version or ownership changes", async () => {
     const now = "2026-08-15T03:31:00.000Z";
     await expect(
@@ -224,7 +240,7 @@ describe("payment requests", () => {
   });
 });
 
-function createRequest(invoiceIds: string[]) {
+function createRequest(invoiceIds: string[], collectionMode?: "checkout") {
   return SELF.fetch("https://lago.test/api/v1/payment_requests", {
     method: "POST",
     headers,
@@ -232,6 +248,7 @@ function createRequest(invoiceIds: string[]) {
       payment_request: {
         external_customer_id: "customer-payment-request",
         lago_invoice_ids: invoiceIds,
+        ...(collectionMode ? { collection_mode: collectionMode } : {}),
       },
     }),
   });

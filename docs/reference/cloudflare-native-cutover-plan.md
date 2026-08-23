@@ -1,13 +1,19 @@
 # Cloudflare-Native Lago Production Cutover Plan
 
-Status: production foundation deployed fail-closed; consumer canary pending
+Status: isolated staging accepted and production foundation fail-closed; production consumer canary pending
 
-Last reviewed: 2026-08-22
+Last reviewed: 2026-08-23
 
 This document defines the production rollout and endpoint switch. The production foundation was
 explicitly approved and deployed on 2026-08-22 with external actions disabled. Consumer canary,
 provider activation, and retirement remain governed by the gates below; the execution inventory is
 recorded in `cloudflare-native-production-resource-manifest.md`.
+
+The isolated development build passed its final 2026-08-23 acceptance: 400 serial tests, all
+development and production dry bundles, the staged Store-to-Lago Easy Pay Direct checkout, Stripe
+TEST failure/refund replay QA, a 29-route operator truth audit, no pending D1 migrations, and an
+empty foreign-key check. This closes staging implementation, not production authority; the
+production consumer canary and two-cycle retirement gate remain pending.
 
 ## Authority and contract owners
 

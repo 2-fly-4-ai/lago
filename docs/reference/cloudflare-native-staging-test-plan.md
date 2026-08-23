@@ -106,6 +106,17 @@ mechanism, callback URL, and temporary flag change.
   seconds and left two closed cycles/two distinct invoices with aggregate subtotal 1,830 minor
   units, wallet credits 500, total due 1,330, subscription version 3, zero active API keys, and zero
   foreign-key violations.
+- `synthetic-provider-store-20260823`: completed the Store-to-Lago sandbox checkout contract on
+  Store Worker `a796ae31-5007-44b2-99f5-5c973f544549` and API Worker
+  `6684a2ee-fa56-49ac-9088-129bc1e17593`. Store sends explicit checkout collection mode plus zero
+  grace and net terms, and the synthetic request returned a signed Easy Pay Direct hosted-payment
+  URL. Easy Pay Direct success/replay, decline/replay, provider-read recovery, and repeated no-op
+  reconciliation converged without a duplicate provider mutation. Stripe TEST decline/replay and a
+  100-minor-unit refund/replay also converged exactly once. No live card, customer record, or
+  production billing data was used. Migration `0093_reusable_easy_pay_direct_tokens.sql` corrected
+  the provider-token uniqueness model; all migrations are applied and the foreign-key check is
+  empty. The final serial suite passes 400 tests, all dry bundles pass, and the 29-route UI truth
+  audit is recorded in `../evidence/cloudflare-native-final-acceptance-2026-08-23.md`.
 
 The API portions of the resilience run are reproducible with `pnpm run staging:resilience --
 <setup|events|verify>`. The runner requires `LAGO_SYNTHETIC_RUN_ID` and a run-scoped

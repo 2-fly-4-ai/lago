@@ -103,8 +103,13 @@ describe("free-trial billing", () => {
     const billed = await env.BILLING_DB.prepare(
       `SELECT s.trial_ended_at, i.status, i.subtotal_minor, il.precise_amount_minor,
               il.metadata_json,
-              (SELECT COUNT(*) FROM invoices duplicate WHERE duplicate.subscription_id = s.id)
-                AS invoices,
+              (SELECT COUNT(*) FROM invoices duplicate
+               WHERE duplicate.subscription_id = s.id
+                 AND EXISTS (
+                   SELECT 1 FROM invoice_lines duplicate_line
+                   WHERE duplicate_line.invoice_id = duplicate.id
+                     AND duplicate_line.source_type = 'plan'
+                 )) AS invoices,
               (SELECT COUNT(*) FROM outbox_events oe
                WHERE oe.aggregate_id = s.id AND oe.event_type = 'subscription.trial_ended') AS events
        FROM subscriptions s
@@ -418,10 +423,16 @@ describe("free-trial billing", () => {
     const trialEnd = subscription?.trial_end_at ?? "";
     await expect(billEndedTrialSubscriptions(env, trialEnd, "trial-grace-end")).resolves.toBe(1);
     const draft = await env.BILLING_DB.prepare(
-      `SELECT id, subtotal_minor, expected_finalization_date
-       FROM invoices WHERE subscription_id =
-         (SELECT id FROM subscriptions WHERE external_id = 'trial-grace-subscription')`,
-    ).first<{ id: string; subtotal_minor: number; expected_finalization_date: string }>();
+      `SELECT i.id, i.subtotal_minor, i.expected_finalization_date
+       FROM invoices i
+       JOIN subscription_invoice_contexts context ON context.invoice_id = i.id
+       WHERE i.subscription_id =
+         (SELECT id FROM subscriptions WHERE external_id = 'trial-grace-subscription')
+         AND i.status = 'draft' AND context.context_type = 'initial'
+         AND context.period_start = ?`,
+    )
+      .bind(trialEnd)
+      .first<{ id: string; subtotal_minor: number; expected_finalization_date: string }>();
     expect(draft?.id).toBeTruthy();
 
     const refreshedAt = new Date(Date.parse(trialEnd) + 3_600_000).toISOString();

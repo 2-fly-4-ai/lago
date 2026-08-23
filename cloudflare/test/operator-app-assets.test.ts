@@ -162,7 +162,7 @@ describe("isolated operator app assets", () => {
       "Provider refunds are submitted only when an isolated test adapter is enabled",
     );
     expect(operatorIndex).toContain("Payment disputes");
-    expect(operatorIndex).toContain("Stripe network access remains disabled");
+    expect(operatorIndex).toContain("provider-specific safety gates");
   });
 
   it("uses organization-slug routes, real history, and the retained Lago navigation hierarchy", () => {

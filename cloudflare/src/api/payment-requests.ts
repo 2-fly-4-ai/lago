@@ -69,13 +69,22 @@ async function createPaymentRequest(
 ): Promise<Response> {
   const input = objectAt(await parseJsonObject(request), "payment_request");
   const unsupported = Object.keys(input).find(
-    (key) => !["email", "external_customer_id", "lago_invoice_ids"].includes(key),
+    (key) =>
+      !["collection_mode", "email", "external_customer_id", "lago_invoice_ids"].includes(key),
   );
   if (unsupported) {
     throw new ApiError(
       422,
       "unsupported_payment_request_feature",
       `${unsupported} is not implemented for payment requests`,
+    );
+  }
+  const collectionMode = optionalString(input, "collection_mode");
+  if (collectionMode !== null && collectionMode !== "checkout") {
+    throw new ApiError(
+      422,
+      "unsupported_payment_request_collection_mode",
+      "collection_mode must be checkout when provided",
     );
   }
   const externalCustomerId = requiredString(input, "external_customer_id");
@@ -96,7 +105,18 @@ async function createPaymentRequest(
       "Every invoice must belong to the payment request customer",
     );
   }
-  if (ownedInvoices.some((invoice) => invoice.payment_overdue !== 1)) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (
+    ownedInvoices.some(
+      (invoice) =>
+        invoice.payment_overdue !== 1 &&
+        !(
+          collectionMode === "checkout" &&
+          invoice.net_payment_term === 0 &&
+          (invoice.payment_due_date === null || invoice.payment_due_date <= today)
+        ),
+    )
+  ) {
     throw new ApiError(422, "invoices_not_overdue", "Every invoice must be payment overdue");
   }
   if (
@@ -150,8 +170,9 @@ async function createPaymentRequest(
     env.BILLING_DB.prepare(
       `INSERT INTO payment_requests
        (id, organization_id, customer_id, amount_minor, currency, email, payment_attempts,
-        payment_status, ready_for_payment_processing, version, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', 1, 1, ?, ?)`,
+        payment_status, ready_for_payment_processing, version, collection_mode, created_at,
+        updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', 1, 1, ?, ?, ?)`,
     ).bind(
       paymentRequestId,
       auth.organizationId,
@@ -159,6 +180,7 @@ async function createPaymentRequest(
       amountMinor,
       currency,
       email,
+      collectionMode ?? "overdue",
       now,
       now,
     ),

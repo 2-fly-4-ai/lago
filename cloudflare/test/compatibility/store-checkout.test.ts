@@ -32,7 +32,18 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  (env as unknown as { PAYMENT_MUTATIONS_ENABLED: string }).PAYMENT_MUTATIONS_ENABLED = "0";
+  const mutableEnv = env as unknown as {
+    PAYMENT_MUTATIONS_ENABLED: string;
+    EASY_PAY_DIRECT_COMMERCE_API_KEY: string;
+    EASY_PAY_DIRECT_NETWORK_MODE: string;
+    EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET: string;
+    PUBLIC_BASE_URL: string;
+  };
+  mutableEnv.PAYMENT_MUTATIONS_ENABLED = "0";
+  mutableEnv.EASY_PAY_DIRECT_COMMERCE_API_KEY = "";
+  mutableEnv.EASY_PAY_DIRECT_NETWORK_MODE = "disabled";
+  mutableEnv.EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET = "";
+  mutableEnv.PUBLIC_BASE_URL = "https://lago.test";
   vi.unstubAllGlobals();
 });
 
@@ -307,6 +318,102 @@ describe("store-new Lago checkout compatibility", () => {
       { event_type: "customer.created", aggregate_version: 1 },
       { event_type: "customer.updated", aggregate_version: 2 },
     ]);
+  });
+
+  it("accepts Easy Pay Direct customer billing configuration", async () => {
+    const response = await SELF.fetch("https://lago.test/api/v1/customers", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify({
+        customer: {
+          external_id: "easy-pay-direct-provider-customer",
+          email: "easy-pay-direct-provider@example.invalid",
+          billing_configuration: {
+            payment_provider: "easy_pay_direct",
+            payment_provider_code: "easy-pay-direct",
+          },
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      customer: {
+        external_id: "easy-pay-direct-provider-customer",
+        email: "easy-pay-direct-provider@example.invalid",
+        billing_configuration: {
+          payment_provider: "easy_pay_direct",
+          payment_provider_code: "easy-pay-direct",
+        },
+      },
+    });
+  });
+
+  it("creates a replay-safe Easy Pay Direct payment URL for a finalized invoice", async () => {
+    const now = new Date().toISOString();
+    const customerId = "easy-pay-direct-payment-url-customer";
+    const invoiceId = "easy-pay-direct-payment-url-invoice";
+    const paymentRequestId = "easy-pay-direct-payment-url-request";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, email, name, currency, metadata_json,
+          payment_provider, payment_provider_code, created_at, updated_at)
+         VALUES (?, 'org-test', 'epd-payment-url-customer', 'epd-url@example.invalid',
+                 'EPD URL Customer', 'USD', '{}', 'easy_pay_direct', 'easy-pay-direct', ?, ?)`,
+      ).bind(customerId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices
+         (id, organization_id, customer_id, number, status, payment_status, currency,
+          subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
+          finalized_at, payment_overdue, ready_for_payment_processing, created_at, updated_at)
+         VALUES (?, 'org-test', ?, 'EPD-URL', 'finalized', 'pending', 'USD',
+                 900, 0, 0, 900, 1, ?, 1, 1, ?, ?)`,
+      ).bind(invoiceId, customerId, now, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_requests
+         (id, organization_id, customer_id, amount_minor, currency, email,
+          payment_attempts, payment_status, ready_for_payment_processing, version,
+          created_at, updated_at)
+         VALUES (?, 'org-test', ?, 900, 'USD', 'epd-url@example.invalid',
+                 0, 'pending', 1, 1, ?, ?)`,
+      ).bind(paymentRequestId, customerId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices_payment_requests
+         (id, organization_id, payment_request_id, invoice_id, invoice_version,
+          created_at, updated_at)
+         VALUES ('easy-pay-direct-payment-url-link', 'org-test', ?, ?, 1, ?, ?)`,
+      ).bind(paymentRequestId, invoiceId, now, now),
+    ]);
+    const mutableEnv = env as unknown as {
+      PAYMENT_MUTATIONS_ENABLED: string;
+      EASY_PAY_DIRECT_COMMERCE_API_KEY: string;
+      EASY_PAY_DIRECT_NETWORK_MODE: string;
+      EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET: string;
+      PUBLIC_BASE_URL: string;
+    };
+    mutableEnv.PAYMENT_MUTATIONS_ENABLED = "1";
+    mutableEnv.EASY_PAY_DIRECT_COMMERCE_API_KEY = "epd_synthetic_checkout_test_key";
+    mutableEnv.EASY_PAY_DIRECT_NETWORK_MODE = "test";
+    mutableEnv.EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET = "synthetic-signing-secret";
+    mutableEnv.PUBLIC_BASE_URL = "https://lago.test";
+
+    const request = () =>
+      SELF.fetch(`https://lago.test/api/v1/invoices/${invoiceId}/payment_url`, {
+        method: "POST",
+        headers: authorization,
+        body: "{}",
+      });
+    const first = await request();
+    expect(first.status).toBe(200);
+    const firstBody = await first.json<{
+      invoice_payment_details: { payment_url: string };
+    }>();
+    expect(firstBody.invoice_payment_details.payment_url).toContain(
+      "https://lago.test/easy_pay_direct/payment_form?checkout=",
+    );
+    const replay = await request();
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject(firstBody);
   });
 
   it("rejects customer provider modes the Cloudflare checkout path cannot honor", async () => {

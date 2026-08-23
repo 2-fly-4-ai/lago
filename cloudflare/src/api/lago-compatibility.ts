@@ -5,6 +5,8 @@ import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import type { DomainEvent } from "../domain-events";
 import { createAuthorizeNetPaymentUrl } from "../providers/authorize-net";
+import { runCheckoutWorkflow } from "../workflows/checkout";
+import type { WorkflowStep } from "cloudflare:workers";
 import {
   activeBillingPeriod,
   addTrialDays,
@@ -2789,6 +2791,71 @@ async function generateInvoicePaymentUrl(
   if (outstandingMinor <= 0) {
     throw new ApiError(422, "invalid_invoice_status_or_payment_status", "Invoice is not payable");
   }
+  if (invoice.payment_provider === "easy_pay_direct") {
+    if (String(env.PAYMENT_MUTATIONS_ENABLED) !== "1") {
+      throw new ApiError(
+        503,
+        "payment_mutations_disabled",
+        "Payment provider mutations are disabled",
+      );
+    }
+    const paymentRequest = await env.BILLING_DB.prepare(
+      `SELECT request.id, request.version
+       FROM payment_requests request
+       JOIN invoices_payment_requests link
+         ON link.payment_request_id = request.id
+        AND link.organization_id = request.organization_id
+       WHERE request.organization_id = ? AND link.invoice_id = ?
+       ORDER BY request.created_at DESC, request.id DESC LIMIT 1`,
+    )
+      .bind(auth.organizationId, invoice.id)
+      .first<{ id: string; version: number }>();
+    if (!paymentRequest) {
+      throw new ApiError(
+        422,
+        "payment_request_not_found",
+        "No payable request exists for this invoice",
+      );
+    }
+    const idempotencyKey = `payment-request-checkout-${paymentRequest.id}-v${paymentRequest.version}`;
+    const inlineStep = {
+      async do(...args: unknown[]) {
+        const callback = (typeof args[2] === "function" ? args[2] : args[1]) as
+          | (() => Promise<unknown>)
+          | undefined;
+        if (!callback) throw new Error("workflow_step_callback_missing");
+        return callback();
+      },
+    } as unknown as WorkflowStep;
+    await runCheckoutWorkflow(
+      env,
+      {
+        organizationId: auth.organizationId,
+        paymentRequestId: paymentRequest.id,
+        paymentRequestVersion: paymentRequest.version,
+        idempotencyKey,
+        correlationId: requestId,
+      },
+      inlineStep,
+    );
+    const intent = await env.BILLING_DB.prepare(
+      `SELECT payment_url, status, failure_code
+       FROM payment_request_checkout_intents
+       WHERE organization_id = ? AND payment_request_id = ?
+         AND payment_request_version = ? AND provider = 'easy_pay_direct'
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+      .bind(auth.organizationId, paymentRequest.id, paymentRequest.version)
+      .first<{ payment_url: string | null; status: string; failure_code: string | null }>();
+    if (!intent?.payment_url || intent.status !== "succeeded") {
+      throw new ApiError(
+        409,
+        intent?.failure_code ?? "payment_url_creation_in_progress",
+        "Easy Pay Direct checkout URL is not ready",
+      );
+    }
+    return paymentUrlResponse(invoice, intent.payment_url, requestId);
+  }
   if (invoice.payment_provider !== "authorize_net") {
     throw new ApiError(
       422,
@@ -3442,11 +3509,11 @@ function rejectUnsupportedCustomerFields(input: Record<string, unknown>): void {
 }
 
 function validateCustomerProvider(provider: string | null, code: string | null): void {
-  if (provider !== null && provider !== "authorize_net")
+  if (provider !== null && provider !== "authorize_net" && provider !== "easy_pay_direct")
     throw new ApiError(
       422,
       "unsupported_payment_provider",
-      "Only authorize_net is implemented by the Cloudflare checkout path",
+      "Only authorize_net and easy_pay_direct are implemented by the Cloudflare checkout path",
     );
   if ((provider === null) !== (code === null))
     throw new ApiError(

@@ -11,10 +11,15 @@ import {
 import { runCheckoutWorkflow } from "../src/workflows/checkout";
 
 const organizationId = "org-easy-pay-direct-checkout";
-const customerId = "customer-easy-pay-direct-checkout";
-const paymentRequestId = "payment-request-easy-pay-direct-checkout";
+let customerId: string;
+let invoiceId: string;
+let paymentRequestId: string;
 
 beforeEach(async () => {
+  const fixtureId = crypto.randomUUID();
+  customerId = `customer-easy-pay-direct-checkout-${fixtureId}`;
+  invoiceId = `invoice-easy-pay-direct-checkout-${fixtureId}`;
+  paymentRequestId = `payment-request-easy-pay-direct-checkout-${fixtureId}`;
   const now = new Date().toISOString();
   await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
@@ -25,17 +30,17 @@ beforeEach(async () => {
       `INSERT OR IGNORE INTO customers
        (id, organization_id, external_id, email, name, currency, metadata_json,
         payment_provider, payment_provider_code, created_at, updated_at)
-       VALUES (?, ?, 'easy-pay-direct-customer', 'synthetic@example.com', 'Synthetic Customer',
+       VALUES (?, ?, ?, 'synthetic@example.com', 'Synthetic Customer',
                'USD', '{}', 'easy_pay_direct', 'epd-synthetic', ?, ?)`,
-    ).bind(customerId, organizationId, now, now),
+    ).bind(customerId, organizationId, `easy-pay-direct-customer-${fixtureId}`, now, now),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO invoices
        (id, organization_id, customer_id, number, status, payment_status, currency,
         subtotal_minor, tax_minor, credits_minor, total_due_minor, version, finalized_at,
         payment_overdue, ready_for_payment_processing, created_at, updated_at)
-       VALUES ('invoice-easy-pay-direct-checkout', ?, ?, 'INV-EPD', 'finalized', 'pending',
+       VALUES (?, ?, ?, ?, 'finalized', 'pending',
                'USD', 1999, 0, 0, 1999, 1, ?, 1, 1, ?, ?)`,
-    ).bind(organizationId, customerId, now, now, now),
+    ).bind(invoiceId, organizationId, customerId, `INV-EPD-${fixtureId}`, now, now, now),
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO payment_requests
        (id, organization_id, customer_id, amount_minor, currency, email, payment_attempts,
@@ -45,12 +50,37 @@ beforeEach(async () => {
     env.BILLING_DB.prepare(
       `INSERT OR IGNORE INTO invoices_payment_requests
        (id, organization_id, payment_request_id, invoice_id, invoice_version, created_at, updated_at)
-       VALUES ('link-easy-pay-direct-checkout', ?, ?, 'invoice-easy-pay-direct-checkout', 1, ?, ?)`,
-    ).bind(organizationId, paymentRequestId, now, now),
+       VALUES (?, ?, ?, ?, 1, ?, ?)`,
+    ).bind(
+      `link-easy-pay-direct-checkout-${fixtureId}`,
+      organizationId,
+      paymentRequestId,
+      invoiceId,
+      now,
+      now,
+    ),
   ]);
 });
 
 describe("Easy Pay Direct Commerce checkout execution", () => {
+  it("does not treat reusable provider payment tokens as global idempotency keys", async () => {
+    const indexes = await env.BILLING_DB.prepare(
+      "PRAGMA index_list('easy_pay_direct_payment_executions')",
+    ).all<{ name: string; unique: number }>();
+    const uniqueIndexColumns = await Promise.all(
+      indexes.results
+        .filter((index) => index.unique === 1)
+        .map(async (index) => {
+          const columns = await env.BILLING_DB.prepare(
+            `PRAGMA index_info('${index.name.replaceAll("'", "''")}')`,
+          ).all<{ name: string }>();
+          return columns.results.map((column) => column.name);
+        }),
+    );
+
+    expect(uniqueIndexColumns).not.toContainEqual(["payment_token_sha256"]);
+  });
+
   it("creates a sandbox Commerce order once and waits for the signed webhook before reconciling", async () => {
     const runtimeEnv = enabledEnv();
     await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
@@ -252,6 +282,88 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       currency: "USD",
       status: "lost",
       livemode: 0,
+    });
+  });
+
+  it("converges a provider-voided order to one failed payment outcome", async () => {
+    const runtimeEnv = enabledEnv();
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const checkout = await env.BILLING_DB.prepare(
+      `SELECT payment_url FROM payment_request_checkout_intents
+       WHERE payment_request_id = ? AND provider = 'easy_pay_direct'`,
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const checkoutToken = new URL(checkout!.payment_url).searchParams.get("checkout")!;
+    const providerFetch = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.includes("/customers?")) return Response.json({ data: [] });
+      if (url.endsWith("/customers")) {
+        return Response.json(
+          { id: "epd-customer-void", default_payment_method: "epd-pm-void" },
+          { status: 201 },
+        );
+      }
+      if (url.endsWith("/products")) {
+        return Response.json(
+          { id: "epd-product-void", pricing: { amount: 1999, currency: "usd" } },
+          { status: 201 },
+        );
+      }
+      return Response.json(
+        { id: "epd-order-void", status: "pending", total: 1999, currency: "usd" },
+        { status: 201 },
+      );
+    });
+    const submitted = await handleEasyPayDirectCheckoutSubmission(
+      new Request("https://lago.test/easy_pay_direct/payment_form", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          checkout: checkoutToken,
+          payment_token: "card_visa",
+          phone: "+15555550124",
+        }),
+      }),
+      runtimeEnv,
+      "request-epd-void",
+      providerFetch,
+    );
+    expect(submitted.status).toBe(200);
+    const execution = await env.BILLING_DB.prepare(
+      `SELECT id FROM easy_pay_direct_payment_executions WHERE payment_request_id = ?`,
+    )
+      .bind(paymentRequestId)
+      .first<{ id: string }>();
+
+    await expect(
+      reconcileEasyPayDirectExecution(
+        runtimeEnv,
+        execution!.id,
+        vi.fn<typeof fetch>(async () =>
+          Response.json({
+            id: "epd-order-void",
+            status: "voided",
+            total: 1999,
+            currency: "usd",
+          }),
+        ),
+      ),
+    ).resolves.toBe("processed");
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT execution.status AS execution_status, request.payment_status,
+                request.ready_for_payment_processing
+         FROM easy_pay_direct_payment_executions execution
+         JOIN payment_requests request ON request.id = execution.payment_request_id
+         WHERE execution.id = ?`,
+      )
+        .bind(execution!.id)
+        .first(),
+    ).resolves.toEqual({
+      execution_status: "failed",
+      payment_status: "failed",
+      ready_for_payment_processing: 1,
     });
   });
 });
