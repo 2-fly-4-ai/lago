@@ -30,8 +30,8 @@
               >L</span
             >
             <span class="organization-switcher-copy">
-              <strong id="switcher-name">Loading organization…</strong>
-              <small id="switcher-role">Checking membership…</small>
+              <strong id="switcher-name">Lago</strong>
+              <small id="switcher-role">Loading workspace…</small>
             </span>
             <img src="/assets/icons/chevron-down.svg" alt="" aria-hidden="true" />
           </button>
@@ -171,17 +171,51 @@
             <span class="avatar" aria-hidden="true">OP</span>
             <span>
               <strong>Operator</strong>
-              <small id="operator-role">Checking access…</small>
+              <small id="operator-role">Loading role…</small>
             </span>
           </div>
         </header>
 
         <main id="main-content" tabindex="-1">
-          <section class="state-panel" id="loading-state" aria-live="polite">
-            <div class="state-icon loading-icon" aria-hidden="true"></div>
-            <p class="eyebrow">Secure operator session</p>
-            <h1>Checking access</h1>
-            <p>Validating the Cloudflare Access session and tenant membership.</p>
+          <section
+            class="workspace-loading"
+            id="loading-state"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <p class="sr-only">
+              Loading the billing workspace and checking secure organization access.
+            </p>
+            <div class="workspace-loading-heading" aria-hidden="true">
+              <span class="loading-skeleton loading-skeleton-breadcrumb"></span>
+              <span class="loading-skeleton loading-skeleton-title"></span>
+              <span class="loading-skeleton loading-skeleton-description"></span>
+            </div>
+            <div class="workspace-loading-content" aria-hidden="true">
+              <div class="workspace-loading-toolbar">
+                <span class="loading-skeleton loading-skeleton-control"></span>
+                <span class="loading-skeleton loading-skeleton-action"></span>
+              </div>
+              <div class="workspace-loading-table">
+                <span class="loading-skeleton loading-skeleton-table-heading"></span>
+                <div class="workspace-loading-row">
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                </div>
+                <div class="workspace-loading-row">
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                </div>
+                <div class="workspace-loading-row">
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                </div>
+              </div>
+            </div>
           </section>
 
           <section class="state-panel closed" id="closed-state" aria-live="assertive" hidden>

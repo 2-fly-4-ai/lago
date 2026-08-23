@@ -2301,6 +2301,123 @@ main {
   box-shadow: none;
 }
 
+.workspace-loading {
+  min-height: 100vh;
+  background: #ffffff;
+}
+
+.workspace-loading-heading {
+  display: grid;
+  gap: 10px;
+  padding: 48px;
+  border-bottom: 1px solid var(--lago-grey-300);
+}
+
+.workspace-loading-content {
+  padding: 48px;
+}
+
+.workspace-loading-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.workspace-loading-table {
+  overflow: hidden;
+  border: 1px solid var(--lago-grey-300);
+  border-radius: 12px;
+}
+
+.workspace-loading-table-heading {
+  display: block;
+  width: 96px;
+  margin: 20px 24px;
+}
+
+.workspace-loading-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) minmax(120px, 1fr) minmax(96px, 0.7fr);
+  gap: 32px;
+  padding: 18px 24px;
+  border-top: 1px solid var(--lago-grey-200);
+}
+
+.loading-skeleton {
+  display: block;
+  width: 100%;
+  height: 14px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--lago-grey-100) 20%,
+    var(--lago-grey-200) 45%,
+    var(--lago-grey-100) 70%
+  );
+  background-size: 240% 100%;
+  animation: loading-skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+.loading-skeleton-breadcrumb {
+  width: 124px;
+  height: 10px;
+}
+
+.loading-skeleton-title {
+  width: 210px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.loading-skeleton-description {
+  width: min(420px, 72%);
+}
+
+.loading-skeleton-control {
+  width: 220px;
+  height: 36px;
+  border-radius: 8px;
+}
+
+.loading-skeleton-action {
+  width: 112px;
+  height: 36px;
+  border-radius: 8px;
+}
+
+@keyframes loading-skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-skeleton {
+    animation: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .workspace-loading-heading,
+  .workspace-loading-content {
+    padding: 32px 24px;
+  }
+
+  .workspace-loading-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-loading-row .loading-skeleton:nth-child(n + 2) {
+    display: none;
+  }
+}
+
 .page-heading,
 .keys-section {
   margin: 0;

@@ -9,7 +9,7 @@ Status: isolated development stack accepted; production authority cutover remain
 - Lago branch: `codex/cloudflare-native-rewrite`
 - Store consumer branch: `codex/lago-cloudflare-cutover`
 - Development API Worker: `6684a2ee-fa56-49ac-9088-129bc1e17593`
-- Development operator Worker: `92f04ee8-e33f-42dd-9060-17ca78711c74`
+- Development operator Worker: `21ed6c7e-49c4-4d57-923d-72470e5384ff`
 - Development customer-portal Worker: `6bfeedea-636d-4af4-bcf0-3e20573ab3a0`
 - Staging Store Worker: `a796ae31-5007-44b2-99f5-5c973f544549`
 
@@ -54,10 +54,13 @@ or an honest empty state. Unused vendors correctly report `Not configured`; conf
 Easy Pay Direct connections report `Connected` with writes paused by the safety gate.
 
 The audit found one stale Payments-page sentence claiming Stripe network access was disabled. It was
-replaced with provider-neutral safety-gate language, covered by the operator asset suite, deployed in
-operator version `92f04ee8-e33f-42dd-9060-17ca78711c74`, and verified live. The app's screenshot
-capture endpoint was unavailable during this pass, so the acceptance uses loaded DOM state together
-with the existing checked-in visual-parity captures from 2026-08-18.
+replaced with provider-neutral safety-gate language and covered by the operator asset suite. A later
+visual pass also found that the retained shell still exposed the pre-parity oversized Access loading
+panel. Operator version `21ed6c7e-49c4-4d57-923d-72470e5384ff` replaces it with a quiet Lago-native
+page and table skeleton, removes the stale loading copy, respects reduced-motion preferences, and
+resolves into the requested route after membership loading. The revised loading state is captured in
+`cloudflare-native-loading-state-2026-08-23.jpg`; the deployed Pricing Units route was verified live
+without the old `Secure operator session` or `Checking access` headline.
 
 ## Clean gate and remote invariants
 

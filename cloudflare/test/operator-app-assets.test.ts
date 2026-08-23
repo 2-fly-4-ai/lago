@@ -60,6 +60,14 @@ describe("isolated operator app assets", () => {
     expect(operatorHeaders).toContain("Permissions-Policy:");
   });
 
+  it("keeps the access check quiet and consistent with the retained Lago shell", () => {
+    expect(operatorIndex).toContain('class="workspace-loading"');
+    expect(operatorIndex).toContain('aria-busy="true"');
+    expect(operatorIndex).toContain("Loading workspace…");
+    expect(operatorIndex).not.toContain("Secure operator session");
+    expect(operatorIndex).not.toContain("Checking access");
+  });
+
   it("uses the membership-scoped REST BFF without browser credential storage", () => {
     for (const endpoint of [
       "/api/operator/v1/session",

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 
 const port = Number(process.env.PORT || 4173);
+const apiDelayMs = Math.max(0, Number(process.env.OPERATOR_PREVIEW_API_DELAY_MS || 0));
 const root = new URL("../operator-app/", import.meta.url).pathname;
 
 const organizations = {
@@ -397,6 +398,7 @@ const mimeTypes = {
 createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
   if (url.pathname.startsWith("/api/operator/v1/")) {
+    if (apiDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, apiDelayMs));
     if (/\/ai\/conversations\/[^/]+\/messages$/.test(url.pathname)) {
       response.writeHead(200, {
         "Cache-Control": "no-store",
