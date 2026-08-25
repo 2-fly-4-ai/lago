@@ -7,7 +7,7 @@ The Pornhub Video Downloader staging canary now opens an Easy Pay Direct Collect
 - Product checkout: `/easy_pay_direct/payment_form`
 - Internal synthetic QA tool: `/easy_pay_direct/sandbox_tool`
 - Worker: `serp-dev-lago-native`
-- Deployed version: `bf6d13ef-46c9-4abf-8c6d-502196213f27`
+- Deployed version: `2f53e9cf-db6f-4c8f-8244-4aa2265bfe76`
 - `EASY_PAY_DIRECT_NETWORK_MODE`: `gateway_test`
 - `EASY_PAY_DIRECT_LIVEMODE_ALLOWED`: `0`
 - `PAYMENT_MUTATIONS_ENABLED`: `1`
@@ -18,6 +18,8 @@ The Gateway security and Collect.js tokenization values are encrypted Worker sec
 
 - Product form returned HTTP 200.
 - Product form loaded `Collect.js` and rendered the `ccnumber`, `ccexp`, and `cvv` hosted-field containers.
+- Collect.js received explicit field selectors, accessible titles, placeholders, embedded-field CSS, validation styles, a timeout, and a fields-ready callback.
+- The checkout applies a responsive labeled layout and removes native iframe borders instead of exposing browser-default hosted inputs.
 - Product form contained the explicit live-disabled notice.
 - Product form did not contain `card_visa` or the synthetic outcome selector.
 - Internal sandbox tool returned HTTP 200, contained the synthetic outcomes, and did not load Collect.js.

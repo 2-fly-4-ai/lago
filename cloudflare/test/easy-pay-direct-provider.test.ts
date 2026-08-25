@@ -95,7 +95,17 @@ describe("Easy Pay Direct provider", () => {
     expect(body).toContain('id="ccnumber"');
     expect(body).toContain('id="ccexp"');
     expect(body).toContain('id="cvv"');
-    expect(body).toContain("Test cards only; live charging is disabled");
+    expect(body).toContain("Card number");
+    expect(body).toContain("Expiration");
+    expect(body).toContain("Security code");
+    expect(body).toContain("1234 1234 1234 1234");
+    expect(body).toContain("MM / YY");
+    expect(body).toContain("styleSniffer:false");
+    expect(body).toContain("fieldsAvailableCallback");
+    expect(body).toContain("Card details are securely tokenized by Easy Pay Direct");
+    expect(body).toContain("Test cards only · No real money will move");
+    expect(body).toContain(".hosted-field iframe");
+    expect(body).toContain('id="pay" class="pay-button" type="button" disabled');
     expect(body).not.toContain("card_visa");
     expect(body).not.toContain("Sandbox outcome");
   });
