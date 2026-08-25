@@ -3,7 +3,10 @@ import type { WorkflowStep } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleEasyPayDirectCheckoutSubmission } from "../src/api/easy-pay-direct-checkout";
 import { sha256Hex } from "../src/auth/api-key";
-import { verifyEasyPayDirectCheckoutToken } from "../src/providers/easy-pay-direct";
+import {
+  easyPayDirectPaymentForm,
+  verifyEasyPayDirectCheckoutToken,
+} from "../src/providers/easy-pay-direct";
 import {
   reconcileEasyPayDirectExecution,
   reconcileEasyPayDirectReceipt,
@@ -63,6 +66,28 @@ beforeEach(async () => {
 });
 
 describe("Easy Pay Direct Commerce checkout execution", () => {
+  it("rejects a product checkout before provider or database work when terms are not accepted", async () => {
+    const providerFetch = vi.fn<typeof fetch>();
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        new Request("https://lago.test/easy_pay_direct/payment_form", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            checkout: "signed-checkout-token",
+            payment_token: "hosted-payment-token",
+            phone: "+15555550123",
+            terms_accepted: false,
+          }),
+        }),
+        enabledEnv("gateway_test"),
+        "request-epd-terms",
+        providerFetch,
+      ),
+    ).rejects.toMatchObject({ code: "easy_pay_direct_terms_required", status: 422 });
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
   it("does not treat reusable provider payment tokens as global idempotency keys", async () => {
     const indexes = await env.BILLING_DB.prepare(
       "PRAGMA index_list('easy_pay_direct_payment_executions')",
@@ -108,6 +133,12 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       payment_status: "pending",
     });
     const checkoutToken = new URL(checkout!.payment_url).searchParams.get("checkout")!;
+    const checkoutForm = await easyPayDirectPaymentForm(new URL(checkout!.payment_url), runtimeEnv);
+    const checkoutHtml = await checkoutForm.text();
+    expect(checkoutHtml).toContain("SERP subscription");
+    expect(checkoutHtml).toContain("$19.99");
+    expect(checkoutHtml).toContain("synthetic@example.com");
+    expect(checkoutHtml).toContain("Total due today");
     const providerFetch = vi.fn<typeof fetch>(async (_input, init) => {
       const body = new URLSearchParams(String(init?.body));
       expect(body.get("payment_token")).toBe("hosted-token-canary-1");
@@ -127,6 +158,7 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
           checkout: checkoutToken,
           payment_token: "hosted-token-canary-1",
           phone: "+15555550123",
+          terms_accepted: true,
         }),
       });
     const first = await handleEasyPayDirectCheckoutSubmission(
@@ -153,7 +185,9 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       env.BILLING_DB.prepare(
         `SELECT execution.status AS execution_status, execution.provider_transaction_id,
                 execution.provider_response_code, request.payment_status,
-                request.ready_for_payment_processing, invoice.payment_status AS invoice_status
+                execution.terms_accepted_at IS NOT NULL AS terms_accepted,
+                execution.terms_version, request.ready_for_payment_processing,
+                invoice.payment_status AS invoice_status
          FROM easy_pay_direct_payment_executions execution
          JOIN payment_requests request ON request.id = execution.payment_request_id
          JOIN invoices_payment_requests link ON link.payment_request_id = request.id
@@ -166,6 +200,8 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       execution_status: "succeeded",
       provider_transaction_id: "epd-gateway-test-1",
       provider_response_code: "100",
+      terms_accepted: 1,
+      terms_version: "apps-serp-terms-and-privacy-2026-08-25",
       payment_status: "succeeded",
       ready_for_payment_processing: 0,
       invoice_status: "succeeded",

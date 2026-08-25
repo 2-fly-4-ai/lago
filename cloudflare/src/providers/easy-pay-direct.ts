@@ -19,6 +19,20 @@ export type EasyPayDirectEnv = Pick<
   | "PUBLIC_BASE_URL"
 >;
 
+export type EasyPayDirectCheckoutEnv = EasyPayDirectEnv & Pick<Env, "BILLING_DB">;
+
+export type EasyPayDirectCheckoutPresentation = {
+  title: string;
+  description: string | null;
+  interval: string | null;
+  amountMinor: number;
+  subtotalMinor: number;
+  taxMinor: number;
+  creditsMinor: number;
+  currency: string;
+  customerEmail: string;
+};
+
 type CheckoutTokenPayload = { intent: string; expires: number };
 type CommerceErrorBody = { error?: { code?: string; message?: string } };
 export type CommerceCustomer = {
@@ -126,13 +140,14 @@ export async function verifyEasyPayDirectCheckoutToken(
 
 export async function easyPayDirectPaymentForm(
   url: URL,
-  env: EasyPayDirectEnv,
+  env: EasyPayDirectEnv & Partial<Pick<Env, "BILLING_DB">>,
   now = Date.now(),
+  presentationOverride?: EasyPayDirectCheckoutPresentation,
 ): Promise<Response> {
   const token = url.searchParams.get("checkout")?.trim();
   if (!token)
     throw new ApiError(400, "easy_pay_direct_checkout_required", "Checkout token is required");
-  await verifyEasyPayDirectCheckoutToken(
+  const tokenPayload = await verifyEasyPayDirectCheckoutToken(
     token,
     requiredSecret(
       env.EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET,
@@ -148,7 +163,19 @@ export async function easyPayDirectPaymentForm(
       "The product checkout requires Easy Pay Direct Gateway test mode",
     );
   }
-  return renderEasyPayDirectPaymentForm(token, env, false);
+  const presentation =
+    presentationOverride ??
+    (env.BILLING_DB
+      ? await loadEasyPayDirectCheckoutPresentation(
+          env.BILLING_DB,
+          tokenPayload.intent,
+          await sha256Hex(token),
+        )
+      : null);
+  if (!presentation) {
+    throw new ApiError(401, "easy_pay_direct_checkout_invalid", "Checkout link is invalid");
+  }
+  return renderEasyPayDirectPaymentForm(token, env, false, presentation);
 }
 
 export async function easyPayDirectSandboxTool(
@@ -175,33 +202,165 @@ export async function easyPayDirectSandboxTool(
       "The Easy Pay Direct sandbox tool is unavailable",
     );
   }
-  return renderEasyPayDirectPaymentForm(token, env, true);
+  return renderEasyPayDirectPaymentForm(token, env, true, null);
+}
+
+async function loadEasyPayDirectCheckoutPresentation(
+  database: D1Database,
+  intentId: string,
+  tokenHash: string,
+): Promise<EasyPayDirectCheckoutPresentation | null> {
+  const row = await database
+    .prepare(
+      `SELECT intent.amount_minor, intent.currency, customer.email AS customer_email,
+            COALESCE(
+              (SELECT COALESCE(plan.invoice_display_name, plan.name)
+               FROM invoices_payment_requests link
+               JOIN invoice_subscriptions invoice_subscription
+                 ON invoice_subscription.invoice_id = link.invoice_id
+               JOIN subscriptions subscription ON subscription.id = invoice_subscription.subscription_id
+               JOIN plans plan ON plan.id = subscription.plan_id
+               WHERE link.payment_request_id = intent.payment_request_id
+               ORDER BY invoice_subscription.created_at DESC LIMIT 1),
+              (SELECT line.description
+               FROM invoices_payment_requests link
+               JOIN invoice_lines line ON line.invoice_id = link.invoice_id
+               WHERE link.payment_request_id = intent.payment_request_id
+               ORDER BY ABS(line.amount_minor) DESC, line.created_at ASC LIMIT 1),
+              'SERP subscription'
+            ) AS title,
+            (SELECT plan.description
+             FROM invoices_payment_requests link
+             JOIN invoice_subscriptions invoice_subscription
+               ON invoice_subscription.invoice_id = link.invoice_id
+             JOIN subscriptions subscription ON subscription.id = invoice_subscription.subscription_id
+             JOIN plans plan ON plan.id = subscription.plan_id
+             WHERE link.payment_request_id = intent.payment_request_id
+             ORDER BY invoice_subscription.created_at DESC LIMIT 1) AS description,
+            (SELECT plan.interval
+             FROM invoices_payment_requests link
+             JOIN invoice_subscriptions invoice_subscription
+               ON invoice_subscription.invoice_id = link.invoice_id
+             JOIN subscriptions subscription ON subscription.id = invoice_subscription.subscription_id
+             JOIN plans plan ON plan.id = subscription.plan_id
+             WHERE link.payment_request_id = intent.payment_request_id
+             ORDER BY invoice_subscription.created_at DESC LIMIT 1) AS interval,
+            COALESCE((SELECT SUM(invoice.subtotal_minor)
+              FROM invoices_payment_requests link
+              JOIN invoices invoice ON invoice.id = link.invoice_id
+              WHERE link.payment_request_id = intent.payment_request_id), intent.amount_minor) AS subtotal_minor,
+            COALESCE((SELECT SUM(invoice.tax_minor)
+              FROM invoices_payment_requests link
+              JOIN invoices invoice ON invoice.id = link.invoice_id
+              WHERE link.payment_request_id = intent.payment_request_id), 0) AS tax_minor,
+            COALESCE((SELECT SUM(invoice.credits_minor)
+              FROM invoices_payment_requests link
+              JOIN invoices invoice ON invoice.id = link.invoice_id
+              WHERE link.payment_request_id = intent.payment_request_id), 0) AS credits_minor
+       FROM payment_request_checkout_intents intent
+       JOIN customers customer
+         ON customer.id = intent.customer_id AND customer.organization_id = intent.organization_id
+       WHERE intent.id = ? AND intent.provider = 'easy_pay_direct'
+         AND intent.provider_token_sha256 = ? AND intent.status = 'succeeded' LIMIT 1`,
+    )
+    .bind(intentId, tokenHash)
+    .first<{
+      amount_minor: number;
+      currency: string;
+      customer_email: string | null;
+      title: string;
+      description: string | null;
+      interval: string | null;
+      subtotal_minor: number;
+      tax_minor: number;
+      credits_minor: number;
+    }>();
+  if (!row?.customer_email) return null;
+  return {
+    title: row.title,
+    description: row.description,
+    interval: row.interval,
+    amountMinor: row.amount_minor,
+    subtotalMinor: row.subtotal_minor,
+    taxMinor: row.tax_minor,
+    creditsMinor: row.credits_minor,
+    currency: row.currency,
+    customerEmail: row.customer_email,
+  };
 }
 
 function renderEasyPayDirectPaymentForm(
   token: string,
   env: EasyPayDirectEnv,
   synthetic: boolean,
+  presentation: EasyPayDirectCheckoutPresentation | null,
 ): Response {
+  const isTest = env.EASY_PAY_DIRECT_NETWORK_MODE !== "production";
   const collectScript = synthetic
     ? ""
     : `<script src="${COLLECT_JS_URL}" data-tokenization-key="${escapeHtml(requiredSecret(env.EASY_PAY_DIRECT_TOKENIZATION_KEY, "EASY_PAY_DIRECT_TOKENIZATION_KEY"))}"></script>`;
   const paymentFields = synthetic
-    ? `<label>Sandbox outcome<select id="sandbox-token" class="input"><option value="card_visa">Approved Visa</option><option value="card_insufficient_funds">Insufficient funds</option><option value="card_visa_declined">Declined Visa</option></select></label>`
-    : `<fieldset class="payment-fields"><legend>Card details</legend><div class="field-grid"><div class="field-group field-wide"><div class="label-row"><span id="ccnumber-label" class="field-label">Card number</span><span class="test-chip">TEST</span></div><div id="ccnumber" class="hosted-field" role="group" aria-labelledby="ccnumber-label"></div></div><div class="field-group"><span id="ccexp-label" class="field-label">Expiration</span><div id="ccexp" class="hosted-field" role="group" aria-labelledby="ccexp-label"></div></div><div class="field-group"><span id="cvv-label" class="field-label">Security code</span><div id="cvv" class="hosted-field" role="group" aria-labelledby="cvv-label"></div></div></div></fieldset>`;
+    ? `<label class="field-label" for="sandbox-token">Sandbox outcome</label><select id="sandbox-token" class="input"><option value="card_visa">Approved Visa</option><option value="card_insufficient_funds">Insufficient funds</option><option value="card_visa_declined">Declined Visa</option></select>`
+    : `<fieldset class="payment-fields"><legend>Payment method</legend><div class="method-card"><div class="method-name"><span class="method-radio" aria-hidden="true"></span><strong>Card</strong><span class="provider-note">Secured by Easy Pay Direct</span></div><div class="field-grid"><div class="field-group field-wide"><div class="label-row"><span id="ccnumber-label" class="field-label">Card number</span>${isTest ? '<span class="test-chip">TEST</span>' : ""}</div><div id="ccnumber" class="hosted-field" role="group" aria-labelledby="ccnumber-label"></div></div><div class="field-group"><span id="ccexp-label" class="field-label">Expiration</span><div id="ccexp" class="hosted-field" role="group" aria-labelledby="ccexp-label"></div></div><div class="field-group"><span id="cvv-label" class="field-label">Security code</span><div id="cvv" class="hosted-field" role="group" aria-labelledby="cvv-label"></div></div></div></div></fieldset>`;
   const submitScript = synthetic
     ? `button.addEventListener('click',()=>submit(document.getElementById('sandbox-token').value));`
     : `CollectJS.configure({variant:'inline',paymentSelector:'#pay',styleSniffer:false,customCss:{color:'#172033','background-color':'#ffffff','font-family':'ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif','font-size':'16px','font-weight':'500','line-height':'24px',padding:'13px 14px','border-style':'none','border-width':'0'},placeholderCss:{color:'#8a94a6'},focusCss:{color:'#172033','background-color':'#ffffff'},invalidCss:{color:'#b42318'},validCss:{color:'#172033'},fields:{ccnumber:{selector:'#ccnumber',title:'Card number',placeholder:'1234 1234 1234 1234',enableCardBrandPreviews:true},ccexp:{selector:'#ccexp',title:'Expiration date',placeholder:'MM / YY'},cvv:{display:'required',selector:'#cvv',title:'Security code',placeholder:'CVV'}},validationCallback:(field,valid,message)=>{const id={ccnum:'ccnumber',ccnumber:'ccnumber',ccexp:'ccexp',cvv:'cvv'}[field];const container=id&&document.getElementById(id);if(container){container.classList.toggle('is-invalid',!valid);container.setAttribute('aria-invalid',String(!valid))}if(!valid&&message)error.textContent=message;else if(valid)error.textContent=''},timeoutDuration:10000,timeoutCallback:()=>{error.textContent='The secure card fields did not respond. Check the details and try again.';button.disabled=false},fieldsAvailableCallback:()=>{button.disabled=false;document.getElementById('payment-status').textContent='Secure fields ready'},callback:(response)=>submit(response.token)});`;
-  const safeToken = escapeHtml(token);
   const submissionPath = synthetic
     ? "/easy_pay_direct/sandbox_tool"
     : "/easy_pay_direct/payment_form";
+  const title = escapeHtml(presentation?.title ?? "Synthetic sandbox QA");
+  const description = presentation?.description
+    ? `<p class="product-description">${escapeHtml(presentation.description)}</p>`
+    : "";
+  const interval = intervalLabel(presentation?.interval ?? null);
+  const amount = presentation
+    ? formatCheckoutMoney(presentation.amountMinor, presentation.currency)
+    : "Internal QA";
+  const subtotal = presentation
+    ? formatCheckoutMoney(presentation.subtotalMinor, presentation.currency)
+    : "—";
+  const taxRow =
+    presentation && presentation.taxMinor > 0
+      ? `<div class="total-row"><span>Tax</span><strong>${formatCheckoutMoney(presentation.taxMinor, presentation.currency)}</strong></div>`
+      : "";
+  const creditRow =
+    presentation && presentation.creditsMinor > 0
+      ? `<div class="total-row discount"><span>Discounts &amp; credits</span><strong>−${formatCheckoutMoney(presentation.creditsMinor, presentation.currency)}</strong></div>`
+      : "";
+  const summary = presentation
+    ? `<section class="summary-panel"><div class="summary-inner"><a class="back-link" href="javascript:history.back()" aria-label="Go back">← <img class="brand-mark" src="https://apps.serp.co/logo.svg" alt="SERP"></a><p class="summary-kicker">Subscribe to ${title}</p><div class="price"><span>${amount}</span>${interval ? `<small>per<br>${escapeHtml(interval)}</small>` : ""}</div><div class="product-line"><div><strong>${title}</strong>${description}<span class="billing-note">${interval ? `Billed ${escapeHtml(presentation.interval ?? "")}` : "One-time payment"}</span></div><strong>${subtotal}</strong></div><div class="totals"><div class="total-row"><span>Subtotal</span><strong>${subtotal}</strong></div>${creditRow}${taxRow}<div class="total-row due"><span>Total due today</span><strong>${amount}</strong></div></div><div class="route-note"><strong>Product canary</strong><span>This checkout is routed through Lago and Easy Pay Direct. Other SERP products continue using the existing Stripe checkout.</span></div></div></section>`
+    : `<section class="summary-panel"><div class="summary-inner"><span class="brand">SERP</span><p class="summary-kicker">Internal payment testing</p><div class="price"><span>QA</span></div><div class="route-note"><strong>Synthetic outcomes only</strong><span>No provider card form is used on this internal surface.</span></div></div></section>`;
+  const contact = presentation
+    ? `<section class="form-section"><h2>Contact</h2><label class="field-label" for="email">Email</label><input id="email" class="input" type="email" value="${escapeHtml(presentation.customerEmail)}" readonly aria-readonly="true"><p class="field-help">This email is locked to the signed checkout.</p></section>`
+    : "";
+  const terms = presentation
+    ? `<label class="terms"><input id="terms" type="checkbox" required><span>I agree to SERP's <a href="https://apps.serp.co/legal/terms" target="_blank" rel="noreferrer">Terms of Service</a> and <a href="https://apps.serp.co/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>.</span></label>`
+    : "";
+  const modeBanner = isTest
+    ? `<div class="test-banner"><strong>EPD TEST MODE</strong><span>Test cards only. No real money will move.</span></div>`
+    : "";
   return new Response(
     `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Secure payment</title>` +
-      `<style nonce="epd-style">:root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f2f5f9;color:#172033}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 50% -20%,#e4ecfb 0,#f2f5f9 40%,#f7f8fa 100%)}.shell{width:min(100%,620px);margin:0 auto;padding:56px 20px}.card{overflow:hidden;background:#fff;border:1px solid #dbe2ea;border-radius:20px;box-shadow:0 24px 60px rgba(26,39,64,.12)}.card-head{padding:30px 32px 24px;border-bottom:1px solid #edf0f4}.eyebrow{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}.secure-mark{display:inline-flex;align-items:center;gap:8px;color:#344054;font-size:13px;font-weight:700}.secure-mark svg{width:18px;height:18px;color:#17745b}.mode-badge{display:inline-flex;align-items:center;border:1px solid #f5c97b;border-radius:999px;background:#fff7e8;color:#8a4b08;padding:5px 10px;font-size:11px;font-weight:800;letter-spacing:.08em}.card-body{padding:28px 32px 32px}h1{font-size:28px;line-height:1.2;letter-spacing:-.025em;margin:0 0 8px}.note{color:#667085;line-height:1.55;margin:0}.payment-fields{min-width:0;margin:0 0 22px;padding:0;border:0}.payment-fields legend{margin:0 0 16px;padding:0;color:#344054;font-size:14px;font-weight:750}.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px 12px}.field-wide{grid-column:1/-1}.field-label,.label-row{display:block;color:#344054;font-size:13px;font-weight:700}.label-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}.field-group>.field-label{margin-bottom:7px}.test-chip{color:#8a4b08;font-size:10px;letter-spacing:.08em}.hosted-field,.input{box-sizing:border-box;width:100%;height:52px;border:1px solid #cfd7e3;border-radius:10px;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.04);transition:border-color .16s,box-shadow .16s}.hosted-field{overflow:hidden;padding:0}.hosted-field iframe{display:block!important;width:100%!important;height:52px!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important}.hosted-field:focus-within,.input:focus{border-color:#2970ff;box-shadow:0 0 0 4px rgba(41,112,255,.12);outline:0}.hosted-field.is-invalid{border-color:#d92d20;box-shadow:0 0 0 4px rgba(217,45,32,.1)}.input{margin-top:7px;padding:0 14px;color:#172033;font-family:inherit;font-size:16px;font-weight:500}.input::placeholder{color:#98a2b3}.phone-label{display:block;color:#344054;font-size:13px;font-weight:700}.error{min-height:21px;margin:9px 0;color:#b42318;font-size:13px}.pay-button{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;height:52px;border:0;border-radius:10px;background:#172033;color:#fff;font-size:15px;font-weight:750;cursor:pointer;box-shadow:0 8px 20px rgba(23,32,51,.18);transition:transform .15s,background .15s}.pay-button:hover{background:#26334b}.pay-button:active{transform:translateY(1px)}.pay-button svg{width:17px;height:17px}.pay-button[disabled]{opacity:.5;cursor:wait;box-shadow:none}.trust-row{display:flex;align-items:center;justify-content:center;gap:7px;margin:18px 0 0;color:#667085;font-size:12px;text-align:center}.trust-row svg{flex:none;width:15px;height:15px;color:#17745b}.status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:560px){.shell{padding:20px 12px}.card{border-radius:16px}.card-head,.card-body{padding-left:20px;padding-right:20px}.field-grid{grid-template-columns:1fr}.field-wide{grid-column:auto}h1{font-size:25px}}</style>${collectScript}</head>` +
-      `<body><main class="shell"><section class="card"><header class="card-head"><div class="eyebrow"><span class="secure-mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3m-9 0h8a2 2 0 0 1 2 2v7H6v-7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Secure checkout</span><span class="mode-badge">TEST MODE</span></div><h1>${synthetic ? "Synthetic sandbox QA" : "Complete your test payment"}</h1><p class="note">${synthetic ? "Internal QA only. Choose a synthetic EPD Commerce outcome." : "Easy Pay Direct sandbox · Test cards only · No real money will move"}</p></header><div class="card-body">${paymentFields}<label class="phone-label">Phone number<input id="phone" class="input" inputmode="tel" autocomplete="tel" placeholder="+1 415 555 1234" required></label><p id="error" class="error" role="alert"></p><span id="payment-status" class="status" role="status">${synthetic ? "Synthetic payment ready" : "Loading secure fields"}</span><button id="pay" class="pay-button" type="button"${synthetic ? "" : " disabled"}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3m-9 0h8a2 2 0 0 1 2 2v7H6v-7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>${synthetic ? "Run synthetic QA payment" : "Pay securely in test mode"}</button><p class="trust-row"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 12 3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 22c5-2.25 8-6 8-11V5l-8-3-8 3v6c0 5 3 8.75 8 11Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Card details are securely tokenized by Easy Pay Direct</p></div></section></main>` +
-      `<script nonce="epd-script">const checkout=${JSON.stringify(safeToken)};const button=document.getElementById('pay');const error=document.getElementById('error');async function submit(paymentToken){const phone=document.getElementById('phone').value.trim();if(!/^\\+[1-9]\\d{7,14}$/.test(phone)){error.textContent='Enter a phone number in international format, for example +14155551234';return}button.disabled=true;error.textContent='';try{const result=await fetch(${JSON.stringify(submissionPath)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checkout,payment_token:paymentToken,phone})});const body=await result.json();if(!result.ok)throw new Error(body?.error?.message||body?.error||'Payment could not be processed');if(body.redirect_url){location.assign(body.redirect_url);return}button.textContent=body.status==='processing'?'Payment submitted':'Payment received'}catch(cause){error.textContent=cause instanceof Error?cause.message:'Payment could not be processed';button.disabled=false}}${submitScript}</script></body></html>`,
+      `<style nonce="epd-style">:root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1d2433;background:#fff}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#fff}.checkout{display:grid;grid-template-columns:minmax(0,1fr) minmax(500px,1fr);min-height:100vh}.summary-panel{background:#f8f9fb;border-right:1px solid #e5e7eb}.summary-inner{width:min(100%,560px);margin-left:auto;padding:58px 72px 64px}.back-link{display:inline-flex;align-items:center;gap:12px;margin-bottom:64px;color:#667085;text-decoration:none}.brand,.brand-mark{color:#111827}.brand{font-size:15px;font-weight:900;letter-spacing:.14em}.brand-mark{display:block;width:24px;height:24px;object-fit:contain}.summary-kicker{margin:0 0 5px;color:#697386;font-size:18px}.price{display:flex;align-items:center;gap:12px;margin-bottom:68px;color:#161b26}.price>span{font-size:44px;font-weight:650;letter-spacing:-.04em}.price small{color:#697386;font-size:14px;font-weight:650;line-height:1.2}.product-line{display:flex;justify-content:space-between;gap:32px;padding-bottom:25px;border-bottom:1px solid #dfe3e8}.product-line>div{display:grid;gap:5px}.product-line strong{font-size:14px}.product-description,.billing-note{margin:0;color:#697386;font-size:13px;line-height:1.45}.totals{display:grid;gap:20px;padding-top:24px}.total-row{display:flex;justify-content:space-between;gap:24px;color:#2d3441;font-size:14px}.discount{color:#475467}.due{margin-top:4px;padding-top:22px;border-top:1px solid #dfe3e8;font-size:16px}.route-note{display:grid;gap:7px;margin-top:54px;padding:18px;border:1px solid #dfe3e8;border-radius:10px;background:#fff;color:#667085;font-size:12px;line-height:1.5}.route-note strong{color:#344054}.payment-panel{background:#fff}.payment-inner{width:min(100%,610px);padding:76px 72px 48px}.test-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:28px;padding:11px 13px;border:1px solid #f4c66e;border-radius:8px;background:#fff9ed;color:#7a4605;font-size:12px}.test-banner strong{letter-spacing:.06em}.form-section{margin-bottom:34px}.form-section h2,.payment-fields legend{margin:0 0 15px;padding:0;color:#1d2433;font-size:15px;font-weight:750}.field-label,.label-row{display:block;color:#344054;font-size:13px;font-weight:700}.label-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}.field-group>.field-label{margin-bottom:7px}.field-help{margin:7px 0 0;color:#7a8495;font-size:11px}.test-chip{color:#8a4b08;font-size:10px;letter-spacing:.08em}.payment-fields{min-width:0;margin:0 0 22px;padding:0;border:0}.method-card{overflow:hidden;border:1px solid #d7dde5;border-radius:10px}.method-name{display:flex;align-items:center;gap:10px;padding:17px;border-bottom:1px solid #e5e7eb}.method-radio{width:15px;height:15px;border:4px solid #1473e6;border-radius:50%}.provider-note{margin-left:auto;color:#7a8495;font-size:11px}.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px 12px;padding:18px}.field-wide{grid-column:1/-1}.hosted-field,.input{width:100%;height:50px;border:1px solid #cfd7e3;border-radius:7px;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.04);transition:border-color .16s,box-shadow .16s}.hosted-field{overflow:hidden}.hosted-field iframe{display:block!important;width:100%!important;height:50px!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important}.hosted-field:focus-within,.input:focus{border-color:#1473e6;box-shadow:0 0 0 3px rgba(20,115,230,.12);outline:0}.hosted-field.is-invalid{border-color:#d92d20}.input{margin-top:7px;padding:0 14px;color:#172033;font:500 15px inherit}.input[readonly]{background:#f9fafb;color:#475467}.phone-label{display:block;margin-bottom:18px;color:#344054;font-size:13px;font-weight:700}.terms{display:flex;align-items:flex-start;gap:10px;margin:10px 0 18px;color:#667085;font-size:12px;line-height:1.5}.terms input{width:18px;height:18px;margin:0;accent-color:#1473e6}.terms a{color:#475467}.error{min-height:21px;margin:8px 0;color:#b42318;font-size:13px}.pay-button{display:flex;align-items:center;justify-content:center;width:100%;height:54px;border:0;border-radius:7px;background:#1473e6;color:#fff;font-size:15px;font-weight:750;cursor:pointer}.pay-button:hover{background:#0e66cf}.pay-button[disabled]{opacity:.5;cursor:wait}.trust-row{margin:16px 0 0;color:#667085;font-size:11px;text-align:center}.footer{display:flex;justify-content:center;gap:18px;margin-top:30px;color:#7a8495;font-size:11px}.footer a{color:inherit;text-decoration:none}.status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:900px){.checkout{grid-template-columns:1fr}.summary-panel{border-right:0;border-bottom:1px solid #e5e7eb}.summary-inner,.payment-inner{width:100%;margin:0;padding:34px 24px}.back-link{margin-bottom:38px}.price{margin-bottom:42px}.payment-inner{max-width:640px;margin:auto}}@media(max-width:520px){.field-grid{grid-template-columns:1fr}.field-wide{grid-column:auto}.provider-note{display:none}.price>span{font-size:36px}}</style>${collectScript}</head>` +
+      `<body><main class="checkout">${summary}<section class="payment-panel"><div class="payment-inner">${modeBanner}${contact}${paymentFields}<label class="phone-label">Phone number<input id="phone" class="input" inputmode="tel" autocomplete="tel" placeholder="+1 415 555 1234" required></label>${terms}<p id="error" class="error" role="alert"></p><span id="payment-status" class="status" role="status">${synthetic ? "Synthetic payment ready" : "Loading secure fields"}</span><button id="pay" class="pay-button" type="button"${synthetic ? "" : " disabled"}>${synthetic ? "Run synthetic QA payment" : isTest ? "Pay with EPD test mode" : "Subscribe"}</button><p class="trust-row">Card details are securely tokenized by Easy Pay Direct</p><footer class="footer"><a href="https://apps.serp.co/legal/terms" target="_blank" rel="noreferrer">Legal</a><a href="https://apps.serp.co/privacy" target="_blank" rel="noreferrer">Privacy</a><span>Powered by Easy Pay Direct</span></footer></div></section></main>` +
+      `<script nonce="epd-script">const checkout=${JSON.stringify(token)};const button=document.getElementById('pay');const error=document.getElementById('error');async function submit(paymentToken){const phone=document.getElementById('phone').value.trim();const terms=document.getElementById('terms');if(!/^\\+[1-9]\\d{7,14}$/.test(phone)){error.textContent='Enter a phone number in international format, for example +14155551234';return}if(terms&&!terms.checked){error.textContent='Accept the Terms of Service and Privacy Policy to continue';terms.focus();return}button.disabled=true;error.textContent='';try{const result=await fetch(${JSON.stringify(submissionPath)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checkout,payment_token:paymentToken,phone,terms_accepted:terms?terms.checked:true})});const body=await result.json();if(!result.ok)throw new Error(body?.error?.message||body?.error||'Payment could not be processed');if(body.redirect_url){location.assign(body.redirect_url);return}button.textContent=body.status==='processing'?'Payment submitted':'Payment received'}catch(cause){error.textContent=cause instanceof Error?cause.message:'Payment could not be processed';button.disabled=false}}${submitScript}</script></body></html>`,
     { headers: checkoutHeaders(!synthetic) },
+  );
+}
+
+function formatCheckoutMoney(amountMinor: number, currency: string): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency.toUpperCase(),
+  }).format(amountMinor / 100);
+}
+
+function intervalLabel(interval: string | null): string | null {
+  if (!interval || interval === "one_time") return null;
+  return (
+    ({ weekly: "week", monthly: "month", quarterly: "quarter", yearly: "year" } as const)[
+      interval as "weekly" | "monthly" | "quarterly" | "yearly"
+    ] ?? interval
   );
 }
 
@@ -685,10 +844,12 @@ function easyPayDirectKeyMatchesMode(key: string, mode: "test" | "live"): boolea
 
 function checkoutHeaders(usesGateway: boolean): HeadersInit {
   const gateway = "https://secure.easypaydirectgateway.com";
+  const applePaySdk = "https://applepay.cdn-apple.com";
+  const applePayInlineStyle = "'sha256-JobNDYsreMTIYfohuh2+pVhf0IMdNEBKOfHVBDG8q0g='";
   return {
     "Cache-Control": "no-store",
     "Content-Security-Policy": usesGateway
-      ? `default-src 'none'; script-src 'nonce-epd-script' ${gateway}; style-src 'nonce-epd-style'; frame-src ${gateway}; connect-src 'self' ${gateway}; img-src data: ${gateway}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+      ? `default-src 'none'; script-src 'nonce-epd-script' ${gateway} ${applePaySdk}; style-src 'nonce-epd-style' ${applePayInlineStyle} ${gateway}; font-src ${applePaySdk}; frame-src ${gateway}; connect-src 'self' ${gateway}; img-src data: ${gateway} https://apps.serp.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
       : "default-src 'none'; script-src 'nonce-epd-script'; style-src 'nonce-epd-style'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     "Content-Type": "text/html; charset=utf-8",
     "Referrer-Policy": "no-referrer",

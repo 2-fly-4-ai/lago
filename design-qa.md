@@ -1,69 +1,68 @@
-# Lago Cloudflare Operator Design QA
-
-Final result: passed
+# EPD checkout design QA
 
 ## Comparison target
 
-- Source visual truth:
-  `docs/evidence/cloudflare-operator-2026-08-18/04-original-lago-customer-usage.png`
-- Additional source visual:
-  `docs/evidence/cloudflare-operator-2026-08-18/05-original-lago-customer-billing.png`
-- Matched customer-detail comparison:
-  `docs/evidence/cloudflare-operator-2026-08-18/14-customer-detail-comparison-final.png`
-- Matched customer-analytics comparison:
-  `docs/evidence/cloudflare-operator-2026-08-18/16-customer-analytics-comparison-final.png`
-- Mobile detail:
-  `docs/evidence/cloudflare-operator-2026-08-18/12-operator-customer-detail-mobile.png`
-- Mobile table overflow:
-  `docs/evidence/cloudflare-operator-2026-08-18/17-operator-plans-mobile-overflow.png`
-- Desktop viewport: 1502 × 888 CSS pixels, device scale factor 1.
-- Mobile viewport: 390 × 844 CSS pixels, device scale factor 1.
+- Source visual truth: `/var/folders/k7/8p9szj517nj6p9vlnbjs3rsr0000gn/T/codex-clipboard-0113d1cf-7679-4737-9903-e03e6463ac9e.png`
+- Browser-rendered implementation: `docs/evidence/screenshots/epd-checkout-desktop-2026-08-25.png`
+- Responsive implementation: `docs/evidence/screenshots/epd-checkout-mobile-390-css-2026-08-25.png`
+- Source pixels: 3374 × 1772 at the captured desktop density.
+- Desktop implementation pixels/CSS viewport: 2048 × 1076, device scale factor 1.
+- Mobile implementation pixels: 390 × 1616 full-page capture from a 390 × 844 CSS viewport, device scale factor 1.
+- State: signed staging subscription checkout, EPD Gateway test mode, hosted fields ready, no card entered.
+- Density normalization: the source and desktop implementation have the same 1.904:1 viewport ratio and were compared together at a normalized 2048 × 1076 display size. The mobile capture was evaluated independently at its exact CSS width.
 
-## Resolved findings
+## Findings
 
-- [Resolved P1] Customer detail now uses an organization-slug route, original entity header,
-  Overview/Wallets/Analytics/Invoices/Credit notes/Settings tabs, right-hand Details rail, billing
-  summary, route-level edit action, and tenant-safe not-found state.
-- [Resolved P2] Every admitted list/show family now has a focused deep-linkable detail page. The
-  list identity is a real link, reload and browser history work, and a missing identifier cannot
-  fall through to another organization.
-- [Resolved P2] Mobile tables provide a visible `Scroll for more columns` affordance, remain bounded
-  to the viewport, and retain horizontal access to every column.
-- [Resolved P2] Inter is bundled locally as a WOFF2 asset under the same-origin CSP with its SIL OFL
-  license. Browser verification confirmed `document.fonts.check("14px Inter")`.
+- No actionable P0, P1, or P2 differences remain.
+- [P3] The test-mode banner adds one row above Contact that is absent from the Stripe reference. This is an intentional staging-only safety disclosure and is omitted in production mode.
+- [P3] The EPD canary does not reproduce Stripe's wallet rows or Store-owned add-on carousel. Google Pay eligibility depends on the EPD processor and is unsupported by the current Gateway demo processor; Apple Pay tokens cannot be vaulted for this recurring flow; Amazon Pay is not an EPD Collect.js method. The signed Lago snapshot also does not contain Store upsell inventory, so the implementation does not fabricate either surface.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: self-hosted Inter, weights, scale, line height, truncation, and entity
-  hierarchy match the checked-in Lago source closely.
-- Spacing and layout rhythm: current 240px `NavLayout` width, grouped navigation, 48px desktop page
-  gutters, compact detail header, tab rhythm, 326px details rail, table density, and original radius
-  treatment are retained.
-- Colors and tokens: original Lago blue actions/selections, grey navigation, white canvas, light
-  selected rows, and semantic membership state are mapped to local variables.
-- Asset fidelity: every visible UI icon and the Lago mark comes from the checked-in source asset
-  set. No custom inline SVG, CSS drawing, emoji, or text-glyph UI icon is used.
-- Copy and content: retained capabilities use realistic synthetic rows. Unsupported controls remain
-  visible in their original hierarchy as explicit unavailable states without claiming parity.
-- States and interactions: real organization-slug routes, direct deep links, reload, back/forward,
-  customer tabs, generic entity links, native dialogs, Escape close, mobile navigation, two-org
-  switching, viewer restrictions, and tenant-specific empty/missing states were exercised.
-- Accessibility: semantic navigation and tables, current-page state, labeled organization menu,
-  skip link, native dialogs, reduced-motion behavior, and visible keyboard targets are present. The
-  desktop Customers state exposed 31 ordered focusable links/buttons with no negative tab indexes.
-- Responsive behavior: 390px screenshots verify off-canvas navigation, stacked actions, detail-card
-  reflow, tab scrolling, and discoverable table overflow without document-width overflow.
-- Browser console errors: none in the exercised local or deployed states.
+- Fonts and typography: system sans-serif treatment, price hierarchy, labels, totals, and small legal text match the reference's optical scale and weight closely. Wrapping is clean at desktop and 390px.
+- Spacing and layout rhythm: the desktop reproduces the two-column summary/payment composition, central content widths, divider, price block, line item, totals, terms, primary action, and footer. Mobile stacks the two regions without horizontal overflow (`scrollWidth = innerWidth = 390`).
+- Colors and visual tokens: the implementation preserves the reference's white/soft-gray split, quiet blue-gray text, light borders, and blue primary action. Amber is reserved for the staging-only test disclosure.
+- Image quality and asset fidelity: the official SERP SVG from `apps.serp.co` is used and loaded successfully. No placeholder image, CSS drawing, emoji, or handcrafted SVG substitutes the brand mark.
+- Copy and content: plan, interval, email, subtotal, discounts/credits, tax, and total are rendered from the locked D1 checkout state. The canary and test-mode disclosures accurately describe the active route.
+
+## Full-view comparison evidence
+
+The source and implementation were opened together. Both show the same primary hierarchy: order summary and total on the left; contact, payment method, terms, action, and provider footer on the right. The EPD implementation intentionally replaces Stripe wallet rows with the real hosted card fields and adds a staging disclosure. No important content is clipped or pushed below an unusable viewport.
+
+## Focused region evidence
+
+The payment region was checked directly after Collect.js initialized. Card number, expiration, and security-code iframe containers were visible with the expected placeholders; the payment button was enabled; the accessibility status read `Secure fields ready`; the two legal links resolved correctly. The official brand image reported a positive natural width. No additional crop was required because the 2048px capture keeps all labels and hosted fields legible.
+
+## Primary interactions and runtime checks
+
+- Collect.js field readiness: passed on desktop and mobile.
+- Terms checkbox toggle: passed.
+- Terms and Privacy links: passed.
+- Desktop horizontal overflow: none.
+- Mobile horizontal overflow at 390px: none.
+- Browser console errors after the final CSP fix: none.
+- Live card submission: intentionally not performed in visual QA; provider transaction behavior remains covered by the forced-Gateway-test integration tests.
 
 ## Comparison history
 
-1. The initial deployment used a custom SERP dashboard, one long hash-anchor document, text-glyph
-   icons, and no organization switcher.
-2. The first parity pass restored the original Lago navigation hierarchy, source icons, focused
-   list routes, original color/spacing system, and real organization-slug history.
-3. The first mobile capture exposed hidden navigation labels; the inherited rule was corrected and
-   verified in `09-operator-parity-navigation-mobile-fixed.png`.
-4. Dialog testing exposed unreliable Escape handling; a global native-dialog Escape boundary was
-   added and retested.
-5. Customer detail and generic entity pages removed the final structural mismatch. The two matched
-   desktop composites now compare the source and implementation at the same viewport and state.
+1. First rendered pass found a P2 runtime-quality issue: EPD's hosted library attempted to load its stylesheet and Apple SDK resources outside the CSP. The CSP was narrowed to the provider Gateway and Apple SDK origins, including the exact Apple inline-style hash and font origin. Post-fix browser evidence showed zero console errors on desktop and mobile.
+2. Second pass found a P2 brand-fidelity issue: the source's official mark had been represented by a text wordmark. It was replaced with the official SERP SVG asset. Post-fix evidence confirmed the image loaded and retained the reference's compact back/brand treatment.
+3. Final pass found no actionable P0/P1/P2 differences.
+
+## Implementation checklist
+
+- [x] Two-column Stripe-comparable desktop composition.
+- [x] Responsive 390px stacked layout without overflow.
+- [x] Locked server-side plan, email, interval, subtotal, discounts/credits, tax, and total.
+- [x] Real EPD hosted card fields.
+- [x] Required terms acceptance and server-side consent record.
+- [x] Staging-only test disclosure.
+- [x] Official SERP brand asset.
+- [x] Zero browser console errors.
+
+## Follow-up polish
+
+- If SERP later enables an EPD processor that supports Google Pay for recurring vault-backed payments, add the wallet only after an end-to-end provider qualification pass.
+- Keep Store upsells in the Store checkout layer unless the signed Lago checkout contract is explicitly expanded to carry locked add-on inventory and prices.
+
+final result: passed

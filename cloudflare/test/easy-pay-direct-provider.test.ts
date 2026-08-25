@@ -68,7 +68,7 @@ describe("Easy Pay Direct provider", () => {
     const body = await response.text();
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(body).toContain("card_visa");
-    expect(body).toContain("Internal QA only");
+    expect(body).toContain("Internal payment testing");
     expect(body).not.toContain("synthetic-tokenization-key");
     expect(body).not.toContain("Collect.js");
   });
@@ -84,11 +84,25 @@ describe("Easy Pay Direct provider", () => {
       new URL(checkout.paymentUrl),
       gatewayTestEnv,
       now,
+      {
+        title: "SERP 1-App Premium Plan",
+        description: "One premium SERP app subscription.",
+        interval: "monthly",
+        amountMinor: 1850,
+        subtotalMinor: 3700,
+        taxMinor: 0,
+        creditsMinor: 1850,
+        currency: "USD",
+        customerEmail: "synthetic@example.test",
+      },
     );
     const body = await response.text();
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(response.headers.get("Content-Security-Policy")).toContain(
       "https://secure.easypaydirectgateway.com",
+    );
+    expect(response.headers.get("Content-Security-Policy")).toContain(
+      "https://applepay.cdn-apple.com",
     );
     expect(body).toContain("Collect.js");
     expect(body).toContain("synthetic-tokenization-key");
@@ -103,7 +117,17 @@ describe("Easy Pay Direct provider", () => {
     expect(body).toContain("styleSniffer:false");
     expect(body).toContain("fieldsAvailableCallback");
     expect(body).toContain("Card details are securely tokenized by Easy Pay Direct");
-    expect(body).toContain("Test cards only · No real money will move");
+    expect(body).toContain("Test cards only. No real money will move.");
+    expect(body).toContain("SERP 1-App Premium Plan");
+    expect(body).toContain("$18.50");
+    expect(body).toContain("$37.00");
+    expect(body).toContain("Discounts &amp; credits");
+    expect(body).toContain("synthetic@example.test");
+    expect(body).toContain("https://apps.serp.co/legal/terms");
+    expect(body).toContain("https://apps.serp.co/privacy");
+    expect(body).toContain("terms_accepted");
+    expect(body).toContain("Other SERP products continue using the existing Stripe checkout");
+    expect(body).toContain('src="https://apps.serp.co/logo.svg"');
     expect(body).toContain(".hosted-field iframe");
     expect(body).toContain('id="pay" class="pay-button" type="button" disabled');
     expect(body).not.toContain("card_visa");

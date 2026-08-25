@@ -14,6 +14,8 @@ import {
 } from "../providers/easy-pay-direct";
 import { reconcilePaymentRequest, type PendingReceipt } from "../reconciliation/authorize-net";
 
+const CHECKOUT_TERMS_VERSION = "apps-serp-terms-and-privacy-2026-08-25";
+
 type CheckoutRow = {
   checkout_intent_id: string;
   organization_id: string;
@@ -36,6 +38,8 @@ type ExecutionRow = {
   status: "pending" | "processing" | "succeeded" | "failed" | "unknown";
   payment_token_sha256: string;
   phone_sha256: string;
+  terms_accepted_at: string | null;
+  terms_version: string | null;
   customer_idempotency_key: string;
   payment_method_idempotency_key: string;
   product_idempotency_key: string;
@@ -70,6 +74,13 @@ export async function handleEasyPayDirectCheckoutSubmission(
   const checkoutToken = requiredString(body, "checkout");
   const paymentToken = requiredString(body, "payment_token");
   const phone = requiredString(body, "phone");
+  if (surface === "product_checkout" && body.terms_accepted !== true) {
+    throw new ApiError(
+      422,
+      "easy_pay_direct_terms_required",
+      "Accept the Terms of Service and Privacy Policy to continue",
+    );
+  }
   if (
     checkoutToken.length > 2_048 ||
     paymentToken.length > 512 ||
@@ -122,13 +133,15 @@ export async function handleEasyPayDirectCheckoutSubmission(
     checkout.checkout_intent_id,
   );
   const now = new Date().toISOString();
+  const termsAcceptedAt = surface === "product_checkout" ? now : null;
+  const termsVersion = surface === "product_checkout" ? CHECKOUT_TERMS_VERSION : null;
   await env.BILLING_DB.prepare(
     `INSERT INTO easy_pay_direct_payment_executions
      (id, organization_id, checkout_intent_id, payment_request_id, provider_account_code,
-      request_sha256, payment_token_sha256, phone_sha256,
+      request_sha256, payment_token_sha256, phone_sha256, terms_accepted_at, terms_version,
       customer_idempotency_key, payment_method_idempotency_key,
       product_idempotency_key, order_idempotency_key, status, created_at, updated_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
      WHERE NOT EXISTS (
        SELECT 1 FROM easy_pay_direct_payment_executions WHERE checkout_intent_id = ?
      )
@@ -143,6 +156,8 @@ export async function handleEasyPayDirectCheckoutSubmission(
       checkout.request_sha256,
       paymentTokenHash,
       phoneHash,
+      termsAcceptedAt,
+      termsVersion,
       crypto.randomUUID(),
       crypto.randomUUID(),
       crypto.randomUUID(),
@@ -160,6 +175,16 @@ export async function handleEasyPayDirectCheckoutSubmission(
       409,
       "easy_pay_direct_checkout_replay_mismatch",
       "Checkout was already submitted with different payment details",
+    );
+  }
+  if (
+    surface === "product_checkout" &&
+    (!execution.terms_accepted_at || execution.terms_version !== CHECKOUT_TERMS_VERSION)
+  ) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_checkout_replay_mismatch",
+      "Checkout was already submitted without the current terms acceptance",
     );
   }
   if (execution.status === "succeeded")
@@ -528,7 +553,8 @@ async function loadExecution(
 ): Promise<ExecutionRow | null> {
   return database
     .prepare(
-      `SELECT id, status, payment_token_sha256, phone_sha256, customer_idempotency_key,
+      `SELECT id, status, payment_token_sha256, phone_sha256, terms_accepted_at, terms_version,
+            customer_idempotency_key,
             payment_method_idempotency_key, product_idempotency_key, order_idempotency_key,
             provider_transaction_id, provider_customer_id, provider_payment_method_id,
             provider_product_id, customer_vault_id, gateway_billing_id,
