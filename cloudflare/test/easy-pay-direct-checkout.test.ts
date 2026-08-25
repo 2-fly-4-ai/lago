@@ -219,6 +219,65 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
     });
   });
 
+  it("binds an anonymous Store checkout to the submitted email before charging", async () => {
+    const runtimeEnv = enabledEnv("gateway_test");
+    await env.BILLING_DB.prepare(
+      "UPDATE customers SET email = NULL WHERE id = ? AND organization_id = ?",
+    )
+      .bind(customerId, organizationId)
+      .run();
+    await env.BILLING_DB.prepare("UPDATE payment_requests SET email = NULL WHERE id = ?")
+      .bind(paymentRequestId)
+      .run();
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const checkout = await env.BILLING_DB.prepare(
+      `SELECT payment_url FROM payment_request_checkout_intents
+       WHERE payment_request_id = ? AND provider = 'easy_pay_direct'`,
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const checkoutForm = await easyPayDirectPaymentForm(new URL(checkout!.payment_url), runtimeEnv);
+    expect(await checkoutForm.text()).toContain('placeholder="you@example.com"');
+    const checkoutToken = new URL(checkout!.payment_url).searchParams.get("checkout")!;
+    const providerFetch = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.get("email")).toBe("guest@example.test");
+      return new Response(
+        "response=1&responsetext=Approved&response_code=100&transactionid=epd-guest-test-1&authcode=TEST&customer_vault_id=vault-guest-test-1",
+      );
+    });
+    const response = await handleEasyPayDirectCheckoutSubmission(
+      new Request("https://lago.test/easy_pay_direct/payment_form", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          checkout: checkoutToken,
+          payment_token: "hosted-token-guest-1",
+          phone: "+15555550125",
+          email: "Guest@Example.Test",
+          terms_accepted: true,
+        }),
+      }),
+      runtimeEnv,
+      "request-epd-guest-test",
+      providerFetch,
+    );
+    await expect(response.json()).resolves.toMatchObject({ status: "succeeded" });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT customer.email, execution.email_sha256 IS NOT NULL AS email_bound
+         FROM easy_pay_direct_payment_executions execution
+         JOIN payment_request_checkout_intents intent
+           ON intent.id = execution.checkout_intent_id
+         JOIN customers customer
+           ON customer.id = intent.customer_id AND customer.organization_id = intent.organization_id
+         WHERE execution.payment_request_id = ?`,
+      )
+        .bind(paymentRequestId)
+        .first(),
+    ).resolves.toEqual({ email: "guest@example.test", email_bound: 1 });
+  });
+
   it("creates a sandbox Commerce order once and waits for the signed webhook before reconciling", async () => {
     const runtimeEnv = enabledEnv();
     await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());

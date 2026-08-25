@@ -38,6 +38,7 @@ type ExecutionRow = {
   status: "pending" | "processing" | "succeeded" | "failed" | "unknown";
   payment_token_sha256: string;
   phone_sha256: string;
+  email_sha256: string | null;
   terms_accepted_at: string | null;
   terms_version: string | null;
   customer_idempotency_key: string;
@@ -104,11 +105,24 @@ export async function handleEasyPayDirectCheckoutSubmission(
   if (!checkout.expires_at || Date.parse(checkout.expires_at) <= Date.now()) {
     throw new ApiError(410, "easy_pay_direct_checkout_expired", "Checkout link has expired");
   }
-  if (!checkout.customer_email) {
+  const submittedEmail = typeof body.email === "string" ? body.email : null;
+  const customerEmail = normalizeCheckoutEmail(checkout.customer_email ?? submittedEmail);
+  if (!customerEmail) {
     throw new ApiError(
       422,
       "easy_pay_direct_customer_email_required",
-      "Customer email is required for Easy Pay Direct",
+      "Enter a valid email address to continue",
+    );
+  }
+  if (
+    checkout.customer_email &&
+    submittedEmail &&
+    normalizeCheckoutEmail(submittedEmail) !== normalizeCheckoutEmail(checkout.customer_email)
+  ) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_checkout_replay_mismatch",
+      "The checkout email does not match the signed customer",
     );
   }
   if (surface === "product_checkout" && env.EASY_PAY_DIRECT_NETWORK_MODE === "test") {
@@ -128,6 +142,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
 
   const paymentTokenHash = await easyPayDirectPaymentTokenHash(paymentToken);
   const phoneHash = await sha256Hex(phone);
+  const emailHash = await sha256Hex(customerEmail);
   const executionId = await deterministicUuid(
     "easy-pay-direct-payment-execution",
     checkout.checkout_intent_id,
@@ -138,10 +153,11 @@ export async function handleEasyPayDirectCheckoutSubmission(
   await env.BILLING_DB.prepare(
     `INSERT INTO easy_pay_direct_payment_executions
      (id, organization_id, checkout_intent_id, payment_request_id, provider_account_code,
-      request_sha256, payment_token_sha256, phone_sha256, terms_accepted_at, terms_version,
+      request_sha256, payment_token_sha256, phone_sha256, email_sha256,
+      terms_accepted_at, terms_version,
       customer_idempotency_key, payment_method_idempotency_key,
       product_idempotency_key, order_idempotency_key, status, created_at, updated_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
      WHERE NOT EXISTS (
        SELECT 1 FROM easy_pay_direct_payment_executions WHERE checkout_intent_id = ?
      )
@@ -156,6 +172,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
       checkout.request_sha256,
       paymentTokenHash,
       phoneHash,
+      emailHash,
       termsAcceptedAt,
       termsVersion,
       crypto.randomUUID(),
@@ -170,7 +187,11 @@ export async function handleEasyPayDirectCheckoutSubmission(
   let execution = await loadExecution(env.BILLING_DB, checkout.checkout_intent_id);
   if (!execution || execution.id !== executionId)
     throw new ApiError(409, "easy_pay_direct_checkout_conflict", "Checkout was already submitted");
-  if (execution.payment_token_sha256 !== paymentTokenHash || execution.phone_sha256 !== phoneHash) {
+  if (
+    execution.payment_token_sha256 !== paymentTokenHash ||
+    execution.phone_sha256 !== phoneHash ||
+    execution.email_sha256 !== emailHash
+  ) {
     throw new ApiError(
       409,
       "easy_pay_direct_checkout_replay_mismatch",
@@ -185,6 +206,49 @@ export async function handleEasyPayDirectCheckoutSubmission(
       409,
       "easy_pay_direct_checkout_replay_mismatch",
       "Checkout was already submitted without the current terms acceptance",
+    );
+  }
+  if (!checkout.customer_email) {
+    const updated = await env.BILLING_DB.prepare(
+      `UPDATE customers SET email = ?, updated_at = ?
+       WHERE id = ? AND organization_id = ?
+         AND (email IS NULL OR trim(email) = '' OR lower(trim(email)) = ?)`,
+    )
+      .bind(
+        customerEmail,
+        new Date().toISOString(),
+        checkout.customer_id,
+        checkout.organization_id,
+        customerEmail,
+      )
+      .run();
+    if (updated.meta.changes !== 1) {
+      throw new ApiError(
+        409,
+        "easy_pay_direct_checkout_replay_mismatch",
+        "The checkout customer email changed",
+      );
+    }
+    checkout.customer_email = customerEmail;
+  }
+  const paymentRequestUpdated = await env.BILLING_DB.prepare(
+    `UPDATE payment_requests SET email = ?, updated_at = ?
+     WHERE id = ? AND organization_id = ?
+       AND (email IS NULL OR trim(email) = '' OR lower(trim(email)) = ?)`,
+  )
+    .bind(
+      customerEmail,
+      new Date().toISOString(),
+      checkout.payment_request_id,
+      checkout.organization_id,
+      customerEmail,
+    )
+    .run();
+  if (paymentRequestUpdated.meta.changes !== 1) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_checkout_replay_mismatch",
+      "The checkout payment email changed",
     );
   }
   if (execution.status === "succeeded")
@@ -220,7 +284,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
           currency: checkout.currency,
           orderId: checkout.payment_request_id,
           orderDescription: `Lago payment request ${checkout.payment_request_id}`,
-          customerEmail: checkout.customer_email,
+          customerEmail,
           firstName: names.firstName,
           lastName: names.lastName,
           phone,
@@ -553,7 +617,8 @@ async function loadExecution(
 ): Promise<ExecutionRow | null> {
   return database
     .prepare(
-      `SELECT id, status, payment_token_sha256, phone_sha256, terms_accepted_at, terms_version,
+      `SELECT id, status, payment_token_sha256, phone_sha256, email_sha256,
+              terms_accepted_at, terms_version,
             customer_idempotency_key,
             payment_method_idempotency_key, product_idempotency_key, order_idempotency_key,
             provider_transaction_id, provider_customer_id, provider_payment_method_id,
@@ -563,6 +628,14 @@ async function loadExecution(
     )
     .bind(checkoutIntentId)
     .first<ExecutionRow>();
+}
+
+function normalizeCheckoutEmail(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized || normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(normalized)) {
+    return null;
+  }
+  return normalized;
 }
 
 async function loadProfile(

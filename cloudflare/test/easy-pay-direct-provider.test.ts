@@ -134,6 +134,35 @@ describe("Easy Pay Direct provider", () => {
     expect(body).not.toContain("Sandbox outcome");
   });
 
+  it("collects an email on the provider checkout when the Store customer is anonymous", async () => {
+    const now = Date.parse("2026-08-22T00:00:00.000Z");
+    const checkout = await createEasyPayDirectCheckoutUrl(
+      gatewayTestEnv,
+      { checkoutIntentId: "intent-gateway-test-guest" },
+      now,
+    );
+    const response = await easyPayDirectPaymentForm(
+      new URL(checkout.paymentUrl),
+      gatewayTestEnv,
+      now,
+      {
+        title: "SERP App Plan",
+        description: "One SERP app.",
+        interval: "monthly",
+        amountMinor: 900,
+        subtotalMinor: 900,
+        taxMinor: 0,
+        creditsMinor: 0,
+        currency: "USD",
+        customerEmail: null,
+      },
+    );
+    const body = await response.text();
+    expect(body).toContain('id="email" class="input" type="email" placeholder="you@example.com"');
+    expect(body).toContain("Your receipt and product access will be linked to this email.");
+    expect(body).toContain("...(emailInput?{email}:{})");
+  });
+
   it("fails closed instead of showing the synthetic picker as a product checkout", async () => {
     const now = Date.parse("2026-08-22T00:00:00.000Z");
     const checkout = await createEasyPayDirectCheckoutUrl(

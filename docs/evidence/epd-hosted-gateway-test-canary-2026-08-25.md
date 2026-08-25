@@ -7,7 +7,7 @@ The Pornhub Video Downloader staging canary now opens an Easy Pay Direct Collect
 - Product checkout: `/easy_pay_direct/payment_form`
 - Internal synthetic QA tool: `/easy_pay_direct/sandbox_tool`
 - Worker: `serp-dev-lago-native`
-- Deployed version: `9bfcfb67-ee80-4722-a595-f6ef36d1412d`
+- Deployed version: `3070483d-c741-4bbb-a831-70ba0b8d8a55`
 - `EASY_PAY_DIRECT_NETWORK_MODE`: `gateway_test`
 - `EASY_PAY_DIRECT_LIVEMODE_ALLOWED`: `0`
 - `PAYMENT_MUTATIONS_ENABLED`: `1`
@@ -34,6 +34,20 @@ The Gateway security and Collect.js tokenization values are encrypted Worker sec
 - Format, lint, generated Worker types, TypeScript, dry-run bundle, and the full 406-test suite passed.
 - Desktop and 390px browser captures passed design QA with no horizontal overflow; hosted fields reported ready and the final browser console contained no errors.
 - Remote D1 migration check reported no pending migrations after `0094`; remote `PRAGMA foreign_key_check` returned no rows.
+
+## Store-originated purchase verification — 2026-08-26
+
+An actual staging checkout started at the Pornhub Video Downloader product route, passed through the safe Store, rendered the EPD Collect.js hosted fields, and completed with EPD's Gateway test account.
+
+- The Store-created anonymous Lago customer initially had no email. The hosted checkout now collects the buyer email and binds only its SHA-256 hash into the immutable payment execution identity through migration `0095_easy_pay_direct_checkout_email.sql`.
+- Existing signed customer emails remain locked; a conflicting submitted email is rejected.
+- The purchase used a synthetic `example.invalid` identity, EPD's documented test Visa, a future test expiry, and test CVV. No production customer or live card was used.
+- EPD returned approved sandbox transaction `12472222192`; Lago returned HTTP 200 with `status = succeeded`, `replayed = false`, and the browser displayed `Payment received`.
+- D1 recorded one execution and one invoice link. The checkout intent, payment request, execution, and invoice all converged to `succeeded`; `ready_for_payment_processing = 0`.
+- D1 recorded the email binding and terms acceptance/version without storing card data in the Worker.
+- Remote `PRAGMA foreign_key_check` returned no rows and the remote migration check reported no pending migrations after `0095`.
+- Focused lint, TypeScript, Worker dry build, deployed health, and the Store-to-provider browser path passed against Worker version `3070483d-c741-4bbb-a831-70ba0b8d8a55`.
+- The current machine's Cloudflare Vitest pool timed out while starting `cloudflare-pool` before loading any test file. This was a local runner-start failure, not a test assertion; the deployed staging path and D1 invariants above supplied the action-time verification for this patch.
 
 ## Safety invariants
 
