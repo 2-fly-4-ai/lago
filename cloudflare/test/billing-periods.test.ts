@@ -46,6 +46,13 @@ describe("timezone-aware billing periods", () => {
     ).toBe(31);
   });
 
+  it("uses one synthetic billing unit for a one-time plan", () => {
+    const purchasedAt = new Date("2026-08-26T00:00:00.000Z");
+    expect(billingPeriodDurationDays(purchasedAt, purchasedAt, "calendar", "one_time", "UTC")).toBe(
+      1,
+    );
+  });
+
   it("preserves anniversary behavior and rejects unknown zones", () => {
     expect(
       firstPeriodEnd(

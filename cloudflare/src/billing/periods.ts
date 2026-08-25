@@ -116,6 +116,7 @@ export function billingPeriodDurationDays(
   interval: string,
   timezone: string,
 ): number {
+  if (interval === "one_time") return 1;
   return billingTime === "calendar"
     ? initialPlanProration(periodStart, periodEnd, billingTime, interval, timezone).fullPeriodDays
     : billingPeriodProration(periodStart, periodStart, periodEnd, timezone).fullPeriodDays;

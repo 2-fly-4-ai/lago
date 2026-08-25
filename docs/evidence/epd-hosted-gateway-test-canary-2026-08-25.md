@@ -7,7 +7,8 @@ The Pornhub Video Downloader staging canary now opens an Easy Pay Direct Collect
 - Product checkout: `/easy_pay_direct/payment_form`
 - Internal synthetic QA tool: `/easy_pay_direct/sandbox_tool`
 - Worker: `serp-dev-lago-native`
-- Deployed version: `3070483d-c741-4bbb-a831-70ba0b8d8a55`
+- Lago Worker version: `05530d05-b2cb-4afa-b062-2280799016b0`
+- Safe Store Worker version: `2e2a548f-51e1-4150-99fd-80327e5d39b7`
 - `EASY_PAY_DIRECT_NETWORK_MODE`: `gateway_test`
 - `EASY_PAY_DIRECT_LIVEMODE_ALLOWED`: `0`
 - `PAYMENT_MUTATIONS_ENABLED`: `1`
@@ -49,6 +50,37 @@ An actual staging checkout started at the Pornhub Video Downloader product route
 - Focused lint, TypeScript, Worker dry build, deployed health, and the Store-to-provider browser path passed against Worker version `3070483d-c741-4bbb-a831-70ba0b8d8a55`.
 - The current machine's Cloudflare Vitest pool timed out while starting `cloudflare-pool` before loading any test file. This was a local runner-start failure, not a test assertion; the deployed staging path and D1 invariants above supplied the action-time verification for this patch.
 
+## Store purchase-model verification — 2026-08-26
+
+The staging Store now derives the Lago plan cadence from the Store's existing purchase model instead
+of treating every generic plan checkout as a subscription. The Pornhub Video Downloader canary is
+configured as `one_time`; other products retain their existing routing.
+
+- A fresh browser checkout started at the staging Pornhub Video Downloader route, passed through the
+  safe Store, and rendered the EPD Collect.js hosted fields as `$9.00` with `One-time payment`.
+- Exactly one EPD Gateway test submission completed successfully as sandbox transaction
+  `12474102559`; the browser displayed `Payment received`.
+- D1 recorded plan `serp-1-app-plan-one-time` with interval `one_time`, a 900-cent invoice, one
+  provider execution, one payment, one invoice link, and one payment allocation. The execution,
+  payment request, invoice, and subscription all converged to `succeeded`/`active` as applicable.
+- The previously completed recurring sandbox transaction `12472222192` remains attached to
+  `serp-1-app-plan-monthly` with interval `monthly`, a 900-cent invoice, one provider execution,
+  and one payment. This verifies that adding one-time routing did not collapse the recurring path.
+- Active staging variants now include `serp-1-app-plan-monthly` (900 cents),
+  `serp-1-app-plan-yearly` (7,900 cents), and `serp-1-app-plan-one-time` (900 cents).
+- The non-canary EPorner Video Downloader staging checkout still redirected to Stripe Checkout; no
+  payment was submitted on that control path.
+- Migration `0096_store_staging_purchase_model_plans.sql` is synthetic-organization scoped and was
+  applied only to the staging D1 database. The remote migration inventory reports no pending
+  migrations, and `PRAGMA foreign_key_check` returns no rows.
+- The changed billing-period suite passes 8/8, Store routing suites pass 34/34, and formatting,
+  lint, Access tests, inventory, generated types, TypeScript, and every development/production dry
+  bundle pass. The full isolated Cloudflare suite could not complete on this mounted worktree: four
+  workers caused unrelated 10-second I/O timeouts, while one isolated worker restarted `workerd`
+  per file and did not finish in a practical window. A `--no-isolate` diagnostic was stopped after
+  it changed fixture semantics and produced an unrelated coupon failure; it is not treated as a
+  product-test result.
+
 ## Safety invariants
 
 - Gateway submission always sends `test_mode=enabled` in `gateway_test` mode.
@@ -57,9 +89,9 @@ An actual staging checkout started at the Pornhub Video Downloader product route
 - The synthetic Commerce selector cannot render on the product checkout route.
 - The synthetic QA route is unavailable in production mode.
 - Google Pay is not exposed against the current EPD Gateway demo processor because EPD limits it to eligible processors.
-- Apple Pay is not exposed for this recurring checkout because EPD documents its tokens as one-time and not suitable for Customer Vault storage.
+- Apple Pay is not exposed for recurring EPD checkouts because EPD documents its tokens as one-time and not suitable for Customer Vault storage. A separate one-time wallet can be evaluated later without changing this canary's card-only contract.
 - Amazon Pay remains a Stripe-only method for this checkout.
-- Stripe production behavior, production Lago data/routes, `store-new`, and `serp-auth` were not changed by this patch.
+- Store staging code and the isolated development Workers were changed for this canary. Existing production Store/Stripe routing, production Lago data/routes, and `serp-auth` were not switched or deployed by this patch.
 
 ## Primary references
 
