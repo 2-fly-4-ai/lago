@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import type { EasyPayDirectEnv } from "../src/providers/easy-pay-direct";
 import {
   addEasyPayDirectPaymentMethod,
+  chargeEasyPayDirectGatewayTestToken,
   createEasyPayDirectCheckoutUrl,
   createEasyPayDirectCustomer,
   createEasyPayDirectOrder,
   createEasyPayDirectProduct,
   easyPayDirectPaymentForm,
+  easyPayDirectSandboxTool,
   getEasyPayDirectOrder,
   refundEasyPayDirectOrder,
   vaultEasyPayDirectCard,
@@ -21,6 +23,11 @@ const providerEnv = {
   EASY_PAY_DIRECT_NETWORK_MODE: "test",
   EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
   PUBLIC_BASE_URL: "https://lago.test",
+} satisfies EasyPayDirectEnv;
+
+const gatewayTestEnv = {
+  ...providerEnv,
+  EASY_PAY_DIRECT_NETWORK_MODE: "gateway_test",
 } satisfies EasyPayDirectEnv;
 
 describe("Easy Pay Direct provider", () => {
@@ -48,20 +55,104 @@ describe("Easy Pay Direct provider", () => {
     ).rejects.toMatchObject({ code: "easy_pay_direct_checkout_invalid" });
   });
 
-  it("renders a no-store synthetic sandbox form without loading Collect.js", async () => {
+  it("keeps synthetic outcomes on a separate no-store internal QA surface", async () => {
     const now = Date.parse("2026-08-22T00:00:00.000Z");
     const checkout = await createEasyPayDirectCheckoutUrl(
       providerEnv,
       { checkoutIntentId: "intent-synthetic-2" },
       now,
     );
-    const response = await easyPayDirectPaymentForm(new URL(checkout.paymentUrl), providerEnv, now);
+    const sandboxUrl = new URL(checkout.paymentUrl);
+    sandboxUrl.pathname = "/easy_pay_direct/sandbox_tool";
+    const response = await easyPayDirectSandboxTool(sandboxUrl, providerEnv, now);
     const body = await response.text();
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(body).toContain("card_visa");
-    expect(body).toContain("No real money is moved");
+    expect(body).toContain("Internal QA only");
     expect(body).not.toContain("synthetic-tokenization-key");
     expect(body).not.toContain("Collect.js");
+  });
+
+  it("renders hosted EPD card fields for the product canary and never exposes synthetic outcomes", async () => {
+    const now = Date.parse("2026-08-22T00:00:00.000Z");
+    const checkout = await createEasyPayDirectCheckoutUrl(
+      gatewayTestEnv,
+      { checkoutIntentId: "intent-gateway-test-1" },
+      now,
+    );
+    const response = await easyPayDirectPaymentForm(
+      new URL(checkout.paymentUrl),
+      gatewayTestEnv,
+      now,
+    );
+    const body = await response.text();
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Content-Security-Policy")).toContain(
+      "https://secure.easypaydirectgateway.com",
+    );
+    expect(body).toContain("Collect.js");
+    expect(body).toContain("synthetic-tokenization-key");
+    expect(body).toContain('id="ccnumber"');
+    expect(body).toContain('id="ccexp"');
+    expect(body).toContain('id="cvv"');
+    expect(body).toContain("Test cards only; live charging is disabled");
+    expect(body).not.toContain("card_visa");
+    expect(body).not.toContain("Sandbox outcome");
+  });
+
+  it("fails closed instead of showing the synthetic picker as a product checkout", async () => {
+    const now = Date.parse("2026-08-22T00:00:00.000Z");
+    const checkout = await createEasyPayDirectCheckoutUrl(
+      providerEnv,
+      { checkoutIntentId: "intent-commerce-test-only" },
+      now,
+    );
+    await expect(
+      easyPayDirectPaymentForm(new URL(checkout.paymentUrl), providerEnv, now),
+    ).rejects.toMatchObject({ code: "easy_pay_direct_gateway_test_not_configured" });
+  });
+
+  it("submits hosted tokens only as forced Gateway test transactions", async () => {
+    const providerFetch = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe("https://secure.easypaydirectgateway.com/api/transact.php");
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.get("type")).toBe("sale");
+      expect(body.get("payment_token")).toBe("hosted-token-1");
+      expect(body.get("amount")).toBe("19.99");
+      expect(body.get("currency")).toBe("USD");
+      expect(body.get("test_mode")).toBe("enabled");
+      expect(body.get("security_key")).toBe("synthetic-security-key");
+      expect(body.has("ccnumber")).toBe(false);
+      expect(body.has("ccexp")).toBe(false);
+      expect(body.has("cvv")).toBe(false);
+      return new Response(
+        "response=1&responsetext=Approved&response_code=100&transactionid=txn-test-1&authcode=TEST&orderid=payment-request-1&customer_vault_id=vault-test-1",
+      );
+    });
+    await expect(
+      chargeEasyPayDirectGatewayTestToken(
+        gatewayTestEnv,
+        {
+          paymentToken: "hosted-token-1",
+          amountMinor: 1999,
+          currency: "USD",
+          orderId: "payment-request-1",
+          orderDescription: "SERP1F test checkout",
+          customerEmail: "synthetic@example.test",
+          firstName: "Synthetic",
+          lastName: "Customer",
+          phone: "+15555550123",
+          idempotencyKey: "550e8400-e29b-41d4-a716-446655440005",
+        },
+        providerFetch,
+      ),
+    ).resolves.toMatchObject({
+      id: "txn-test-1",
+      status: "succeeded",
+      responseCode: "100",
+      customerVaultId: "vault-test-1",
+    });
+    expect(providerFetch).toHaveBeenCalledOnce();
   });
 
   it("uses the versioned Commerce API for customer, payment method, product, and order", async () => {
@@ -174,6 +265,14 @@ describe("Easy Pay Direct provider", () => {
         { checkoutIntentId: "intent-1" },
       ),
     ).rejects.toMatchObject({ code: "easy_pay_direct_key_environment_mismatch" });
+    await expect(
+      createEasyPayDirectCheckoutUrl(
+        { ...gatewayTestEnv, EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1" },
+        { checkoutIntentId: "intent-1" },
+      ),
+    ).rejects.toMatchObject({
+      code: "easy_pay_direct_gateway_test_requires_livemode_disabled",
+    });
   });
 
   it("uses Gateway only to create a live vault and billing id", async () => {

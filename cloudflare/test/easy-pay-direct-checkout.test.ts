@@ -81,6 +81,108 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
     expect(uniqueIndexColumns).not.toContainEqual(["payment_token_sha256"]);
   });
 
+  it("charges the product canary through forced Gateway test mode and reconciles once", async () => {
+    const runtimeEnv = enabledEnv("gateway_test");
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const checkout = await env.BILLING_DB.prepare(
+      `SELECT payment_url, status, provider_account_code FROM payment_request_checkout_intents
+       WHERE payment_request_id = ? AND provider = 'easy_pay_direct'`,
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string; status: string; provider_account_code: string }>();
+    expect(checkout).toMatchObject({ status: "succeeded", provider_account_code: "epd-synthetic" });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT intent.organization_id, intent.payment_request_id, intent.request_sha256,
+                request.organization_id AS request_organization_id, request.payment_status
+         FROM payment_request_checkout_intents intent
+         JOIN payment_requests request ON request.id = intent.payment_request_id
+         WHERE intent.payment_request_id = ?`,
+      )
+        .bind(paymentRequestId)
+        .first(),
+    ).resolves.toMatchObject({
+      organization_id: organizationId,
+      payment_request_id: paymentRequestId,
+      request_organization_id: organizationId,
+      payment_status: "pending",
+    });
+    const checkoutToken = new URL(checkout!.payment_url).searchParams.get("checkout")!;
+    const providerFetch = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.get("payment_token")).toBe("hosted-token-canary-1");
+      expect(body.get("amount")).toBe("19.99");
+      expect(body.get("test_mode")).toBe("enabled");
+      expect(body.get("security_key")).toBe("synthetic-security-key");
+      expect(body.has("ccnumber")).toBe(false);
+      return new Response(
+        "response=1&responsetext=Approved&response_code=100&transactionid=epd-gateway-test-1&authcode=TEST&customer_vault_id=vault-test-1",
+      );
+    });
+    const request = () =>
+      new Request("https://lago.test/easy_pay_direct/payment_form", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          checkout: checkoutToken,
+          payment_token: "hosted-token-canary-1",
+          phone: "+15555550123",
+        }),
+      });
+    const first = await handleEasyPayDirectCheckoutSubmission(
+      request(),
+      runtimeEnv,
+      "request-epd-gateway-test-1",
+      providerFetch,
+    );
+    await expect(first.json()).resolves.toMatchObject({
+      status: "succeeded",
+      provider: "easy_pay_direct",
+      provider_order_id: "epd-gateway-test-1",
+      replayed: false,
+    });
+    const replay = await handleEasyPayDirectCheckoutSubmission(
+      request(),
+      runtimeEnv,
+      "request-epd-gateway-test-2",
+      providerFetch,
+    );
+    await expect(replay.json()).resolves.toMatchObject({ status: "succeeded", replayed: true });
+    expect(providerFetch).toHaveBeenCalledOnce();
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT execution.status AS execution_status, execution.provider_transaction_id,
+                execution.provider_response_code, request.payment_status,
+                request.ready_for_payment_processing, invoice.payment_status AS invoice_status
+         FROM easy_pay_direct_payment_executions execution
+         JOIN payment_requests request ON request.id = execution.payment_request_id
+         JOIN invoices_payment_requests link ON link.payment_request_id = request.id
+         JOIN invoices invoice ON invoice.id = link.invoice_id
+         WHERE execution.payment_request_id = ?`,
+      )
+        .bind(paymentRequestId)
+        .first(),
+    ).resolves.toEqual({
+      execution_status: "succeeded",
+      provider_transaction_id: "epd-gateway-test-1",
+      provider_response_code: "100",
+      payment_status: "succeeded",
+      ready_for_payment_processing: 0,
+      invoice_status: "succeeded",
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT provider, signature_valid, processed_at IS NOT NULL AS processed
+         FROM webhook_receipts
+         WHERE provider = 'easy_pay_direct_gateway_test' AND provider_event_id LIKE 'gateway-test:%'`,
+      ).first(),
+    ).resolves.toEqual({
+      provider: "easy_pay_direct_gateway_test",
+      signature_valid: 0,
+      processed: 1,
+    });
+  });
+
   it("creates a sandbox Commerce order once and waits for the signed webhook before reconciling", async () => {
     const runtimeEnv = enabledEnv();
     await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
@@ -142,6 +244,7 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       runtimeEnv,
       "request-epd-1",
       providerFetch,
+      "synthetic_qa",
     );
     await expect(first.json()).resolves.toMatchObject({
       status: "processing",
@@ -154,6 +257,7 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       runtimeEnv,
       "request-epd-2",
       providerFetch,
+      "synthetic_qa",
     );
     await expect(replay.json()).resolves.toMatchObject({ status: "processing", replayed: true });
     expect(providerFetch).toHaveBeenCalledTimes(4);
@@ -328,6 +432,7 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       runtimeEnv,
       "request-epd-void",
       providerFetch,
+      "synthetic_qa",
     );
     expect(submitted.status).toBe(200);
     const execution = await env.BILLING_DB.prepare(
@@ -404,7 +509,7 @@ function checkoutParams() {
   };
 }
 
-function enabledEnv(): Env {
+function enabledEnv(mode: "test" | "gateway_test" = "test"): Env {
   return new Proxy(env, {
     get(target, property, receiver) {
       if (property === "PAYMENT_MUTATIONS_ENABLED") return "1";
@@ -416,7 +521,7 @@ function enabledEnv(): Env {
       if (property === "EASY_PAY_DIRECT_TOKENIZATION_KEY") return "synthetic-tokenization-key";
       if (property === "EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET")
         return "synthetic-checkout-signing-secret";
-      if (property === "EASY_PAY_DIRECT_NETWORK_MODE") return "test";
+      if (property === "EASY_PAY_DIRECT_NETWORK_MODE") return mode;
       if (property === "EASY_PAY_DIRECT_LIVEMODE_ALLOWED") return "0";
       if (property === "EASY_PAY_DIRECT_ACCOUNT_CODE") return "epd-synthetic";
       if (property === "EASY_PAY_DIRECT_ORGANIZATION_ID") return organizationId;

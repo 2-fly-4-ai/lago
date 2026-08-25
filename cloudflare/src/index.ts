@@ -3,7 +3,7 @@ import { authenticateApiKey } from "./auth/api-key";
 import { handleLagoCompatibilityRequest } from "./api/lago-compatibility";
 import { ApiError, apiErrorResponse } from "./http";
 import { authorizeNetPaymentForm } from "./providers/authorize-net";
-import { easyPayDirectPaymentForm } from "./providers/easy-pay-direct";
+import { easyPayDirectPaymentForm, easyPayDirectSandboxTool } from "./providers/easy-pay-direct";
 import { handleAuthorizeNetWebhook } from "./webhooks/authorize-net";
 import { handleEasyPayDirectWebhook } from "./webhooks/easy-pay-direct";
 import { handleStripeWebhook } from "./webhooks/stripe";
@@ -78,6 +78,20 @@ export default {
 
       if (request.method === "POST" && url.pathname === "/easy_pay_direct/payment_form") {
         return await handleEasyPayDirectCheckoutSubmission(request, env, requestId);
+      }
+
+      if (request.method === "GET" && url.pathname === "/easy_pay_direct/sandbox_tool") {
+        return await easyPayDirectSandboxTool(url, env);
+      }
+
+      if (request.method === "POST" && url.pathname === "/easy_pay_direct/sandbox_tool") {
+        return await handleEasyPayDirectCheckoutSubmission(
+          request,
+          env,
+          requestId,
+          fetch,
+          "synthetic_qa",
+        );
       }
 
       const authorizeNetWebhookMatch = url.pathname.match(/^\/webhooks\/authorize_net\/([^/]+)$/);

@@ -52,6 +52,16 @@ export type CommerceOrder = {
   }>;
 };
 export type GatewayVaultResult = { customerVaultId: string; billingId: string };
+export type GatewayTransactionResult = {
+  id: string | null;
+  status: "succeeded" | "failed" | "unknown";
+  responseCode: string | null;
+  responseText: string;
+  authCode: string | null;
+  orderId: string | null;
+  customerVaultId: string | null;
+  rawStatus: string | null;
+};
 
 export async function createEasyPayDirectCheckoutUrl(
   env: EasyPayDirectEnv,
@@ -60,7 +70,10 @@ export async function createEasyPayDirectCheckoutUrl(
 ): Promise<{ paymentUrl: string; token: string; expiresAt: string }> {
   validateIdentifier(input.checkoutIntentId, "checkoutIntentId");
   assertEasyPayDirectNetwork(env);
-  if (env.EASY_PAY_DIRECT_NETWORK_MODE === "production") {
+  if (
+    env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test" ||
+    env.EASY_PAY_DIRECT_NETWORK_MODE === "production"
+  ) {
     requiredSecret(env.EASY_PAY_DIRECT_TOKENIZATION_KEY, "EASY_PAY_DIRECT_TOKENIZATION_KEY");
   }
   const expires = Math.floor(now / 1000) + CHECKOUT_TTL_SECONDS;
@@ -128,24 +141,120 @@ export async function easyPayDirectPaymentForm(
     now,
   );
   assertEasyPayDirectNetwork(env);
-  const isSandbox = env.EASY_PAY_DIRECT_NETWORK_MODE === "test";
-  const collectScript = isSandbox
+  if (env.EASY_PAY_DIRECT_NETWORK_MODE === "test") {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_gateway_test_not_configured",
+      "The product checkout requires Easy Pay Direct Gateway test mode",
+    );
+  }
+  return renderEasyPayDirectPaymentForm(token, env, false);
+}
+
+export async function easyPayDirectSandboxTool(
+  url: URL,
+  env: EasyPayDirectEnv,
+  now = Date.now(),
+): Promise<Response> {
+  const token = url.searchParams.get("checkout")?.trim();
+  if (!token)
+    throw new ApiError(400, "easy_pay_direct_checkout_required", "Checkout token is required");
+  await verifyEasyPayDirectCheckoutToken(
+    token,
+    requiredSecret(
+      env.EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET,
+      "EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET",
+    ),
+    now,
+  );
+  assertEasyPayDirectNetwork(env);
+  if (env.EASY_PAY_DIRECT_NETWORK_MODE === "production") {
+    throw new ApiError(
+      404,
+      "easy_pay_direct_sandbox_tool_unavailable",
+      "The Easy Pay Direct sandbox tool is unavailable",
+    );
+  }
+  return renderEasyPayDirectPaymentForm(token, env, true);
+}
+
+function renderEasyPayDirectPaymentForm(
+  token: string,
+  env: EasyPayDirectEnv,
+  synthetic: boolean,
+): Response {
+  const collectScript = synthetic
     ? ""
     : `<script src="${COLLECT_JS_URL}" data-tokenization-key="${escapeHtml(requiredSecret(env.EASY_PAY_DIRECT_TOKENIZATION_KEY, "EASY_PAY_DIRECT_TOKENIZATION_KEY"))}" data-variant="inline" data-field-ccnumber-selector="#ccnumber" data-field-ccexp-selector="#ccexp" data-field-cvv-selector="#cvv" data-field-cvv-display="required"></script>`;
-  const paymentFields = isSandbox
+  const paymentFields = synthetic
     ? `<label>Sandbox outcome<select id="sandbox-token" class="input"><option value="card_visa">Approved Visa</option><option value="card_insufficient_funds">Insufficient funds</option><option value="card_visa_declined">Declined Visa</option></select></label>`
     : `<div class="fields"><div id="ccnumber" class="field"></div><div id="ccexp" class="field"></div><div id="cvv" class="field"></div></div>`;
-  const submitScript = isSandbox
+  const submitScript = synthetic
     ? `button.addEventListener('click',()=>submit(document.getElementById('sandbox-token').value));`
     : `CollectJS.configure({variant:'inline',paymentSelector:'#pay',callback:(response)=>submit(response.token)});`;
   const safeToken = escapeHtml(token);
+  const submissionPath = synthetic
+    ? "/easy_pay_direct/sandbox_tool"
+    : "/easy_pay_direct/payment_form";
   return new Response(
     `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Secure payment</title>` +
       `<style nonce="epd-style">body{font-family:ui-sans-serif,system-ui,sans-serif;background:#f7f7f8;color:#18181b;margin:0}.shell{max-width:520px;margin:48px auto;padding:0 20px}.card{background:#fff;border:1px solid #e4e4e7;border-radius:16px;padding:28px;box-shadow:0 12px 36px rgba(0,0,0,.08)}h1{font-size:24px;margin:0 0 8px}.note{color:#52525b;margin:0 0 24px}.fields{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px}.field,.input{box-sizing:border-box;width:100%;height:46px;border:1px solid #d4d4d8;border-radius:8px;padding:0 10px;margin:6px 0 16px}.error{min-height:22px;color:#b91c1c;margin:12px 0}button{width:100%;height:46px;border:0;border-radius:8px;background:#18181b;color:#fff;font-weight:700;cursor:pointer}button[disabled]{opacity:.55;cursor:wait}@media(max-width:520px){.fields{grid-template-columns:1fr}}</style>${collectScript}</head>` +
-      `<body><main class="shell"><section class="card"><h1>${isSandbox ? "Sandbox payment" : "Secure payment"}</h1><p class="note">${isSandbox ? "No real money is moved. Choose a synthetic outcome." : "Card details are collected directly by Easy Pay Direct and never touch SERP servers."}</p>${paymentFields}<label>Phone number<input id="phone" class="input" inputmode="tel" autocomplete="tel" placeholder="+14155551234" required></label><p id="error" class="error" role="alert"></p><button id="pay" type="button">${isSandbox ? "Run sandbox payment" : "Pay securely"}</button></section></main>` +
-      `<script nonce="epd-script">const checkout=${JSON.stringify(safeToken)};const button=document.getElementById('pay');const error=document.getElementById('error');async function submit(paymentToken){const phone=document.getElementById('phone').value.trim();if(!/^\\+[1-9]\\d{7,14}$/.test(phone)){error.textContent='Enter a phone number in international format, for example +14155551234';return}button.disabled=true;error.textContent='';try{const result=await fetch('/easy_pay_direct/payment_form',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checkout,payment_token:paymentToken,phone})});const body=await result.json();if(!result.ok)throw new Error(body?.error?.message||body?.error||'Payment could not be processed');if(body.redirect_url){location.assign(body.redirect_url);return}button.textContent=body.status==='processing'?'Payment submitted':'Payment received'}catch(cause){error.textContent=cause instanceof Error?cause.message:'Payment could not be processed';button.disabled=false}}${submitScript}</script></body></html>`,
-    { headers: checkoutHeaders(isSandbox) },
+      `<body><main class="shell"><section class="card"><h1>${synthetic ? "Synthetic sandbox QA" : "EPD test payment"}</h1><p class="note">${synthetic ? "Internal QA only. Choose a synthetic EPD Commerce outcome." : "Secure Easy Pay Direct test transaction. Test cards only; live charging is disabled."}</p>${paymentFields}<label>Phone number<input id="phone" class="input" inputmode="tel" autocomplete="tel" placeholder="+14155551234" required></label><p id="error" class="error" role="alert"></p><button id="pay" type="button">${synthetic ? "Run synthetic QA payment" : "Pay with EPD test mode"}</button></section></main>` +
+      `<script nonce="epd-script">const checkout=${JSON.stringify(safeToken)};const button=document.getElementById('pay');const error=document.getElementById('error');async function submit(paymentToken){const phone=document.getElementById('phone').value.trim();if(!/^\\+[1-9]\\d{7,14}$/.test(phone)){error.textContent='Enter a phone number in international format, for example +14155551234';return}button.disabled=true;error.textContent='';try{const result=await fetch(${JSON.stringify(submissionPath)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checkout,payment_token:paymentToken,phone})});const body=await result.json();if(!result.ok)throw new Error(body?.error?.message||body?.error||'Payment could not be processed');if(body.redirect_url){location.assign(body.redirect_url);return}button.textContent=body.status==='processing'?'Payment submitted':'Payment received'}catch(cause){error.textContent=cause instanceof Error?cause.message:'Payment could not be processed';button.disabled=false}}${submitScript}</script></body></html>`,
+    { headers: checkoutHeaders(!synthetic) },
   );
+}
+
+export async function chargeEasyPayDirectGatewayTestToken(
+  env: EasyPayDirectEnv,
+  input: {
+    paymentToken: string;
+    amountMinor: number;
+    currency: string;
+    orderId: string;
+    orderDescription: string;
+    customerEmail: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    idempotencyKey: string;
+  },
+  fetcher: typeof fetch = fetch,
+): Promise<GatewayTransactionResult> {
+  if (
+    env.EASY_PAY_DIRECT_NETWORK_MODE !== "gateway_test" ||
+    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0"
+  ) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_gateway_test_forbidden",
+      "Easy Pay Direct Gateway test transactions are disabled",
+    );
+  }
+  validateIdentifier(input.paymentToken, "paymentToken");
+  validateIdentifier(input.orderId, "orderId");
+  validateIdentifier(input.idempotencyKey, "idempotencyKey");
+  validateMoney(input.amountMinor, input.currency);
+  const body = new URLSearchParams({
+    type: "sale",
+    security_key: requiredSecret(env.EASY_PAY_DIRECT_SECURITY_KEY, "EASY_PAY_DIRECT_SECURITY_KEY"),
+    payment_token: input.paymentToken,
+    amount: (input.amountMinor / 100).toFixed(2),
+    currency: input.currency,
+    orderid: input.orderId.slice(0, 255),
+    order_description: input.orderDescription.slice(0, 255),
+    first_name: input.firstName.slice(0, 255),
+    last_name: input.lastName.slice(0, 255),
+    email: input.customerEmail.slice(0, 255),
+    phone: input.phone.slice(0, 255),
+    test_mode: "enabled",
+    dup_seconds: "1200",
+    customer_vault: "add_customer",
+    initiated_by: "customer",
+    stored_credential_indicator: "stored",
+    merchant_defined_field_1: `lago_idempotency_key=${input.idempotencyKey}`,
+  });
+  return gatewayTransactionRequest(body, fetcher);
 }
 
 export async function findEasyPayDirectCustomerByEmail(
@@ -467,12 +576,58 @@ async function gatewayVaultRequest(
   return { customerVaultId, billingId: values.get("billing_id")?.trim() || null };
 }
 
+async function gatewayTransactionRequest(
+  body: URLSearchParams,
+  fetcher: typeof fetch,
+): Promise<GatewayTransactionResult> {
+  let response: Response;
+  try {
+    response = await fetcher(PAYMENT_API_URL, {
+      method: "POST",
+      headers: {
+        Accept: "application/x-www-form-urlencoded",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+  } catch {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_gateway_outcome_unknown",
+      "EPD Gateway did not return a transaction outcome",
+    );
+  }
+  const raw = await readBoundedResponse(response, MAX_PROVIDER_RESPONSE_BYTES);
+  const values = new URLSearchParams(raw);
+  const rawStatus = values.get("response")?.trim() || null;
+  const responseText = values.get("responsetext")?.trim() || "Unknown provider response";
+  const status =
+    rawStatus === "1" ? "succeeded" : rawStatus === "2" || rawStatus === "3" ? "failed" : "unknown";
+  if (!response.ok && status === "unknown") {
+    throw new ApiError(
+      response.status === 429 ? 429 : 503,
+      response.status === 429 ? "easy_pay_direct_rate_limited" : "easy_pay_direct_gateway_error",
+      responseText,
+    );
+  }
+  return {
+    id: values.get("transactionid")?.trim() || null,
+    status,
+    responseCode: values.get("response_code")?.trim() || null,
+    responseText,
+    authCode: values.get("authcode")?.trim() || null,
+    orderId: values.get("orderid")?.trim() || null,
+    customerVaultId: values.get("customer_vault_id")?.trim() || null,
+    rawStatus,
+  };
+}
+
 function assertEasyPayDirectNetwork(env: EasyPayDirectEnv): {
   commerceApiKey: string;
   gatewaySecurityKey: string;
 } {
   const mode = env.EASY_PAY_DIRECT_NETWORK_MODE;
-  if (mode !== "test" && mode !== "production") {
+  if (mode !== "test" && mode !== "gateway_test" && mode !== "production") {
     throw new ApiError(
       503,
       "easy_pay_direct_network_disabled",
@@ -486,11 +641,21 @@ function assertEasyPayDirectNetwork(env: EasyPayDirectEnv): {
       "Easy Pay Direct live mode is disabled",
     );
   }
+  if (mode === "gateway_test" && env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0") {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_gateway_test_requires_livemode_disabled",
+      "Easy Pay Direct Gateway test mode requires live mode to remain disabled",
+    );
+  }
   const commerceApiKey = requiredSecret(
     env.EASY_PAY_DIRECT_COMMERCE_API_KEY,
     "EASY_PAY_DIRECT_COMMERCE_API_KEY",
   );
-  if (mode === "test" && !easyPayDirectKeyMatchesMode(commerceApiKey, "test")) {
+  if (
+    (mode === "test" || mode === "gateway_test") &&
+    !easyPayDirectKeyMatchesMode(commerceApiKey, "test")
+  ) {
     throw new ApiError(
       503,
       "easy_pay_direct_key_environment_mismatch",
@@ -507,7 +672,7 @@ function assertEasyPayDirectNetwork(env: EasyPayDirectEnv): {
   return {
     commerceApiKey,
     gatewaySecurityKey:
-      mode === "production"
+      mode === "production" || mode === "gateway_test"
         ? requiredSecret(env.EASY_PAY_DIRECT_SECURITY_KEY, "EASY_PAY_DIRECT_SECURITY_KEY")
         : "",
   };
@@ -518,13 +683,13 @@ function easyPayDirectKeyMatchesMode(key: string, mode: "test" | "live"): boolea
   return match?.[1] === mode;
 }
 
-function checkoutHeaders(isSandbox: boolean): HeadersInit {
+function checkoutHeaders(usesGateway: boolean): HeadersInit {
   const gateway = "https://secure.easypaydirectgateway.com";
   return {
     "Cache-Control": "no-store",
-    "Content-Security-Policy": isSandbox
-      ? "default-src 'none'; script-src 'nonce-epd-script'; style-src 'nonce-epd-style'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-      : `default-src 'none'; script-src 'nonce-epd-script' ${gateway}; style-src 'nonce-epd-style'; frame-src ${gateway}; connect-src 'self' ${gateway}; img-src data: ${gateway}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+    "Content-Security-Policy": usesGateway
+      ? `default-src 'none'; script-src 'nonce-epd-script' ${gateway}; style-src 'nonce-epd-style'; frame-src ${gateway}; connect-src 'self' ${gateway}; img-src data: ${gateway}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+      : "default-src 'none'; script-src 'nonce-epd-script'; style-src 'nonce-epd-style'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     "Content-Type": "text/html; charset=utf-8",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",

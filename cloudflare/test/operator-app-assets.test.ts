@@ -18,7 +18,9 @@ describe("isolated operator app assets", () => {
     expect(apiConfig).toContain('"WALLET_FUNDING_MODE": "stripe_test"');
     expect(apiConfig).toContain('"STRIPE_WEBHOOKS_ENABLED": "1"');
     expect(apiConfig).toContain('"STRIPE_LIVEMODE_ALLOWED": "0"');
-    expect(apiConfig).toContain('"PAYMENT_MUTATIONS_ENABLED": "0"');
+    expect(apiConfig).toContain('"PAYMENT_MUTATIONS_ENABLED": "1"');
+    expect(apiConfig).toContain('"EASY_PAY_DIRECT_NETWORK_MODE": "gateway_test"');
+    expect(apiConfig).toContain('"EASY_PAY_DIRECT_LIVEMODE_ALLOWED": "0"');
     expect(apiConfig).not.toContain('"directory": "operator-app"');
     expect(operatorConfig).toContain('"directory": "operator-app"');
     expect(operatorConfig).not.toContain('"directory": "operator-ui"');

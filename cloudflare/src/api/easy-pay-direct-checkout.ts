@@ -3,13 +3,16 @@ import { ApiError, json, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
 import {
   addEasyPayDirectPaymentMethod,
+  chargeEasyPayDirectGatewayTestToken,
   createEasyPayDirectCustomer,
   createEasyPayDirectOrder,
   createEasyPayDirectProduct,
   easyPayDirectPaymentTokenHash,
   findEasyPayDirectCustomerByEmail,
   vaultEasyPayDirectCard,
+  type GatewayTransactionResult,
 } from "../providers/easy-pay-direct";
+import { reconcilePaymentRequest, type PendingReceipt } from "../reconciliation/authorize-net";
 
 type CheckoutRow = {
   checkout_intent_id: string;
@@ -43,8 +46,11 @@ type ExecutionRow = {
   provider_product_id: string | null;
   customer_vault_id: string | null;
   gateway_billing_id: string | null;
+  provider_response_code: string | null;
   failure_message: string | null;
 };
+
+type CheckoutSurface = "product_checkout" | "synthetic_qa";
 
 type ProviderProfile = {
   provider_customer_id: string;
@@ -58,6 +64,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
   env: Env,
   requestId: string,
   fetcher: typeof fetch = fetch,
+  surface: CheckoutSurface = "product_checkout",
 ): Promise<Response> {
   const body = await parseJsonObject(request);
   const checkoutToken = requiredString(body, "checkout");
@@ -93,6 +100,20 @@ export async function handleEasyPayDirectCheckoutSubmission(
       "Customer email is required for Easy Pay Direct",
     );
   }
+  if (surface === "product_checkout" && env.EASY_PAY_DIRECT_NETWORK_MODE === "test") {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_gateway_test_not_configured",
+      "The product checkout requires Easy Pay Direct Gateway test mode",
+    );
+  }
+  if (surface === "synthetic_qa" && env.EASY_PAY_DIRECT_NETWORK_MODE === "production") {
+    throw new ApiError(
+      404,
+      "easy_pay_direct_sandbox_tool_unavailable",
+      "The Easy Pay Direct sandbox tool is unavailable",
+    );
+  }
 
   const paymentTokenHash = await easyPayDirectPaymentTokenHash(paymentToken);
   const phoneHash = await sha256Hex(phone);
@@ -107,7 +128,10 @@ export async function handleEasyPayDirectCheckoutSubmission(
       request_sha256, payment_token_sha256, phone_sha256,
       customer_idempotency_key, payment_method_idempotency_key,
       product_idempotency_key, order_idempotency_key, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
+     WHERE NOT EXISTS (
+       SELECT 1 FROM easy_pay_direct_payment_executions WHERE checkout_intent_id = ?
+     )
      ON CONFLICT(checkout_intent_id) DO NOTHING`,
   )
     .bind(
@@ -125,6 +149,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
       crypto.randomUUID(),
       now,
       now,
+      checkout.checkout_intent_id,
     )
     .run();
   let execution = await loadExecution(env.BILLING_DB, checkout.checkout_intent_id);
@@ -160,9 +185,30 @@ export async function handleEasyPayDirectCheckoutSubmission(
     throw new ApiError(409, "easy_pay_direct_processing", "Checkout is already processing");
 
   try {
+    if (surface === "product_checkout" && env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test") {
+      const names = splitCustomerName(checkout.customer_name, checkout.customer_email);
+      const transaction = await chargeEasyPayDirectGatewayTestToken(
+        env,
+        {
+          paymentToken,
+          amountMinor: checkout.amount_minor,
+          currency: checkout.currency,
+          orderId: checkout.payment_request_id,
+          orderDescription: `Lago payment request ${checkout.payment_request_id}`,
+          customerEmail: checkout.customer_email,
+          firstName: names.firstName,
+          lastName: names.lastName,
+          phone,
+          idempotencyKey: execution.order_idempotency_key,
+        },
+        fetcher,
+      );
+      return await finalizeGatewayTestOutcome(env, checkout, executionId, transaction, requestId);
+    }
+
     const profile = await loadProfile(env.BILLING_DB, checkout);
     const vault =
-      env.EASY_PAY_DIRECT_NETWORK_MODE === "test"
+      surface === "synthetic_qa" || env.EASY_PAY_DIRECT_NETWORK_MODE === "test"
         ? { customerVaultId: paymentToken, billingId: paymentToken }
         : await vaultEasyPayDirectCard(
             env,
@@ -329,6 +375,131 @@ export async function handleEasyPayDirectCheckoutSubmission(
   }
 }
 
+async function finalizeGatewayTestOutcome(
+  env: Env,
+  checkout: CheckoutRow,
+  executionId: string,
+  transaction: GatewayTransactionResult,
+  requestId: string,
+): Promise<Response> {
+  const timestamp = new Date().toISOString();
+  const providerTransactionId = transaction.id?.trim() || null;
+  if (!providerTransactionId || transaction.status === "unknown") {
+    await env.BILLING_DB.prepare(
+      `UPDATE easy_pay_direct_payment_executions
+       SET status = 'unknown', provider_transaction_id = ?, provider_response_code = ?,
+           failure_code = 'easy_pay_direct_gateway_outcome_unknown', failure_message = ?,
+           updated_at = ?, completed_at = ?
+       WHERE id = ? AND status = 'processing'`,
+    )
+      .bind(
+        providerTransactionId,
+        transaction.responseCode,
+        transaction.responseText.slice(0, 500),
+        timestamp,
+        timestamp,
+        executionId,
+      )
+      .run();
+    throw new ApiError(
+      503,
+      "easy_pay_direct_gateway_outcome_unknown",
+      "Easy Pay Direct Gateway outcome requires reconciliation",
+    );
+  }
+
+  const normalizedStatus = transaction.status;
+  const failureCode =
+    normalizedStatus === "failed"
+      ? transaction.responseCode || "easy_pay_direct_gateway_declined"
+      : null;
+  const failureMessage =
+    normalizedStatus === "failed" ? transaction.responseText.slice(0, 500) : null;
+  await env.BILLING_DB.prepare(
+    `UPDATE easy_pay_direct_payment_executions
+     SET provider_transaction_id = ?, provider_response_code = ?, customer_vault_id = ?,
+         failure_code = ?, failure_message = ?, updated_at = ?
+     WHERE id = ? AND status = 'processing'`,
+  )
+    .bind(
+      providerTransactionId,
+      transaction.responseCode,
+      transaction.customerVaultId,
+      failureCode,
+      failureMessage,
+      timestamp,
+      executionId,
+    )
+    .run();
+
+  const receiptId = await deterministicUuid(
+    "easy-pay-direct-gateway-test-receipt",
+    `${checkout.provider_account_code}:${providerTransactionId}:${normalizedStatus}`,
+  );
+  const providerEventId = `gateway-test:${providerTransactionId}:${normalizedStatus}`;
+  const payloadHash = await sha256Hex(
+    JSON.stringify({
+      id: providerTransactionId,
+      status: normalizedStatus,
+      response_code: transaction.responseCode,
+      response_text: transaction.responseText,
+      amount_minor: checkout.amount_minor,
+      currency: checkout.currency,
+    }),
+  );
+  await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `INSERT INTO webhook_receipts
+       (id, provider, provider_account_code, provider_event_id, signature_valid,
+        payload_sha256, received_at, processed_at, processing_error_code)
+       VALUES (?, 'easy_pay_direct_gateway_test', ?, ?, 0, ?, ?, NULL, NULL)
+       ON CONFLICT(provider, provider_account_code, provider_event_id) DO NOTHING`,
+    ).bind(receiptId, checkout.provider_account_code, providerEventId, payloadHash, timestamp),
+    env.BILLING_DB.prepare(
+      `INSERT INTO provider_webhook_events
+       (receipt_id, organization_id, event_type, provider_transaction_id, invoice_id,
+        normalized_status, normalized_at, payment_request_id)
+       VALUES (?, ?, 'transaction.test.reconciled', ?, NULL, NULL, NULL, NULL)
+       ON CONFLICT(receipt_id) DO NOTHING`,
+    ).bind(receiptId, checkout.organization_id, providerTransactionId),
+  ]);
+
+  const receipt: PendingReceipt = {
+    receipt_id: receiptId,
+    organization_id: checkout.organization_id,
+    provider_account_code: checkout.provider_account_code,
+    event_type: "transaction.test.reconciled",
+    provider_transaction_id: providerTransactionId,
+    archive_key: null,
+    processed_at: null,
+  };
+  await reconcilePaymentRequest(
+    env.BILLING_DB,
+    receipt,
+    checkout.payment_request_id,
+    {
+      id: providerTransactionId,
+      amountMinor: checkout.amount_minor,
+      failureCode,
+      failureMessage,
+    },
+    normalizedStatus,
+    "easy_pay_direct",
+  );
+  await env.BILLING_DB.prepare(
+    `UPDATE easy_pay_direct_payment_executions
+     SET status = ?, updated_at = ?, completed_at = ?
+     WHERE id = ? AND status = 'processing'`,
+  )
+    .bind(normalizedStatus, timestamp, timestamp, executionId)
+    .run();
+
+  if (normalizedStatus === "failed") {
+    throw new ApiError(422, "easy_pay_direct_declined", failureMessage || "Payment was declined");
+  }
+  return successResponse(env, providerTransactionId, requestId, false);
+}
+
 async function loadCheckout(
   database: D1Database,
   intentId: string,
@@ -360,7 +531,8 @@ async function loadExecution(
       `SELECT id, status, payment_token_sha256, phone_sha256, customer_idempotency_key,
             payment_method_idempotency_key, product_idempotency_key, order_idempotency_key,
             provider_transaction_id, provider_customer_id, provider_payment_method_id,
-            provider_product_id, customer_vault_id, gateway_billing_id, failure_message
+            provider_product_id, customer_vault_id, gateway_billing_id,
+            provider_response_code, failure_message
      FROM easy_pay_direct_payment_executions WHERE checkout_intent_id = ? LIMIT 1`,
     )
     .bind(checkoutIntentId)

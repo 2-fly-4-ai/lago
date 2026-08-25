@@ -7,11 +7,6 @@ import { deterministicUuid } from "../src/identifiers";
 const apiKey = "invoice-payment-retry-key";
 const organizationId = "org-invoice-payment-retry";
 const invoiceId = "invoice-payment-retry";
-const headers = {
-  Authorization: `Bearer ${apiKey}`,
-  "Content-Type": "application/json",
-  "Idempotency-Key": "retry-command",
-};
 const auth = {
   organizationId,
   organizationExternalId: "invoice-payment-retry",
@@ -75,12 +70,14 @@ beforeEach(async () => {
 
 describe("invoice payment retry", () => {
   it("keeps retry behind the payment mutation gate and requires an idempotency key", async () => {
-    const disabled = await SELF.fetch(
-      `https://lago.test/api/v1/invoices/${invoiceId}/retry_payment`,
-      { method: "POST", headers, body: "{}" },
-    );
-    expect(disabled.status).toBe(503);
-    await expect(disabled.json()).resolves.toMatchObject({ code: "payment_mutations_disabled" });
+    await expect(
+      handleInvoicePaymentRetryRequest(
+        retryRequest("retry-command", {}, invoiceId),
+        { ...env, PAYMENT_MUTATIONS_ENABLED: "0" } as unknown as Env,
+        auth,
+        "request-disabled",
+      ),
+    ).rejects.toMatchObject({ status: 503, code: "payment_mutations_disabled" });
 
     await expect(retry("", {})).rejects.toMatchObject({ code: "idempotency_key_required" });
     await expect(

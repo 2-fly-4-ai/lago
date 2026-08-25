@@ -48,15 +48,28 @@ beforeEach(async () => {
 
 describe("payment ledger", () => {
   it("keeps manual payment recording behind the payment mutation kill switch", async () => {
-    const response = await SELF.fetch("https://lago.test/api/v1/payments", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        payment: { invoice_id: "invoice-payment-ledger", amount_cents: 1000, reference: "wire" },
-      }),
-    });
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toMatchObject({ code: "payment_mutations_disabled" });
+    await expect(
+      handlePaymentLedgerRequest(
+        new Request("https://lago.test/api/v1/payments", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            payment: {
+              invoice_id: "invoice-payment-ledger",
+              amount_cents: 1000,
+              reference: "wire",
+            },
+          }),
+        }),
+        { ...env, PAYMENT_MUTATIONS_ENABLED: "0" } as unknown as Env,
+        {
+          organizationId: "org-payment-ledger",
+          organizationExternalId: "payment-ledger",
+          apiKeyId: "key-payment-ledger",
+        },
+        "request-disabled",
+      ),
+    ).rejects.toMatchObject({ status: 503, code: "payment_mutations_disabled" });
     const count = await env.BILLING_DB.prepare(
       "SELECT COUNT(*) AS total FROM payment_attempts WHERE organization_id = 'org-payment-ledger'",
     ).first<{ total: number }>();

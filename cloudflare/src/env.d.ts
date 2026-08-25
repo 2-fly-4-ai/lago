@@ -11,7 +11,7 @@ declare namespace Cloudflare {
     EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET?: string;
     EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY?: string;
     EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY_PREVIOUS?: string;
-    EASY_PAY_DIRECT_NETWORK_MODE?: "disabled" | "test" | "production";
+    EASY_PAY_DIRECT_NETWORK_MODE?: "disabled" | "test" | "gateway_test" | "production";
     EASY_PAY_DIRECT_LIVEMODE_ALLOWED?: "0" | "1";
     EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL?: string;
     EASY_PAY_DIRECT_ACCOUNT_CODE?: string;
@@ -45,7 +45,7 @@ interface Env {
   EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET?: string;
   EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY?: string;
   EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY_PREVIOUS?: string;
-  EASY_PAY_DIRECT_NETWORK_MODE?: "disabled" | "test" | "production";
+  EASY_PAY_DIRECT_NETWORK_MODE?: "disabled" | "test" | "gateway_test" | "production";
   EASY_PAY_DIRECT_LIVEMODE_ALLOWED?: "0" | "1";
   EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL?: string;
   EASY_PAY_DIRECT_ACCOUNT_CODE?: string;
