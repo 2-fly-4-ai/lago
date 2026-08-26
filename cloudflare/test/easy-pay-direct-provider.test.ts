@@ -119,6 +119,7 @@ describe("Easy Pay Direct provider", () => {
     expect(body).toContain("Card details are securely tokenized by Easy Pay Direct");
     expect(body).toContain("Test cards only. No real money will move.");
     expect(body).toContain("SERP 1-App Premium Plan");
+    expect(body).toContain("Subscribe to SERP 1-App Premium Plan");
     expect(body).toContain("$18.50");
     expect(body).toContain("$37.00");
     expect(body).toContain("Discounts &amp; credits");
@@ -132,6 +133,35 @@ describe("Easy Pay Direct provider", () => {
     expect(body).toContain('id="pay" class="pay-button" type="button" disabled');
     expect(body).not.toContain("card_visa");
     expect(body).not.toContain("Sandbox outcome");
+  });
+
+  it("labels one-time product checkouts as purchases instead of subscriptions", async () => {
+    const now = Date.parse("2026-08-22T00:00:00.000Z");
+    const checkout = await createEasyPayDirectCheckoutUrl(
+      gatewayTestEnv,
+      { checkoutIntentId: "intent-gateway-test-one-time" },
+      now,
+    );
+    const response = await easyPayDirectPaymentForm(
+      new URL(checkout.paymentUrl),
+      gatewayTestEnv,
+      now,
+      {
+        title: "Synthetic Store App Plan",
+        description: "One SERP app.",
+        interval: "one_time",
+        amountMinor: 900,
+        subtotalMinor: 900,
+        taxMinor: 0,
+        creditsMinor: 0,
+        currency: "USD",
+        customerEmail: null,
+      },
+    );
+    const body = await response.text();
+    expect(body).toContain("Buy Synthetic Store App Plan");
+    expect(body).toContain("One-time payment");
+    expect(body).not.toContain("Subscribe to Synthetic Store App Plan");
   });
 
   it("collects an email on the provider checkout when the Store customer is anonymous", async () => {
