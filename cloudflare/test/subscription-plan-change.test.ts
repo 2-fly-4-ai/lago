@@ -603,7 +603,7 @@ describe("subscription plan generations", () => {
            (SELECT COUNT(*) FROM invoice_subscriptions WHERE invoice_id IN (?, ?)) AS owners,
            cn.allocation_state, source_line.source_id,
            (SELECT COUNT(*) FROM credit_note_applications cna
-            WHERE cna.invoice_id = ?) AS applications
+            WHERE cna.invoice_id = ? AND cna.credit_note_id = cn.id) AS applications
          FROM termination_credit_note_contexts tc
          JOIN credit_notes cn ON cn.id = tc.credit_note_id
          JOIN credit_note_items cni ON cni.credit_note_id = cn.id
