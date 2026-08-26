@@ -582,6 +582,10 @@ unsupported.
 
 ## Local verification
 
+When this worktree is accessed through `/Volumes/brianfarley`, run filesystem-heavy checks and
+deploys on the Mac mini's local SSD. Follow `../docs/reference/mac-mini-remote-execution.md`; do not
+build through the SMB mount.
+
 Use Node 22 or newer and pnpm 11:
 
 ```sh
