@@ -29,6 +29,7 @@
     "EASY_PAY_DIRECT_LIVEMODE_ALLOWED": "0",
     "EASY_PAY_DIRECT_ACCOUNT_CODE": "easy-pay-direct",
     "EASY_PAY_DIRECT_ORGANIZATION_ID": "org-synthetic-e2e-20260815-001",
+    "EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL": "https://serp-dev-safe-store.serpcompany.workers.dev/checkout/success",
     "CREDIT_NOTE_REFUND_MODE": "disabled",
     "WALLET_FUNDING_MODE": "stripe_test",
     "EXTERNAL_TAX_MODE": "disabled",

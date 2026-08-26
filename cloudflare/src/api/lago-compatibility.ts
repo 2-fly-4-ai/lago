@@ -1814,11 +1814,19 @@ export async function listInvoices(
               i.total_due_minor,
               COALESCE((
                 SELECT SUM(amount_minor) FROM (
-                  SELECT p.amount_minor FROM payment_attempts p
+                  SELECT p.provider, p.provider_account_code,
+                         COALESCE(p.provider_transaction_id, 'attempt:' || p.id) AS transaction_key,
+                         p.amount_minor
+                  FROM payment_attempts p
                   WHERE p.invoice_id = i.id AND p.status = 'succeeded'
-                  UNION ALL
-                  SELECT allocation.amount_minor FROM payment_request_payment_allocations allocation
-                  WHERE allocation.invoice_id = i.id
+                  UNION
+                  SELECT payment.provider, payment.provider_account_code,
+                         COALESCE(payment.provider_transaction_id, 'request-payment:' || payment.id),
+                         allocation.amount_minor
+                  FROM payment_request_payment_allocations allocation
+                  JOIN payment_request_payments payment
+                    ON payment.id = allocation.payment_request_payment_id
+                  WHERE allocation.invoice_id = i.id AND payment.status = 'succeeded'
                 )
               ), 0) AS total_paid_minor,
               i.net_payment_term, i.payment_due_date, i.payment_overdue,
@@ -2492,11 +2500,19 @@ export async function findInvoice(
               i.total_due_minor,
               COALESCE((
                 SELECT SUM(amount_minor) FROM (
-                  SELECT p.amount_minor FROM payment_attempts p
+                  SELECT p.provider, p.provider_account_code,
+                         COALESCE(p.provider_transaction_id, 'attempt:' || p.id) AS transaction_key,
+                         p.amount_minor
+                  FROM payment_attempts p
                   WHERE p.invoice_id = i.id AND p.status = 'succeeded'
-                  UNION ALL
-                  SELECT allocation.amount_minor FROM payment_request_payment_allocations allocation
-                  WHERE allocation.invoice_id = i.id
+                  UNION
+                  SELECT payment.provider, payment.provider_account_code,
+                         COALESCE(payment.provider_transaction_id, 'request-payment:' || payment.id),
+                         allocation.amount_minor
+                  FROM payment_request_payment_allocations allocation
+                  JOIN payment_request_payments payment
+                    ON payment.id = allocation.payment_request_payment_id
+                  WHERE allocation.invoice_id = i.id AND payment.status = 'succeeded'
                 )
               ), 0) AS total_paid_minor,
               i.net_payment_term, i.payment_due_date, i.payment_overdue,
@@ -2766,11 +2782,19 @@ async function generateInvoicePaymentUrl(
             i.total_due_minor,
             COALESCE((
               SELECT SUM(amount_minor) FROM (
-                SELECT p.amount_minor FROM payment_attempts p
+                SELECT p.provider, p.provider_account_code,
+                       COALESCE(p.provider_transaction_id, 'attempt:' || p.id) AS transaction_key,
+                       p.amount_minor
+                FROM payment_attempts p
                 WHERE p.invoice_id = i.id AND p.status = 'succeeded'
-                UNION ALL
-                SELECT allocation.amount_minor FROM payment_request_payment_allocations allocation
-                WHERE allocation.invoice_id = i.id
+                UNION
+                SELECT payment.provider, payment.provider_account_code,
+                       COALESCE(payment.provider_transaction_id, 'request-payment:' || payment.id),
+                       allocation.amount_minor
+                FROM payment_request_payment_allocations allocation
+                JOIN payment_request_payments payment
+                  ON payment.id = allocation.payment_request_payment_id
+                WHERE allocation.invoice_id = i.id AND payment.status = 'succeeded'
               )
             ), 0) AS total_paid_minor,
             i.net_payment_term, i.payment_due_date, i.payment_overdue,

@@ -1,7 +1,7 @@
 # Container-Free Cloudflare-Native Lago Rewrite
 
 Opened: 2026-08-12
-Status: active
+Status: implementation complete; production cutover deferred
 Branch: `codex/cloudflare-native-rewrite`
 Worktree: `tmp/lago-cloudflare-native/`
 
@@ -3630,3 +3630,18 @@ resource and mutation described.
   suite remains at the known baseline of 393/395 tests, with only the two unrelated trial-billing
   assertions failing. Payment mutations and live modes remain disabled; no production,
   `store-new`, or `serp-auth` change occurred.
+- 2026-08-26: Closed the isolated Cloudflare-native implementation and staging acceptance pass.
+  The adult-standard Store cohort resolves 988 live products to Lago/EPD test mode while safe
+  products and the Plus/Premium adult tiers remain on Stripe. A real hosted EPD test transaction
+  completed once for 900 USD minor units, reconciled to one Store order, and granted the intended
+  synthetic SerpAuth entitlement; two callback replays created no additional order, provider
+  transaction, or entitlement. An unpaid callback remained pending with no EPD execution or order,
+  and unknown Lago callbacks failed closed without falling through to Stripe. Store migrations
+  `0011` and `0012` removed obsolete provider-specific source constraints while preserving every
+  existing row and passing foreign-key checks. Lago's payment projection now deduplicates the
+  invoice-attempt and payment-request-allocation representations of the same provider transaction.
+  The complete Lago gate passes 412 tests plus all development/production dry builds; Store core
+  passes 561 tests, checkout/type/lint gates pass, health and Access fail-closed checks pass, and
+  both staging D1 databases have no foreign-key violations. Detailed evidence is in
+  `docs/evidence/adult-standard-plan-epd-staging-canary-2026-08-26.md`. Production migration,
+  secrets, routes/DNS, and product canary activation remain a separately approved rollout.

@@ -159,6 +159,8 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
           payment_token: "hosted-token-canary-1",
           phone: "+15555550123",
           terms_accepted: true,
+          return_to:
+            "https://store.test/checkout/success?session_id=lago%3Ainvoice-1&provider=easy_pay_direct",
         }),
       });
     const first = await handleEasyPayDirectCheckoutSubmission(
@@ -172,6 +174,8 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       provider: "easy_pay_direct",
       provider_order_id: "epd-gateway-test-1",
       replayed: false,
+      redirect_url:
+        "https://store.test/checkout/success?session_id=lago%3Ainvoice-1&provider=easy_pay_direct",
     });
     const replay = await handleEasyPayDirectCheckoutSubmission(
       request(),
@@ -620,6 +624,8 @@ function enabledEnv(mode: "test" | "gateway_test" = "test"): Env {
       if (property === "EASY_PAY_DIRECT_LIVEMODE_ALLOWED") return "0";
       if (property === "EASY_PAY_DIRECT_ACCOUNT_CODE") return "epd-synthetic";
       if (property === "EASY_PAY_DIRECT_ORGANIZATION_ID") return organizationId;
+      if (property === "EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL")
+        return "https://store.test/checkout/success";
       if (property === "PROVIDER_READS_ENABLED") return "1";
       return Reflect.get(target, property, receiver) as unknown;
     },

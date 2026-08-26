@@ -11,6 +11,7 @@ import {
   easyPayDirectSandboxTool,
   getEasyPayDirectOrder,
   refundEasyPayDirectOrder,
+  resolveEasyPayDirectSuccessRedirect,
   vaultEasyPayDirectCard,
   verifyEasyPayDirectCheckoutToken,
 } from "../src/providers/easy-pay-direct";
@@ -31,6 +32,30 @@ const gatewayTestEnv = {
 } satisfies EasyPayDirectEnv;
 
 describe("Easy Pay Direct provider", () => {
+  it("allows only the configured Store success route and preserves its checkout state", () => {
+    const configured = "https://store.test/checkout/success";
+    expect(
+      resolveEasyPayDirectSuccessRedirect(
+        "https://store.test/checkout/success?session_id=lago%3Ainvoice-1&provider=easy_pay_direct",
+        configured,
+      ),
+    ).toBe(
+      "https://store.test/checkout/success?session_id=lago%3Ainvoice-1&provider=easy_pay_direct",
+    );
+    expect(() =>
+      resolveEasyPayDirectSuccessRedirect(
+        "https://attacker.test/checkout/success?session_id=lago%3Ainvoice-1",
+        configured,
+      ),
+    ).toThrowError(expect.objectContaining({ code: "easy_pay_direct_redirect_invalid" }));
+    expect(() =>
+      resolveEasyPayDirectSuccessRedirect(
+        "https://store.test/other-path?session_id=lago%3Ainvoice-1",
+        configured,
+      ),
+    ).toThrowError(expect.objectContaining({ code: "easy_pay_direct_redirect_invalid" }));
+  });
+
   it("creates and verifies an expiring signed checkout URL", async () => {
     const now = Date.parse("2026-08-22T00:00:00.000Z");
     const checkout = await createEasyPayDirectCheckoutUrl(

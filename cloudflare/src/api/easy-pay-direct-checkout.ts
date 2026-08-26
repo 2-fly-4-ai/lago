@@ -9,6 +9,7 @@ import {
   createEasyPayDirectProduct,
   easyPayDirectPaymentTokenHash,
   findEasyPayDirectCustomerByEmail,
+  resolveEasyPayDirectSuccessRedirect,
   vaultEasyPayDirectCard,
   type GatewayTransactionResult,
 } from "../providers/easy-pay-direct";
@@ -75,6 +76,10 @@ export async function handleEasyPayDirectCheckoutSubmission(
   const checkoutToken = requiredString(body, "checkout");
   const paymentToken = requiredString(body, "payment_token");
   const phone = requiredString(body, "phone");
+  const returnTo = resolveEasyPayDirectSuccessRedirect(
+    typeof body.return_to === "string" ? body.return_to : null,
+    env.EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL,
+  );
   if (surface === "product_checkout" && body.terms_accepted !== true) {
     throw new ApiError(
       422,
@@ -252,9 +257,9 @@ export async function handleEasyPayDirectCheckoutSubmission(
     );
   }
   if (execution.status === "succeeded")
-    return successResponse(env, execution.provider_transaction_id, requestId, true);
+    return successResponse(execution.provider_transaction_id, requestId, true, returnTo);
   if (execution.status === "processing" && execution.provider_transaction_id)
-    return processingResponse(env, execution.provider_transaction_id, requestId, true);
+    return processingResponse(execution.provider_transaction_id, requestId, true, returnTo);
   if (checkout.payment_status === "succeeded" || checkout.ready_for_payment_processing !== 1) {
     throw new ApiError(409, "easy_pay_direct_checkout_state_changed", "Checkout state changed");
   }
@@ -292,7 +297,14 @@ export async function handleEasyPayDirectCheckoutSubmission(
         },
         fetcher,
       );
-      return await finalizeGatewayTestOutcome(env, checkout, executionId, transaction, requestId);
+      return await finalizeGatewayTestOutcome(
+        env,
+        checkout,
+        executionId,
+        transaction,
+        requestId,
+        returnTo,
+      );
     }
 
     const profile = await loadProfile(env.BILLING_DB, checkout);
@@ -448,7 +460,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
     )
       .bind(order.id, order.status, new Date().toISOString(), executionId)
       .run();
-    return processingResponse(env, order.id, requestId, false);
+    return processingResponse(order.id, requestId, false, returnTo);
   } catch (error) {
     const current = await loadExecution(env.BILLING_DB, checkout.checkout_intent_id);
     if (current?.status === "processing" && !current.provider_transaction_id) {
@@ -470,6 +482,7 @@ async function finalizeGatewayTestOutcome(
   executionId: string,
   transaction: GatewayTransactionResult,
   requestId: string,
+  returnTo: string | null,
 ): Promise<Response> {
   const timestamp = new Date().toISOString();
   const providerTransactionId = transaction.id?.trim() || null;
@@ -586,7 +599,7 @@ async function finalizeGatewayTestOutcome(
   if (normalizedStatus === "failed") {
     throw new ApiError(422, "easy_pay_direct_declined", failureMessage || "Payment was declined");
   }
-  return successResponse(env, providerTransactionId, requestId, false);
+  return successResponse(providerTransactionId, requestId, false, returnTo);
 }
 
 async function loadCheckout(
@@ -728,10 +741,10 @@ function splitCustomerName(
 }
 
 function processingResponse(
-  env: Env,
   orderId: string | null,
   requestId: string,
   replayed: boolean,
+  redirectUrl: string | null,
 ): Response {
   return json(
     {
@@ -739,17 +752,17 @@ function processingResponse(
       provider: "easy_pay_direct",
       provider_order_id: orderId,
       replayed,
-      redirect_url: env.EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL?.trim() || null,
+      redirect_url: redirectUrl,
     },
     { requestId },
   );
 }
 
 function successResponse(
-  env: Env,
   orderId: string | null,
   requestId: string,
   replayed: boolean,
+  redirectUrl: string | null,
 ): Response {
   return json(
     {
@@ -757,7 +770,7 @@ function successResponse(
       provider: "easy_pay_direct",
       provider_order_id: orderId,
       replayed,
-      redirect_url: env.EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL?.trim() || null,
+      redirect_url: redirectUrl,
     },
     { requestId },
   );

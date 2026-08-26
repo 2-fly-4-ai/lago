@@ -16,6 +16,7 @@ export type EasyPayDirectEnv = Pick<
   | "EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET"
   | "EASY_PAY_DIRECT_NETWORK_MODE"
   | "EASY_PAY_DIRECT_LIVEMODE_ALLOWED"
+  | "EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL"
   | "PUBLIC_BASE_URL"
 >;
 
@@ -175,7 +176,11 @@ export async function easyPayDirectPaymentForm(
   if (!presentation) {
     throw new ApiError(401, "easy_pay_direct_checkout_invalid", "Checkout link is invalid");
   }
-  return renderEasyPayDirectPaymentForm(token, env, false, presentation);
+  const returnTo = resolveEasyPayDirectSuccessRedirect(
+    url.searchParams.get("return_to"),
+    env.EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL,
+  );
+  return renderEasyPayDirectPaymentForm(token, env, false, presentation, returnTo);
 }
 
 export async function easyPayDirectSandboxTool(
@@ -202,7 +207,59 @@ export async function easyPayDirectSandboxTool(
       "The Easy Pay Direct sandbox tool is unavailable",
     );
   }
-  return renderEasyPayDirectPaymentForm(token, env, true, null);
+  return renderEasyPayDirectPaymentForm(token, env, true, null, null);
+}
+
+export function resolveEasyPayDirectSuccessRedirect(
+  requested: string | null | undefined,
+  configured: string | null | undefined,
+): string | null {
+  const configuredValue = configured?.trim();
+  if (!configuredValue) return null;
+  let allowed: URL;
+  try {
+    allowed = new URL(configuredValue);
+  } catch {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_redirect_not_configured",
+      "Easy Pay Direct success redirect is invalid",
+    );
+  }
+  if (allowed.protocol !== "https:" || allowed.username || allowed.password) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_redirect_not_configured",
+      "Easy Pay Direct success redirect is invalid",
+    );
+  }
+  const requestedValue = requested?.trim();
+  if (!requestedValue) return allowed.toString();
+  let candidate: URL;
+  try {
+    candidate = new URL(requestedValue);
+  } catch {
+    throw new ApiError(
+      422,
+      "easy_pay_direct_redirect_invalid",
+      "Checkout success redirect is invalid",
+    );
+  }
+  if (
+    candidate.protocol !== allowed.protocol ||
+    candidate.origin !== allowed.origin ||
+    candidate.pathname !== allowed.pathname ||
+    candidate.username ||
+    candidate.password ||
+    candidate.hash
+  ) {
+    throw new ApiError(
+      422,
+      "easy_pay_direct_redirect_invalid",
+      "Checkout success redirect is invalid",
+    );
+  }
+  return candidate.toString();
 }
 
 async function loadEasyPayDirectCheckoutPresentation(
@@ -294,6 +351,7 @@ function renderEasyPayDirectPaymentForm(
   env: EasyPayDirectEnv,
   synthetic: boolean,
   presentation: EasyPayDirectCheckoutPresentation | null,
+  returnTo: string | null,
 ): Response {
   const isTest = env.EASY_PAY_DIRECT_NETWORK_MODE !== "production";
   const collectScript = synthetic
@@ -345,7 +403,7 @@ function renderEasyPayDirectPaymentForm(
     `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Secure payment</title>` +
       `<style nonce="epd-style">:root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1d2433;background:#fff}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#fff}.checkout{display:grid;grid-template-columns:minmax(0,1fr) minmax(500px,1fr);min-height:100vh}.summary-panel{background:#f8f9fb;border-right:1px solid #e5e7eb}.summary-inner{width:min(100%,560px);margin-left:auto;padding:58px 72px 64px}.back-link{display:inline-flex;align-items:center;gap:12px;margin-bottom:64px;color:#667085;text-decoration:none}.brand,.brand-mark{color:#111827}.brand{font-size:15px;font-weight:900;letter-spacing:.14em}.brand-mark{display:block;width:24px;height:24px;object-fit:contain}.summary-kicker{margin:0 0 5px;color:#697386;font-size:18px}.price{display:flex;align-items:center;gap:12px;margin-bottom:68px;color:#161b26}.price>span{font-size:44px;font-weight:650;letter-spacing:-.04em}.price small{color:#697386;font-size:14px;font-weight:650;line-height:1.2}.product-line{display:flex;justify-content:space-between;gap:32px;padding-bottom:25px;border-bottom:1px solid #dfe3e8}.product-line>div{display:grid;gap:5px}.product-line strong{font-size:14px}.product-description,.billing-note{margin:0;color:#697386;font-size:13px;line-height:1.45}.totals{display:grid;gap:20px;padding-top:24px}.total-row{display:flex;justify-content:space-between;gap:24px;color:#2d3441;font-size:14px}.discount{color:#475467}.due{margin-top:4px;padding-top:22px;border-top:1px solid #dfe3e8;font-size:16px}.route-note{display:grid;gap:7px;margin-top:54px;padding:18px;border:1px solid #dfe3e8;border-radius:10px;background:#fff;color:#667085;font-size:12px;line-height:1.5}.route-note strong{color:#344054}.payment-panel{background:#fff}.payment-inner{width:min(100%,610px);padding:76px 72px 48px}.test-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:28px;padding:11px 13px;border:1px solid #f4c66e;border-radius:8px;background:#fff9ed;color:#7a4605;font-size:12px}.test-banner strong{letter-spacing:.06em}.form-section{margin-bottom:34px}.form-section h2,.payment-fields legend{margin:0 0 15px;padding:0;color:#1d2433;font-size:15px;font-weight:750}.field-label,.label-row{display:block;color:#344054;font-size:13px;font-weight:700}.label-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}.field-group>.field-label{margin-bottom:7px}.field-help{margin:7px 0 0;color:#7a8495;font-size:11px}.test-chip{color:#8a4b08;font-size:10px;letter-spacing:.08em}.payment-fields{min-width:0;margin:0 0 22px;padding:0;border:0}.method-card{overflow:hidden;border:1px solid #d7dde5;border-radius:10px}.method-name{display:flex;align-items:center;gap:10px;padding:17px;border-bottom:1px solid #e5e7eb}.method-radio{width:15px;height:15px;border:4px solid #1473e6;border-radius:50%}.provider-note{margin-left:auto;color:#7a8495;font-size:11px}.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px 12px;padding:18px}.field-wide{grid-column:1/-1}.hosted-field,.input{width:100%;height:50px;border:1px solid #cfd7e3;border-radius:7px;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.04);transition:border-color .16s,box-shadow .16s}.hosted-field{overflow:hidden}.hosted-field iframe{display:block!important;width:100%!important;height:50px!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important}.hosted-field:focus-within,.input:focus{border-color:#1473e6;box-shadow:0 0 0 3px rgba(20,115,230,.12);outline:0}.hosted-field.is-invalid{border-color:#d92d20}.input{margin-top:7px;padding:0 14px;color:#172033;font:500 15px inherit}.input[readonly]{background:#f9fafb;color:#475467}.phone-label{display:block;margin-bottom:18px;color:#344054;font-size:13px;font-weight:700}.terms{display:flex;align-items:flex-start;gap:10px;margin:10px 0 18px;color:#667085;font-size:12px;line-height:1.5}.terms input{width:18px;height:18px;margin:0;accent-color:#1473e6}.terms a{color:#475467}.error{min-height:21px;margin:8px 0;color:#b42318;font-size:13px}.pay-button{display:flex;align-items:center;justify-content:center;width:100%;height:54px;border:0;border-radius:7px;background:#1473e6;color:#fff;font-size:15px;font-weight:750;cursor:pointer}.pay-button:hover{background:#0e66cf}.pay-button[disabled]{opacity:.5;cursor:wait}.trust-row{margin:16px 0 0;color:#667085;font-size:11px;text-align:center}.footer{display:flex;justify-content:center;gap:18px;margin-top:30px;color:#7a8495;font-size:11px}.footer a{color:inherit;text-decoration:none}.status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:900px){.checkout{grid-template-columns:1fr}.summary-panel{border-right:0;border-bottom:1px solid #e5e7eb}.summary-inner,.payment-inner{width:100%;margin:0;padding:34px 24px}.back-link{margin-bottom:38px}.price{margin-bottom:42px}.payment-inner{max-width:640px;margin:auto}}@media(max-width:520px){.field-grid{grid-template-columns:1fr}.field-wide{grid-column:auto}.provider-note{display:none}.price>span{font-size:36px}}</style>${collectScript}</head>` +
       `<body><main class="checkout">${summary}<section class="payment-panel"><div class="payment-inner">${modeBanner}${contact}${paymentFields}<label class="phone-label">Phone number<input id="phone" class="input" inputmode="tel" autocomplete="tel" placeholder="+1 415 555 1234" required></label>${terms}<p id="error" class="error" role="alert"></p><span id="payment-status" class="status" role="status">${synthetic ? "Synthetic payment ready" : "Loading secure fields"}</span><button id="pay" class="pay-button" type="button"${synthetic ? "" : " disabled"}>${synthetic ? "Run synthetic QA payment" : isTest ? "Pay with EPD test mode" : livePaymentLabel}</button><p class="trust-row">Card details are securely tokenized by Easy Pay Direct</p><footer class="footer"><a href="https://apps.serp.co/legal/terms" target="_blank" rel="noreferrer">Legal</a><a href="https://apps.serp.co/privacy" target="_blank" rel="noreferrer">Privacy</a><span>Powered by Easy Pay Direct</span></footer></div></section></main>` +
-      `<script nonce="epd-script">const checkout=${JSON.stringify(token)};const button=document.getElementById('pay');const error=document.getElementById('error');async function submit(paymentToken){const phone=document.getElementById('phone').value.trim();const emailInput=document.getElementById('email');const email=emailInput?emailInput.value.trim():'';const terms=document.getElementById('terms');if(emailInput&&!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)){error.textContent='Enter a valid email address';emailInput.focus();return}if(!/^\\+[1-9]\\d{7,14}$/.test(phone)){error.textContent='Enter a phone number in international format, for example +14155551234';return}if(terms&&!terms.checked){error.textContent='Accept the Terms of Service and Privacy Policy to continue';terms.focus();return}button.disabled=true;error.textContent='';try{const result=await fetch(${JSON.stringify(submissionPath)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checkout,payment_token:paymentToken,phone,...(emailInput?{email}:{}),terms_accepted:terms?terms.checked:true})});const body=await result.json();if(!result.ok)throw new Error(body?.error?.message||body?.error||'Payment could not be processed');if(body.redirect_url){location.assign(body.redirect_url);return}button.textContent=body.status==='processing'?'Payment submitted':'Payment received'}catch(cause){error.textContent=cause instanceof Error?cause.message:'Payment could not be processed';button.disabled=false}}${submitScript}</script></body></html>`,
+      `<script nonce="epd-script">const checkout=${JSON.stringify(token)};const returnTo=${JSON.stringify(returnTo)};const button=document.getElementById('pay');const error=document.getElementById('error');async function submit(paymentToken){const phone=document.getElementById('phone').value.trim();const emailInput=document.getElementById('email');const email=emailInput?emailInput.value.trim():'';const terms=document.getElementById('terms');if(emailInput&&!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)){error.textContent='Enter a valid email address';emailInput.focus();return}if(!/^\\+[1-9]\\d{7,14}$/.test(phone)){error.textContent='Enter a phone number in international format, for example +14155551234';return}if(terms&&!terms.checked){error.textContent='Accept the Terms of Service and Privacy Policy to continue';terms.focus();return}button.disabled=true;error.textContent='';try{const result=await fetch(${JSON.stringify(submissionPath)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checkout,payment_token:paymentToken,phone,...(emailInput?{email}:{}),terms_accepted:terms?terms.checked:true,...(returnTo?{return_to:returnTo}:{})})});const body=await result.json();if(!result.ok)throw new Error(body?.error?.message||body?.error||'Payment could not be processed');if(body.redirect_url){location.assign(body.redirect_url);return}button.textContent=body.status==='processing'?'Payment submitted':'Payment received'}catch(cause){error.textContent=cause instanceof Error?cause.message:'Payment could not be processed';button.disabled=false}}${submitScript}</script></body></html>`,
     { headers: checkoutHeaders(!synthetic) },
   );
 }

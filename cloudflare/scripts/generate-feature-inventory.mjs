@@ -363,7 +363,10 @@ const jobRules = [
       /api\/app\/jobs\/(?:ai_conversations\/.*|segment_(?:identify|track)_job|integrations\/.*|integration_customers\/.*|usage_monitoring\/.*)\.rb$/i,
     disposition: "not-used",
     target: "No retained SERP Lago runtime contract",
-    evidence: ["cloudflare/README.md", "docs/plans/active/2026-08-12-cloudflare-native-rewrite.md"],
+    evidence: [
+      "cloudflare/README.md",
+      "docs/plans/completed/2026-08-12-cloudflare-native-rewrite.md",
+    ],
     migrationNotes:
       "Read-only consumer audits found no Lago API dependency for AI conversation streaming, Segment telemetry, CRM/accounting/tax integrations, integration-customer fanout, or Lago premium usage-alert delivery.",
     rollbackNotes:
@@ -375,7 +378,10 @@ const jobRules = [
     disposition: "not-used",
     target:
       "No retained Lago runtime; SERP commerce and entitlement recovery call Stripe directly from their owning Workers",
-    evidence: ["cloudflare/README.md", "docs/plans/active/2026-08-12-cloudflare-native-rewrite.md"],
+    evidence: [
+      "cloudflare/README.md",
+      "docs/plans/completed/2026-08-12-cloudflare-native-rewrite.md",
+    ],
     migrationNotes:
       "These jobs are provider-specific to Lago-managed Stripe, Adyen, GoCardless, Cashfree, Flutterwave, or MoneyHash. The retained Lago adapter is Authorize.Net hosted payment only.",
     rollbackNotes:
@@ -425,7 +431,10 @@ const jobRules = [
       /api\/app\/jobs\/(?:send_email_job|invoices\/notify_job|payment_receipts\/notify_job)\.rb$/i,
     disposition: "not-used",
     target: "No retained Lago email-delivery contract",
-    evidence: ["cloudflare/README.md", "docs/plans/active/2026-08-12-cloudflare-native-rewrite.md"],
+    evidence: [
+      "cloudflare/README.md",
+      "docs/plans/completed/2026-08-12-cloudflare-native-rewrite.md",
+    ],
     migrationNotes:
       "SERP does not consume Lago email delivery. Document generation and outbox evidence remain available without a mailer, SMTP process, or customer-message side effect.",
     rollbackNotes:
@@ -867,7 +876,10 @@ const portRules = [
     disposition: "not-used",
     target:
       "No retained Lago runtime; SERP commerce and entitlement recovery call Stripe directly from their owning Workers",
-    evidence: ["cloudflare/README.md", "docs/plans/active/2026-08-12-cloudflare-native-rewrite.md"],
+    evidence: [
+      "cloudflare/README.md",
+      "docs/plans/completed/2026-08-12-cloudflare-native-rewrite.md",
+    ],
     migrationNotes:
       "A read-only audit of the pinned store-new and serp-auth consumers found direct Stripe ownership and no Lago API dependency. Adyen, Cashfree, Flutterwave, GoCardless, MoneyHash, and Lago-managed Stripe therefore have no retained SERP runtime contract.",
     rollbackNotes:

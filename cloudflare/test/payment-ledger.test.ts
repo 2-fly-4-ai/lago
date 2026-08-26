@@ -36,6 +36,21 @@ beforeEach(async () => {
       "DELETE FROM payment_attempts WHERE organization_id = 'org-payment-ledger'",
     ),
     env.BILLING_DB.prepare(
+      `DELETE FROM payment_request_payment_allocations
+       WHERE payment_request_id = 'request-payment-ledger-deduplicated'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM payment_request_payments
+       WHERE payment_request_id = 'request-payment-ledger-deduplicated'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM invoices_payment_requests
+       WHERE payment_request_id = 'request-payment-ledger-deduplicated'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM payment_requests WHERE id = 'request-payment-ledger-deduplicated'`,
+    ),
+    env.BILLING_DB.prepare(
       `DELETE FROM outbox_events WHERE organization_id = 'org-payment-ledger'
        AND event_type IN ('payment.recorded', 'invoice.payment_status_updated')`,
     ),
@@ -109,6 +124,93 @@ describe("payment ledger", () => {
       { headers },
     );
     expect(missing.status).toBe(404);
+  });
+
+  it("deduplicates a provider settlement recorded for both an invoice and its payment request", async () => {
+    const now = new Date().toISOString();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `DELETE FROM payment_request_payment_allocations
+         WHERE payment_request_id = 'request-payment-ledger-deduplicated'`,
+      ),
+      env.BILLING_DB.prepare(
+        `DELETE FROM payment_request_payments
+         WHERE payment_request_id = 'request-payment-ledger-deduplicated'`,
+      ),
+      env.BILLING_DB.prepare(
+        `DELETE FROM invoices_payment_requests
+         WHERE payment_request_id = 'request-payment-ledger-deduplicated'`,
+      ),
+      env.BILLING_DB.prepare(
+        `DELETE FROM payment_requests WHERE id = 'request-payment-ledger-deduplicated'`,
+      ),
+    ]);
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_requests
+         (id, organization_id, customer_id, amount_minor, currency, payment_status,
+          ready_for_payment_processing, version, created_at, updated_at, collection_mode)
+         VALUES ('request-payment-ledger-deduplicated', 'org-payment-ledger',
+                 'customer-payment-ledger', 1000, 'USD', 'succeeded', 0, 1, ?, ?, 'checkout')`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices_payment_requests
+         (id, organization_id, payment_request_id, invoice_id, invoice_version,
+          created_at, updated_at)
+         VALUES ('request-link-payment-ledger-deduplicated', 'org-payment-ledger',
+                 'request-payment-ledger-deduplicated', 'invoice-payment-ledger', 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payments
+         (id, organization_id, payment_request_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          version, created_at, updated_at)
+         VALUES ('request-payment-ledger-success', 'org-payment-ledger',
+                 'request-payment-ledger-deduplicated', 'easy_pay_direct', 'easy-pay-direct',
+                 'provider-transaction-deduplicated', 'request-payment-ledger-deduplicated',
+                 1000, 'USD', 'succeeded', 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payment_allocations
+         (id, organization_id, payment_request_payment_id, payment_request_id, invoice_id,
+          amount_minor, currency, created_at)
+         VALUES ('request-allocation-payment-ledger-deduplicated', 'org-payment-ledger',
+                 'request-payment-ledger-success', 'request-payment-ledger-deduplicated',
+                 'invoice-payment-ledger', 1000, 'USD', ?)`,
+      ).bind(now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_attempts
+         (id, organization_id, invoice_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          payment_type, version, created_at, updated_at)
+         VALUES ('invoice-attempt-payment-ledger-deduplicated', 'org-payment-ledger',
+                 'invoice-payment-ledger', 'easy_pay_direct', 'easy-pay-direct',
+                 'provider-transaction-deduplicated', 'invoice-payment-ledger-deduplicated',
+                 1000, 'USD', 'succeeded', 'provider', 1, ?, ?)`,
+      ).bind(now, now),
+    ]);
+
+    const payments = await SELF.fetch(
+      "https://lago.test/api/v1/payments?invoice_id=invoice-payment-ledger",
+      { headers },
+    );
+    await expect(payments.json()).resolves.toMatchObject({
+      payments: [
+        {
+          lago_id: "request-payment-ledger-success",
+          payable_type: "PaymentRequest",
+          provider_payment_id: "provider-transaction-deduplicated",
+        },
+      ],
+      meta: { total_count: 1 },
+    });
+
+    const invoice = await SELF.fetch("https://lago.test/api/v1/invoices/invoice-payment-ledger", {
+      headers,
+    });
+    await expect(invoice.json()).resolves.toMatchObject({
+      invoice: { total_due_amount_cents: 0, total_paid_amount_cents: 1000 },
+    });
   });
 
   it("records partial and final manual settlements idempotently when explicitly enabled", async () => {

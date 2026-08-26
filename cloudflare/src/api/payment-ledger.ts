@@ -320,6 +320,16 @@ export function paymentRows(): string {
           FROM payment_attempts payment
           JOIN invoices invoice ON invoice.id = payment.invoice_id
           JOIN customers customer ON customer.id = invoice.customer_id
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM payment_request_payments request_payment
+            JOIN invoices_payment_requests request_link
+              ON request_link.payment_request_id = request_payment.payment_request_id
+            WHERE request_link.invoice_id = payment.invoice_id
+              AND request_payment.provider = payment.provider
+              AND request_payment.provider_account_code = payment.provider_account_code
+              AND request_payment.provider_transaction_id = payment.provider_transaction_id
+          )
           UNION ALL
           SELECT payment.id, payment.organization_id, payment.payment_request_id AS payable_id,
                  'PaymentRequest' AS payable_type,
@@ -384,10 +394,19 @@ async function successfulPaymentTotal(database: D1Database, invoiceId: string): 
   const value = await database
     .prepare(
       `SELECT COALESCE(SUM(amount_minor), 0) AS total FROM (
-         SELECT amount_minor FROM payment_attempts
+         SELECT provider, provider_account_code,
+                COALESCE(provider_transaction_id, 'attempt:' || id) AS transaction_key,
+                amount_minor
+         FROM payment_attempts
          WHERE invoice_id = ? AND status = 'succeeded'
-         UNION ALL
-         SELECT amount_minor FROM payment_request_payment_allocations WHERE invoice_id = ?
+         UNION
+         SELECT payment.provider, payment.provider_account_code,
+                COALESCE(payment.provider_transaction_id, 'request-payment:' || payment.id),
+                allocation.amount_minor
+         FROM payment_request_payment_allocations allocation
+         JOIN payment_request_payments payment
+           ON payment.id = allocation.payment_request_payment_id
+         WHERE allocation.invoice_id = ? AND payment.status = 'succeeded'
        )`,
     )
     .bind(invoiceId, invoiceId)
