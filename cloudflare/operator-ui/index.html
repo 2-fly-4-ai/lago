@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>SERP Billing Operator Migration</title>
+    <link rel="stylesheet" href="/assets/operator.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">SERP billing</div>
+        <div class="status"><span aria-hidden="true"></span> Isolated development</div>
+      </header>
+
+      <section class="hero" aria-labelledby="page-title">
+        <p class="kicker">Cloudflare-native operator surface</p>
+        <h1 id="page-title">Migration in progress</h1>
+        <p class="lede">
+          The container-free billing API is being verified one workflow at a time. The legacy Lago
+          console stays intentionally hidden until each visible screen has a mapped, tested Worker
+          contract.
+        </p>
+      </section>
+
+      <section class="grid" aria-label="Migration safeguards">
+        <article>
+          <div class="number">01</div>
+          <h2>Static by default</h2>
+          <p>This shell is delivered as a cached Worker asset without invoking billing compute.</p>
+        </article>
+        <article>
+          <div class="number">02</div>
+          <h2>API paths preserved</h2>
+          <p>
+            Health, REST, hosted-payment, and provider-webhook paths always reach the Worker first.
+          </p>
+        </article>
+        <article>
+          <div class="number">03</div>
+          <h2>No pretend controls</h2>
+          <p>Unmapped GraphQL screens, credentials, and billing mutations are not exposed here.</p>
+        </article>
+      </section>
+
+      <aside>
+        <strong>Operator access is not enabled.</strong>
+        <span
+          >A reviewed authentication and screen contract must land before interactive
+          controls.</span
+        >
+      </aside>
+    </main>
+    <footer>
+      This page contains no customer data, credential input, provider action, or GraphQL client.
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,118 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "serp-dev-lago-native",
+  "account_id": "cec5f04e1d18bcc65f2be0aefb04f059",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+  "assets": {
+    "directory": "operator-ui",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*",
+      "/health",
+      "/ready",
+      "/authorize_net/*",
+      "/easy_pay_direct/*",
+      "/webhooks/*",
+    ],
+  },
+  "vars": {
+    "APP_ENV": "development",
+    "PUBLIC_BASE_URL": "https://serp-dev-lago-native.serpcompany.workers.dev",
+    "PAYMENT_MUTATIONS_ENABLED": "1",
+    "EASY_PAY_DIRECT_NETWORK_MODE": "gateway_test",
+    "EASY_PAY_DIRECT_LIVEMODE_ALLOWED": "0",
+    "EASY_PAY_DIRECT_ACCOUNT_CODE": "easy-pay-direct",
+    "EASY_PAY_DIRECT_ORGANIZATION_ID": "org-synthetic-e2e-20260815-001",
+    "EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL": "https://serp-dev-safe-store.serpcompany.workers.dev/checkout/success",
+    "CREDIT_NOTE_REFUND_MODE": "disabled",
+    "WALLET_FUNDING_MODE": "stripe_test",
+    "EXTERNAL_TAX_MODE": "disabled",
+    "PROVIDER_READS_ENABLED": "1",
+    "STRIPE_NETWORK_MODE": "enabled",
+    "STRIPE_WEBHOOKS_ENABLED": "1",
+    "STRIPE_LIVEMODE_ALLOWED": "0",
+    "STRIPE_ACCOUNT_CODE": "acct_1Rba2Z06JrOmKRCm",
+    "STRIPE_ORGANIZATION_ID": "org-synthetic-e2e-20260815-001",
+    "OUTBOUND_WEBHOOKS_ENABLED": "0",
+  },
+  "d1_databases": [
+    {
+      "binding": "BILLING_DB",
+      "database_name": "serp-dev-lago-native-d1",
+      "database_id": "2f32f159-c269-46c6-a4dd-9e38477f5d25",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BILLING_ARTIFACTS",
+      "bucket_name": "serp-dev-lago-native-billing-artifacts",
+    },
+  ],
+  "browser": {
+    "binding": "BROWSER",
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BILLING_ACCOUNTS",
+        "class_name": "BillingAccount",
+      },
+    ],
+  },
+  "exports": {
+    "BillingAccount": {
+      "type": "durable-object",
+      "storage": "sqlite",
+    },
+  },
+  "queues": {
+    "producers": [
+      {
+        "binding": "DOMAIN_EVENTS",
+        "queue": "serp-dev-lago-domain-events",
+      },
+    ],
+    "consumers": [
+      {
+        "queue": "serp-dev-lago-domain-events",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "serp-dev-lago-domain-events-dlq",
+        "retry_delay": 30,
+      },
+    ],
+  },
+  "workflows": [
+    {
+      "name": "serp-dev-lago-checkout",
+      "binding": "CHECKOUT_WORKFLOW",
+      "class_name": "CheckoutWorkflow",
+    },
+    {
+      "name": "serp-dev-lago-reconciliation",
+      "binding": "RECONCILIATION_WORKFLOW",
+      "class_name": "ReconciliationWorkflow",
+    },
+    {
+      "name": "serp-dev-lago-documents",
+      "binding": "DOCUMENT_WORKFLOW",
+      "class_name": "DocumentWorkflow",
+    },
+    {
+      "name": "serp-dev-lago-plan-deletion",
+      "binding": "PLAN_DELETION_WORKFLOW",
+      "class_name": "PlanDeletionWorkflow",
+    },
+  ],
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
+}

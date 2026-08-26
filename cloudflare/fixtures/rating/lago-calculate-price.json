@@ -1,0 +1,56 @@
+[
+  {
+    "name": "standard",
+    "units": "5",
+    "charge": { "model": "standard", "amount": "10" },
+    "expectedAmountCents": "50"
+  },
+  {
+    "name": "graduated",
+    "units": "5",
+    "charge": {
+      "model": "graduated",
+      "ranges": [
+        { "fromValue": 0, "toValue": 2, "perUnitAmount": "2", "flatAmount": "0" },
+        { "fromValue": 3, "toValue": null, "perUnitAmount": "3", "flatAmount": "0" }
+      ]
+    },
+    "expectedAmountCents": "13"
+  },
+  {
+    "name": "package",
+    "units": "5",
+    "charge": { "model": "package", "packageSize": 2, "amount": "10", "freeUnits": 1 },
+    "expectedAmountCents": "20"
+  },
+  {
+    "name": "volume",
+    "units": "5",
+    "charge": {
+      "model": "volume",
+      "ranges": [
+        { "fromValue": 0, "toValue": 2, "perUnitAmount": "2", "flatAmount": "0" },
+        { "fromValue": 3, "toValue": null, "perUnitAmount": "3", "flatAmount": "0" }
+      ]
+    },
+    "expectedAmountCents": "15"
+  },
+  {
+    "name": "percentage",
+    "units": "5",
+    "charge": { "model": "percentage", "rate": "10" },
+    "expectedAmountCents": "0.5"
+  },
+  {
+    "name": "graduated percentage",
+    "units": "5",
+    "charge": {
+      "model": "graduated_percentage",
+      "ranges": [
+        { "fromValue": 0, "toValue": 2, "rate": "10", "flatAmount": "10" },
+        { "fromValue": 3, "toValue": null, "rate": "20", "flatAmount": "20" }
+      ]
+    },
+    "expectedAmountCents": "30.8"
+  }
+]

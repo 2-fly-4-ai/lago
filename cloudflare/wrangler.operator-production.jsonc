@@ -1,0 +1,74 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "serp-prod-lago-operator",
+  "account_id": "cec5f04e1d18bcc65f2be0aefb04f059",
+  "main": "src/operator/index.ts",
+  "compatibility_date": "2026-08-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+  "assets": {
+    "directory": "operator-app",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/health", "/ready"],
+  },
+  "vars": {
+    "APP_ENV": "production",
+    "AI_MODEL": "@cf/zai-org/glm-4.7-flash",
+    "CREDIT_NOTE_REFUND_MODE": "disabled",
+    "OPERATOR_ACCESS_ENABLED": "1",
+    "ACCESS_TEAM_DOMAIN": "https://serpcompany.cloudflareaccess.com",
+    "ACCESS_AUD": "45796b837d3cef645820ada0f4c1100fff9965a1db9e41742bbb9d5a1ecd5977",
+  },
+  "ai": {
+    "binding": "AI",
+  },
+  "d1_databases": [
+    {
+      "binding": "BILLING_DB",
+      "database_name": "serp-prod-lago-native-d1",
+      "database_id": "a0274eda-6f03-429a-896f-a1e0121a9f21",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BILLING_ARTIFACTS",
+      "bucket_name": "serp-prod-lago-native-billing-artifacts",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BILLING_ACCOUNTS",
+        "class_name": "BillingAccount",
+        "script_name": "serp-prod-lago-native",
+      },
+    ],
+  },
+  "workflows": [
+    {
+      "name": "serp-prod-lago-plan-deletion",
+      "binding": "PLAN_DELETION_WORKFLOW",
+      "class_name": "PlanDeletionWorkflow",
+      "script_name": "serp-prod-lago-native",
+    },
+    {
+      "name": "serp-prod-lago-documents",
+      "binding": "DOCUMENT_WORKFLOW",
+      "class_name": "DocumentWorkflow",
+      "script_name": "serp-prod-lago-native",
+    },
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "DOMAIN_EVENTS",
+        "queue": "serp-prod-lago-domain-events",
+      },
+    ],
+  },
+}

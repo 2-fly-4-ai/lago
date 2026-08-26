@@ -1,0 +1,3403 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    />
+    <meta name="color-scheme" content="light" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Lago · SERP Billing</title>
+    <link rel="stylesheet" href="/assets/operator-app.css?v=20260818-retained-parity-2" />
+    <script type="module" src="/assets/operator-app.js?v=20260818-retained-parity-2"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Billing operator navigation">
+        <div class="organization-switcher-shell">
+          <button
+            class="organization-switcher"
+            id="organization-switcher"
+            type="button"
+            aria-expanded="false"
+            aria-controls="organization-menu"
+          >
+            <span class="organization-switcher-avatar" id="switcher-monogram" aria-hidden="true"
+              >L</span
+            >
+            <span class="organization-switcher-copy">
+              <strong id="switcher-name">Lago</strong>
+              <small id="switcher-role">Loading workspace…</small>
+            </span>
+            <img src="/assets/icons/chevron-down.svg" alt="" aria-hidden="true" />
+          </button>
+          <div class="organization-menu" id="organization-menu" role="menu" hidden>
+            <p>Organizations</p>
+            <div id="organization-menu-items"></div>
+          </div>
+        </div>
+
+        <nav aria-label="Primary navigation">
+          <div class="nav-section">
+            <p class="nav-label">Reports</p>
+            <a class="nav-item" href="/analytics" data-route="analytics">
+              <img class="nav-icon" src="/assets/icons/chart-bar.svg" alt="" />Analytics
+            </a>
+            <a class="nav-item" href="/forecasts" data-route="forecasts">
+              <img class="nav-icon" src="/assets/icons/forecast.svg" alt="" />Forecasts
+            </a>
+          </div>
+
+          <div class="nav-section">
+            <p class="nav-label">Configuration</p>
+            <a class="nav-item" href="/billable-metrics" data-route="billable-metrics">
+              <img class="nav-icon" src="/assets/icons/pulse.svg" alt="" />Billable metrics
+            </a>
+            <a class="nav-item" href="/plans" data-route="plans">
+              <img class="nav-icon" src="/assets/icons/board.svg" alt="" />Plans
+            </a>
+            <a class="nav-item" href="/features" data-route="features">
+              <img class="nav-icon" src="/assets/icons/switch.svg" alt="" />Features
+            </a>
+            <a class="nav-item" href="/add-ons" data-route="add-ons">
+              <img class="nav-icon" src="/assets/icons/puzzle.svg" alt="" />Add-ons
+            </a>
+            <a class="nav-item" href="/coupons" data-route="coupons">
+              <img class="nav-icon" src="/assets/icons/coupon.svg" alt="" />Coupons
+            </a>
+          </div>
+
+          <div class="nav-section">
+            <p class="nav-label">Billing &amp; operations</p>
+            <a class="nav-item" href="/customers" data-route="customers">
+              <img class="nav-icon" src="/assets/icons/user-multiple.svg" alt="" />Customers
+            </a>
+            <a class="nav-item" href="/subscriptions" data-route="subscriptions">
+              <img class="nav-icon" src="/assets/icons/clock.svg" alt="" />Subscriptions
+            </a>
+            <a class="nav-item" href="/invoices" data-route="invoices">
+              <img class="nav-icon" src="/assets/icons/document.svg" alt="" />Invoices
+            </a>
+            <a class="nav-item" href="/payments" data-route="payments">
+              <img class="nav-icon" src="/assets/icons/coin-dollar.svg" alt="" />Payments
+            </a>
+            <a class="nav-item" href="/credit-notes" data-route="credit-notes">
+              <img class="nav-icon" src="/assets/icons/receipt.svg" alt="" />Credit notes
+            </a>
+            <a class="nav-item" href="/wallets" data-route="wallets">
+              <img class="nav-icon" src="/assets/icons/wallet.svg" alt="" />Wallets
+            </a>
+            <a class="nav-item" href="/quotes" data-route="quotes">
+              <img class="nav-icon" src="/assets/icons/document.svg" alt="" />Quotes
+            </a>
+          </div>
+
+          <div class="nav-section nav-section-settings">
+            <p class="nav-label">Settings</p>
+            <a class="nav-item" href="/overview" data-route="overview">
+              <img class="nav-icon" src="/assets/icons/company.svg" alt="" />Organization
+            </a>
+            <a class="nav-item" href="/billing-profile" data-route="billing-profile">
+              <img class="nav-icon" src="/assets/icons/settings.svg" alt="" />Billing profile
+            </a>
+            <a class="nav-item" href="/invoice-sections" data-route="invoice-sections">
+              <img class="nav-icon" src="/assets/icons/table.svg" alt="" />Invoice sections
+            </a>
+            <a class="nav-item" href="/pricing-units" data-route="pricing-units">
+              <img class="nav-icon" src="/assets/icons/coin-dollar.svg" alt="" />Pricing units
+            </a>
+            <a class="nav-item" href="/taxes" data-route="taxes">
+              <img class="nav-icon" src="/assets/icons/percentage.svg" alt="" />Taxes
+            </a>
+            <a class="nav-item" href="/api-keys" data-route="api-keys">
+              <img class="nav-icon" src="/assets/icons/key.svg" alt="" />API keys
+            </a>
+            <a class="nav-item" href="/payment-receipts" data-route="payment-receipts">
+              <img class="nav-icon" src="/assets/icons/receipt.svg" alt="" />Payment receipts
+            </a>
+            <a class="nav-item" href="/data-exports" data-route="data-exports">
+              <img class="nav-icon" src="/assets/icons/download.svg" alt="" />Data exports
+            </a>
+            <a class="nav-item" href="/webhook-endpoints" data-route="webhook-endpoints">
+              <img class="nav-icon" src="/assets/icons/plug.svg" alt="" />Webhooks
+            </a>
+            <a class="nav-item" href="/dunning-campaigns" data-route="dunning-campaigns">
+              <img class="nav-icon" src="/assets/icons/warning-unfilled.svg" alt="" />Dunning
+            </a>
+            <a class="nav-item" href="/team-security" data-route="team-security">
+              <img class="nav-icon" src="/assets/icons/user-multiple.svg" alt="" />Team &amp;
+              security
+            </a>
+            <a class="nav-item" href="/integrations" data-route="integrations">
+              <img class="nav-icon" src="/assets/icons/plug.svg" alt="" />Integrations
+            </a>
+          </div>
+
+          <div class="nav-section">
+            <p class="nav-label">Developer tools</p>
+            <a class="nav-item" href="/activity-logs" data-route="activity-logs">
+              <img class="nav-icon" src="/assets/icons/clock.svg" alt="" />Activity logs
+            </a>
+            <a class="nav-item" href="/api-logs" data-route="api-logs">
+              <img class="nav-icon" src="/assets/icons/document.svg" alt="" />API logs
+            </a>
+            <a class="nav-item" href="/events" data-route="events">
+              <img class="nav-icon" src="/assets/icons/pulse.svg" alt="" />Events
+            </a>
+          </div>
+        </nav>
+
+        <div class="sidebar-footer">
+          <a href="https://getlago.com/docs" target="_blank" rel="noreferrer">
+            <img src="/assets/icons/book.svg" alt="" />Documentation
+          </a>
+          <span><img src="/assets/lago-logo-grey.svg" alt="Lago" /></span>
+        </div>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <button class="nav-burger" id="nav-burger" type="button" aria-label="Open navigation">
+            <img src="/assets/icons/burger.svg" alt="" />
+          </button>
+          <div>
+            <p class="topbar-title" id="workspace-name">Loading workspace…</p>
+          </div>
+          <div class="operator-badge" id="operator-badge" hidden>
+            <span class="avatar" aria-hidden="true">OP</span>
+            <span>
+              <strong>Operator</strong>
+              <small id="operator-role">Loading role…</small>
+            </span>
+          </div>
+        </header>
+
+        <main id="main-content" tabindex="-1">
+          <section
+            class="workspace-loading"
+            id="loading-state"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <p class="sr-only">
+              Loading the billing workspace and checking secure organization access.
+            </p>
+            <div class="workspace-loading-heading" aria-hidden="true">
+              <span class="loading-skeleton loading-skeleton-breadcrumb"></span>
+              <span class="loading-skeleton loading-skeleton-title"></span>
+              <span class="loading-skeleton loading-skeleton-description"></span>
+            </div>
+            <div class="workspace-loading-content" aria-hidden="true">
+              <div class="workspace-loading-toolbar">
+                <span class="loading-skeleton loading-skeleton-control"></span>
+                <span class="loading-skeleton loading-skeleton-action"></span>
+              </div>
+              <div class="workspace-loading-table">
+                <span class="loading-skeleton loading-skeleton-table-heading"></span>
+                <div class="workspace-loading-row">
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                </div>
+                <div class="workspace-loading-row">
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                </div>
+                <div class="workspace-loading-row">
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                  <span class="loading-skeleton"></span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="state-panel closed" id="closed-state" aria-live="assertive" hidden>
+            <div class="state-icon lock-icon" aria-hidden="true">
+              <img src="/assets/icons/close.svg" alt="" />
+            </div>
+            <p class="eyebrow">Fail-closed boundary</p>
+            <h1 id="closed-title">Operator Access not configured</h1>
+            <p id="closed-message">
+              This isolated operator Worker will not expose billing controls until Cloudflare Access
+              and an active tenant membership are configured.
+            </p>
+            <div class="state-facts" aria-label="Current safeguards">
+              <span>No API-key login</span>
+              <span>No GraphQL fallback</span>
+              <span>No customer billing data</span>
+            </div>
+          </section>
+
+          <div id="dashboard" hidden>
+            <section
+              class="page-heading route-panel"
+              id="overview"
+              data-route-panel="overview"
+              aria-labelledby="page-title"
+            >
+              <div>
+                <p class="route-breadcrumb">Settings / Organization</p>
+                <h1 id="page-title">Organization</h1>
+                <p>
+                  Review the active organization, billing currency, timezone, and membership role.
+                </p>
+              </div>
+              <span class="role-pill" id="role-pill">Viewer access</span>
+            </section>
+
+            <div class="notice error" id="page-error" role="alert" hidden>
+              <span aria-hidden="true"
+                ><img src="/assets/icons/warning-unfilled.svg" alt=""
+              /></span>
+              <p id="page-error-message"></p>
+              <button class="text-button" id="dismiss-error" type="button">Dismiss</button>
+            </div>
+
+            <section
+              class="unavailable-page route-panel"
+              id="unavailable-route"
+              data-route-panel="unavailable"
+              hidden
+            >
+              <div class="unavailable-icon">
+                <img src="/assets/icons/warning-unfilled.svg" alt="" />
+              </div>
+              <p class="route-breadcrumb" id="unavailable-breadcrumb">Lago</p>
+              <h1 id="unavailable-title">Page unavailable</h1>
+              <p id="unavailable-message">
+                This familiar Lago page is retained, but its bounded Cloudflare read model is not
+                available yet.
+              </p>
+              <div class="unavailable-boundary">
+                <strong>Cloudflare boundary</strong>
+                <p id="unavailable-boundary-copy">
+                  No provider, customer, or external action has been enabled for this page.
+                </p>
+              </div>
+            </section>
+
+            <section
+              class="report-page route-panel"
+              id="analytics"
+              aria-labelledby="analytics-title"
+            >
+              <header class="report-header">
+                <div>
+                  <p class="route-breadcrumb">Reports / Analytics</p>
+                  <h1 id="analytics-title">Analytics</h1>
+                  <p>Understand revenue, recurring subscriptions, usage, credits, and invoices.</p>
+                </div>
+                <div class="date-filter" aria-label="Analytics date range">
+                  <label for="analytics-from">From</label>
+                  <input id="analytics-from" type="date" />
+                  <label for="analytics-to">To</label>
+                  <input id="analytics-to" type="date" />
+                  <button class="secondary-button" id="refresh-analytics" type="button">
+                    Apply
+                  </button>
+                </div>
+              </header>
+              <nav class="report-tabs" aria-label="Analytics sections">
+                <button class="active" type="button" data-analytics-tab="revenue">
+                  Revenue streams
+                </button>
+                <button type="button" data-analytics-tab="mrr">MRR</button>
+                <button type="button" data-analytics-tab="usage">Usage</button>
+                <button type="button" data-analytics-tab="credits">Prepaid credits</button>
+                <button type="button" data-analytics-tab="invoices">Invoices</button>
+              </nav>
+              <div class="report-loading" id="analytics-loading">Loading analytics…</div>
+              <div id="analytics-content" hidden>
+                <div class="metric-card-grid" id="analytics-summary"></div>
+                <section class="chart-card" aria-labelledby="analytics-chart-title">
+                  <div class="chart-card-heading">
+                    <div>
+                      <p class="eyebrow" id="analytics-chart-eyebrow">Revenue</p>
+                      <h2 id="analytics-chart-title">Revenue streams over time</h2>
+                    </div>
+                    <span class="role-pill" id="analytics-currency">—</span>
+                  </div>
+                  <div
+                    class="bar-chart"
+                    id="analytics-chart"
+                    role="img"
+                    aria-label="Analytics values over time"
+                  ></div>
+                </section>
+                <section class="chart-card" aria-labelledby="analytics-breakdown-title">
+                  <div class="chart-card-heading">
+                    <h2 id="analytics-breakdown-title">Breakdown</h2>
+                  </div>
+                  <div class="analytics-breakdown" id="analytics-breakdown"></div>
+                </section>
+              </div>
+            </section>
+
+            <section
+              class="report-page route-panel"
+              id="forecasts"
+              aria-labelledby="forecasts-title"
+            >
+              <header class="report-header">
+                <div>
+                  <p class="route-breadcrumb">Reports / Forecasts</p>
+                  <div class="heading-with-chip">
+                    <h1 id="forecasts-title">Forecasts</h1>
+                    <span class="ai-chip">AI · Beta</span>
+                  </div>
+                  <p>Compare optimistic, realistic, and conservative revenue projections.</p>
+                </div>
+                <label class="compact-select" for="forecast-months"
+                  >Projection
+                  <select id="forecast-months">
+                    <option value="3">3 months</option>
+                    <option value="6" selected>6 months</option>
+                    <option value="12">12 months</option>
+                  </select>
+                </label>
+              </header>
+              <div class="report-loading" id="forecasts-loading">Building forecast…</div>
+              <div id="forecasts-content" hidden>
+                <div class="forecast-legend" aria-label="Forecast scenarios">
+                  <span><i class="scenario optimistic"></i>Optimistic</span>
+                  <span><i class="scenario realistic"></i>Realistic</span>
+                  <span><i class="scenario conservative"></i>Conservative</span>
+                </div>
+                <section class="chart-card">
+                  <div
+                    class="bar-chart grouped"
+                    id="forecast-chart"
+                    role="img"
+                    aria-label="Forecast scenarios by month"
+                  ></div>
+                </section>
+                <div class="table-shell">
+                  <div class="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Month</th>
+                          <th>Optimistic</th>
+                          <th>Realistic</th>
+                          <th>Conservative</th>
+                        </tr>
+                      </thead>
+                      <tbody id="forecast-table-body"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <p class="forecast-method" id="forecast-method"></p>
+              </div>
+            </section>
+
+            <section
+              class="keys-section"
+              id="billable-metrics"
+              aria-labelledby="billable-metrics-title"
+            >
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Configuration / Billable metrics</p>
+                  <h2 id="billable-metrics-title">Billable metrics</h2>
+                  <p>Define how incoming usage events are aggregated and rated.</p>
+                </div>
+                <div>
+                  <button class="primary-button" id="open-create-metric" type="button" hidden>
+                    <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create metric
+                  </button>
+                </div>
+              </div>
+              <div class="list-filter">
+                <label for="metric-search">Search</label
+                ><input id="metric-search" type="search" placeholder="Search metrics" />
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="metrics-loading">Loading billable metrics…</div>
+                <div class="empty-state" id="metrics-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/pulse.svg" alt="" />
+                  <h3>No billable metrics</h3>
+                  <p>Create a metric to begin metering usage events.</p>
+                </div>
+                <div class="table-scroll" id="metrics-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th>Aggregation</th>
+                        <th>Field</th>
+                        <th>Recurring</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="metrics-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="features" aria-labelledby="features-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Configuration / Features</p>
+                  <h2 id="features-title">Features</h2>
+                  <p>Define product features and the typed privileges plans may grant.</p>
+                </div>
+                <div>
+                  <button class="primary-button" id="open-create-feature" type="button" hidden>
+                    <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create feature
+                  </button>
+                </div>
+              </div>
+              <div class="list-filter">
+                <label for="feature-search">Search</label
+                ><input id="feature-search" type="search" placeholder="Search features" />
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="features-loading">Loading features…</div>
+                <div class="empty-state" id="features-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/switch.svg" alt="" />
+                  <h3>No features</h3>
+                  <p>Create a feature and add boolean, integer, string, or select privileges.</p>
+                </div>
+                <div class="table-scroll" id="features-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Feature</th>
+                        <th>Subscriptions</th>
+                        <th>Plans</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="features-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section
+              class="organization-card route-panel"
+              data-route-panel="overview"
+              aria-labelledby="organization-title"
+            >
+              <div class="organization-monogram" id="organization-monogram" aria-hidden="true">
+                —
+              </div>
+              <div class="organization-copy">
+                <p class="eyebrow">Current organization</p>
+                <h2 id="organization-title">Loading organization…</h2>
+                <p id="organization-slug">—</p>
+              </div>
+              <dl class="organization-meta">
+                <div>
+                  <dt>Currency</dt>
+                  <dd id="organization-currency">—</dd>
+                </div>
+                <div>
+                  <dt>Timezone</dt>
+                  <dd id="organization-timezone">—</dd>
+                </div>
+                <div>
+                  <dt>Configuration</dt>
+                  <dd id="organization-version">—</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="keys-section" id="billing-profile" aria-labelledby="billing-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Default billing entity</p>
+                  <h2 id="billing-title">Billing profile</h2>
+                  <p>
+                    Review the legal, address, payment-term, and invoice defaults used by this
+                    organization’s single billing entity.
+                  </p>
+                </div>
+                <button class="primary-button" id="open-edit-billing" type="button" hidden>
+                  Edit billing profile
+                </button>
+              </div>
+
+              <div class="profile-card" id="billing-profile-card" aria-live="polite">
+                <div class="table-loading" id="billing-loading">Loading billing profile…</div>
+                <dl class="profile-grid" id="billing-profile-grid" hidden>
+                  <div>
+                    <dt>Legal identity</dt>
+                    <dd id="billing-legal-name">—</dd>
+                    <small id="billing-legal-number">—</small>
+                  </div>
+                  <div>
+                    <dt>Billing email</dt>
+                    <dd id="billing-email">—</dd>
+                  </div>
+                  <div>
+                    <dt>Billing address</dt>
+                    <dd id="billing-address">—</dd>
+                  </div>
+                  <div>
+                    <dt>Payment terms</dt>
+                    <dd id="billing-payment-terms">—</dd>
+                  </div>
+                  <div>
+                    <dt>Invoice numbering</dt>
+                    <dd id="billing-numbering">—</dd>
+                    <small id="billing-prefix">—</small>
+                  </div>
+                  <div>
+                    <dt>Document defaults</dt>
+                    <dd id="billing-document-locale">—</dd>
+                    <small id="billing-zero-invoices">—</small>
+                  </div>
+                  <div>
+                    <dt>Default taxes</dt>
+                    <dd id="billing-tax-count">—</dd>
+                  </div>
+                  <div>
+                    <dt>Selected sections</dt>
+                    <dd id="billing-section-count">—</dd>
+                  </div>
+                </dl>
+              </div>
+              <div class="entity-detail-card billing-advanced-card" id="billing-advanced-card">
+                <div class="detail-panel-heading">
+                  <div>
+                    <h2>Billing defaults</h2>
+                    <p>
+                      Manage the same tax, dunning, and document identity defaults used by Lago.
+                    </p>
+                  </div>
+                </div>
+                <form class="advanced-settings-form" id="billing-advanced-form">
+                  <label for="billing-default-taxes"
+                    >Default taxes
+                    <select id="billing-default-taxes" multiple size="4"></select>
+                  </label>
+                  <label for="billing-default-dunning"
+                    >Dunning campaign
+                    <select id="billing-default-dunning">
+                      <option value="">Organization default</option>
+                    </select>
+                  </label>
+                  <label for="billing-logo-file"
+                    >Billing entity logo
+                    <input
+                      id="billing-logo-file"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                    />
+                    <small>PNG, JPEG, or WebP · maximum 1 MB</small>
+                  </label>
+                  <div class="row-actions">
+                    <button class="secondary-button" id="remove-billing-logo" type="button">
+                      Remove logo
+                    </button>
+                    <button class="primary-button" id="save-billing-advanced" type="submit">
+                      Save defaults
+                    </button>
+                  </div>
+                  <p class="form-error" id="billing-advanced-error" hidden></p>
+                </form>
+              </div>
+            </section>
+
+            <section class="keys-section" id="customers" aria-labelledby="customers-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Billing accounts</p>
+                  <h2 id="customers-title">Customers</h2>
+                  <p>Review and update the retained core customer billing fields.</p>
+                </div>
+                <button class="primary-button" id="open-create-customer" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
+                  Create customer
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="customers-loading" aria-live="polite">
+                  Loading customers…
+                </div>
+                <div class="empty-state" id="customers-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/user-multiple.svg" alt="" />
+                  <h3>No customers</h3>
+                  <p id="customers-empty-copy">This organization has no customers.</p>
+                </div>
+                <div class="table-scroll" id="customers-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Email</th>
+                        <th scope="col">Currency</th>
+                        <th scope="col">Timezone</th>
+                        <th scope="col">Payment term</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="customers-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section
+              class="customer-detail route-panel"
+              id="customer-detail"
+              data-route-panel="customer-detail"
+              aria-labelledby="customer-detail-name"
+              hidden
+            >
+              <header class="detail-topbar">
+                <button class="detail-back" id="customer-detail-back" type="button">
+                  <img src="/assets/icons/arrow-left.svg" alt="" />
+                  <span>Customers</span>
+                </button>
+                <div class="row-actions">
+                  <button class="secondary-button" id="customer-portal-link" type="button">
+                    Create portal link
+                  </button>
+                  <button class="primary-button" id="customer-detail-edit" type="button">
+                    Edit customer
+                  </button>
+                </div>
+              </header>
+              <div class="detail-layout">
+                <div class="detail-main">
+                  <div class="detail-entity">
+                    <span class="detail-avatar" id="customer-detail-avatar" aria-hidden="true"
+                      >—</span
+                    >
+                    <div>
+                      <h1 id="customer-detail-name">Customer</h1>
+                      <p id="customer-detail-external-id">—</p>
+                    </div>
+                  </div>
+                  <nav class="detail-tabs" aria-label="Customer sections">
+                    <button type="button" data-customer-tab="overview">Overview</button>
+                    <button type="button" data-customer-tab="wallets">Wallets</button>
+                    <button type="button" data-customer-tab="analytics">Analytics</button>
+                    <button type="button" data-customer-tab="invoices">Invoices</button>
+                    <button type="button" data-customer-tab="credit-notes">Credit notes</button>
+                    <button type="button" data-customer-tab="settings">Settings</button>
+                  </nav>
+                  <div class="detail-tab-panel" id="customer-detail-tab-panel"></div>
+                </div>
+                <aside class="detail-aside" aria-label="Customer details">
+                  <div class="detail-aside-heading">
+                    <h2>Details</h2>
+                    <button class="text-button" id="customer-detail-edit-aside" type="button">
+                      Edit
+                    </button>
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>Name</dt>
+                      <dd id="customer-detail-field-name">—</dd>
+                    </div>
+                    <div>
+                      <dt>External ID</dt>
+                      <dd id="customer-detail-field-id">—</dd>
+                    </div>
+                    <div>
+                      <dt>Currency</dt>
+                      <dd id="customer-detail-field-currency">—</dd>
+                    </div>
+                    <div>
+                      <dt>Email</dt>
+                      <dd id="customer-detail-field-email">—</dd>
+                    </div>
+                    <div>
+                      <dt>Timezone</dt>
+                      <dd id="customer-detail-field-timezone">—</dd>
+                    </div>
+                    <div>
+                      <dt>Payment term</dt>
+                      <dd id="customer-detail-field-term">—</dd>
+                    </div>
+                  </dl>
+                </aside>
+              </div>
+            </section>
+
+            <section
+              class="entity-detail route-panel"
+              id="entity-detail"
+              data-route-panel="entity-detail"
+              aria-labelledby="entity-detail-name"
+              hidden
+            >
+              <header class="detail-topbar">
+                <button class="detail-back" id="entity-detail-back" type="button">
+                  <img src="/assets/icons/arrow-left.svg" alt="" />
+                  <span id="entity-detail-back-label">Back</span>
+                </button>
+                <div class="row-actions" id="entity-detail-actions">
+                  <button
+                    class="secondary-button"
+                    id="entity-download-document"
+                    type="button"
+                    hidden
+                  >
+                    <img class="button-icon" src="/assets/icons/download.svg" alt="" />Download PDF
+                  </button>
+                  <button class="primary-button" id="entity-detail-edit" type="button" hidden>
+                    Edit
+                  </button>
+                </div>
+              </header>
+              <div class="entity-detail-content">
+                <div class="detail-entity">
+                  <span class="detail-avatar" id="entity-detail-avatar" aria-hidden="true">—</span>
+                  <div>
+                    <p class="eyebrow" id="entity-detail-type">Billing object</p>
+                    <h1 id="entity-detail-name">Billing object</h1>
+                    <p id="entity-detail-id">—</p>
+                  </div>
+                </div>
+                <section class="entity-detail-card" aria-labelledby="entity-detail-overview-title">
+                  <div class="detail-panel-heading">
+                    <h2 id="entity-detail-overview-title">Overview</h2>
+                  </div>
+                  <dl class="entity-detail-fields" id="entity-detail-fields"></dl>
+                </section>
+                <section
+                  class="entity-detail-card"
+                  id="entity-alerts"
+                  aria-labelledby="entity-alerts-title"
+                  hidden
+                >
+                  <div class="detail-panel-heading">
+                    <div>
+                      <h2 id="entity-alerts-title">Alerts</h2>
+                      <p>Configure threshold alerts for this billing resource.</p>
+                    </div>
+                    <button class="secondary-button" id="open-create-alert" type="button" hidden>
+                      Add alert
+                    </button>
+                  </div>
+                  <div class="table-loading compact" id="entity-alerts-loading">
+                    Loading alerts…
+                  </div>
+                  <div class="detail-empty" id="entity-alerts-empty" hidden>
+                    <p>No alerts are configured for this resource.</p>
+                  </div>
+                  <div class="table-scroll" id="entity-alerts-table-shell" hidden>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Alert</th>
+                          <th>Type</th>
+                          <th>Thresholds</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody id="entity-alerts-body"></tbody>
+                    </table>
+                  </div>
+                </section>
+                <section
+                  class="entity-detail-card"
+                  id="entity-advanced"
+                  aria-labelledby="entity-advanced-title"
+                  hidden
+                >
+                  <div class="detail-panel-heading">
+                    <div>
+                      <h2 id="entity-advanced-title">Billing controls</h2>
+                      <p id="entity-advanced-copy"></p>
+                    </div>
+                  </div>
+                  <div id="entity-advanced-content"></div>
+                </section>
+                <div class="detail-empty" id="entity-detail-missing" hidden>
+                  <h2>Billing object not found</h2>
+                  <p>
+                    This object is not available in the selected organization. No other tenant was
+                    queried.
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="activity-logs" aria-labelledby="activity-logs-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Developer tools / Activity logs</p>
+                  <h2 id="activity-logs-title">Activity logs</h2>
+                  <p>Review tenant-scoped billing changes with sensitive fields redacted.</p>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="empty-state" id="activity-logs-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/clock.svg" alt="" />
+                  <h3>No activity yet</h3>
+                  <p>Billing changes for this organization will appear here.</p>
+                </div>
+                <div class="table-scroll" id="activity-logs-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Activity</th>
+                        <th>Resource</th>
+                        <th>Version</th>
+                        <th>Delivery</th>
+                        <th>Occurred</th>
+                      </tr>
+                    </thead>
+                    <tbody id="activity-logs-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="api-logs" aria-labelledby="api-logs-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Developer tools / API logs</p>
+                  <h2 id="api-logs-title">API logs</h2>
+                  <p>Inspect redacted operator request metadata retained for 30 days.</p>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="empty-state" id="api-logs-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/document.svg" alt="" />
+                  <h3>No API logs yet</h3>
+                  <p>Operator requests will appear here without bodies or query values.</p>
+                </div>
+                <div class="table-scroll" id="api-logs-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Request</th>
+                        <th>Method</th>
+                        <th>Path</th>
+                        <th>Status</th>
+                        <th>Duration</th>
+                        <th>Occurred</th>
+                      </tr>
+                    </thead>
+                    <tbody id="api-logs-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="events" aria-labelledby="events-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Developer tools / Events</p>
+                  <h2 id="events-title">Events</h2>
+                  <p>Trace received usage events without exposing their property payloads.</p>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="empty-state" id="events-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/pulse.svg" alt="" />
+                  <h3>No events yet</h3>
+                  <p>Usage events for this organization will appear here.</p>
+                </div>
+                <div class="table-scroll" id="events-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Transaction</th>
+                        <th>Code</th>
+                        <th>Subscription</th>
+                        <th>Timestamp</th>
+                        <th>Received</th>
+                      </tr>
+                    </thead>
+                    <tbody id="events-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="team-security" aria-labelledby="team-security-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Settings / Team &amp; security</p>
+                  <h2 id="team-security-title">Team &amp; security</h2>
+                  <p>
+                    Manage Cloudflare Access memberships, invitations, roles, and authentication.
+                  </p>
+                </div>
+                <button class="primary-button" id="open-team-invite" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Invite member
+                </button>
+              </div>
+              <div class="team-security-grid">
+                <section class="chart-card">
+                  <div class="chart-card-heading"><h3>Members</h3></div>
+                  <div class="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Identity</th>
+                          <th>Role</th>
+                          <th>Status</th>
+                          <th>Joined</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody id="team-members-body"></tbody>
+                    </table>
+                  </div>
+                </section>
+                <section class="chart-card">
+                  <div class="chart-card-heading"><h3>Pending invitations</h3></div>
+                  <div class="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Identity</th>
+                          <th>Role</th>
+                          <th>Status</th>
+                          <th>Expires</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody id="team-invitations-body"></tbody>
+                    </table>
+                  </div>
+                </section>
+                <section class="chart-card">
+                  <div class="chart-card-heading"><h3>Authentication</h3></div>
+                  <dl class="entity-detail-fields" id="team-authentication"></dl>
+                </section>
+                <section class="chart-card">
+                  <div class="chart-card-heading"><h3>Roles</h3></div>
+                  <div id="team-roles" class="settings-list"></div>
+                </section>
+              </div>
+            </section>
+
+            <section class="keys-section" id="integrations" aria-labelledby="integrations-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Settings / Integrations</p>
+                  <h2 id="integrations-title">Integrations</h2>
+                  <p>
+                    View connected providers and prepare additional integrations. Payment writes
+                    remain separately gated.
+                  </p>
+                </div>
+              </div>
+              <div class="integration-groups" id="integration-groups"></div>
+            </section>
+
+            <section class="keys-section" id="api-keys" aria-labelledby="keys-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Tenant credentials</p>
+                  <h2 id="keys-title">API keys</h2>
+                  <p>Secrets are shown only once when a key is created or rotated.</p>
+                </div>
+                <button class="primary-button" id="open-create-key" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
+                  Create API key
+                </button>
+              </div>
+
+              <div class="table-shell">
+                <div class="table-loading" id="keys-loading" aria-live="polite">
+                  Loading API keys…
+                </div>
+                <div class="empty-state" id="keys-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/key.svg" alt="" />
+                  <h3>No active API keys</h3>
+                  <p id="keys-empty-copy">This organization has no active API credentials.</p>
+                </div>
+                <div class="table-scroll" id="keys-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Name</th>
+                        <th scope="col">Credential</th>
+                        <th scope="col">Created</th>
+                        <th scope="col">Last used</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="keys-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section
+              class="keys-section"
+              id="invoice-sections"
+              aria-labelledby="invoice-sections-title"
+            >
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Invoice presentation</p>
+                  <h2 id="invoice-sections-title">Custom sections</h2>
+                  <p>Add reusable manual text blocks to the organization’s invoice catalog.</p>
+                </div>
+                <button class="primary-button" id="open-create-section" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
+                  Create section
+                </button>
+              </div>
+
+              <div class="table-shell">
+                <div class="table-loading" id="sections-loading" aria-live="polite">
+                  Loading invoice sections…
+                </div>
+                <div class="empty-state" id="sections-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/table.svg" alt="" />
+                  <h3>No custom sections</h3>
+                  <p id="sections-empty-copy">This organization has no manual invoice sections.</p>
+                </div>
+                <div class="table-scroll" id="sections-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Name</th>
+                        <th scope="col">Code</th>
+                        <th scope="col">Display name</th>
+                        <th scope="col">Details</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="sections-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="payment-receipts" aria-labelledby="receipts-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Payment evidence</p>
+                  <h2 id="receipts-title">Payment receipts</h2>
+                  <p>Review tenant-scoped receipts and download generated PDF artifacts.</p>
+                </div>
+              </div>
+
+              <div class="table-shell">
+                <div class="table-loading" id="receipts-loading" aria-live="polite">
+                  Loading payment receipts…
+                </div>
+                <div class="empty-state" id="receipts-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/receipt.svg" alt="" />
+                  <h3>No payment receipts</h3>
+                  <p>Receipts appear after a payment fully settles its payable.</p>
+                </div>
+                <div class="table-scroll" id="receipts-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Receipt</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Invoices</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Created</th>
+                      </tr>
+                    </thead>
+                    <tbody id="receipts-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="pricing-units" aria-labelledby="pricing-units-title">
+              <div class="section-heading">
+                <div>
+                  <p class="route-breadcrumb">Settings / Invoice settings / Pricing units</p>
+                  <h2 id="pricing-units-title">Pricing units</h2>
+                  <p>Define the customer-visible units used by plans and invoice lines.</p>
+                </div>
+                <button class="primary-button" id="open-create-pricing-unit" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create pricing unit
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="pricing-units-loading">Loading pricing units…</div>
+                <div class="empty-state" id="pricing-units-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/coin-dollar.svg" alt="" />
+                  <h3>No pricing units</h3>
+                  <p>Create a pricing unit to label billable amounts consistently.</p>
+                </div>
+                <div class="table-scroll" id="pricing-units-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Code</th>
+                        <th>Short name</th>
+                        <th>Description</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="pricing-units-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="taxes" aria-labelledby="taxes-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Billing catalog</p>
+                  <h2 id="taxes-title">Manual taxes</h2>
+                  <p>Manage tenant-scoped percentage taxes used by supported billing resources.</p>
+                </div>
+                <button class="primary-button" id="open-create-tax" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
+                  Create tax
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="taxes-loading" aria-live="polite">
+                  Loading taxes…
+                </div>
+                <div class="empty-state" id="taxes-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/percentage.svg" alt="" />
+                  <h3>No manual taxes</h3>
+                  <p id="taxes-empty-copy">This organization has no active manual taxes.</p>
+                </div>
+                <div class="table-scroll" id="taxes-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Name</th>
+                        <th scope="col">Code</th>
+                        <th scope="col">Rate</th>
+                        <th scope="col">Default</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="taxes-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="add-ons" aria-labelledby="add-ons-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Billing catalog</p>
+                  <h2 id="add-ons-title">Add-ons</h2>
+                  <p>Manage reusable fixed-price items for supported plan charges.</p>
+                </div>
+                <button class="primary-button" id="open-create-add-on" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
+                  Create add-on
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="add-ons-loading" aria-live="polite">
+                  Loading add-ons…
+                </div>
+                <div class="empty-state" id="add-ons-empty" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
+                  <h3>No active add-ons</h3>
+                  <p id="add-ons-empty-copy">This organization has no active add-ons.</p>
+                </div>
+                <div class="table-scroll" id="add-ons-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Name</th>
+                        <th scope="col">Code</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Invoice label</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="add-ons-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="coupons" aria-labelledby="coupons-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Discount catalog</p>
+                  <h2 id="coupons-title">Coupons</h2>
+                  <p>Create tenant coupons and manage their customer applications.</p>
+                </div>
+                <div class="row-actions">
+                  <button class="secondary-button" id="open-apply-coupon" type="button" hidden>
+                    Apply coupon
+                  </button>
+                  <button class="primary-button" id="open-create-coupon" type="button" hidden>
+                    <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
+                    Create coupon
+                  </button>
+                </div>
+              </div>
+              <h3>Catalog</h3>
+              <div class="table-shell">
+                <div class="table-loading" id="coupons-loading" aria-live="polite">
+                  Loading coupons…
+                </div>
+                <div class="empty-state" id="coupons-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/coupon.svg" alt="" />
+                  <h3>No coupons</h3>
+                  <p id="coupons-empty-copy">This organization has no coupons.</p>
+                </div>
+                <div class="table-scroll" id="coupons-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Coupon</th>
+                        <th scope="col">Code</th>
+                        <th scope="col">Discount</th>
+                        <th scope="col">Frequency</th>
+                        <th scope="col">Expiration</th>
+                      </tr>
+                    </thead>
+                    <tbody id="coupons-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <h3>Customer applications</h3>
+              <div class="table-shell">
+                <div class="table-loading" id="applied-coupons-loading" aria-live="polite">
+                  Loading coupon applications…
+                </div>
+                <div class="empty-state" id="applied-coupons-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/user-multiple.svg" alt="" />
+                  <h3>No coupon applications</h3>
+                  <p>No coupons have been applied to customers.</p>
+                </div>
+                <div class="table-scroll" id="applied-coupons-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Coupon</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Discount</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Applied</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="applied-coupons-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="plans" aria-labelledby="plans-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Product catalog</p>
+                  <h2 id="plans-title">Plans</h2>
+                  <p>Manage core recurring plans and their add-on-backed fixed charges.</p>
+                </div>
+                <div class="row-actions">
+                  <button
+                    class="secondary-button"
+                    id="open-create-fixed-charge"
+                    type="button"
+                    hidden
+                  >
+                    Add fixed charge</button
+                  ><button class="primary-button" id="open-create-plan" type="button" hidden>
+                    <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create plan
+                  </button>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="plans-loading" aria-live="polite">
+                  Loading plans…
+                </div>
+                <div class="empty-state" id="plans-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/board.svg" alt="" />
+                  <h3>No plans</h3>
+                  <p id="plans-empty-copy">This organization has no active plans.</p>
+                </div>
+                <div class="table-scroll" id="plans-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Plan</th>
+                        <th scope="col">Interval</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Trial</th>
+                        <th scope="col">Fixed charges</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="plans-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <h3>Fixed charges</h3>
+              <div class="table-shell">
+                <div class="empty-state" id="fixed-charges-empty" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />
+                  <h3>No fixed charges</h3>
+                  <p>No active plan fixed charges are configured.</p>
+                </div>
+                <div class="table-scroll" id="fixed-charges-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Charge</th>
+                        <th scope="col">Plan</th>
+                        <th scope="col">Add-on</th>
+                        <th scope="col">Model</th>
+                        <th scope="col">Units</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="fixed-charges-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="subscriptions" aria-labelledby="subscriptions-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Recurring billing</p>
+                  <h2 id="subscriptions-title">Subscriptions</h2>
+                  <p>Create, change, schedule, cancel, or terminate customer subscriptions.</p>
+                </div>
+                <button class="primary-button" id="open-create-subscription" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create subscription
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="subscriptions-loading" aria-live="polite">
+                  Loading subscriptions…
+                </div>
+                <div class="empty-state" id="subscriptions-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/clock.svg" alt="" />
+                  <h3>No subscriptions</h3>
+                  <p id="subscriptions-empty-copy">This organization has no subscriptions.</p>
+                </div>
+                <div class="table-scroll" id="subscriptions-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Subscription</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Plan</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Current period</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="subscriptions-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="invoices" aria-labelledby="invoices-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Billing documents</p>
+                  <h2 id="invoices-title">Invoices</h2>
+                  <p>
+                    Review invoices and run retained internal draft, finalization, one-off, and void
+                    actions.
+                  </p>
+                </div>
+                <button class="primary-button" id="open-create-invoice" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create one-off
+                  invoice
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="invoices-loading" aria-live="polite">
+                  Loading invoices…
+                </div>
+                <div class="empty-state" id="invoices-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/document.svg" alt="" />
+                  <h3>No invoices</h3>
+                  <p id="invoices-empty-copy">This organization has no invoices.</p>
+                </div>
+                <div class="table-scroll" id="invoices-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Invoice</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Type</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Payment</th>
+                        <th scope="col">Amount</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="invoices-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="wallets" aria-labelledby="wallets-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Granted credits</p>
+                  <h2 id="wallets-title">Wallets</h2>
+                  <p>Review balances and manage manual granted-credit wallets.</p>
+                </div>
+                <button class="primary-button" id="open-create-wallet" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create wallet
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="wallets-loading" aria-live="polite">
+                  Loading wallets…
+                </div>
+                <div class="empty-state" id="wallets-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/wallet.svg" alt="" />
+                  <h3>No wallets</h3>
+                  <p id="wallets-empty-copy">This organization has no granted-credit wallets.</p>
+                </div>
+                <div class="table-scroll" id="wallets-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Wallet</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Balance</th>
+                        <th scope="col">Rate</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Expires</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="wallets-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="credit-notes" aria-labelledby="credit-notes-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Invoice adjustments</p>
+                  <h2 id="credit-notes-title">Credit notes</h2>
+                  <p>Issue itemized credit notes against finalized invoices.</p>
+                </div>
+                <button class="primary-button" id="open-create-credit-note" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create credit note
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="credit-notes-loading" aria-live="polite">
+                  Loading credit notes…
+                </div>
+                <div class="empty-state" id="credit-notes-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/receipt.svg" alt="" />
+                  <h3>No credit notes</h3>
+                  <p id="credit-notes-empty-copy">This organization has no credit notes.</p>
+                </div>
+                <div class="table-scroll" id="credit-notes-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Credit note</th>
+                        <th scope="col">Invoice</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Reason</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Balance</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="credit-notes-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="payments" aria-labelledby="payments-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Settlement ledger</p>
+                  <h2 id="payments-title">Payments</h2>
+                  <p>
+                    Read-only provider and manual settlement evidence. Retry and payment-link
+                    actions remain unavailable.
+                  </p>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="payments-loading" aria-live="polite">
+                  Loading payments…
+                </div>
+                <div class="empty-state" id="payments-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/coin-dollar.svg" alt="" />
+                  <h3>No payments</h3>
+                  <p>No settlement records are available.</p>
+                </div>
+                <div class="table-scroll" id="payments-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Payment</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Invoices</th>
+                        <th scope="col">Provider</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Created</th>
+                      </tr>
+                    </thead>
+                    <tbody id="payments-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="billing-subsection" aria-labelledby="payment-disputes-title">
+                <div>
+                  <p class="eyebrow">Provider risk</p>
+                  <h3 id="payment-disputes-title">Payment disputes</h3>
+                  <p>Verified provider outcomes only. Evidence submission remains in Stripe.</p>
+                </div>
+                <div class="table-loading" id="payment-disputes-loading" aria-live="polite">
+                  Loading payment disputes…
+                </div>
+                <div class="empty-state compact-empty" id="payment-disputes-empty" hidden>
+                  <h3>No payment disputes</h3>
+                  <p>No verified dispute events have been received.</p>
+                </div>
+                <div class="table-scroll" id="payment-disputes-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Dispute</th>
+                        <th scope="col">Invoice</th>
+                        <th scope="col">Reason</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Evidence due</th>
+                        <th scope="col">Mode</th>
+                        <th scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="payment-disputes-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="billing-subsection" aria-labelledby="provider-refunds-title">
+                <div>
+                  <p class="eyebrow">Provider returns</p>
+                  <h3 id="provider-refunds-title">Provider refunds</h3>
+                  <p>
+                    Read-only execution evidence. Refund creation remains controlled by
+                    provider-specific safety gates.
+                  </p>
+                </div>
+                <div class="table-loading" id="provider-refunds-loading" aria-live="polite">
+                  Loading provider refunds…
+                </div>
+                <div class="empty-state compact-empty" id="provider-refunds-empty" hidden>
+                  <h3>No provider refunds</h3>
+                  <p>No provider refund operation has been submitted.</p>
+                </div>
+                <div class="table-scroll" id="provider-refunds-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Refund</th>
+                        <th scope="col">Invoice</th>
+                        <th scope="col">Credit note</th>
+                        <th scope="col">Provider</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Updated</th>
+                      </tr>
+                    </thead>
+                    <tbody id="provider-refunds-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="quotes" aria-labelledby="quotes-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Commercial proposals</p>
+                  <h2 id="quotes-title">Quotes</h2>
+                  <p>
+                    Manage the retained draft, approval, void, and superseding-version lifecycle.
+                  </p>
+                </div>
+                <button class="primary-button" id="open-create-quote" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create quote
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="quotes-loading" aria-live="polite">
+                  Loading quotes…
+                </div>
+                <div class="empty-state" id="quotes-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/document.svg" alt="" />
+                  <h3>No quotes</h3>
+                  <p id="quotes-empty-copy">This organization has no quotes.</p>
+                </div>
+                <div class="table-scroll" id="quotes-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Quote</th>
+                        <th scope="col">Customer</th>
+                        <th scope="col">Order type</th>
+                        <th scope="col">Version</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Updated</th>
+                        <th class="actions-column" scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="quotes-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="data-exports" aria-labelledby="data-exports-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Auditable CSV jobs</p>
+                  <h2 id="data-exports-title">Data exports</h2>
+                  <p>Create bounded CSV snapshots and review generation status.</p>
+                </div>
+                <button class="primary-button" id="open-create-data-export" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create export
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="data-exports-loading" aria-live="polite">
+                  Loading exports…
+                </div>
+                <div class="empty-state" id="data-exports-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/download.svg" alt="" />
+                  <h3>No exports</h3>
+                  <p id="data-exports-empty-copy">This organization has no export jobs.</p>
+                </div>
+                <div class="table-scroll" id="data-exports-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Export</th>
+                        <th scope="col">Resource</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Rows</th>
+                        <th scope="col">Size</th>
+                        <th scope="col">Created</th>
+                        <th scope="col">Delivery</th>
+                      </tr>
+                    </thead>
+                    <tbody id="data-exports-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section
+              class="keys-section"
+              id="webhook-endpoints"
+              aria-labelledby="webhook-endpoints-title"
+            >
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Outbound integrations</p>
+                  <h2 id="webhook-endpoints-title">Webhook endpoints</h2>
+                  <p>
+                    Read-only endpoint inventory while outbound delivery and signing-secret
+                    configuration remain disabled.
+                  </p>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="webhook-endpoints-loading" aria-live="polite">
+                  Loading webhook endpoints…
+                </div>
+                <div class="empty-state" id="webhook-endpoints-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/key.svg" alt="" />
+                  <h3>No webhook endpoints</h3>
+                  <p>No active outbound endpoints are configured.</p>
+                </div>
+                <div class="table-scroll" id="webhook-endpoints-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Endpoint</th>
+                        <th scope="col">URL</th>
+                        <th scope="col">Signature</th>
+                        <th scope="col">Events</th>
+                        <th scope="col">Created</th>
+                        <th scope="col">Access</th>
+                      </tr>
+                    </thead>
+                    <tbody id="webhook-endpoints-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="keys-section" id="dunning-campaigns" aria-labelledby="dunning-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Overdue policy</p>
+                  <h2 id="dunning-title">Dunning campaigns</h2>
+                  <p>
+                    Configure internal overdue thresholds and inspect generated payment requests.
+                    Provider collection and email delivery remain disabled.
+                  </p>
+                </div>
+                <button class="primary-button" id="open-create-dunning" type="button" hidden>
+                  <img class="button-icon" src="/assets/icons/plus.svg" alt="" />Create campaign
+                </button>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="dunning-loading" aria-live="polite">
+                  Loading dunning campaigns…
+                </div>
+                <div class="empty-state" id="dunning-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/warning-unfilled.svg" alt="" />
+                  <h3>No dunning campaigns</h3>
+                  <p>No internal overdue policy is configured.</p>
+                </div>
+                <div class="table-scroll" id="dunning-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Attempts</th>
+                        <th>Thresholds</th>
+                        <th>Scope</th>
+                        <th>Customers</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dunning-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="table-shell">
+                <div class="table-loading" id="payment-requests-loading" aria-live="polite">
+                  Loading payment requests…
+                </div>
+                <div class="empty-state" id="payment-requests-empty" hidden>
+                  <img class="empty-icon" src="/assets/icons/user-multiple.svg" alt="" />
+                  <h3>No payment requests</h3>
+                  <p>No dunning attempts have produced a payment request.</p>
+                </div>
+                <div class="table-scroll" id="payment-requests-table-shell" hidden>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Customer</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Invoices</th>
+                        <th>Created</th>
+                        <th>Access</th>
+                      </tr>
+                    </thead>
+                    <tbody id="payment-requests-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+        </main>
+      </div>
+
+      <aside class="ai-rail" id="ai-rail" aria-label="Lago Assistant" hidden>
+        <button
+          class="ai-rail-button"
+          id="open-ai-panel"
+          type="button"
+          aria-expanded="false"
+          aria-controls="ai-panel"
+        >
+          <img src="/assets/lago-logo-grey.svg" alt="" /><span>Assistant</span>
+        </button>
+      </aside>
+      <aside class="ai-panel" id="ai-panel" aria-label="Lago Assistant conversation" hidden>
+        <header class="ai-panel-header">
+          <div>
+            <p class="eyebrow">Lago Assistant</p>
+            <h2>How can I help?</h2>
+          </div>
+          <button
+            class="icon-button"
+            id="close-ai-panel"
+            type="button"
+            aria-label="Close assistant"
+          >
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </header>
+        <div class="ai-history" id="ai-history" aria-label="Recent conversations"></div>
+        <div class="ai-messages" id="ai-messages" aria-live="polite"></div>
+        <div class="ai-shortcuts" id="ai-shortcuts">
+          <button type="button" data-ai-shortcut="Summarize this organization's billing health.">
+            Billing health
+          </button>
+          <button
+            type="button"
+            data-ai-shortcut="Explain the current revenue and subscription totals."
+          >
+            Explain revenue
+          </button>
+          <button type="button" data-ai-shortcut="What billing operations should I review next?">
+            Next checks
+          </button>
+        </div>
+        <form class="ai-composer" id="ai-form">
+          <label class="sr-only" for="ai-prompt">Ask Lago Assistant</label>
+          <textarea
+            id="ai-prompt"
+            rows="3"
+            maxlength="8000"
+            placeholder="Ask about billing operations…"
+            required
+          ></textarea>
+          <div>
+            <span>Read-only · scoped to this organization</span
+            ><button class="primary-button" id="send-ai-message" type="submit">Send</button>
+          </div>
+        </form>
+      </aside>
+    </div>
+
+    <dialog class="modal section-modal" id="metric-form-dialog" aria-labelledby="metric-form-title">
+      <form method="dialog" id="metric-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Usage aggregation</p>
+            <h2 id="metric-form-title">Create billable metric</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="metric-name">Name</label><input id="metric-name" required maxlength="255" />
+          </div>
+          <div>
+            <label for="metric-code">Code</label><input id="metric-code" required maxlength="255" />
+          </div>
+          <div>
+            <label for="metric-aggregation">Aggregation</label
+            ><select id="metric-aggregation">
+              <option value="count_agg">Count</option>
+              <option value="sum_agg">Sum</option>
+              <option value="max_agg">Maximum</option>
+              <option value="unique_count_agg">Unique count</option>
+              <option value="latest_agg">Latest</option>
+              <option value="weighted_sum_agg">Weighted sum</option>
+              <option value="custom_agg">Custom expression</option>
+            </select>
+          </div>
+          <div>
+            <label for="metric-field">Event field</label><input id="metric-field" maxlength="255" />
+          </div>
+        </div>
+        <label for="metric-description">Description</label
+        ><textarea id="metric-description" rows="3" maxlength="600"></textarea>
+        <label for="metric-expression">Custom expression</label
+        ><textarea id="metric-expression" rows="3" maxlength="2000"></textarea>
+        <label class="checkbox-field"
+          ><input id="metric-recurring" type="checkbox" />Recurring aggregation</label
+        >
+        <p class="form-error" id="metric-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-metric-form" value="default" type="submit">
+            Create metric
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="feature-form-dialog"
+      aria-labelledby="feature-form-title"
+    >
+      <form method="dialog" id="feature-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Entitlement catalog</p>
+            <h2 id="feature-form-title">Create feature</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="feature-name">Name</label><input id="feature-name" maxlength="255" />
+          </div>
+          <div>
+            <label for="feature-code">Code</label
+            ><input id="feature-code" required maxlength="255" />
+          </div>
+        </div>
+        <label for="feature-description">Description</label
+        ><textarea id="feature-description" rows="3" maxlength="600"></textarea>
+        <div class="privilege-heading">
+          <div>
+            <h3>Privileges</h3>
+            <p>Add the values plans can grant for this feature.</p>
+          </div>
+          <button class="secondary-button" id="add-feature-privilege" type="button">
+            Add privilege
+          </button>
+        </div>
+        <div class="privilege-editor" id="feature-privileges"></div>
+        <p class="form-error" id="feature-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-feature-form" value="default" type="submit">
+            Create feature
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="dunning-form-dialog"
+      aria-labelledby="dunning-form-title"
+    >
+      <form method="dialog" id="dunning-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Internal overdue policy</p>
+            <h2 id="dunning-form-title">Create dunning campaign</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy">
+          This configures D1 scheduling only. It does not enable payment-provider or email actions.
+        </p>
+        <div class="form-grid">
+          <div>
+            <label for="dunning-name">Name</label
+            ><input id="dunning-name" required maxlength="255" />
+          </div>
+          <div>
+            <label for="dunning-code">Code</label
+            ><input id="dunning-code" required maxlength="255" />
+          </div>
+          <div>
+            <label for="dunning-days">Days between attempts</label
+            ><input id="dunning-days" type="number" min="1" step="1" required />
+          </div>
+          <div>
+            <label for="dunning-attempts">Maximum attempts</label
+            ><input id="dunning-attempts" type="number" min="1" step="1" required />
+          </div>
+        </div>
+        <label for="dunning-description">Description</label
+        ><textarea id="dunning-description" rows="2"></textarea>
+        <label for="dunning-thresholds">Currency thresholds (JSON)</label>
+        <textarea id="dunning-thresholds" rows="4" spellcheck="false" required></textarea>
+        <p class="field-hint">Example: [{"amount_cents":1000,"currency":"USD"}]</p>
+        <label for="dunning-bcc">BCC metadata (comma-separated emails)</label
+        ><input id="dunning-bcc" type="text" autocomplete="off" />
+        <label class="checkbox-row"
+          ><input id="dunning-applied" type="checkbox" />Apply as the organization default</label
+        >
+        <p class="form-error" id="dunning-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-dunning-form" value="default" type="submit">
+            Create campaign
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="key-form-dialog" aria-labelledby="key-form-title">
+      <form method="dialog" id="key-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow" id="key-form-eyebrow">Tenant credential</p>
+            <h2 id="key-form-title">Create API key</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy" id="key-form-copy">
+          Give the credential a name that identifies the service using it.
+        </p>
+        <label for="key-name">Key name</label>
+        <input id="key-name" name="name" maxlength="255" autocomplete="off" required />
+        <p class="field-hint">Use a service or environment name, such as “Store delivery”.</p>
+        <p class="form-error" id="key-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-key-form" value="default" type="submit">
+            Create key
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal section-modal" id="section-form-dialog" aria-labelledby="section-title">
+      <form method="dialog" id="section-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Invoice presentation</p>
+            <h2 id="section-title">Create custom section</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy" id="section-form-copy">
+          Create a reusable manual text block for organization invoices.
+        </p>
+        <div class="field-grid">
+          <div>
+            <label for="section-name">Internal name</label>
+            <input id="section-name" name="name" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="section-code">Code</label>
+            <input id="section-code" name="code" maxlength="255" autocomplete="off" required />
+          </div>
+        </div>
+        <label for="section-display-name">Invoice display name</label>
+        <input id="section-display-name" name="display_name" maxlength="255" autocomplete="off" />
+        <label for="section-description">Description</label>
+        <textarea id="section-description" name="description" rows="2"></textarea>
+        <label for="section-details">Invoice details</label>
+        <textarea id="section-details" name="details" rows="5"></textarea>
+        <p class="field-hint">Only the configured display content belongs on generated invoices.</p>
+        <p class="form-error" id="section-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-section-form" value="default" type="submit">
+            Create section
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="pricing-unit-dialog" aria-labelledby="pricing-unit-title">
+      <form method="dialog" id="pricing-unit-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Invoice settings</p>
+            <h2 id="pricing-unit-title">Create pricing unit</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <label for="pricing-unit-name">Name</label>
+        <input id="pricing-unit-name" maxlength="255" required />
+        <div class="field-grid">
+          <div>
+            <label for="pricing-unit-code">Code</label>
+            <input id="pricing-unit-code" maxlength="100" required />
+          </div>
+          <div>
+            <label for="pricing-unit-short-name">Short name</label>
+            <input id="pricing-unit-short-name" maxlength="3" required />
+          </div>
+        </div>
+        <label for="pricing-unit-description">Description</label>
+        <textarea id="pricing-unit-description" rows="3" maxlength="1000"></textarea>
+        <p class="form-error" id="pricing-unit-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-pricing-unit" value="default" type="submit">
+            Create pricing unit
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="alert-dialog" aria-labelledby="alert-title">
+      <form method="dialog" id="alert-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Threshold alert</p>
+            <h2 id="alert-title">Create alert</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <label for="alert-name">Name</label><input id="alert-name" maxlength="255" />
+        <label for="alert-code">Code</label><input id="alert-code" maxlength="100" required />
+        <label for="alert-type">Alert type</label
+        ><select id="alert-type" required></select>
+        <label for="alert-metric">Billable metric</label>
+        <select id="alert-metric">
+          <option value="">Not applicable</option>
+        </select>
+        <label for="alert-threshold">Threshold</label>
+        <input id="alert-threshold" inputmode="decimal" required />
+        <label class="checkbox-field">
+          <input id="alert-recurring" type="checkbox" />Recurring threshold
+        </label>
+        <p class="field-hint">
+          Alert evaluation stays internal; no email, webhook, or provider action is enabled.
+        </p>
+        <p class="form-error" id="alert-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-alert" value="default" type="submit">
+            Create alert
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal billing-modal"
+      id="billing-form-dialog"
+      aria-labelledby="billing-form-title"
+    >
+      <form method="dialog" id="billing-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Default billing entity</p>
+            <h2 id="billing-form-title">Edit billing profile</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy">
+          These settings control future billing documents. Existing finalized documents remain
+          immutable.
+        </p>
+
+        <fieldset>
+          <legend>Identity</legend>
+          <div class="field-grid">
+            <div>
+              <label for="billing-name">Billing entity name</label>
+              <input
+                id="billing-name"
+                name="name"
+                maxlength="255"
+                autocomplete="organization"
+                required
+              />
+            </div>
+            <div>
+              <label for="billing-form-email">Billing email</label>
+              <input
+                id="billing-form-email"
+                name="email"
+                type="email"
+                maxlength="320"
+                autocomplete="email"
+              />
+            </div>
+            <div>
+              <label for="billing-form-legal-name">Legal name</label>
+              <input
+                id="billing-form-legal-name"
+                name="legal_name"
+                maxlength="255"
+                autocomplete="organization"
+              />
+            </div>
+            <div>
+              <label for="billing-form-legal-number">Legal number</label>
+              <input
+                id="billing-form-legal-number"
+                name="legal_number"
+                maxlength="255"
+                autocomplete="off"
+              />
+            </div>
+            <div>
+              <label for="billing-tax-id">Tax identification number</label>
+              <input
+                id="billing-tax-id"
+                name="tax_identification_number"
+                maxlength="255"
+                autocomplete="off"
+              />
+            </div>
+            <div>
+              <label for="billing-country">Country code</label>
+              <input
+                id="billing-country"
+                name="country"
+                maxlength="2"
+                autocomplete="country"
+                placeholder="US"
+              />
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Address</legend>
+          <label for="billing-address-line1">Address line 1</label>
+          <input
+            id="billing-address-line1"
+            name="address_line1"
+            maxlength="255"
+            autocomplete="address-line1"
+          />
+          <label for="billing-address-line2">Address line 2</label>
+          <input
+            id="billing-address-line2"
+            name="address_line2"
+            maxlength="255"
+            autocomplete="address-line2"
+          />
+          <div class="field-grid compact-fields">
+            <div>
+              <label for="billing-city">City</label>
+              <input id="billing-city" name="city" maxlength="255" autocomplete="address-level2" />
+            </div>
+            <div>
+              <label for="billing-state">State or region</label>
+              <input
+                id="billing-state"
+                name="state"
+                maxlength="255"
+                autocomplete="address-level1"
+              />
+            </div>
+            <div>
+              <label for="billing-zipcode">Postal code</label>
+              <input
+                id="billing-zipcode"
+                name="zipcode"
+                maxlength="255"
+                autocomplete="postal-code"
+              />
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Invoice defaults</legend>
+          <div class="field-grid">
+            <div>
+              <label for="billing-currency">Currency</label>
+              <input
+                id="billing-currency"
+                name="default_currency"
+                minlength="3"
+                maxlength="3"
+                autocomplete="off"
+                required
+              />
+            </div>
+            <div>
+              <label for="billing-timezone">Timezone</label>
+              <input
+                id="billing-timezone"
+                name="timezone"
+                maxlength="255"
+                autocomplete="off"
+                required
+              />
+            </div>
+            <div>
+              <label for="billing-net-term">Net payment term (days)</label>
+              <input
+                id="billing-net-term"
+                name="net_payment_term"
+                type="number"
+                min="0"
+                step="1"
+                required
+              />
+            </div>
+            <div>
+              <label for="billing-grace-period">Invoice grace period (days)</label>
+              <input
+                id="billing-grace-period"
+                name="invoice_grace_period"
+                type="number"
+                min="0"
+                step="1"
+                required
+              />
+            </div>
+            <div>
+              <label for="billing-document-numbering">Document numbering</label>
+              <select id="billing-document-numbering" name="document_numbering">
+                <option value="per_billing_entity">Per billing entity</option>
+                <option value="per_customer">Per customer</option>
+              </select>
+            </div>
+            <div>
+              <label for="billing-document-prefix">Document prefix</label>
+              <input
+                id="billing-document-prefix"
+                name="document_number_prefix"
+                maxlength="10"
+                autocomplete="off"
+              />
+            </div>
+            <div>
+              <label for="billing-locale">Document locale</label>
+              <input
+                id="billing-locale"
+                name="document_locale"
+                maxlength="10"
+                autocomplete="off"
+                required
+              />
+            </div>
+            <div>
+              <label for="billing-issuing-adjustment">Subscription issuing adjustment</label>
+              <select id="billing-issuing-adjustment">
+                <option value="align_with_finalization_date">Align with finalization date</option>
+                <option value="keep_anchor">Keep anchor</option>
+              </select>
+            </div>
+            <div>
+              <label for="billing-issuing-anchor">Subscription issuing anchor</label>
+              <select id="billing-issuing-anchor">
+                <option value="next_period_start">Next period start</option>
+                <option value="current_period_end">Current period end</option>
+              </select>
+            </div>
+          </div>
+          <label for="billing-footer">Invoice footer</label>
+          <textarea id="billing-footer" name="invoice_footer" rows="3"></textarea>
+          <label class="checkbox-field" for="billing-finalize-zero">
+            <input id="billing-finalize-zero" name="finalize_zero_amount_invoice" type="checkbox" />
+            <span>Finalize zero-amount invoices</span>
+          </label>
+        </fieldset>
+
+        <p class="field-hint">
+          E-invoicing and additional billing entities remain outside this default-entity form.
+        </p>
+        <p class="form-error" id="billing-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-billing-form" value="default" type="submit">
+            Save billing profile
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="tax-form-dialog" aria-labelledby="tax-form-title">
+      <form method="dialog" id="tax-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Billing catalog</p>
+            <h2 id="tax-form-title">Create manual tax</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy" id="tax-form-copy">Create a percentage tax for this organization.</p>
+        <div class="field-grid">
+          <div>
+            <label for="tax-name">Tax name</label>
+            <input id="tax-name" name="name" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="tax-code">Code</label>
+            <input id="tax-code" name="code" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="tax-rate">Rate (%)</label>
+            <input
+              id="tax-rate"
+              name="rate"
+              type="number"
+              min="0"
+              max="100"
+              step="0.000001"
+              required
+            />
+          </div>
+        </div>
+        <label for="tax-description">Description</label>
+        <textarea id="tax-description" name="description" rows="3"></textarea>
+        <label class="checkbox-field" for="tax-applied-to-organization">
+          <input id="tax-applied-to-organization" name="applied_to_organization" type="checkbox" />
+          <span>Apply by default to the organization</span>
+        </label>
+        <p class="form-error" id="tax-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-tax-form" value="default" type="submit">
+            Create tax
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="add-on-form-dialog" aria-labelledby="add-on-form-title">
+      <form method="dialog" id="add-on-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Billing catalog</p>
+            <h2 id="add-on-form-title">Create add-on</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy" id="add-on-form-copy">Create a reusable fixed-price item.</p>
+        <div class="field-grid">
+          <div>
+            <label for="add-on-name">Name</label>
+            <input id="add-on-name" name="name" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="add-on-code">Code</label>
+            <input id="add-on-code" name="code" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="add-on-amount">Amount (minor units)</label>
+            <input id="add-on-amount" name="amount_cents" type="number" min="1" step="1" required />
+          </div>
+          <div>
+            <label for="add-on-currency">Currency</label>
+            <input
+              id="add-on-currency"
+              name="amount_currency"
+              minlength="3"
+              maxlength="3"
+              autocomplete="off"
+              required
+            />
+          </div>
+        </div>
+        <label for="add-on-invoice-name">Invoice display name</label>
+        <input
+          id="add-on-invoice-name"
+          name="invoice_display_name"
+          maxlength="255"
+          autocomplete="off"
+        />
+        <label for="add-on-description">Description</label>
+        <textarea id="add-on-description" name="description" rows="3"></textarea>
+        <p class="field-hint">Tax-code assignment remains unavailable in this retained subset.</p>
+        <p class="form-error" id="add-on-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-add-on-form" value="default" type="submit">
+            Create add-on
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="customer-form-dialog"
+      aria-labelledby="customer-form-title"
+    >
+      <form method="dialog" id="customer-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Billing account</p>
+            <h2 id="customer-form-title">Create customer</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy" id="customer-form-copy">Create a tenant-scoped billing customer.</p>
+        <div class="field-grid">
+          <div>
+            <label for="customer-external-id">External ID</label>
+            <input
+              id="customer-external-id"
+              name="external_id"
+              maxlength="255"
+              autocomplete="off"
+              required
+            />
+          </div>
+          <div>
+            <label for="customer-name">Name</label>
+            <input id="customer-name" name="name" maxlength="255" autocomplete="name" />
+          </div>
+          <div>
+            <label for="customer-email">Email</label>
+            <input
+              id="customer-email"
+              name="email"
+              type="email"
+              maxlength="320"
+              autocomplete="email"
+            />
+          </div>
+          <div>
+            <label for="customer-currency">Currency</label>
+            <input
+              id="customer-currency"
+              name="currency"
+              minlength="3"
+              maxlength="3"
+              autocomplete="off"
+            />
+          </div>
+          <div>
+            <label for="customer-timezone">Timezone</label>
+            <input id="customer-timezone" name="timezone" maxlength="255" autocomplete="off" />
+          </div>
+          <div>
+            <label for="customer-net-term">Net payment term (days)</label>
+            <input id="customer-net-term" name="net_payment_term" type="number" min="0" step="1" />
+          </div>
+          <div>
+            <label for="customer-grace-period">Invoice grace period (days)</label>
+            <input
+              id="customer-grace-period"
+              name="invoice_grace_period"
+              type="number"
+              min="0"
+              step="1"
+            />
+          </div>
+        </div>
+        <p class="field-hint">
+          Provider settings and custom sections remain separate customer workflows.
+        </p>
+        <p class="form-error" id="customer-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="submit-customer-form" value="default" type="submit">
+            Create customer
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal section-modal" id="coupon-form-dialog" aria-labelledby="coupon-form-title">
+      <form method="dialog" id="coupon-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Discount catalog</p>
+            <h2 id="coupon-form-title">Create coupon</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy">Coupon definitions are immutable after creation.</p>
+        <div class="field-grid">
+          <div>
+            <label for="coupon-name">Name</label
+            ><input id="coupon-name" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="coupon-code">Code</label
+            ><input id="coupon-code" maxlength="255" autocomplete="off" required />
+          </div>
+          <div>
+            <label for="coupon-type">Discount type</label
+            ><select id="coupon-type">
+              <option value="percentage">Percentage</option>
+              <option value="fixed_amount">Fixed amount</option>
+            </select>
+          </div>
+          <div>
+            <label for="coupon-percentage">Percentage rate</label
+            ><input id="coupon-percentage" type="number" min="0.000001" max="100" step="0.000001" />
+          </div>
+          <div>
+            <label for="coupon-amount">Amount (minor units)</label
+            ><input id="coupon-amount" type="number" min="1" step="1" />
+          </div>
+          <div>
+            <label for="coupon-currency">Currency</label
+            ><input id="coupon-currency" minlength="3" maxlength="3" autocomplete="off" />
+          </div>
+          <div>
+            <label for="coupon-frequency">Frequency</label
+            ><select id="coupon-frequency">
+              <option value="once">Once</option>
+              <option value="recurring">Recurring</option>
+              <option value="forever">Forever</option>
+            </select>
+          </div>
+          <div>
+            <label for="coupon-duration">Recurring duration</label
+            ><input id="coupon-duration" type="number" min="1" step="1" />
+          </div>
+          <div>
+            <label for="coupon-expiration">Expiration</label
+            ><select id="coupon-expiration">
+              <option value="no_expiration">No expiration</option>
+              <option value="time_limit">Time limit</option>
+            </select>
+          </div>
+          <div>
+            <label for="coupon-expiration-at">Expires at</label
+            ><input id="coupon-expiration-at" type="datetime-local" />
+          </div>
+        </div>
+        <label for="coupon-description">Description</label
+        ><textarea id="coupon-description" rows="3"></textarea>
+        <label class="checkbox-field" for="coupon-reusable"
+          ><input id="coupon-reusable" type="checkbox" checked /><span
+            >Allow repeated application to the same customer</span
+          ></label
+        >
+        <p class="field-hint">
+          Plan, billable-metric, and customer targeting are intentionally unavailable.
+        </p>
+        <p class="form-error" id="coupon-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-coupon-form" value="default" type="submit">
+            Create coupon
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="apply-coupon-dialog" aria-labelledby="apply-coupon-title">
+      <form method="dialog" id="apply-coupon-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Customer discount</p>
+            <h2 id="apply-coupon-title">Apply coupon</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="apply-coupon-customer">Customer</label
+            ><select id="apply-coupon-customer" required></select>
+          </div>
+          <div>
+            <label for="apply-coupon-code">Coupon</label
+            ><select id="apply-coupon-code" required></select>
+          </div>
+        </div>
+        <p class="form-error" id="apply-coupon-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-apply-coupon" value="default" type="submit">
+            Apply coupon
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal section-modal" id="plan-form-dialog" aria-labelledby="plan-form-title">
+      <form method="dialog" id="plan-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Product catalog</p>
+            <h2 id="plan-form-title">Create plan</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy" id="plan-form-copy">Create a core recurring plan.</p>
+        <div class="field-grid">
+          <div>
+            <label for="plan-name">Name</label><input id="plan-name" maxlength="255" required />
+          </div>
+          <div>
+            <label for="plan-code">Code</label><input id="plan-code" maxlength="255" required />
+          </div>
+          <div>
+            <label for="plan-interval">Interval</label
+            ><select id="plan-interval">
+              <option value="weekly">Weekly</option>
+              <option value="monthly" selected>Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+          </div>
+          <div>
+            <label for="plan-amount">Amount (minor units)</label
+            ><input id="plan-amount" type="number" min="0" step="1" required />
+          </div>
+          <div>
+            <label for="plan-currency">Currency</label
+            ><input id="plan-currency" minlength="3" maxlength="3" required />
+          </div>
+          <div>
+            <label for="plan-trial">Trial period (days)</label
+            ><input id="plan-trial" type="number" min="0" step="1" />
+          </div>
+        </div>
+        <label for="plan-invoice-name">Invoice display name</label
+        ><input id="plan-invoice-name" maxlength="255" /><label for="plan-description"
+          >Description</label
+        ><textarea id="plan-description" rows="3"></textarea
+        ><label class="checkbox-field" for="plan-pay-advance"
+          ><input id="plan-pay-advance" type="checkbox" /><span
+            >Bill base amount in advance</span
+          ></label
+        >
+        <section class="plan-entitlements-editor" aria-labelledby="plan-entitlements-title">
+          <div>
+            <h3 id="plan-entitlements-title">Features</h3>
+            <p>Grant product features and typed privilege values to this plan.</p>
+          </div>
+          <div id="plan-entitlements"></div>
+          <p class="field-hint" id="plan-entitlements-empty" hidden>
+            Create a feature before adding plan entitlements.
+          </p>
+        </section>
+        <p class="field-hint">
+          Usage charges, thresholds, commitments, taxes, and metadata remain separate workflows.
+        </p>
+        <p class="form-error" id="plan-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-plan-form" value="default" type="submit">
+            Create plan
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="fixed-charge-form-dialog"
+      aria-labelledby="fixed-charge-form-title"
+    >
+      <form method="dialog" id="fixed-charge-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Plan charge</p>
+            <h2 id="fixed-charge-form-title">Add fixed charge</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="fixed-charge-plan">Plan</label
+            ><select id="fixed-charge-plan" required></select>
+          </div>
+          <div>
+            <label for="fixed-charge-add-on">Add-on</label
+            ><select id="fixed-charge-add-on" required></select>
+          </div>
+          <div>
+            <label for="fixed-charge-code">Code</label
+            ><input id="fixed-charge-code" maxlength="255" required />
+          </div>
+          <div>
+            <label for="fixed-charge-model">Charge model</label
+            ><select id="fixed-charge-model">
+              <option value="standard">Standard</option>
+              <option value="graduated">Graduated</option>
+              <option value="volume">Volume</option>
+            </select>
+          </div>
+          <div>
+            <label for="fixed-charge-units">Units</label
+            ><input id="fixed-charge-units" type="number" min="0" step="any" required />
+          </div>
+        </div>
+        <label for="fixed-charge-invoice-name">Invoice display name</label
+        ><input id="fixed-charge-invoice-name" maxlength="255" /><label
+          for="fixed-charge-properties"
+          >Rating properties (JSON)</label
+        ><textarea id="fixed-charge-properties" rows="5" required>{"amount":"0"}</textarea
+        ><label class="checkbox-field" for="fixed-charge-pay-advance"
+          ><input id="fixed-charge-pay-advance" type="checkbox" /><span
+            >Bill in advance</span
+          ></label
+        ><label class="checkbox-field" for="fixed-charge-prorated"
+          ><input id="fixed-charge-prorated" type="checkbox" /><span>Prorate charge</span></label
+        ><label class="checkbox-field" for="fixed-charge-apply-now"
+          ><input id="fixed-charge-apply-now" type="checkbox" /><span
+            >Apply unit changes immediately</span
+          ></label
+        >
+        <p class="form-error" id="fixed-charge-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button
+            class="primary-button"
+            id="submit-fixed-charge-form"
+            value="default"
+            type="submit"
+          >
+            Add fixed charge
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="subscription-form-dialog"
+      aria-labelledby="subscription-form-title"
+    >
+      <form method="dialog" id="subscription-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Recurring billing</p>
+            <h2 id="subscription-form-title">Create subscription</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy" id="subscription-form-copy">Create a customer subscription.</p>
+        <div class="field-grid">
+          <div>
+            <label for="subscription-external-id">External ID</label
+            ><input id="subscription-external-id" maxlength="255" required />
+          </div>
+          <div>
+            <label for="subscription-customer">Customer</label
+            ><select id="subscription-customer" required></select>
+          </div>
+          <div>
+            <label for="subscription-plan">Plan</label
+            ><select id="subscription-plan" required></select>
+          </div>
+          <div>
+            <label for="subscription-name">Name</label
+            ><input id="subscription-name" maxlength="255" />
+          </div>
+          <div>
+            <label for="subscription-at">Starts at</label
+            ><input id="subscription-at" type="datetime-local" />
+          </div>
+          <div>
+            <label for="subscription-ending-at">Ends at</label
+            ><input id="subscription-ending-at" type="datetime-local" />
+          </div>
+          <div>
+            <label for="subscription-billing-time">Billing time</label
+            ><select id="subscription-billing-time">
+              <option value="anniversary">Anniversary</option>
+              <option value="calendar">Calendar</option>
+            </select>
+          </div>
+          <div>
+            <label for="subscription-termination-invoice">Termination invoice</label
+            ><select id="subscription-termination-invoice">
+              <option value="generate">Generate</option>
+              <option value="skip">Skip</option>
+            </select>
+          </div>
+          <div>
+            <label for="subscription-termination-credit">Prepaid credit</label
+            ><select id="subscription-termination-credit">
+              <option value="credit">Credit unused base</option>
+              <option value="skip">Skip credit</option>
+            </select>
+          </div>
+        </div>
+        <p class="field-hint">
+          Changing the plan may create internal upgrade billing or schedule a downgrade. Provider
+          payment methods, custom sections, and usage thresholds remain unavailable.
+        </p>
+        <p class="form-error" id="subscription-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button
+            class="primary-button"
+            id="submit-subscription-form"
+            value="default"
+            type="submit"
+          >
+            Create subscription
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal danger-modal"
+      id="terminate-subscription-dialog"
+      aria-labelledby="terminate-subscription-title"
+    >
+      <form method="dialog" id="terminate-subscription-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Confirm billing transition</p>
+            <h2 id="terminate-subscription-title">Terminate subscription?</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy" id="terminate-subscription-copy"></p>
+        <label for="terminate-subscription-invoice">Final invoice</label
+        ><select id="terminate-subscription-invoice">
+          <option value="generate">Generate final invoice</option>
+          <option value="skip">Skip final invoice</option>
+        </select>
+        <label for="terminate-subscription-credit">Prepaid credit</label
+        ><select id="terminate-subscription-credit">
+          <option value="credit">Credit unused base</option>
+          <option value="skip">Skip credit</option>
+        </select>
+        <p class="form-error" id="terminate-subscription-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button
+            class="danger-button"
+            id="submit-terminate-subscription"
+            value="default"
+            type="submit"
+          >
+            Terminate subscription
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal"
+      id="invoice-form-dialog"
+      aria-labelledby="invoice-form-title"
+    >
+      <form method="dialog" id="invoice-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">One-off billing</p>
+            <h2 id="invoice-form-title">Create one-off invoice</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="invoice-customer">Customer</label
+            ><select id="invoice-customer" required></select>
+          </div>
+          <div>
+            <label for="invoice-currency">Currency</label
+            ><input id="invoice-currency" minlength="3" maxlength="3" required />
+          </div>
+        </div>
+        <label for="invoice-fees">Fees (JSON array)</label
+        ><textarea id="invoice-fees" rows="9" required>[{"add_on_code":"","units":1}]</textarea>
+        <p class="field-hint">
+          Each fee supports add_on_code, invoice_display_name, unit_amount_cents, units, and
+          description. Provider collection and fee tax targeting are unavailable.
+        </p>
+        <p class="form-error" id="invoice-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-invoice-form" value="default" type="submit">
+            Create finalized invoice
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal section-modal" id="wallet-form-dialog" aria-labelledby="wallet-form-title">
+      <form method="dialog" id="wallet-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Granted credits</p>
+            <h2 id="wallet-form-title">Create wallet</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <div class="field-grid">
+          <div>
+            <label for="wallet-customer">Customer</label
+            ><select id="wallet-customer" required></select>
+          </div>
+          <div>
+            <label for="wallet-name">Name</label><input id="wallet-name" maxlength="255" required />
+          </div>
+          <div>
+            <label for="wallet-code">Code</label><input id="wallet-code" maxlength="100" required />
+          </div>
+          <div>
+            <label for="wallet-currency">Currency</label
+            ><input id="wallet-currency" minlength="3" maxlength="3" required />
+          </div>
+          <div>
+            <label for="wallet-rate">Rate amount</label
+            ><input id="wallet-rate" type="number" min="0.000001" step="any" value="1" required />
+          </div>
+          <div>
+            <label for="wallet-credits">Initial granted credits</label
+            ><input id="wallet-credits" type="number" min="0" step="any" value="0" required />
+          </div>
+          <div>
+            <label for="wallet-priority">Priority</label
+            ><input id="wallet-priority" type="number" min="1" max="50" value="50" required />
+          </div>
+          <div>
+            <label for="wallet-expiration">Expiration (optional)</label
+            ><input id="wallet-expiration" type="datetime-local" />
+          </div>
+          <div>
+            <label for="wallet-recurring-trigger">Automatic top-up</label
+            ><select id="wallet-recurring-trigger">
+              <option value="">None</option>
+              <option value="interval">Interval</option>
+              <option value="threshold">Threshold</option>
+            </select>
+          </div>
+          <div>
+            <label for="wallet-recurring-interval">Top-up interval</label
+            ><select id="wallet-recurring-interval">
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="semiannual">Semiannual</option>
+              <option value="yearly">Yearly</option>
+            </select>
+          </div>
+          <div>
+            <label for="wallet-recurring-paid">Recurring paid credits</label
+            ><input id="wallet-recurring-paid" type="number" min="0" step="any" value="0" />
+          </div>
+          <div>
+            <label for="wallet-recurring-granted">Recurring granted credits</label
+            ><input id="wallet-recurring-granted" type="number" min="0" step="any" value="0" />
+          </div>
+          <div>
+            <label for="wallet-recurring-threshold">Threshold credits</label
+            ><input id="wallet-recurring-threshold" type="number" min="0" step="any" value="0" />
+          </div>
+          <div>
+            <label for="wallet-recurring-payment-method">Stripe test payment method ID</label
+            ><input id="wallet-recurring-payment-method" maxlength="255" placeholder="pm_…" />
+          </div>
+        </div>
+        <p class="field-hint">
+          Paid automatic top-ups stay disabled unless the isolated Stripe test-mode gates and exact
+          synthetic tenant mapping are enabled. Live-mode credentials are always rejected.
+        </p>
+        <p class="form-error" id="wallet-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-wallet-form" value="default" type="submit">
+            Create wallet
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="wallet-top-up-dialog" aria-labelledby="wallet-top-up-title">
+      <form method="dialog" id="wallet-top-up-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Manual grant</p>
+            <h2 id="wallet-top-up-title">Top up wallet</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <label for="wallet-top-up-credits">Granted credits</label
+        ><input id="wallet-top-up-credits" type="number" min="0.000001" step="any" required />
+        <label for="wallet-top-up-name">Transaction name (optional)</label
+        ><input id="wallet-top-up-name" maxlength="255" />
+        <p class="form-error" id="wallet-top-up-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-wallet-top-up" value="default" type="submit">
+            Grant credits
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="modal section-modal billing-modal"
+      id="credit-note-form-dialog"
+      aria-labelledby="credit-note-form-title"
+    >
+      <form method="dialog" id="credit-note-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Invoice adjustment</p>
+            <h2 id="credit-note-form-title">Issue a credit note</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <label for="credit-note-invoice">Finalized invoice</label
+        ><select id="credit-note-invoice" required></select>
+        <label for="credit-note-reason">Reason</label
+        ><select id="credit-note-reason">
+          <option value="order_change">Order change</option>
+          <option value="order_cancellation">Order cancellation</option>
+          <option value="duplicated_charge">Duplicated charge</option>
+          <option value="product_unsatisfactory">Product unsatisfactory</option>
+          <option value="fraudulent_charge">Fraudulent charge</option>
+          <option value="other">Other</option>
+        </select>
+        <label for="credit-note-description">Description (optional)</label
+        ><input id="credit-note-description" maxlength="255" />
+        <fieldset class="credit-note-items-fieldset">
+          <legend>Items to credit</legend>
+          <div id="credit-note-items"></div>
+        </fieldset>
+        <div class="credit-note-estimate" aria-live="polite">
+          <div><span>Selected items</span><strong id="credit-note-items-total">—</strong></div>
+          <div><span>Coupon adjustment</span><strong id="credit-note-coupon-total">—</strong></div>
+          <div><span>Taxes</span><strong id="credit-note-tax-total">—</strong></div>
+          <div class="credit-note-estimate-total">
+            <span>Total to allocate</span><strong id="credit-note-total">—</strong>
+          </div>
+        </div>
+        <div class="field-grid credit-note-allocation-grid">
+          <div>
+            <label for="credit-note-amount">Credit amount (minor units)</label
+            ><input id="credit-note-amount" type="number" min="0" step="1" required />
+          </div>
+          <div>
+            <label for="credit-note-offset-amount">Offset amount (minor units)</label
+            ><input id="credit-note-offset-amount" type="number" min="0" step="1" required />
+          </div>
+          <div>
+            <label for="credit-note-refund-amount">Refund amount (minor units)</label
+            ><input id="credit-note-refund-amount" type="number" min="0" step="1" value="0" />
+          </div>
+        </div>
+        <p class="field-hint">
+          Allocate the adjusted total between customer credit and the unpaid invoice balance.
+          Provider refunds are submitted only when an isolated test adapter is enabled; otherwise
+          the backend rejects them. PDF generation and download are available from the detail page.
+        </p>
+        <p class="form-error" id="credit-note-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button
+            class="primary-button"
+            id="submit-credit-note-form"
+            value="default"
+            type="submit"
+          >
+            Issue credit note
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal section-modal" id="quote-form-dialog" aria-labelledby="quote-form-title">
+      <form method="dialog" id="quote-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Commercial proposal</p>
+            <h2 id="quote-form-title">Create quote</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy" id="quote-form-copy">Create a new draft quote.</p>
+        <div class="field-grid">
+          <div>
+            <label for="quote-customer">Customer</label
+            ><select id="quote-customer" required></select>
+          </div>
+          <div>
+            <label for="quote-order-type">Order type</label
+            ><select id="quote-order-type">
+              <option value="one_off">One off</option>
+              <option value="subscription_creation">Subscription creation</option>
+              <option value="subscription_amendment">Subscription amendment</option>
+            </select>
+          </div>
+          <div>
+            <label for="quote-subscription">Subscription (amendments only)</label
+            ><select id="quote-subscription">
+              <option value="">None</option>
+            </select>
+          </div>
+        </div>
+        <label for="quote-content">Content</label><textarea id="quote-content" rows="5"></textarea>
+        <label for="quote-billing-items">Billing items (JSON array)</label
+        ><textarea id="quote-billing-items" rows="8">[]</textarea>
+        <p class="field-hint">
+          Quotes have no PDF, template, generation, download, email, or public delivery contract in
+          the retained API.
+        </p>
+        <p class="form-error" id="quote-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-quote-form" value="default" type="submit">
+            Create quote
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="data-export-form-dialog" aria-labelledby="data-export-form-title">
+      <form method="dialog" id="data-export-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">CSV snapshot</p>
+            <h2 id="data-export-form-title">Create data export</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <label for="data-export-resource">Resource</label
+        ><select id="data-export-resource">
+          <option value="invoices">Invoices</option>
+          <option value="invoice_fees">Invoice fees</option>
+          <option value="credit_notes">Credit notes</option>
+          <option value="credit_note_items">Credit note items</option></select
+        ><label for="data-export-filters">Filters (JSON object)</label
+        ><textarea id="data-export-filters" rows="7">{}</textarea>
+        <p class="field-hint">
+          The operator records requester provenance and starts the shared Document Workflow.
+          Artifact download and completion email remain unavailable here.
+        </p>
+        <p class="form-error" id="data-export-form-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button
+            class="primary-button"
+            id="submit-data-export-form"
+            value="default"
+            type="submit"
+          >
+            Create export
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal danger-modal" id="confirm-dialog" aria-labelledby="confirm-title">
+      <form method="dialog" id="confirm-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Confirm operator action</p>
+            <h2 id="confirm-title">Confirm action</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <p class="modal-copy" id="confirm-copy"></p>
+        <p class="form-error" id="confirm-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="danger-button" id="confirm-action" value="default" type="submit">
+            Confirm
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="team-invite-dialog" aria-labelledby="team-invite-title">
+      <form method="dialog" id="team-invite-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Cloudflare Access</p>
+            <h2 id="team-invite-title">Invite member</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <label for="team-invite-email">Access email</label
+        ><input id="team-invite-email" type="email" maxlength="320" required />
+        <label for="team-invite-role">Role</label
+        ><select id="team-invite-role">
+          <option value="viewer">Viewer</option>
+          <option value="admin">Admin</option>
+        </select>
+        <p class="field-hint">
+          Only a SHA-256 email hash is stored. Cloudflare Access performs the identity challenge and
+          the first matching login claims the membership.
+        </p>
+        <p class="form-error" id="team-invite-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-team-invite" value="default" type="submit">
+            Create invitation
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="integration-dialog" aria-labelledby="integration-dialog-title">
+      <form method="dialog" id="integration-form">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">Disabled-by-default provider</p>
+            <h2 id="integration-dialog-title">Configure integration</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close" type="submit">
+            <img src="/assets/icons/close.svg" alt="" />
+          </button>
+        </div>
+        <label for="integration-display-name">Display name</label
+        ><input id="integration-display-name" maxlength="120" />
+        <label for="integration-settings">Non-secret settings (JSON)</label
+        ><textarea id="integration-settings" rows="8">{}</textarea>
+        <p class="field-hint">
+          Credentials are rejected here. No provider call, retry, sync, payment, or tax action is
+          enabled.
+        </p>
+        <p class="form-error" id="integration-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button
+          ><button class="primary-button" id="submit-integration" value="default" type="submit">
+            Save disabled configuration
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal secret-modal" id="secret-dialog" aria-labelledby="secret-title">
+      <div class="modal-heading">
+        <div>
+          <p class="eyebrow">One-time credential</p>
+          <h2 id="secret-title">Copy this API key now</h2>
+        </div>
+        <button class="icon-button" id="close-secret-top" aria-label="Close" type="button">
+          ×
+        </button>
+      </div>
+      <p class="modal-copy">
+        This secret is shown once. Store it in an approved secret manager before closing this
+        window.
+      </p>
+      <div class="secret-value">
+        <code id="secret-value">—</code>
+        <button class="secondary-button" id="copy-secret" type="button">Copy key</button>
+      </div>
+      <p class="copy-status" id="copy-status" aria-live="polite"></p>
+      <div class="modal-actions">
+        <button class="primary-button" id="close-secret" type="button">I’ve stored this key</button>
+      </div>
+    </dialog>
+  </body>
+</html>

@@ -1,0 +1,137 @@
+# Adult standard-plan EPD staging canary
+
+Date: 2026-08-26
+
+## Scope
+
+- Store branch: `codex/lago-cloudflare-cutover`
+- Lago branch: `codex/cloudflare-native-rewrite`
+- Staging only; no live cards, production data, production routes, or production provider calls.
+- The Store catalog selects the 988 live adult products in the standard $9 one-time plan cohort.
+- Safe products and adult Plus/Premium products remain on the existing Stripe path.
+
+## Deployed versions
+
+- `serp-dev-safe-store`: `009dd813-9256-4175-9fce-96a7e479f790`
+- `serp-dev-lago-native`: `5521e5f1-3284-4320-8644-1aa71ef894de`
+- `serp-dev-lago-operator`: `21ed6c7e-49c4-4d57-923d-72470e5384ff`
+- `serp-dev-lago-portal`: `6bfeedea-636d-4af4-bcf0-3e20573ab3a0`
+
+## Browser verification
+
+The following staging marketing-site checkouts minted staging-signed intents and reached the Lago EPD
+hosted test card form as a one-time `$9.00` purchase:
+
+- `pornhub-video-downloader`
+- `eporner-video-downloader`
+- `rule34-video-downloader`
+- `zzcartoon-downloader`
+
+Each page displayed `EPD TEST MODE`, real hosted card fields, `One-time payment`, and the corrected
+`Buy Synthetic Store App Plan` heading. No card was submitted.
+
+Control checks stayed on Stripe Sandbox:
+
+- `pinterest-downloader` on the safe standard plan
+- `justforfans-downloader` on the adult Plus plan
+- `onlyfans-downloader` on the adult Premium plan
+
+The safe control initially exposed an adult-classification bug. Store commit `8976de4fa` fixed the
+route to require both a valid signed standard intent and an adult catalog classification before the
+cohort route can select Lago/EPD.
+
+## Automated gates
+
+- Store checkout, billing-route, and migration-journal tests: 34 passed.
+- Lago test suite: 72 files and 410 tests passed.
+- Lago formatting, lint, generated inventory, Access provisioning tests, generated binding checks,
+  TypeScript checks, and development/production dry-run Worker builds passed.
+- Unauthenticated operator request redirected to Cloudflare Access (`302`).
+- Unauthenticated Lago API request failed closed (`401 unauthorized`).
+- Store and Lago health endpoints returned healthy responses.
+- Store and Lago D1 `PRAGMA foreign_key_check` returned no rows.
+- Lago reported no pending migrations.
+- Store migration hashes now match the journal. The previously orphaned row-read index migration was
+  moved to journaled migration `0010`, applied to staging, and guarded by a regression test.
+
+## Remote build execution
+
+Builds and deploys ran directly on the Mac mini over the existing `ssh macmini` configuration, using
+the mini's local SSD rather than compiling across the SMB-mounted `/Volumes/brianfarley` worktree.
+The corrected Store Next build completed in about 35 seconds, and the Lago deploy completed in about
+15 seconds. The absolute worktree Git metadata was supplied explicitly where Git-aware commands
+needed it.
+
+## Commits
+
+Store:
+
+- `df87d7a53` — route the adult standard-plan staging cohort to EPD
+- `8976de4fa` — require adult catalog classification for the cohort
+- `0f7f15a03` — repair Store migration journal coverage
+
+Lago:
+
+- `e802ac2` — label one-time EPD purchases truthfully
+- `f87f2a5` — scope the upgrade credit ownership assertion
+
+Production routing remains unchanged. Moving any product cohort beyond staging remains a separate
+canary decision.
+
+## Final end-to-end acceptance
+
+The final deployed build completed a real EPD test-mode purchase from the staged Pornhub Downloader
+product route. The checkout displayed the hosted EPD card fields, `EPD TEST MODE`, a one-time
+`$9.00` total, and the generic `SERP App Plan` payment description. No live card or production data
+was used.
+
+- Synthetic customer: `epd-final-1787739733331@example.invalid`
+- Lago invoice: `386da1ec-e98b-5663-8a7d-83aa5c1957d2`
+- EPD test transaction: `12475753463`
+- EPD response: `100`, succeeded
+- Store result: one completed session and exactly one paid order for 900 USD minor units
+- Store provider and source: `easy_pay_direct`
+- Bound product: `pornhub-video-downloader`
+- Staging SerpAuth result: active `pornhub-downloader` entitlement for the synthetic customer
+
+Reloading the same completion callback twice continued to show the completed purchase while Store
+retained one order and Lago retained one EPD execution, one payment-request payment, and one invoice
+allocation. No replay created a second provider transaction or entitlement.
+
+An unpaid checkout was also sent directly to its completion callback. It displayed the blocking
+`Lago payment is not verified yet` state, retained a pending Store session, created no Store order,
+and retained zero EPD executions, payment attempts, or allocations. An unknown `lago:` callback
+displayed `Checkout could not be verified` and did not fall through to Stripe.
+
+The live pass exposed two legacy staging D1 constraints that allowed only Stripe/PayPal/GHL source
+values. Journaled Store migrations `0011` and `0012` rebuilt `checkout_sessions` and `orders`
+without the obsolete provider-specific constraint. They preserved 298 checkout sessions and 219
+orders at migration time; post-migration foreign-key checks returned no rows. The reconciled EPD
+order now records truthful provider/source attribution.
+
+The Lago payment projection was also corrected so the one provider transaction is not counted twice
+through both invoice-attempt and payment-request-allocation representations. A regression test pins
+the canonical API result at 900 paid and zero due.
+
+## Final gates
+
+- Lago `pnpm check`: passed formatting, lint, Access tests, generated inventories, binding types,
+  TypeScript, 72 files / 412 tests, and all development and production dry-run builds.
+- Store core: 90 files / 561 tests passed.
+- Store checkout/billing-route/fulfillment focused suites passed; Store typecheck and lint passed.
+- The broad Store app suite passed 590 of 591 runnable tests. Its only failure is the pre-existing
+  isolated-worktree content-integrity assertion for source product JSON files that are not present
+  in this worktree; it is unrelated to the generated catalog or this checkout path and was not
+  hidden or weakened.
+- The adult-standard dry-run resolved 988 current live products with zero pending test selections;
+  JustForFans Plus and OnlyFans Premium remained excluded.
+- A safe `skool-video-downloader` control still reached Stripe test Checkout.
+- Lago `/health` and `/ready`, and Store `/api/health`, returned 200.
+- Unauthenticated Lago API returned 401; unauthenticated operator traffic redirected to Cloudflare
+  Access with 302.
+- Lago has no pending migrations. Lago and Store D1 foreign-key checks returned no rows. Store
+  migration records include the exact hashes for `0011` and `0012`.
+
+This closes the isolated staging implementation and acceptance work. Production data migration,
+production provider secrets, production routing/DNS, and the product canary activation remain a
+separate explicitly approved rollout.

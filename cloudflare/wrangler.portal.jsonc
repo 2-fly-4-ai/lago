@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "serp-dev-lago-customer-portal",
+  "account_id": "cec5f04e1d18bcc65f2be0aefb04f059",
+  "main": "src/portal/index.ts",
+  "compatibility_date": "2026-08-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "assets": {
+    "directory": "portal-app",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/health"],
+  },
+  "vars": { "APP_ENV": "development" },
+  "d1_databases": [
+    {
+      "binding": "BILLING_DB",
+      "database_name": "serp-dev-lago-native-d1",
+      "database_id": "2f32f159-c269-46c6-a4dd-9e38477f5d25",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BILLING_ARTIFACTS",
+      "bucket_name": "serp-dev-lago-native-billing-artifacts",
+    },
+  ],
+}

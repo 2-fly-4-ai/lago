@@ -323,7 +323,7 @@ Lago uses Clockwork to schedule recurring jobs. The clock process runs independe
 | Activate Subscriptions | Every 5 minutes | Activates pending subscriptions | - |
 | Refresh Draft Invoices | Every 5 minutes | Updates draft invoice data | - |
 | Process Subscription Activity | Configurable (default: 1 minute) | Processes subscription activities | `LAGO_SUBSCRIPTION_ACTIVITY_PROCESSING_INTERVAL_SECONDS` |
-| Refresh Lifetime Usages | Configurable (default: 5 minutes) | Refreshes lifetime usage data | `LAGO_LIFETIME_USAGE_REFRESH_INTERVAL_SECONDS`, disable with `LAGO_DISABLE_LIFETIME_USAGE_REFRESH=true` |
+| Refresh Lifetime Usages | Configurable (default: 5 minutes) | Refreshes lifetime usage and evaluates progressive billing thresholds | D1 projection + deterministic per-subscription Workflow step |
 | Refresh Wallets Ongoing Balance | Every 5 minutes | Updates wallet balances | Requires cache configuration (`LAGO_MEMCACHE_SERVERS` or `LAGO_REDIS_CACHE_URL`), disable with `LAGO_DISABLE_WALLET_REFRESH=true` |
 | Refresh Flagged Subscriptions | Every 1 minute | Refreshes flagged subscriptions | Requires `LAGO_REDIS_STORE_URL` |
 
@@ -334,16 +334,16 @@ Lago uses Clockwork to schedule recurring jobs. The clock process runs independe
 | Terminate Ended Subscriptions | At :05 | Ends subscriptions that have reached their end date | - |
 | Post-Validate Events | At :05 | Validates events | Disable with `LAGO_DISABLE_EVENTS_VALIDATION=true` |
 | Bill Customers | At :10 | Processes subscription billing | - |
-| API Keys Track Usage | At :15 | Tracks API key usage metrics | - |
-| Compute Daily Usage | At :15 | Calculates daily usage statistics | - |
+| API Keys Track Usage | At :15 | Audits synchronous API-key last-use persistence | Guarded D1 authentication write; no cache flush |
+| Compute Daily Usage | At :15 | Calculates customer-local daily usage statistics | D1 snapshot + normalized charge-delta projection in Reconciliation Workflow |
 | Finalize Invoices | At :20 | Finalizes pending invoices | - |
 | Mark Invoices as Payment Overdue | At :25 | Updates overdue invoice status | - |
 | Terminate Coupons | At :30 | Expires coupons that have reached their end date | - |
-| Retry Generating Subscription Invoices | At :30 | Retries failed invoice generation | - |
+| Retry Generating Subscription Invoices | At :30 | Reclaims failed/stale transactional billing cycles | Shared billing-close Workflow executor |
 | Bill Ended Trial Subscriptions | At :35 | Bills subscriptions when trials end | - |
 | Terminate Wallets | At :45 | Expires wallets | - |
 | Process Dunning Campaigns | At :45 | Executes dunning campaign actions | - |
-| Termination Alert | At :50 | Sends alerts for upcoming subscription terminations | - |
+| Termination Alert | At :50 | Persists deduplicated 15/45-day termination-alert events | D1 outbox; outbound delivery safety-gated |
 | Terminate Expired Wallet Transaction Rules | At :50 | Cleans up expired wallet rules | - |
 | Top Up Wallet Interval Credits | At :55 | Adds recurring wallet credits | - |
 

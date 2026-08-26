@@ -1,0 +1,690 @@
+# Lago Cloudflare Native
+
+This package is the container-free Cloudflare replacement for Lago in the SERP platform. It is
+currently isolated from production and preserves the verified `store-new` REST contract while the
+remaining Lago feature inventory is dispositioned and ported.
+
+## Architecture
+
+- Worker: authenticated Lago-compatible HTTP API and signed provider webhooks.
+- Fee API: tenant-scoped immutable invoice-fee list/show with pagination, customer/subscription/
+  currency/type/date filters, tax snapshots, and explicit unsupported mutation errors.
+- API-key control plane: tenant-scoped create/list/show/name-update/rotate/revoke routes return raw
+  key material only from create/rotate, store only SHA-256 hashes and short endings, enforce expiry
+  during authentication, protect the last non-expiring key, reject unenforced fine-grained
+  permissions, and commit secret-free versioned audit evidence atomically.
+- Organization API: Lago-compatible show/update for identity, address, currency, timezone, payment
+  terms, document numbering, email settings, and invoice configuration, with default-tax and active
+  webhook projections, global slug uniqueness, replay-safe versions, and secret/value-free audit
+  evidence. Webhook mutation remains in the separately gated endpoint API.
+- Billing-entity API: Lago-compatible list/show/update over the retained one-default-entity-per-
+  organization architecture, including tax and custom-section projections, normalized shared
+  invoice configuration, replay-safe versions, and value-free audit evidence. Creation, non-default
+  entities, e-invoicing, EU tax automation, and compound side-effecting mutations fail explicitly.
+- Payment-receipt API: tenant-scoped Lago-compatible list/show and invoice filtering over receipts
+  created atomically when an invoice or payment request first settles. Customer-scoped numbering,
+  payment serialization, payment-first/payable-first ordering, replay, and value-free outbox evidence
+  are D1-owned. Receipt-created events idempotently dispatch Browser Rendering PDF generation through
+  the shared Document Workflow, immutable checksummed artifacts live in R2, and authenticated private
+  downloads are projected as `file_url` only after generation. UBL/XML e-invoicing and email resend
+  remain explicitly disabled.
+- Credit-note documents: finalized and voided credit notes use the shared ownership-checked Document
+  Workflow, Browser Rendering, version-addressed R2 objects, checksums, value-free generated events,
+  and authenticated private downloads. Voiding advances the credit-note version and produces a new
+  immutable PDF without replacing the prior artifact. UBL/XML e-invoicing remains explicitly
+  disabled.
+- Credit-note financials: fee-bounded notes snapshot proportional coupon adjustments and source tax
+  rates with cumulative rounding, split the adjusted total across customer credit, source-invoice
+  offset, and refund amounts, and project the same values through API, PDF, and CSV reads. Offsets
+  settle only the source invoice's current unpaid balance. Refunds remain fail-closed in deployed
+  configuration; an explicit `sandbox` adapter records synthetic success evidence without making an
+  external request or accepting provider credentials. Lost provider disputes block later refunds,
+  and every sandbox outcome also enters the generic provider-refund ledger.
+- Stripe financial controls: a narrow, disabled-by-default compatibility boundary can construct an
+  idempotent refund request through an injected transport, verify raw-body webhook signatures,
+  reject live-mode events, archive immutable evidence, and project disputes/refund outcomes into
+  tenant-scoped D1 ledgers. It does not own checkout or subscription billing, is not wired into the
+  live credit-note command, and makes no Stripe request in the checked-in configuration.
+- Quote API: the pinned Lago GraphQL-only quote domain is exposed as a documented REST replacement
+  with tenant-scoped organization numbering, customer/subscription validation, active-member owners,
+  one active version, draft edits, approval, voiding, superseding clones, optimistic revisions,
+  idempotent creation/clone commands, and value-free outbox evidence. The pinned revision has no
+  quote PDF, template, generation job, or download contract, so this surface does not invent one.
+- Data exports: authenticated create/list/show/download routes replace the pinned GraphQL mutations
+  and Rails job chain for invoice, invoice-fee, credit-note, and credit-note-item CSVs. D1 owns the
+  replay-safe lifecycle; the shared Document Workflow pages a creation-time-bounded snapshot twice,
+  measures it, then streams through `FixedLengthStream` directly to an immutable R2 key. This removes
+  temporary files, export-part rows, local unlink/combine work, and Active Storage. CSV formula-like
+  user strings are neutralized, downloads are private and expire after seven days, and completion
+  email remains explicitly disabled.
+- PDF attachment boundary: the pinned `pdfcpu` subprocess only embeds generated Factur-X XML into
+  e-invoicing PDFs. It is not used for ordinary PDF generation or page merging. Because the retained
+  billing-entity subset rejects e-invoicing and every document API keeps XML disabled, `pdfcpu` is
+  deliberately absent rather than replaced by an unreachable Wasm or JavaScript shim.
+- D1: organizations, customers, plans, subscriptions, invoices, coupon applications/credits,
+  credit-note balances/applications/recredits, immutable tax/coupon adjustment snapshots, internal
+  invoice offsets, sandbox refund evidence, granted-credit wallets and consumption lots,
+  manual tax definitions and immutable invoice tax snapshots, add-on catalog entries and recurring
+  fixed charges with in-arrears or in-advance timing, local-day proration, effective-dated
+  subscription units, immediate-billing evidence and durable repair state, customer payment terms,
+  immutable invoice due-date snapshots,
+  customer invoice-grace settings, distinct initial/renewal invoice contexts, refreshable draft
+  state, dependency-invalidation triggers and mutation guards, immutable issuing/finalization dates,
+  tenant-scoped invoice custom-section catalog records, subscription selections, and immutable
+  invoice section snapshots, organization-level default selections for the retained single billing
+  entity, customer overrides/skip state, wallet and wallet-transaction selections, one canonical
+  invoice precedence projection, wallet ongoing-balance/depletion projections, and fixed granted
+  threshold-rule state,
+  customer time zones, subscription billing mode/timezone snapshots, immutable trial boundaries,
+  overdue state, quote identities/versions/owners, data-export lifecycle metadata, payment attempts,
+  outbox state, and webhook receipt metadata;
+  plan-level minimum commitments are reconciled as auditable period true-up lines after recurring
+  subscription, usage, and fixed-charge fees.
+- Plan catalog: idempotent creation and optimistic scalar updates with transactional versioned
+  outbox events, including the base subscription’s pay-in-advance mode and non-negative trial
+  period. Standalone usage charges support create/list/show, optimistic core updates, soft deletion,
+  deterministic code reuse, and the supported invoiceable, non-prorated pay-in-advance timing
+  subset. Attached plans retain Lago's restricted mutable charge subset;
+  every charge mutation invalidates affected drafts while finalized invoice lines remain immutable.
+  Billable metrics expose the same active/version lifecycle: deletion atomically retires attached
+  charges, invalidates drafts, hides retired usage and wallet targets immediately, and enqueues
+  bounded event/R2 cleanup. Deterministic metric generations allow safe same-code recreation while
+  finalized lines and relational event history remain auditable.
+  Supported fixed charges also expose standalone create/list/show,
+  optimistic core update, and soft-delete routes with the same draft/finalized invariants. Creates
+  and inherited unit updates on attached plans are effective-dated per active subscription: the
+  default takes effect at the next period boundary, while `apply_units_immediately: true` affects
+  the open period. Standard fixed charges may bill in advance with optional proration; graduated
+  advance charges are supported only without proration, and volume advance charges fail
+  explicitly. Their retained hard uniqueness constraint means a deleted fixed-charge code cannot
+  yet be reused.
+  Unused plans can be retired atomically with their active usage/fixed charges. Plans with
+  subscription history instead enter a durable deletion Workflow that closes the attachment
+  snapshot, terminates active generations, cancels pending generations, recalculates/finalizes
+  plan-linked drafts, and only then retires the catalog graph. The Workflow uses bounded batches,
+  deterministic continuation instances, DELETE replay, and five-minute dispatch repair.
+  Commitments and relational catalog/billing rows remain historical, and monotonic deterministic
+  generations permit repeated same-code recreation. Filter/tax/pricing-unit/child-plan cascades
+  and catalog graph replacement remain guarded.
+- Subscription lifecycle: pay-in-advance starts create their initial invoice atomically, combining
+  the base and advance fixed-charge lines. In-arrears starts create no base invoice but do create a
+  fixed-charge-only invoice when their plan has advance fixed charges; those charges also bill at
+  activation during a base-plan trial. A supported future UTC `subscription_at` creates a
+  pending subscription with no invoice, and the five-minute activation owner applies the same
+  billing-mode rule exactly once. A start on an earlier customer-local day activates at that
+  historical instant without generating a retroactive invoice, then resumes from the billing
+  period containing creation time. Pending starts can be moved to another future instant or
+  canceled without producing an invoice. Immediate, historical, and scheduled activation emit a
+  transactional `subscription.started` event. Subscription create, update, and plan replacement
+  persist Lago's `manual` or provider-default payment policy; provider-specific method IDs remain
+  guarded until the tenant-scoped registry is ported. Subscription create/update also accepts
+  Lago's `invoice_custom_section` wrapper: explicit skip clears selections, explicit false can
+  replace them, an omitted skip preserves a prior skip, and unknown codes are ignored as in the
+  legacy service. Pending plan replacement preserves omitted selections; new upgrade/downgrade
+  generations start without inherited selections unless explicitly supplied. Zero-grace
+  in-arrears subscriptions can terminate
+  with an atomic final invoice: the base fee and minimum-commitment target are prorated by inclusive
+  UTC service days, usage is bounded to the following UTC-day boundary, non-prorated fixed charges
+  retain their full amount, and prorated fixed charges use event-weighted customer-local calendar
+  days through termination. The same constrained plans may persist a
+  future UTC `ending_at`; the legacy hourly `:05` owner applies it exactly once and takes precedence
+  over the recurring close. Supported active and pending updates can set or clear that instant and
+  persist Lago's `on_termination_invoice` action; pay-in-advance subscriptions can additionally
+  persist the supported `credit` or `skip` credit-note action. Manual and scheduled termination use
+  the stored actions unless a valid manual query override is supplied. Pay-in-advance subscriptions
+  may schedule `ending_at` only with persisted skip-credit, so the unattended owner cannot enter an
+  allocated-source credit path. Explicit
+  skip-invoice/skip-credit termination remains idempotent; any existing draft is invalidated and remains refreshable/
+  finalizable from its immutable invoice context. At renewal, pay-in-advance base and fixed-charge
+  fees snapshot the next period while in-arrears base, usage, and fixed-charge fees snapshot the
+  closed period. Immediate advance-unit increases bill only units not already paid in the open
+  period; decreases create zero-amount evidence without a refund, and the five-minute owner repairs
+  any committed event whose synchronous invoice step was interrupted. Credit-only
+  pay-in-advance termination can return exact unused UTC service days when its source base invoice
+  is finalized and has no discount, tax, or wallet allocation. Prior invoice-level credit-note
+  applications do not reduce the creditable source line. The default combined
+  command creates that credit, finalizes bounded in-arrears usage without rebilling the base, and
+  applies the new balance before wallet credits in one ordered D1 batch. The usage invoice can also
+  be generated while explicitly skipping unused-period crediting. A pay-in-advance minimum
+  commitment uses the same prorated termination target, subtracting gross eligible plan, usage, and
+  fixed fees already invoiced in the period plus the current termination fees. Credit notes do not
+  reduce that gross fee history, and refresh excludes the current draft so its true-up is stable.
+  Backdated one-time plans, tenant-local termination dates, refund/offset modes, allocated source
+  invoices and unused-period credit/refund for pay-in-advance fixed-charge lines remain guarded.
+  In-arrears termination with a positive grace period instead creates a non-consuming draft from an
+  immutable termination context; manual or scheduled refresh uses the original period boundaries,
+  and finalization alone allocates coupon, credit-note, and wallet balances. Pay-in-advance grace
+  termination now couples two drafts: the unused-period note remains non-allocatable while its
+  prepaid source invoice is draft, refreshes proportionally with that source, and becomes available
+  only after the source finalizes. The termination draft cannot finalize early and then applies the
+  new balance before wallet credits. Coupon, tax, or wallet adjustments on the still-draft source
+  remain explicitly guarded; finalized credit-note balances can chain across successive drafts.
+  Calendar and anniversary subscription billing are
+  persisted explicitly; calendar boundaries and invoice dates use the snapshotted customer IANA
+  timezone and remain half-open UTC instants in D1. Positive trials defer the initial base invoice.
+  The hourly `:35` owner closes missed trial-covered periods, coordinates with the `:10` billing
+  owner at exact boundaries, emits one trial-ended transition, and creates one locally prorated
+  pay-in-advance base (or leaves in-arrears base proration to period close). Grace-period trial
+  invoices refresh and finalize from the same immutable initial context without adding charges.
+  Posting the same external subscription with a different same-currency plan now preserves Lago's
+  immutable generation chain. Annualized price determines an immediate upgrade or boundary
+  downgrade. An upgrade terminates the old generation, starts a distinct generation, reconciles
+  old in-arrears fees, a new prepaid base, advance fixed charges, and any unused prepaid credit into
+  one invoice, and links that invoice to both generations atomically. A prorated advance fixed
+  charge with the same add-on deducts the overlapping amount already paid on the prior generation.
+  A downgrade remains pending until the old period
+  closes, when the same cycle command bills the old plan, starts the new generation, and records one
+  replay-safe combined invoice. Grace drafts retain both immutable period snapshots; termination
+  cancels a queued downgrade in the same D1 batch. Usage-event ownership uses half-open generation
+  timestamps, while transaction IDs remain unique across the shared external subscription. Prepaid
+  upgrades can also chain while source invoices remain in grace: each unused-period note stays
+  non-allocatable until its exact source draft finalizes, dependent drafts refuse premature manual
+  finalization, and the scheduler resolves source-first chains before applying each balance.
+- Durable Objects: aggregate command reservations for idempotent customer, invoice, subscription,
+  and provider operations; D1 versions, constraints, and triggers enforce monetary concurrency.
+- Queues: at-least-once domain event delivery with idempotent consumers and a dead-letter queue.
+- Metering: single-event replay/conflict handling and all-before-write batches of up to 100 events,
+  with atomic D1 event/outbox rows and deterministic immutable R2 evidence. Billable metrics may
+  derive their aggregation field through the pinned Lago expression grammar. A bounded TypeScript
+  parser/evaluator supports exact decimals, event attributes, arithmetic, and the six legacy
+  functions without `eval`, Wasm, a Rust extension, or a subprocess; the derived property is part
+  of replay hashing, D1 state, and R2 evidence. Optional metric `round`, `ceil`, or `floor`
+  configuration is applied to the aggregate before current-usage and recurring-invoice rating,
+  including zero-default and negative precision. Weighted-sum metrics integrate cumulative deltas
+  over the full civil-day charge period at exact 20-place Lago ceiling precision. Recurring
+  weighted state is reconstructed from retained events across subscription generations and is
+  recorded separately from billed weighted units. Target-wallet-enabled weighted charges
+  reconstruct and retain that state independently for each normalized wallet-code group, including
+  groups with a carried balance but no current-period events.
+  Billable metrics and charges also support bounded nested filters. Metric filter catalogs and
+  charge-specific price overrides are validated and stored atomically in D1; each event is assigned
+  to the first most-specific matching filter or the unmatched base charge, with wildcard values
+  still requiring the event property to exist. Current usage and invoice lines preserve the same
+  exact partition, and filter invoice lines use deterministic source identities. Current usage
+  reports actual rated usage without applying charge minimums; invoices add one charge-wide,
+  termination-prorated true-up line across all filter/base fees. Target-wallet-enabled charges
+  partition each filter/base fee again by wallet code, preserving deterministic line identities,
+  combined filter/wallet metadata, exact current-usage totals, and exact wallet allocations.
+  Recurring weighted-sum filters reconstruct an independent historical cumulative baseline for
+  every filter/base partition across subscription generations. The same baseline map composes with
+  target-wallet grouping, so weighted filter × wallet cells rate and allocate independently.
+  Invoiceable, non-prorated pay-in-advance charges create one finalized invoice per usage event and
+  charge for count, sum, or unique-count metrics. The event-triggered marginal calculation supports
+  standard, graduated, package, percentage, and graduated-percentage pricing; preserves filter and
+  target-wallet partitions; and uses the normal coupon, manual-tax, credit-note, wallet, invoice-
+  ownership, custom-section, and outbox paths. A D1 event/charge ledger makes Queue replay
+  idempotent, and the five-minute reconciliation owner repairs persisted events whose delivery was
+  missed. Non-invoiceable or prorated advance usage, volume pricing, custom aggregation, positive
+  minimums, and grouped pricing remain explicit unsupported boundaries.
+  Each persisted event also coalesces one D1 subscription-activity row and advances the
+  subscription's last-received event date in the same transaction. Queue delivery refreshes a
+  lineage-scoped lifetime-usage projection from current rated usage plus draft/finalized usage
+  invoice lines; a guarded activity version preserves arrivals concurrent with calculation.
+  `GET` and `PUT /api/v1/subscriptions/:external_id/lifetime_usage` expose the Lago-compatible
+  projection and external historical amount. The Cron Workflow drains missed activity every minute
+  and rotates through retained lifetime projections every five minutes, replacing the legacy
+  Clockwork and Sidekiq fanout without Redis or a dedicated queue process. Plan and subscription
+  APIs now own fixed and recurring usage thresholds in D1, including subscription override/fallback
+  semantics and threshold replacement across plan changes. The reconciliation Workflow checks
+  refreshed lifetime usage and creates cumulative usage-only progressive invoices with exact
+  threshold-crossing evidence. Each later progressive or final invoice credits the latest
+  cumulative invoice; a downward/source correction atomically creates a deterministic credit note
+  for the excess. Dedicated usage-monitoring alerts remain a separate, unported contract.
+  The retained hourly `:15` revenue-analytics owner now writes customer-local daily snapshots to
+  D1. It preserves Lago's cumulative usage and `usage_diff` JSON while also materializing exact
+  per-charge cumulative and delta units, event counts, and amounts for indexed rollups. Scheduled
+  snapshots stop at the customer's local midnight and skip the billing boundary; a second
+  idempotent projection repairs that boundary from versioned draft/finalized invoice lines. The
+  invoice reader excludes event-triggered pay-in-advance usage invoices, which are marginal
+  billing evidence rather than period-close analytics. This removes the daily usage dependency on
+  PostgreSQL, Sidekiq, Redis, and ClickHouse. The operator analytics API/GraphQL adapter remains a
+  separate consumer of this D1 projection.
+- Workflows and Cron: a deterministic one-minute dispatcher preserves an exhaustive ownership map
+  of all 27 legacy Clockwork schedules. It runs pending-subscription activation, billing-close,
+  flagged-draft refresh, draft-finalization, trial-ending, invoice-overdue, Authorize.Net receipt retry,
+  coupon-expiration, wallet-expiration, ongoing wallet projection/threshold-grant, and interval
+  wallet top-up paths on their original slots, drains subscription activity every minute, refreshes
+  lifetime usage every five minutes, projects daily revenue usage at the retained hourly `:15`
+  slot, and records the legacy hourly post-validation owner as a synchronous-precommit boundary.
+  The latter no longer scans a materialized view: invalid metric
+  codes, missing/non-numeric aggregation fields, and invalid filter values are rejected before the
+  event, R2 archive, or outbox entry commits. The old Redis/ClickHouse refreshed-subscription loop
+  is likewise consolidated into the D1 activity and wallet projection owners. Cron also performs 90-day
+  inbound/outbound webhook retention, records each run in D1, publishes the outbox, and reports due
+  schedules whose behavior is not yet ported. Each run also drains retired billable-metric events
+  in bounded D1/R2 batches, repairs pending pay-in-advance fixed and usage invoices, and repairs
+  pending plan-deletion Workflow dispatches. Subscription-
+  bearing plan deletion has its own Workflow, durable D1 task/snapshot, bounded subscription and
+  draft batches, and deterministic continuation handoff. Inbound and usage-event retention records
+  R2 deletion tasks transactionally before removing or tombstoning source rows, so storage outages
+  remain retryable.
+  The hourly `:50` owner selects active subscriptions ending on the exact UTC 15/45-day windows and
+  inserts one deterministic termination-alert outbox event per subscription/day. Delivery remains
+  subject to the existing outbound-webhook safety gate.
+  The legacy hourly `:30` stuck-generating-invoice retry reuses the normal billing-close executor.
+  Invoice rows are never exposed in a generating state: D1 commits the complete invoice graph
+  atomically, while the leased billing-cycle record reclaims failed or stale attempts. The extra
+  slot therefore provides a real recovery pass without a Sidekiq invoice job.
+  Successful bearer authentication also advances the API key's D1 last-use timestamp under the
+  active-key predicate; the legacy Rails-cache write and hourly flush no longer need a runtime
+  owner.
+  The dedicated-organization wallet refresher is also retired as a separate runtime owner. The
+  global D1 wallet-projection scan includes every tenant, while Workers supplies horizontal
+  isolation without a dedicated Sidekiq process or tenant-ID environment list.
+  The legacy failed-invoice retry is retained as an audited no-work boundary: it only retried
+  persisted external-tax API-limit failures, while external tax-provider configuration is rejected
+  before this Worker's atomic invoice write and no tax-error-detail ledger exists.
+- Active Job consolidation: the generated pinned-source inventory requires an explicit rule for
+  every one of the 242 Rails job files and fails closed when a new job lacks one. Ninety-five
+  retained commands collapse into the Worker/D1, Queue, Workflow, Cron, document, webhook, usage,
+  wallet, and Authorize.Net owners described above, each with checked-in executable evidence.
+  Another 143 jobs are not used: historical PostgreSQL backfills; Lago-managed non-Authorize.Net
+  providers; CRM/accounting, Segment, AI-conversation, VIES/external-tax, XML/e-invoicing, email,
+  and premium usage-alert paths without a verified SERP consumer; plus unsupported provider-funded
+  credits and bulk provider mutations. The final four files are Active Job/Sidekiq/Clock/Sentry
+  scaffolding retired by Cloudflare's native runtime. No generic background-job placeholder or
+  continuously running queue process remains in the retained architecture.
+- R2: immutable provider webhook, usage-event, invoice-document, payment-receipt, and credit-note
+  archives.
+- Usage storage: D1 is the authoritative exact event and billing-projection ledger; R2 holds
+  immutable raw evidence. Durable Object SQL remains command coordination, while Analytics Engine
+  and Pipelines/R2 Data Catalog are deferred derived-analytics options rather than billing
+  authorities. The measured limits and sharding/fanout gates are recorded in
+  `../docs/reference/cloudflare-usage-storage-decision.md`.
+- Operator Static Assets: the API Worker continues to serve a script-free migration shell while the
+  separate operator Worker serves `operator-app`, a native-ES-module organization,
+  billing-profile, API-key, customer, catalog, coupon-application, and invoice-section workspace.
+  Both bundles use direct Static Assets
+  delivery, restrictive CSP/framing/
+  no-index headers, SPA fallback, and Worker-first `/api/*`, health, and readiness paths. The
+  operator app validates its Cloudflare Access session before exposing the dashboard, renders a
+  disabled or unauthorized state fail-closed, gives viewers sanitized key metadata only, and gives
+  admins create/rename/rotate/revoke controls. It does not contain a GraphQL client, bearer-login
+  field, credential storage, or runtime bypass. Create/rotate secrets exist only in memory inside a
+  one-time dialog and are cleared when it closes. The pinned React/Apollo console is intentionally
+  not deployed while its operations remain unmapped.
+  `../docs/reference/cloudflare-operator-surface-policy.md` defines screen admission, route-family
+  disposition, and the Access/JWT plus D1 membership boundary required before remote deployment.
+  `../docs/reference/cloudflare-operator-parity-matrix.md` records the original Lago navigation,
+  organization-scoped list/detail routes, responsive behavior, and explicit unavailable states
+  preserved by the Cloudflare port.
+- Operator authentication: a separately configured `serp-dev-lago-operator` Worker keeps human
+  Cloudflare Access policy away from service API clients and provider webhooks. It validates the
+  Access RS256 JWT issuer, audience, signature, expiry, and subject; looks up only an issuer-scoped
+  subject hash in the D1 membership table; allows one Access identity to select among its active
+  organization memberships; enforces viewer/admin roles plus same-origin/
+  CSRF mutation prerequisites; and reports readiness/session `503` while Access is disabled. The
+  live Worker config contains no invented issuer, audience, identity, or membership. Because a
+  Worker-target Access application requires an existing Worker resource ID, the initial deployment
+  uses `wrangler.operator-bootstrap.jsonc`: a binding-free bootstrap that returns `503` and
+  `Cache-Control: no-store` for every route. The real assets and BFF are deployed only after the
+  approved Access application protects that Worker ID. Its first read-only BFF route,
+  `GET /api/operator/v1/organization`, resolves the membership tenant and reuses the canonical
+  organization REST serializer rather than creating a second browser-specific projection.
+  `/api/operator/v1/api-keys` and its member/rotate routes reuse the secret-safe API-key control
+  plane: viewers receive sanitized metadata, while same-origin/CSRF-checked admins can create,
+  rename, rotate, and revoke. Raw values appear only in create/rotate responses.
+  `/api/operator/v1/invoice-custom-sections` similarly reuses the canonical tenant-scoped custom-
+  section handler: viewers can read active manual invoice content, and admins can create, edit, and
+  terminate it. Its D1 mutation and transactional outbox continue to publish through the existing
+  internal domain-event Queue; the operator Worker is a producer only.
+  `/api/operator/v1/billing-entities/default` reuses the canonical single-entity handler: viewers
+  can read the detailed billing profile, while same-origin/CSRF-checked admins can update the
+  supported legal, address, payment-term, numbering, locale, and document defaults. Additional
+  entities, e-invoicing, tax assignment, and other side-effecting features remain unavailable.
+  `/api/operator/v1/payment-receipts` exposes tenant-scoped list/show metadata only. It suppresses
+  document URLs and rejects every mutation, keeping PDF generation/download and email delivery out
+  of the operator Worker until those actions receive a separate approved contract.
+  `/api/operator/v1/taxes` reuses the canonical D1 and Queue-backed manual-tax catalog: viewers can
+  list/show active taxes, while same-origin/CSRF-checked admins can create, edit, and terminate them.
+  `/api/operator/v1/add-ons` does the same for retained fixed-price add-ons while preserving
+  currency/in-use guards and keeping unsupported tax-code assignment unavailable.
+  `/api/operator/v1/customers` reuses the canonical core customer list/show/upsert handler. Viewers
+  receive tenant-scoped rows and admins can create/edit identity, email, currency, timezone, and
+  payment-term fields. The BFF itself rejects provider, dunning, metadata, custom-section,
+  tax-target, and deletion operations until those advanced workflows are separately admitted.
+  `/api/operator/v1/coupons`, `/api/operator/v1/applied-coupons`, and the customer-nested applied-
+  coupon route form one complete bounded family. Viewers can inspect immutable coupon definitions
+  and customer applications; admins can create fixed or percentage coupons, apply them, and
+  terminate active applications. The canonical handler retains D1/Queue persistence and uses the
+  API Worker’s `BILLING_ACCOUNTS` Durable Object through a cross-script binding so apply/terminate
+  commands keep their existing idempotency and per-customer serialization. Coupon creation now
+  admits one tenant-validated plan or billable-metric target family and persists exact per-line
+  discount allocations; coupon edit/delete and customer targeting remain unavailable.
+  `/api/operator/v1/plans` and its nested `/fixed-charges` routes provide the next bounded catalog
+  family. Viewers can inspect the active core plan/fixed-charge graph; admins can create, edit, and
+  delete core recurring plans and add-on-backed fixed charges. The BFF rejects embedded usage
+  charges, thresholds, commitments, taxes, and metadata until those editors are separately mapped.
+  Deleting an in-use plan retains the canonical durable deletion task and reaches the API Worker’s
+  `PLAN_DELETION_WORKFLOW` through a cross-script Workflow binding; unused plans retire
+  transactionally. The fixed-charge path retains canonical cascade, in-use, pricing-model, and
+  immediate-unit billing guards.
+  `/api/operator/v1/subscriptions` completes the core subscription family. Viewers receive
+  tenant-scoped list/show projections; admins can create or replay a subscription, change its plan,
+  update its name/start/end and persisted termination actions, cancel a pending generation, or
+  terminate an active generation with explicit final-invoice and prepaid-credit choices. These
+  routes reuse the canonical D1/Queue implementation and the existing `BILLING_ACCOUNTS` Durable
+  Object reservation for termination. The BFF rejects provider payment methods, invoice custom-
+  section assignment, and usage-threshold overrides until those advanced workflows are separately
+  admitted.
+  `/api/operator/v1/invoices` provides the core invoice family. Viewers can list/show tenant-scoped
+  invoices; admins can create a finalized manual one-off invoice from retained add-ons, refresh or
+  finalize a draft, and void a finalized invoice while preserving its independent payment state.
+  The BFF requires one-off creation to skip
+  provider collection and accepts tenant-validated per-fee tax targeting. PDF generation/download, payment URLs,
+  provider payment retry, and email delivery remain outside this family and unavailable until each
+  receives its own bounded operator contract.
+  `/api/operator/v1/wallets` and `/api/operator/v1/wallet-transactions` expose the core manual
+  granted-credit wallet family. Viewers can inspect wallets and their transaction ledger; admins can
+  create a wallet, grant additional credits with an idempotency key, and terminate it. Recurring
+  grants, fee/metric targeting, invoice custom sections, paid credits, and provider funding remain
+  unavailable at this boundary.
+  `/api/operator/v1/credit-notes` exposes list/show plus admin itemized creation, adjusted
+  coupon/tax estimation, customer-credit and unpaid-invoice-offset allocation, fully-unconsumed
+  credit-only voiding, and retained PDF generation/download. Creation preserves the canonical
+  idempotency-key and invoice-line validation contract. The original allocation structure is
+  rendered as fee rows and totals instead of a raw JSON editor. Provider refunds are admitted only
+  by the ledger's network-free sandbox adapter and remain disabled in the deployed operator;
+  provider actions and email remain unavailable.
+  `/api/operator/v1/payments` is a read-only settlement ledger for provider and manual payment
+  evidence. The operator BFF rejects every payment mutation; payment links, retries, and manual
+  settlement writes remain behind their existing disabled external-action gates.
+  `/api/operator/v1/quotes` and `/api/operator/v1/quote-versions` expose the retained quote REST
+  replacement: viewer list/show plus admin idempotent draft create, owner/version edits,
+  approve/void, and superseding clone. The operator surface does not invent PDF, template,
+  generation, download, email, or public-delivery behavior absent from the canonical contract.
+  `/api/operator/v1/data-exports` exposes viewer list/show plus admin idempotent CSV snapshot
+  creation for invoices, fees, credit notes, and credit-note items. Migration 0071 records exactly
+  one immutable requester principal—API key or active operator membership—without synthesizing a
+  browser credential. Creation dispatches the API Worker’s shared Document Workflow through a
+  cross-script binding; artifact download and completion email remain unavailable in the operator
+  Worker pending separate delivery contracts.
+  `/api/operator/v1/webhook-endpoints` is viewer/admin read-only while
+  `OUTBOUND_WEBHOOKS_ENABLED=0`. Endpoint creation, edits, deletion, signing-secret configuration,
+  and delivery remain unavailable; the operator browser never accepts or stores an HMAC secret.
+  `/api/operator/v1/dunning-campaigns` exposes viewer reads plus admin create/edit/delete for the
+  canonical D1 campaign policy, including organization defaults, attempt spacing, limits, and
+  currency thresholds. `/api/operator/v1/payment-requests` is read-only evidence: the operator BFF
+  rejects manual creation, so only the guarded scheduler can produce dunning requests. Provider
+  checkout remains behind `PAYMENT_MUTATIONS_ENABLED=0`, and email/link delivery remains absent.
+- Browser Rendering: deterministic invoice, payment-receipt, and credit-note PDF generation through
+  a retryable Document Workflow.
+- Operator catalog compatibility: authenticated REST create/list/show/update/delete endpoints at
+  `/api/v1/invoice_custom_sections` replace the retained operator GraphQL workflow for this
+  feature. Draft invoices refresh their snapshots; finalized invoice API/PDF output uses only the
+  immutable copy. Lago-compatible plan charge-filter list/show/create/update/delete endpoints live
+  under `/api/v1/plans/:plan_code/charges/:charge_code/filters`; mutations use optimistic charge
+  versions and transactional `charge.updated` outbox events. Subscription fixed-charge list/show/
+  update endpoints live under `/api/v1/subscriptions/:external_id/fixed_charges`; the first update
+  clones the complete active pricing graph into a hidden child plan, while later updates mutate the
+  same child fixed charge with optimistic versions and transactional outbox events. Immediate unit
+  application writes an effective-dated event for the open period; the default schedules the new
+  units at the next boundary. Catalog fixed-charge create/update and their inherited child-plan
+  cascades use the same timing contract. In-arrears prorated charges rate the event-weighted units
+  across customer-local calendar days. Advance increases use the same local-day window, charge only
+  a positive delta against all current-period advance lines, and retain deterministic invoice IDs
+  for replay and repair. Fixed-charge-specific taxes are retained across catalog and subscription
+  override graphs, including minimum-commitment and inherited plan targets.
+- Payment requests: authenticated create/list/show and customer-nested list routes persist one
+  tenant-scoped request plus its overdue finalized invoices and `payment_request.created` outbox
+  event in a guarded D1 batch. The amount is the exact remaining balance across one currency.
+  Signed Authorize.Net callbacks and signed Easy Pay Direct webhooks reconcile to one request-level
+  provider payment and immutable per-invoice allocations. Easy Pay Direct sandbox checkout uses
+  documented synthetic tokens; live card fields use hosted Collect.js iframes and Lago receives
+  only the one-use token. Settlement requires the provider amount,
+  request amount, and current linked-invoice balances to agree; version guards, status monotonicity,
+  dunning-counter reset, invoice/request status changes, and outbox evidence share one atomic D1
+  batch. Those payments are visible through the retained `/api/v1/payments` list/show contract,
+  including invoice filters and multi-invoice payable metadata. A D1-backed Checkout Workflow can
+  create the matching hosted link once per request version, persist processing/success/failure
+  outcomes, and emit token-free outbox evidence. Its dispatcher and provider call both require
+  `PAYMENT_MUTATIONS_ENABLED=1`; creating the request itself never calls a provider or sends email.
+- Invoice payment retry: `POST /api/v1/invoices/:id/retry_payment` retains the pinned Authorize.Net
+  behavior without a provider call. A required `Idempotency-Key` is stored only as an
+  organization-scoped SHA-256 derivative. One version-guarded D1 batch records a pending payment
+  intent, resets a retryable finalized invoice to pending, invalidates its stale hosted-payment
+  link, and writes value-free outbox evidence. Same-key replay returns the original result, while
+  different commands racing one invoice version have exactly one winner. Payment-method overrides
+  are rejected because the retained provider uses a newly generated Accept Hosted form rather than
+  a stored method. The route remains disabled unless `PAYMENT_MUTATIONS_ENABLED=1`; the deployed
+  isolated environment keeps that flag at `0`.
+- Dunning campaigns: authenticated tenant-scoped create/list/show/update/delete routes own campaign
+  thresholds, organization defaults, customer overrides, and exclusions in D1. The hourly `:45`
+  Workflow executor creates at most one deterministic payment request per eligible customer and
+  attempt, observes full overdue-invoice totals for campaign thresholds, uses remaining balances
+  for request amounts, and respects currency, payment-processing readiness, elapsed-day spacing,
+  exclusions, and maximum attempts. It emits `dunning_campaign.finished` at the terminal attempt.
+  Each request, version-pinned invoice link, customer attempt advance, and outbox event commits in
+  one guarded D1 batch.
+  Provider checkout handoff is implemented behind the disabled mutation gate. Email/link delivery
+  remains intentionally absent, so schedule parity stays partial and all external-action gates
+  remain authoritative.
+
+No Docker, Compose, local service daemon, Rails runtime, PostgreSQL, Redis, Go/Rust subprocess, or
+OS command is required by this package.
+
+## Invoice custom-section compatibility
+
+The retained operator catalog uses authenticated tenant-scoped REST endpoints in place of its
+legacy GraphQL operations:
+
+- `POST` and `GET /api/v1/invoice_custom_sections` create and list manual sections.
+- `GET`, `PUT`, and `DELETE /api/v1/invoice_custom_sections/:code` show, update, and terminate a
+  section. Termination is a soft delete; its code may be reused by a later section.
+
+Create and update bodies use the Lago-shaped `invoice_custom_section` wrapper with `code`, `name`,
+`description`, `details`, and `display_name`. Subscription create/update and plan-replacement
+requests use the same wrapper name with selection fields:
+
+```json
+{
+  "subscription": {
+    "invoice_custom_section": {
+      "skip_invoice_custom_sections": false,
+      "invoice_custom_section_codes": ["payment-terms", "legal"]
+    }
+  }
+}
+```
+
+Unknown codes are ignored, repeated/reordered codes describe the same selection, explicit
+`skip_invoice_custom_sections: true` removes selections, and explicit false with codes replaces
+them. A codes-only subscription selection update does nothing while skip is already true; false
+re-enables selection.
+Draft invoice snapshots change only after refresh/finalization, and finalized API/PDF content does
+not follow later catalog edits.
+
+Customer create/update accepts top-level `invoice_custom_section_codes` and
+`skip_invoice_custom_sections`. An explicit code list replaces manual customer selections and
+re-enables sections; an empty list falls back to the organization's defaults. Explicit skip clears
+the customer selection and cannot be combined with a code list. Customer reads expose the resolved
+`applicable_invoice_custom_sections` without per-customer D1 queries.
+
+Because the retained Cloudflare subset currently has one billing entity per organization, its
+default selections use `GET` and `PUT` on
+`/api/v1/billing_entities/default/invoice_custom_sections` with a `billing_entity` wrapper and
+`invoice_custom_section_codes`. The invoice precedence is: an explicit subscription selection,
+then subscription skip, then customer skip, then a manual customer selection, then the organization
+default. The same projection drives recurring drafts, finalized snapshots, and one-off invoices.
+Multi-billing-entity routing and provider-created system sections remain explicitly unported.
+
+### Retained payment-provider scope
+
+The Cloudflare rewrite retains Authorize.Net and adds Easy Pay Direct as active provider adapters
+used by the pinned Lago compatibility contract. Easy Pay Direct uses Commerce customers, payment
+methods, products, orders, refunds, and signed webhook-first reconciliation. EPD Gateway remains
+only for live Collect.js Customer Vault setup. Store checkout can select it explicitly while its
+independent rollout switch remains off. Lago-managed Stripe checkout, Adyen,
+GoCardless, Cashfree, Flutterwave, and MoneyHash remain explicit `not-used` feature-inventory
+entries.
+
+The broader operator surface now includes a narrow Stripe-compatible financial-control foundation:
+an outbound refund contract exercised only with injected in-memory transports, disabled signed
+webhook ingestion for disputes/refund outcomes, lost-dispute refund exclusion, and read-only
+operator ledgers. This is preparation, not activation. Enabling it requires a separately approved
+tenant/account mapping, restricted test key, webhook secret/registration, isolated test data, and
+action-time confirmation; production and live-mode activation remain out of scope.
+
+Wallet create/update and granted wallet-transaction create accept the same
+`invoice_custom_section` attach/skip wrapper. Wallet list/show and wallet-transaction reads expose
+the persisted `applied_invoice_custom_sections` without per-row queries. These are resource API
+selections only: Lago's current paid-credit invoice service does not pass wallet resources into
+invoice section application, so this port deliberately does not add them to invoice precedence.
+
+Wallet create/update also supports one active fixed recurring granted-credit rule with either an
+interval or threshold trigger. Weekly, monthly, quarterly, semiannual, and yearly anniversaries use
+the customer's timezone, clip month-end/leap-day anchors like Lago, skip the wallet's creation day,
+and create at most one top-up per wallet/local date. Rule expiration and interval top-up retain
+Lago's hourly `:50` and `:55` schedule slots.
+
+Wallet create/update accepts `applies_to.fee_types` and tenant-local
+`applies_to.billable_metric_codes`. Invoice allocation groups tax-inclusive fee caps, drains only
+matching positive wallets in application priority order, and treats a wallet with no limitations as
+unrestricted. Charges can opt into `accepts_target_wallet`; those charges group and rate events by
+`properties.target_wallet_code`, while untargeted events remain a separate group. Explicit targets
+override normal wallet limitations, and a missing active wallet records one replay-safe
+`event.error` without rejecting the usage event. Opt-out charges ignore the property. The
+five-minute owner uses the same matcher for current-period calculator output and persisted draft
+lines, but assigns each fee wholly to its first match without capping by settled balance. Ongoing
+balance may therefore be negative; only a non-depleted to depleted transition emits
+`wallet.depleted_ongoing_balance`. A fixed threshold rule compares that projection plus
+pending credits, then atomically settles the granted lot with a rule/projection-version idempotency
+key. Per-customer batches use wallet-version guards and roll back every projection, grant, and event
+together. Rule-level custom sections remain resource-only and metadata/name are copied to generated
+transactions. Paid credits, target recurring rules, payment methods, successful-payment
+requirements, progressive billing, and dedicated-organization cadence remain explicitly
+unsupported.
+
+## Safety defaults
+
+- `PUBLIC_BASE_URL` is the isolated workers.dev hostname used to construct hosted-payment form
+  redirects; it is not a provider endpoint, credential, custom domain, or production route.
+- `PAYMENT_MUTATIONS_ENABLED=0` prevents hosted-payment token creation.
+- `EASY_PAY_DIRECT_NETWORK_MODE=disabled` and `EASY_PAY_DIRECT_LIVEMODE_ALLOWED=0` independently
+  reject EPD Commerce/Gateway calls and live-mode activation. Sandbox requires a Commerce key
+  carrying EPD's `_test_` environment marker; production requires a key carrying the
+  `_live_` marker, the separate live gate, and Gateway vault credentials. A live key can never run
+  under the sandbox flag. The account and organization mapping must match before a signed webhook
+  or test refund is accepted.
+- `PROVIDER_READS_ENABLED=0` defers provider reconciliation.
+- `STRIPE_NETWORK_MODE=enabled` permits only the retained, restricted-key Stripe TEST wallet
+  funding seam for the fixed synthetic tenant/account mapping. It does not enable general payment
+  mutations or live-mode traffic.
+- `STRIPE_WEBHOOKS_ENABLED=1` accepts only signature-verified Stripe TEST events for that exact
+  synthetic tenant mapping. Invalid signatures fail before persistence.
+- `STRIPE_LIVEMODE_ALLOWED=0` independently rejects live-mode events if webhook ingestion is later
+  misroutes one to the isolated test endpoint.
+- `OUTBOUND_WEBHOOKS_ENABLED=0` prevents endpoint creation/update and outbound delivery until an
+  approved HMAC signing secret is configured. No signing key is committed or deployed.
+- Provider credentials are secrets and are never stored in `wrangler.jsonc`.
+- The checked-in config has no production route or custom domain.
+- All fixtures are synthetic and contain no customer or production data.
+
+## Local verification
+
+When this worktree is accessed through `/Volumes/brianfarley`, run filesystem-heavy checks and
+deploys on the Mac mini's local SSD. Follow `../docs/reference/mac-mini-remote-execution.md`; do not
+build through the SMB mount.
+
+Use Node 22 or newer and pnpm 11:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm run inventory
+pnpm run check
+```
+
+`pnpm run check` validates formatting, lint rules including floating promises, the generated feature
+inventory, Wrangler-generated bindings, TypeScript, Workers-runtime tests, and a dry-run bundle.
+
+To apply migrations to a fresh local D1 directory:
+
+```sh
+wrangler d1 migrations apply serp-dev-lago-native-d1 --local \
+  --persist-to /path/on-local-disk/lago-cloudflare-d1
+```
+
+Keep Wrangler emulator state on a local-disk path. `workerd` 4.122.0 and 4.123.0 can crash before
+migration execution when persistence is placed on this mounted external workspace. This path is
+emulator state only; it is not another repository worktree and does not affect remote D1.
+
+## Non-production provisioning
+
+Wrangler automatic provisioning is intentionally configured for the isolated `serp-dev-*`
+resources. A deploy may create or bind D1, R2, Queue/DLQ, Workflows, the Worker, and the Durable
+Object namespace. Do not deploy until Wrangler identity and resource names have been reviewed.
+
+Before the first operator deployment, create the Worker ID with the fail-closed bootstrap:
+
+```sh
+wrangler deploy --config wrangler.operator-bootstrap.jsonc
+```
+
+Protect that Worker destination with the approved Cloudflare Access application and policy before
+applying the operator migrations or deploying `wrangler.operator.jsonc`. The bootstrap has no
+bindings or static assets, so it exposes neither the operator UI nor D1 while Access is being set up.
+
+The Access reconciler is read-only unless `--apply` is passed. It requires a narrowly scoped API
+token with Workers Scripts Read, Access Apps and Policies Write, and Access Organizations, Identity
+Providers, and Groups Read. Keep the token out of files and shell history:
+
+```sh
+OPERATOR_ACCESS_EMAIL=approved@example.com \
+  CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
+  node scripts/provision-operator-access.mjs --check
+
+OPERATOR_ACCESS_EMAIL=approved@example.com \
+  CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
+  node scripts/provision-operator-access.mjs --apply
+```
+
+The reconciler resolves the immutable Worker ID, preflights every required read permission before
+writing, creates only the named Worker application and its single-email 24-hour allow policy, and
+refuses configuration drift or additional policies. Its output contains the non-secret team domain
+and audience needed by `wrangler.operator.jsonc`; it never prints the API token.
+
+Do not add production routes, production provider credentials, production data, or enable payment
+mutations without the separate approval gates in the active rewrite plan.
+
+## Contract fixtures
+
+The four synthetic fixtures under `fixtures/store-new/` represent the currently verified consumer
+surface:
+
+1. `POST /api/v1/customers`
+2. `POST /api/v1/subscriptions`
+3. `GET /api/v1/invoices`
+4. `POST /api/v1/invoices/:id/payment_url`
+
+The normative money, time, pagination, error, idempotency, and aggregate-boundary rules are in
+`../docs/reference/cloudflare-native-conventions.md`. The code/config-only record of which SERP
+consumer capabilities are explicitly selected is in
+`../docs/reference/serp-enabled-lago-capabilities.md`; it deliberately does not infer production
+runtime state.
+
+`fixtures/billing/month-end-reconciliation.json` is the synthetic month-end golden contract. Its
+test closes and replays one cycle, compares precise and rounded line amounts, reconciles the line
+sum and credit/tax equation to the invoice total, proves one invoice/cycle/finalization event, and
+checks the persisted period advancement. It was extracted from the existing billing-cycle test and
+contains no production or customer data.
+
+## Document goldens
+
+`fixtures/documents/` contains synthetic invoice, payment-receipt, and credit-note PDFs, 300-DPI PNG
+pages, and a structural manifest. The fixtures exercise multi-page flow, party details, line-item
+tables, totals, immutable-version footers, and the explicit XML-disabled boundary without using
+customer data. Printable templates use an embedded CID TrueType font path; the renderer rejects
+non-portable Type 3 font output, missing expected text, non-A4 geometry, and out-of-bounds glyphs.
+
+The visual check requires Chrome or Chromium, Poppler's `pdftoppm`, and Python with `pypdf` and
+`pdfplumber`. Override discovery with `PDF_GOLDEN_CHROME`, `PDF_GOLDEN_PDFTOPPM`, or
+`PDF_GOLDEN_PYTHON` when those executables are outside `PATH`.
+
+```sh
+pnpm run documents:golden
+```
+
+When an intentional template change is approved, regenerate with
+`pnpm run documents:golden:update`, inspect every resulting PNG page, and then rerun the check.
+
+`store-new` and `serp-auth` are not modified by this branch.
