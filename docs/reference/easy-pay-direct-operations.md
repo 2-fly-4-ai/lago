@@ -82,7 +82,7 @@ The full staged acceptance record is
 7. Widen in bounded cohorts only after the prior cohort has no unexplained mismatch or duplicate.
 8. Retain legacy Lago/containers through two production billing cycles and the rollback window.
 
-Do not begin with the entire adult catalog in production. The 988-product assignment is staging
+Do not begin with the entire adult catalog in production. The 986-product assignment is staging
 coverage; production should start with one product and widen deliberately.
 
 ## Immediate rollback

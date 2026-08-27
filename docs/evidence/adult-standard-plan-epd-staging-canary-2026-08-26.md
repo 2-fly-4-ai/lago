@@ -1,21 +1,24 @@
 # Adult standard-plan EPD staging canary
 
 Date: 2026-08-26
+Final routing-integrity verification: 2026-08-28
 
 ## Scope
 
-- Store branch: `codex/lago-cloudflare-cutover`
+- Store branch: `main` (final routing-integrity work prepared on `codex/lago-routing-integrity`)
 - Lago branch: `codex/cloudflare-native-rewrite`
 - Staging only; no live cards, production data, production routes, or production provider calls.
-- The Store catalog selects the 988 live adult products in the standard $9 one-time plan cohort.
+- The Store catalog selects the 986 currently classified adult products in the standard $9
+  one-time plan cohort.
 - Safe products and adult Plus/Premium products remain on the existing Stripe path.
 
 ## Deployed versions
 
-- `serp-dev-safe-store`: `009dd813-9256-4175-9fce-96a7e479f790`
-- `serp-dev-lago-native`: `5521e5f1-3284-4320-8644-1aa71ef894de`
-- `serp-dev-lago-operator`: `21ed6c7e-49c4-4d57-923d-72470e5384ff`
-- `serp-dev-lago-portal`: `6bfeedea-636d-4af4-bcf0-3e20573ab3a0`
+- `serp-dev-main-store`: `a55e1e1a-f6f9-49c4-aea5-40991e49ffa7`
+- `serp-dev-safe-store`: `b32cfb54-38a5-40f5-b959-8d9ece53b420`
+- `serp-dev-lago-native`: `ad411e3b-554e-4e20-b5d0-636d46035c11`
+- `serp-dev-lago-operator`: `b3d1ac8c-9a9d-4dc0-be32-accbd9dddce1`
+- `serp-dev-lago-portal`: `b6c3e2a2-4ca4-44dc-8a55-5309d3d3e839`
 
 ## Browser verification
 
@@ -38,7 +41,10 @@ Control checks stayed on Stripe Sandbox:
 
 The safe control initially exposed an adult-classification bug. Store commit `8976de4fa` fixed the
 route to require both a valid signed standard intent and an adult catalog classification before the
-cohort route can select Lago/EPD.
+cohort route can select Lago/EPD. Final routing-integrity commit
+`c39a710eb5c0e20bdec03a9d3563d91906cad1eb` corrected the source classifications for Instagram and
+LinkedIn, regenerated both catalogs, and added a generator guard that rejects any future explicit
+safe-shared product classified as Adult.
 
 ## Automated gates
 
@@ -122,7 +128,7 @@ the canonical API result at 900 paid and zero due.
 - The broad Store app suite passed all 591 runnable tests after the sparse worktree materialized the
   tracked `serp-apps` and `pornodownloaders` product JSON source directories. Four live/manual tests
   remained intentionally skipped. No validator was weakened and no catalog data was fabricated.
-- The adult-standard dry-run resolved 988 current live products with zero pending test selections;
+- The adult-standard dry-run resolved 986 current live products with zero pending test selections;
   JustForFans Plus and OnlyFans Premium remained excluded.
 - A safe `skool-video-downloader` control still reached Stripe test Checkout.
 - Lago `/health` and `/ready`, and Store `/api/health`, returned 200.
@@ -134,3 +140,21 @@ the canonical API result at 900 paid and zero due.
 This closes the isolated staging implementation and acceptance work. Production data migration,
 production provider secrets, production routing/DNS, and the product canary activation remain a
 separate explicitly approved rollout.
+
+## Final routing-integrity closeout
+
+The corrected Store commit was merged and pushed to Store `main`, then both staging storefront
+Workers were deployed from that exact revision. A fresh browser pass verified that LinkedIn
+Downloader renders as `Social Media`, does not render an Adult classification, and opens Stripe
+Sandbox with the existing payment-method choices. Pornhub Downloader renders as `Adult` and opens
+the real EPD test hosted card form with `EPD TEST MODE`, a one-time $9 total, three Collect.js
+iframes, and no synthetic-outcome control. No additional payment was submitted during this pass;
+the successful EPD test transaction and replay evidence above remain the provider acceptance.
+
+Post-deploy checks found healthy main Store, safe Store, Lago health, and Lago readiness responses.
+Lago reported no pending migrations. `PRAGMA foreign_key_check` returned no rows for Lago, main
+Store, or safe Store D1. Unauthenticated operator access redirected to Cloudflare Access (`302`),
+and unauthenticated Lago API data remained denied (`401`). The Store full gate passed 133 files with
+592 tests (four files/four manual tests skipped), plus typecheck, lint, formatting, builds, and the
+focused checkout/webhook suites. Lago `pnpm check` passed 72 files and 412 tests with formatting,
+lint, typecheck, generated inventories/bindings, Access tests, and all dry bundles.
