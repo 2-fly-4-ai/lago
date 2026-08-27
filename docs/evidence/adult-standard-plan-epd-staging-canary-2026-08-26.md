@@ -119,10 +119,9 @@ the canonical API result at 900 paid and zero due.
   TypeScript, 72 files / 412 tests, and all development and production dry-run builds.
 - Store core: 90 files / 561 tests passed.
 - Store checkout/billing-route/fulfillment focused suites passed; Store typecheck and lint passed.
-- The broad Store app suite passed 590 of 591 runnable tests. Its only failure is the pre-existing
-  isolated-worktree content-integrity assertion for source product JSON files that are not present
-  in this worktree; it is unrelated to the generated catalog or this checkout path and was not
-  hidden or weakened.
+- The broad Store app suite passed all 591 runnable tests after the sparse worktree materialized the
+  tracked `serp-apps` and `pornodownloaders` product JSON source directories. Four live/manual tests
+  remained intentionally skipped. No validator was weakened and no catalog data was fabricated.
 - The adult-standard dry-run resolved 988 current live products with zero pending test selections;
   JustForFans Plus and OnlyFans Premium remained excluded.
 - A safe `skool-video-downloader` control still reached Stripe test Checkout.

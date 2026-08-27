@@ -518,6 +518,9 @@ independent rollout switch remains off. Lago-managed Stripe checkout, Adyen,
 GoCardless, Cashfree, Flutterwave, and MoneyHash remain explicit `not-used` feature-inventory
 entries.
 
+Operator dashboard links, credential-name ownership, staging state, production sequencing, and
+rollback are indexed in `../docs/reference/easy-pay-direct-operations.md`.
+
 The broader operator surface now includes a narrow Stripe-compatible financial-control foundation:
 an outbound refund contract exercised only with injected in-memory transports, disabled signed
 webhook ingestion for disputes/refund outcomes, lost-dispute refund exclusion, and read-only

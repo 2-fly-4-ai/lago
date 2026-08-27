@@ -11,6 +11,8 @@ remains useful, but SERP-specific decisions must be recorded in this repository.
 - [QUALITY.md](QUALITY.md) — proportional verification and submodule checks.
 - [architecture.md](architecture.md) — existing Lago service and worker architecture.
 - [dev_environment.md](dev_environment.md) — Docker development workflow.
+- [reference/easy-pay-direct-operations.md](reference/easy-pay-direct-operations.md) — EPD and Lago
+  dashboards, ownership, configuration names, staging posture, rollout, and rollback.
 - [plans/README.md](plans/README.md) — canonical dated plan lifecycle.
 
 Implementation documentation inside `api/` and `front/` belongs to those submodule histories. A
