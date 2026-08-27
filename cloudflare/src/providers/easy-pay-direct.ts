@@ -7,6 +7,8 @@ const PAYMENT_API_URL = "https://secure.easypaydirectgateway.com/api/transact.ph
 const COLLECT_JS_URL = "https://secure.easypaydirectgateway.com/token/Collect.js";
 const MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024;
 const CHECKOUT_TTL_SECONDS = 20 * 60;
+const INTERNAL_CHECKOUT_COPY =
+  /\b(?:synthetic|sandbox|internal qa|test fixture|product canary)\b|routed through lago/iu;
 
 export type EasyPayDirectEnv = Pick<
   Env,
@@ -366,9 +368,16 @@ function renderEasyPayDirectPaymentForm(
   const submissionPath = synthetic
     ? "/easy_pay_direct/sandbox_tool"
     : "/easy_pay_direct/payment_form";
-  const title = escapeHtml(presentation?.title ?? "Synthetic sandbox QA");
-  const description = presentation?.description
-    ? `<p class="product-description">${escapeHtml(presentation.description)}</p>`
+  const title = escapeHtml(
+    presentation
+      ? (customerFacingCheckoutCopy(presentation.title) ?? "SERP App Plan")
+      : "Synthetic sandbox QA",
+  );
+  const customerDescription = presentation
+    ? customerFacingCheckoutCopy(presentation.description)
+    : null;
+  const description = customerDescription
+    ? `<p class="product-description">${escapeHtml(customerDescription)}</p>`
     : "";
   const interval = intervalLabel(presentation?.interval ?? null);
   const purchaseVerb = interval ? "Subscribe to" : "Buy";
@@ -388,7 +397,7 @@ function renderEasyPayDirectPaymentForm(
       ? `<div class="total-row discount"><span>Discounts &amp; credits</span><strong>−${formatCheckoutMoney(presentation.creditsMinor, presentation.currency)}</strong></div>`
       : "";
   const summary = presentation
-    ? `<section class="summary-panel"><div class="summary-inner"><a class="back-link" href="javascript:history.back()" aria-label="Go back">← <img class="brand-mark" src="https://apps.serp.co/logo.svg" alt="SERP"></a><p class="summary-kicker">${purchaseVerb} ${title}</p><div class="price"><span>${amount}</span>${interval ? `<small>per<br>${escapeHtml(interval)}</small>` : ""}</div><div class="product-line"><div><strong>${title}</strong>${description}<span class="billing-note">${interval ? `Billed ${escapeHtml(presentation.interval ?? "")}` : "One-time payment"}</span></div><strong>${subtotal}</strong></div><div class="totals"><div class="total-row"><span>Subtotal</span><strong>${subtotal}</strong></div>${creditRow}${taxRow}<div class="total-row due"><span>Total due today</span><strong>${amount}</strong></div></div><div class="route-note"><strong>Product canary</strong><span>This checkout is routed through Lago and Easy Pay Direct. Other SERP products continue using the existing Stripe checkout.</span></div></div></section>`
+    ? `<section class="summary-panel"><div class="summary-inner"><a class="back-link" href="javascript:history.back()" aria-label="Go back">← <img class="brand-mark" src="https://apps.serp.co/logo.svg" alt="SERP"></a><p class="summary-kicker">${purchaseVerb} ${title}</p><div class="price"><span>${amount}</span>${interval ? `<small>per<br>${escapeHtml(interval)}</small>` : ""}</div><div class="product-line"><div><strong>${title}</strong>${description}<span class="billing-note">${interval ? `Billed ${escapeHtml(presentation.interval ?? "")}` : "One-time payment"}</span></div><strong>${subtotal}</strong></div><div class="totals"><div class="total-row"><span>Subtotal</span><strong>${subtotal}</strong></div>${creditRow}${taxRow}<div class="total-row due"><span>Total due today</span><strong>${amount}</strong></div></div></div></section>`
     : `<section class="summary-panel"><div class="summary-inner"><span class="brand">SERP</span><p class="summary-kicker">Internal payment testing</p><div class="price"><span>QA</span></div><div class="route-note"><strong>Synthetic outcomes only</strong><span>No provider card form is used on this internal surface.</span></div></div></section>`;
   const contact = presentation
     ? `<section class="form-section"><h2>Contact</h2><label class="field-label" for="email">Email</label><input id="email" class="input" type="email"${presentation.customerEmail ? ` value="${escapeHtml(presentation.customerEmail)}" readonly aria-readonly="true"` : ' placeholder="you@example.com" autocomplete="email" required maxlength="254"'}><p class="field-help">${presentation.customerEmail ? "This email is locked to the signed checkout." : "Your receipt and product access will be linked to this email."}</p></section>`
@@ -422,6 +431,11 @@ function intervalLabel(interval: string | null): string | null {
       interval as "weekly" | "monthly" | "quarterly" | "yearly"
     ] ?? interval
   );
+}
+
+function customerFacingCheckoutCopy(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized && !INTERNAL_CHECKOUT_COPY.test(normalized) ? normalized : null;
 }
 
 export async function chargeEasyPayDirectGatewayTestToken(

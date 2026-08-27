@@ -19,7 +19,7 @@ import {
 const providerEnv = {
   EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_test_secret",
   EASY_PAY_DIRECT_SECURITY_KEY: "synthetic-security-key",
-  EASY_PAY_DIRECT_TOKENIZATION_KEY: "synthetic-tokenization-key",
+  EASY_PAY_DIRECT_TOKENIZATION_KEY: "test-tokenization-key",
   EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET: "synthetic-signing-secret-with-enough-entropy",
   EASY_PAY_DIRECT_NETWORK_MODE: "test",
   EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
@@ -94,11 +94,12 @@ describe("Easy Pay Direct provider", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(body).toContain("card_visa");
     expect(body).toContain("Internal payment testing");
-    expect(body).not.toContain("synthetic-tokenization-key");
+    expect(body).toContain("Synthetic outcomes only");
+    expect(body).not.toContain("test-tokenization-key");
     expect(body).not.toContain("Collect.js");
   });
 
-  it("renders hosted EPD card fields for the product canary and never exposes synthetic outcomes", async () => {
+  it("renders hosted EPD card fields without exposing internal routing or QA language", async () => {
     const now = Date.parse("2026-08-22T00:00:00.000Z");
     const checkout = await createEasyPayDirectCheckoutUrl(
       gatewayTestEnv,
@@ -118,7 +119,7 @@ describe("Easy Pay Direct provider", () => {
         taxMinor: 0,
         creditsMinor: 1850,
         currency: "USD",
-        customerEmail: "synthetic@example.test",
+        customerEmail: "customer@example.test",
       },
     );
     const body = await response.text();
@@ -130,7 +131,7 @@ describe("Easy Pay Direct provider", () => {
       "https://applepay.cdn-apple.com",
     );
     expect(body).toContain("Collect.js");
-    expect(body).toContain("synthetic-tokenization-key");
+    expect(body).toContain("test-tokenization-key");
     expect(body).toContain('id="ccnumber"');
     expect(body).toContain('id="ccexp"');
     expect(body).toContain('id="cvv"');
@@ -148,16 +149,18 @@ describe("Easy Pay Direct provider", () => {
     expect(body).toContain("$18.50");
     expect(body).toContain("$37.00");
     expect(body).toContain("Discounts &amp; credits");
-    expect(body).toContain("synthetic@example.test");
+    expect(body).toContain("customer@example.test");
     expect(body).toContain("https://apps.serp.co/legal/terms");
     expect(body).toContain("https://apps.serp.co/privacy");
     expect(body).toContain("terms_accepted");
-    expect(body).toContain("Other SERP products continue using the existing Stripe checkout");
     expect(body).toContain('src="https://apps.serp.co/logo.svg"');
     expect(body).toContain(".hosted-field iframe");
     expect(body).toContain('id="pay" class="pay-button" type="button" disabled');
     expect(body).not.toContain("card_visa");
     expect(body).not.toContain("Sandbox outcome");
+    expect(body).not.toMatch(
+      /Synthetic outcomes|Internal payment testing|Product canary|routed through Lago/iu,
+    );
   });
 
   it("labels one-time product checkouts as purchases instead of subscriptions", async () => {
@@ -173,7 +176,7 @@ describe("Easy Pay Direct provider", () => {
       now,
       {
         title: "Synthetic Store App Plan",
-        description: "One SERP app.",
+        description: "Synthetic-only Store fixture.",
         interval: "one_time",
         amountMinor: 900,
         subtotalMinor: 900,
@@ -184,9 +187,12 @@ describe("Easy Pay Direct provider", () => {
       },
     );
     const body = await response.text();
-    expect(body).toContain("Buy Synthetic Store App Plan");
+    expect(body).toContain("Buy SERP App Plan");
     expect(body).toContain("One-time payment");
-    expect(body).not.toContain("Subscribe to Synthetic Store App Plan");
+    expect(body).not.toContain("Subscribe to SERP App Plan");
+    expect(body).not.toMatch(
+      /Synthetic|Sandbox outcome|Internal payment testing|Product canary|routed through Lago/iu,
+    );
   });
 
   it("collects an email on the provider checkout when the Store customer is anonymous", async () => {
