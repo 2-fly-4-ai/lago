@@ -78,15 +78,22 @@ export function integrationRuntimeStatuses(
     env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() === organizationId,
   );
   const easyPayDirectNetworkReady =
-    env.EASY_PAY_DIRECT_NETWORK_MODE === "test" && env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED === "0";
+    ((env.EASY_PAY_DIRECT_NETWORK_MODE === "test" ||
+      env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test") &&
+      env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED === "0") ||
+    (env.EASY_PAY_DIRECT_NETWORK_MODE === "production" &&
+      env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED === "1");
+  const easyPayDirectEnvironment =
+    env.EASY_PAY_DIRECT_NETWORK_MODE === "production" ? "production" : "sandbox";
 
   return [
-    runtimeStatus("stripe", stripeSecretReady, stripeNetworkReady, paymentWritesEnabled),
+    runtimeStatus("stripe", stripeSecretReady, stripeNetworkReady, paymentWritesEnabled, "sandbox"),
     runtimeStatus(
       "easy_pay_direct",
       easyPayDirectSecretReady,
       easyPayDirectNetworkReady,
       paymentWritesEnabled,
+      easyPayDirectEnvironment,
     ),
   ];
 }
@@ -96,6 +103,7 @@ function runtimeStatus(
   secretReady: boolean,
   networkReady: boolean,
   paymentWritesEnabled: boolean,
+  environment: Exclude<ProviderRuntimeStatus["environment"], null>,
 ): ProviderRuntimeStatus {
   if (!secretReady || !networkReady) {
     return {
@@ -103,7 +111,7 @@ function runtimeStatus(
       connectionState: "disconnected",
       secretReady,
       externalActionsEnabled: false,
-      environment: networkReady ? "sandbox" : null,
+      environment: networkReady ? environment : null,
       message: secretReady ? "Provider network access is disabled" : "Credentials are not ready",
     };
   }
@@ -113,8 +121,8 @@ function runtimeStatus(
       connectionState: "connected",
       secretReady: true,
       externalActionsEnabled: false,
-      environment: "sandbox",
-      message: "Sandbox connected; payment writes are paused",
+      environment,
+      message: `${environment === "production" ? "Production" : "Sandbox"} connected; payment writes are paused`,
     };
   }
   return {
@@ -122,8 +130,8 @@ function runtimeStatus(
     connectionState: "connected",
     secretReady: true,
     externalActionsEnabled: true,
-    environment: "sandbox",
-    message: "Sandbox connected; payment writes are enabled",
+    environment,
+    message: `${environment === "production" ? "Production" : "Sandbox"} connected; payment writes are enabled`,
   };
 }
 

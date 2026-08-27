@@ -564,6 +564,46 @@ describe("operator integration registry", () => {
     expect(JSON.stringify(payload)).not.toContain("synthetic-stripe-key");
     expect(JSON.stringify(payload)).not.toContain("synthetic-epd-key");
   });
+
+  it("reports a live EPD adapter as production without exposing credentials", async () => {
+    const organization = await createOrganization("integration-runtime-production");
+    const runtimeStatuses = integrationRuntimeStatuses(
+      {
+        EASY_PAY_DIRECT_NETWORK_MODE: "production",
+        EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+        EASY_PAY_DIRECT_COMMERCE_API_KEY: "synthetic-epd-live-key",
+        EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET: "synthetic-checkout-secret",
+        EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY: "synthetic-webhook-key",
+        EASY_PAY_DIRECT_ACCOUNT_CODE: "easy-pay-direct",
+        EASY_PAY_DIRECT_ORGANIZATION_ID: organization.id,
+        PAYMENT_MUTATIONS_ENABLED: "1",
+      } as Env,
+      organization.id,
+    );
+    const response = await handleOperatorIntegrationsRequest(
+      new Request("https://operator.test/api/operator/v1/integrations"),
+      env.BILLING_DB,
+      organization.id,
+      "request-integration-runtime-production",
+      runtimeStatuses,
+    );
+    const payload = (await response?.json()) as {
+      integrations: Array<Record<string, unknown>>;
+    };
+    expect(payload.integrations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider_code: "easy_pay_direct",
+          status: "connected",
+          secret_ready: true,
+          external_actions_enabled: true,
+          environment: "production",
+          status_message: "Production connected; payment writes are enabled",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(payload)).not.toContain("synthetic-epd-live-key");
+  });
 });
 
 describe("operator pricing units and alerts", () => {
