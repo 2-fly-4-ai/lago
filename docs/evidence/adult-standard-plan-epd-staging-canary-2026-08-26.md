@@ -16,7 +16,7 @@ Final routing-integrity verification: 2026-08-28
 
 - `serp-dev-main-store`: `a55e1e1a-f6f9-49c4-aea5-40991e49ffa7`
 - `serp-dev-safe-store`: `b32cfb54-38a5-40f5-b959-8d9ece53b420`
-- `serp-dev-lago-native`: `ad411e3b-554e-4e20-b5d0-636d46035c11`
+- `serp-dev-lago-native`: `9dc31222-5f13-460f-a93f-e8cd534d09ae`
 - `serp-dev-lago-operator`: `b3d1ac8c-9a9d-4dc0-be32-accbd9dddce1`
 - `serp-dev-lago-portal`: `b6c3e2a2-4ca4-44dc-8a55-5309d3d3e839`
 
@@ -30,8 +30,9 @@ hosted test card form as a one-time `$9.00` purchase:
 - `rule34-video-downloader`
 - `zzcartoon-downloader`
 
-Each page displayed `EPD TEST MODE`, real hosted card fields, `One-time payment`, and the corrected
-`Buy Synthetic Store App Plan` heading. No card was submitted.
+Each page displayed `EPD TEST MODE`, real hosted card fields, and `One-time payment`. The final
+customer-facing copy closeout replaced the fixture-derived heading with `Buy SERP App Plan`. No
+card was submitted.
 
 Control checks stayed on Stripe Sandbox:
 
@@ -80,6 +81,7 @@ Lago:
 
 - `e802ac2` — label one-time EPD purchases truthfully
 - `f87f2a5` — scope the upgrade credit ownership assertion
+- `4882267` — remove internal routing and QA language from customer checkouts
 
 Production routing remains unchanged. Moving any product cohort beyond staging remains a separate
 canary decision.
@@ -158,3 +160,16 @@ and unauthenticated Lago API data remained denied (`401`). The Store full gate p
 592 tests (four files/four manual tests skipped), plus typecheck, lint, formatting, builds, and the
 focused checkout/webhook suites. Lago `pnpm check` passed 72 files and 412 tests with formatting,
 lint, typecheck, generated inventories/bindings, Access tests, and all dry bundles.
+
+## Customer-facing copy closeout
+
+Lago staging API version `9dc31222-5f13-460f-a93f-e8cd534d09ae` removed the customer-visible
+`Product canary` routing explanation and added a defensive checkout-copy filter for internal fixture
+terms. A fresh Pornhub Downloader staging checkout displayed `Buy SERP App Plan`, `$9.00`,
+`One-time payment`, the staging-only `EPD TEST MODE` warning, and three hosted EPD card-field
+iframes. It contained none of `synthetic`, `Product canary`, `routed through Lago`, `Internal
+payment testing`, or `Sandbox outcome`.
+
+The separate internal EPD QA tool intentionally retains its synthetic-outcome wording. No payment
+details were entered and no transaction was submitted during this verification. Production was not
+deployed or changed.
