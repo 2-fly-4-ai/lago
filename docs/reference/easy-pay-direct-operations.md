@@ -7,7 +7,10 @@ data, webhook payloads, customer records, or signed checkout links to this repos
 ## Operator destinations
 
 - SERP Lago staging dashboard: <https://serp-dev-lago-operator.serpcompany.workers.dev/>
+- SERP Lago production dashboard: <https://serp-prod-lago-operator.serpcompany.workers.dev/>
 - EPD Gateway merchant login: <https://secure.easypaydirectgateway.com/merchants/login.php>
+- Production webhook destination:
+  <https://serp-prod-lago-native.serpcompany.workers.dev/webhooks/easy_pay_direct/org-serp-billing>
 - EPD Gateway testing reference:
   <https://secure.easypaydirectgateway.com/merchants/resources/integration/integration_portal.php#testing>
 - EPD Collect.js reference:
