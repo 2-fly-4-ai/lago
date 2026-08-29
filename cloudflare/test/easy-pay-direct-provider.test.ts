@@ -406,21 +406,22 @@ describe("Easy Pay Direct provider", () => {
       EASY_PAY_DIRECT_NETWORK_MODE: "production",
       EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
     } satisfies EasyPayDirectEnv;
+    let submittedBillingId = "";
     const providerFetch = vi.fn<typeof fetch>(async (_url, init) => {
       const body = new URLSearchParams(String(init?.body));
       expect(body.get("customer_vault")).toBe("add_customer");
       expect(body.get("customer_vault_id")).toBeNull();
-      expect(body.get("billing_id")).toBe("billing-1");
+      submittedBillingId = body.get("billing_id") ?? "";
+      expect(submittedBillingId).toMatch(/^[a-f0-9]{32}$/u);
       expect(body.get("payment_token")).toBe("token-1");
       return new Response("response=1&responsetext=Approved&customer_vault_id=vault-1");
     });
-    await expect(
-      vaultEasyPayDirectCard(
-        liveEnv,
-        { paymentToken: "token-1", billingId: "billing-1" },
-        providerFetch,
-      ),
-    ).resolves.toEqual({ customerVaultId: "vault-1", billingId: "billing-1" });
+    const result = await vaultEasyPayDirectCard(
+      liveEnv,
+      { paymentToken: "token-1", billingId: "billing-1" },
+      providerFetch,
+    );
+    expect(result).toEqual({ customerVaultId: "vault-1", billingId: submittedBillingId });
     expect(providerFetch).toHaveBeenCalledOnce();
   });
 
@@ -431,27 +432,65 @@ describe("Easy Pay Direct provider", () => {
       EASY_PAY_DIRECT_NETWORK_MODE: "production",
       EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
     } satisfies EasyPayDirectEnv;
+    let submittedBillingId = "";
     const providerFetch = vi.fn<typeof fetch>(async (_url, init) => {
       const body = new URLSearchParams(String(init?.body));
       expect(body.get("customer_vault")).toBe("add_billing");
       expect(body.get("customer_vault_id")).toBe("vault-1");
-      expect(body.get("billing_id")).toBe("billing-2");
+      submittedBillingId = body.get("billing_id") ?? "";
+      expect(submittedBillingId).toMatch(/^[a-f0-9]{32}$/u);
       expect(body.get("payment_token")).toBe("token-2");
       return new Response(
-        "response=1&responsetext=Approved&customer_vault_id=vault-1&billing_id=billing-2",
+        `response=1&responsetext=Approved&customer_vault_id=vault-1&billing_id=${submittedBillingId}`,
       );
     });
+    const result = await vaultEasyPayDirectCard(
+      liveEnv,
+      {
+        paymentToken: "token-2",
+        billingId: "billing-2",
+        existingCustomerVaultId: "vault-1",
+      },
+      providerFetch,
+    );
+    expect(result).toEqual({ customerVaultId: "vault-1", billingId: submittedBillingId });
+    expect(providerFetch).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a definitive gateway vault rejection without exposing provider text", async () => {
+    const liveEnv = {
+      ...providerEnv,
+      EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
+      EASY_PAY_DIRECT_NETWORK_MODE: "production",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+    } satisfies EasyPayDirectEnv;
+    const providerFetch = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          "response=3&responsetext=Service+Unavailable&response_code=300&transactionid=0&refid=ref-123",
+        ),
+    );
+
     await expect(
       vaultEasyPayDirectCard(
         liveEnv,
-        {
-          paymentToken: "token-2",
-          billingId: "billing-2",
-          existingCustomerVaultId: "vault-1",
-        },
+        { paymentToken: "token-rejected", billingId: "billing-rejected" },
         providerFetch,
       ),
-    ).resolves.toEqual({ customerVaultId: "vault-1", billingId: "billing-2" });
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "300",
+      message:
+        "Payment details could not be saved. No charge was made. Please start a new checkout and try again.",
+      details: {
+        provider: "easy_pay_direct_gateway",
+        phase: "vault",
+        definitive: true,
+        providerResponseCode: "300",
+        providerResponseText: "Service Unavailable",
+        providerReferenceId: "ref-123",
+      },
+    });
     expect(providerFetch).toHaveBeenCalledOnce();
   });
 

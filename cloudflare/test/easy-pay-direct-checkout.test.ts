@@ -282,6 +282,58 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
     ).resolves.toEqual({ email: "guest@example.test", email_bound: 1 });
   });
 
+  it("records a definitive live gateway vault rejection as failed with no transaction", async () => {
+    const runtimeEnv = enabledEnv("production");
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const checkout = await env.BILLING_DB.prepare(
+      `SELECT payment_url FROM payment_request_checkout_intents
+       WHERE payment_request_id = ? AND provider = 'easy_pay_direct'`,
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const checkoutToken = new URL(checkout!.payment_url).searchParams.get("checkout")!;
+    const providerFetch = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          "response=3&responsetext=Service+Unavailable&response_code=300&transactionid=0&refid=ref-123",
+        ),
+    );
+
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        new Request("https://lago.test/easy_pay_direct/payment_form", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            checkout: checkoutToken,
+            payment_token: "hosted-token-live-rejected",
+            phone: "+15555550123",
+            terms_accepted: true,
+          }),
+        }),
+        runtimeEnv,
+        "request-epd-live-rejected",
+        providerFetch,
+      ),
+    ).rejects.toMatchObject({ status: 422, code: "300" });
+    expect(providerFetch).toHaveBeenCalledOnce();
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT status, provider_transaction_id, provider_response_code, failure_code,
+                failure_message
+         FROM easy_pay_direct_payment_executions WHERE payment_request_id = ?`,
+      )
+        .bind(paymentRequestId)
+        .first(),
+    ).resolves.toEqual({
+      status: "failed",
+      provider_transaction_id: null,
+      provider_response_code: "300",
+      failure_code: "300",
+      failure_message: "Service Unavailable",
+    });
+  });
+
   it("creates a sandbox Commerce order once and waits for the signed webhook before reconciling", async () => {
     const runtimeEnv = enabledEnv();
     await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
@@ -608,20 +660,22 @@ function checkoutParams() {
   };
 }
 
-function enabledEnv(mode: "test" | "gateway_test" = "test"): Env {
+function enabledEnv(mode: "test" | "gateway_test" | "production" = "test"): Env {
   return new Proxy(env, {
     get(target, property, receiver) {
       if (property === "PAYMENT_MUTATIONS_ENABLED") return "1";
       if (property === "PUBLIC_BASE_URL") return "https://lago.test";
       if (property === "EASY_PAY_DIRECT_COMMERCE_API_KEY") {
-        return "epd_synthetic_sk_test_secret";
+        return mode === "production"
+          ? "epd_synthetic_sk_live_secret"
+          : "epd_synthetic_sk_test_secret";
       }
       if (property === "EASY_PAY_DIRECT_SECURITY_KEY") return "synthetic-security-key";
       if (property === "EASY_PAY_DIRECT_TOKENIZATION_KEY") return "synthetic-tokenization-key";
       if (property === "EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET")
         return "synthetic-checkout-signing-secret";
       if (property === "EASY_PAY_DIRECT_NETWORK_MODE") return mode;
-      if (property === "EASY_PAY_DIRECT_LIVEMODE_ALLOWED") return "0";
+      if (property === "EASY_PAY_DIRECT_LIVEMODE_ALLOWED") return mode === "production" ? "1" : "0";
       if (property === "EASY_PAY_DIRECT_ACCOUNT_CODE") return "epd-synthetic";
       if (property === "EASY_PAY_DIRECT_ORGANIZATION_ID") return organizationId;
       if (property === "EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL")

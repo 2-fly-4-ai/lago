@@ -69,6 +69,14 @@ export type CommerceOrder = {
   }>;
 };
 export type GatewayVaultResult = { customerVaultId: string; billingId: string };
+export type GatewayVaultFailureDetails = {
+  provider: "easy_pay_direct_gateway";
+  phase: "vault";
+  definitive: boolean;
+  providerResponseCode: string | null;
+  providerResponseText: string;
+  providerReferenceId: string | null;
+};
 export type GatewayTransactionResult = {
   id: string | null;
   status: "succeeded" | "failed" | "unknown";
@@ -686,6 +694,10 @@ export async function vaultEasyPayDirectCard(
     );
   }
   validateIdentifier(input.billingId, "billingId");
+  // NMI/EPD billing identifiers are limited to 32 characters. Lago's
+  // idempotency keys are UUIDs (36 characters), so derive a stable,
+  // collision-resistant gateway identifier instead of sending the UUID.
+  const gatewayBillingId = (await sha256Hex(input.billingId)).slice(0, 32);
   const securityKey = assertEasyPayDirectNetwork(env).gatewaySecurityKey;
   const existingCustomerVaultId = input.existingCustomerVaultId?.trim() || null;
   const vault = await gatewayVaultRequest(
@@ -694,13 +706,13 @@ export async function vaultEasyPayDirectCard(
       payment_token: input.paymentToken,
       customer_vault: existingCustomerVaultId ? "add_billing" : "add_customer",
       ...(existingCustomerVaultId ? { customer_vault_id: existingCustomerVaultId } : {}),
-      billing_id: input.billingId,
+      billing_id: gatewayBillingId,
     }),
     fetcher,
   );
   return {
     customerVaultId: existingCustomerVaultId ?? vault.customerVaultId,
-    billingId: vault.billingId ?? input.billingId,
+    billingId: vault.billingId ?? gatewayBillingId,
   };
 }
 
@@ -782,10 +794,24 @@ async function gatewayVaultRequest(
   const raw = await readBoundedResponse(response, MAX_PROVIDER_RESPONSE_BYTES);
   const values = new URLSearchParams(raw);
   if (!response.ok || values.get("response") !== "1") {
+    const rawStatus = values.get("response")?.trim() || null;
+    const providerResponseText =
+      values.get("responsetext")?.trim().slice(0, 500) || "EPD Gateway could not vault the card";
+    const details: GatewayVaultFailureDetails = {
+      provider: "easy_pay_direct_gateway",
+      phase: "vault",
+      definitive: response.ok && (rawStatus === "2" || rawStatus === "3"),
+      providerResponseCode: values.get("response_code")?.trim() || null,
+      providerResponseText,
+      providerReferenceId: values.get("refid")?.trim() || values.get("ref_id")?.trim() || null,
+    };
     throw new ApiError(
-      response.status === 429 ? 429 : 503,
-      values.get("response_code")?.trim() || "easy_pay_direct_gateway_vault_failed",
-      values.get("responsetext")?.trim().slice(0, 500) || "EPD Gateway could not vault the card",
+      response.status === 429 ? 429 : details.definitive ? 422 : 503,
+      details.providerResponseCode || "easy_pay_direct_gateway_vault_failed",
+      details.definitive
+        ? "Payment details could not be saved. No charge was made. Please start a new checkout and try again."
+        : "The payment provider is temporarily unavailable. No charge was made.",
+      details,
     );
   }
   const customerVaultId = values.get("customer_vault_id")?.trim();

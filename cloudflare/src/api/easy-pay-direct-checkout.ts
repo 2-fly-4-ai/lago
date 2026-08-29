@@ -11,6 +11,7 @@ import {
   findEasyPayDirectCustomerByEmail,
   resolveEasyPayDirectSuccessRedirect,
   vaultEasyPayDirectCard,
+  type GatewayVaultFailureDetails,
   type GatewayTransactionResult,
 } from "../providers/easy-pay-direct";
 import { reconcilePaymentRequest, type PendingReceipt } from "../reconciliation/authorize-net";
@@ -468,13 +469,26 @@ export async function handleEasyPayDirectCheckoutSubmission(
   } catch (error) {
     const current = await loadExecution(env.BILLING_DB, checkout.checkout_intent_id);
     if (current?.status === "processing" && !current.provider_transaction_id) {
-      await markExecution(
-        env.BILLING_DB,
-        executionId,
-        "unknown",
-        null,
-        "Provider outcome requires reconciliation",
-      );
+      const gatewayFailure = gatewayVaultFailureDetails(error);
+      if (gatewayFailure?.definitive) {
+        await markExecution(
+          env.BILLING_DB,
+          executionId,
+          "failed",
+          null,
+          gatewayFailure.providerResponseText,
+          error instanceof ApiError ? error.code : "easy_pay_direct_gateway_vault_failed",
+          gatewayFailure.providerResponseCode,
+        );
+      } else {
+        await markExecution(
+          env.BILLING_DB,
+          executionId,
+          "unknown",
+          null,
+          "Provider outcome requires reconciliation",
+        );
+      }
     }
     throw error;
   }
@@ -718,15 +732,48 @@ async function markExecution(
   status: "failed" | "unknown",
   providerOrderId: string | null,
   message: string,
+  failureCode: string | null = null,
+  providerResponseCode: string | null = null,
 ): Promise<void> {
   const timestamp = new Date().toISOString();
   await database
     .prepare(
       `UPDATE easy_pay_direct_payment_executions SET status = ?, provider_transaction_id = ?,
-       failure_message = ?, updated_at = ?, completed_at = ? WHERE id = ? AND status = 'processing'`,
+       provider_response_code = ?, failure_code = ?, failure_message = ?, updated_at = ?,
+       completed_at = ? WHERE id = ? AND status = 'processing'`,
     )
-    .bind(status, providerOrderId, message.slice(0, 500), timestamp, timestamp, executionId)
+    .bind(
+      status,
+      providerOrderId,
+      providerResponseCode,
+      failureCode,
+      message.slice(0, 500),
+      timestamp,
+      timestamp,
+      executionId,
+    )
     .run();
+}
+
+function gatewayVaultFailureDetails(error: unknown): GatewayVaultFailureDetails | null {
+  if (!(error instanceof ApiError) || !error.details || typeof error.details !== "object") {
+    return null;
+  }
+  const details = error.details as Partial<GatewayVaultFailureDetails>;
+  if (details.provider !== "easy_pay_direct_gateway" || details.phase !== "vault") return null;
+  return {
+    provider: "easy_pay_direct_gateway",
+    phase: "vault",
+    definitive: details.definitive === true,
+    providerResponseCode:
+      typeof details.providerResponseCode === "string" ? details.providerResponseCode : null,
+    providerResponseText:
+      typeof details.providerResponseText === "string"
+        ? details.providerResponseText.slice(0, 500)
+        : "EPD Gateway rejected the vault request",
+    providerReferenceId:
+      typeof details.providerReferenceId === "string" ? details.providerReferenceId : null,
+  };
 }
 
 function splitCustomerName(
