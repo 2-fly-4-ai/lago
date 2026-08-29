@@ -671,7 +671,11 @@ export async function refundEasyPayDirectOrder(
 
 export async function vaultEasyPayDirectCard(
   env: EasyPayDirectEnv,
-  input: { paymentToken: string; existingCustomerVaultId?: string | null },
+  input: {
+    paymentToken: string;
+    billingId: string;
+    existingCustomerVaultId?: string | null;
+  },
   fetcher: typeof fetch = fetch,
 ): Promise<GatewayVaultResult> {
   if (env.EASY_PAY_DIRECT_NETWORK_MODE !== "production") {
@@ -681,37 +685,23 @@ export async function vaultEasyPayDirectCard(
       "Gateway vaulting is only used for live payments",
     );
   }
+  validateIdentifier(input.billingId, "billingId");
   const securityKey = assertEasyPayDirectNetwork(env).gatewaySecurityKey;
-  let customerVaultId = input.existingCustomerVaultId?.trim() || null;
-  if (!customerVaultId) {
-    customerVaultId = (
-      await gatewayVaultRequest(
-        new URLSearchParams({
-          security_key: securityKey,
-          payment_token: input.paymentToken,
-          customer_vault: "add_customer",
-        }),
-        fetcher,
-      )
-    ).customerVaultId;
-  }
-  const addBilling = await gatewayVaultRequest(
+  const existingCustomerVaultId = input.existingCustomerVaultId?.trim() || null;
+  const vault = await gatewayVaultRequest(
     new URLSearchParams({
       security_key: securityKey,
       payment_token: input.paymentToken,
-      customer_vault: "add_billing",
-      customer_vault_id: customerVaultId,
+      customer_vault: existingCustomerVaultId ? "add_billing" : "add_customer",
+      ...(existingCustomerVaultId ? { customer_vault_id: existingCustomerVaultId } : {}),
+      billing_id: input.billingId,
     }),
     fetcher,
   );
-  if (!addBilling.billingId) {
-    throw new ApiError(
-      503,
-      "easy_pay_direct_gateway_vault_incomplete",
-      "EPD Gateway did not return a billing ID",
-    );
-  }
-  return { customerVaultId, billingId: addBilling.billingId };
+  return {
+    customerVaultId: existingCustomerVaultId ?? vault.customerVaultId,
+    billingId: vault.billingId ?? input.billingId,
+  };
 }
 
 export async function easyPayDirectPaymentTokenHash(value: string): Promise<string> {

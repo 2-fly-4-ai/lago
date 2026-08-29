@@ -313,7 +313,11 @@ export async function handleEasyPayDirectCheckoutSubmission(
         ? { customerVaultId: paymentToken, billingId: paymentToken }
         : await vaultEasyPayDirectCard(
             env,
-            { paymentToken, existingCustomerVaultId: profile?.gateway_customer_vault_id },
+            {
+              paymentToken,
+              billingId: execution.payment_method_idempotency_key,
+              existingCustomerVaultId: profile?.gateway_customer_vault_id,
+            },
             fetcher,
           );
     const names = splitCustomerName(checkout.customer_name, checkout.customer_email);

@@ -399,7 +399,7 @@ describe("Easy Pay Direct provider", () => {
     });
   });
 
-  it("uses Gateway only to create a live vault and billing id", async () => {
+  it("uses a Collect.js token exactly once to create a live vault and billing id", async () => {
     const liveEnv = {
       ...providerEnv,
       EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
@@ -408,17 +408,51 @@ describe("Easy Pay Direct provider", () => {
     } satisfies EasyPayDirectEnv;
     const providerFetch = vi.fn<typeof fetch>(async (_url, init) => {
       const body = new URLSearchParams(String(init?.body));
-      if (body.get("customer_vault") === "add_customer") {
-        return new Response("response=1&responsetext=Approved&customer_vault_id=vault-1");
-      }
+      expect(body.get("customer_vault")).toBe("add_customer");
+      expect(body.get("customer_vault_id")).toBeNull();
+      expect(body.get("billing_id")).toBe("billing-1");
+      expect(body.get("payment_token")).toBe("token-1");
+      return new Response("response=1&responsetext=Approved&customer_vault_id=vault-1");
+    });
+    await expect(
+      vaultEasyPayDirectCard(
+        liveEnv,
+        { paymentToken: "token-1", billingId: "billing-1" },
+        providerFetch,
+      ),
+    ).resolves.toEqual({ customerVaultId: "vault-1", billingId: "billing-1" });
+    expect(providerFetch).toHaveBeenCalledOnce();
+  });
+
+  it("uses a Collect.js token exactly once when adding billing to an existing vault", async () => {
+    const liveEnv = {
+      ...providerEnv,
+      EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
+      EASY_PAY_DIRECT_NETWORK_MODE: "production",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+    } satisfies EasyPayDirectEnv;
+    const providerFetch = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.get("customer_vault")).toBe("add_billing");
       expect(body.get("customer_vault_id")).toBe("vault-1");
+      expect(body.get("billing_id")).toBe("billing-2");
+      expect(body.get("payment_token")).toBe("token-2");
       return new Response(
-        "response=1&responsetext=Approved&customer_vault_id=vault-1&billing_id=billing-1",
+        "response=1&responsetext=Approved&customer_vault_id=vault-1&billing_id=billing-2",
       );
     });
     await expect(
-      vaultEasyPayDirectCard(liveEnv, { paymentToken: "token-1" }, providerFetch),
-    ).resolves.toEqual({ customerVaultId: "vault-1", billingId: "billing-1" });
+      vaultEasyPayDirectCard(
+        liveEnv,
+        {
+          paymentToken: "token-2",
+          billingId: "billing-2",
+          existingCustomerVaultId: "vault-1",
+        },
+        providerFetch,
+      ),
+    ).resolves.toEqual({ customerVaultId: "vault-1", billingId: "billing-2" });
+    expect(providerFetch).toHaveBeenCalledOnce();
   });
 
   it("refunds by Commerce order id and returns the provider refund id", async () => {
