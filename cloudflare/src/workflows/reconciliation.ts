@@ -1,6 +1,9 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { reconcileAuthorizeNetReceipt } from "../reconciliation/authorize-net";
-import { reconcileEasyPayDirectExecution } from "../reconciliation/easy-pay-direct";
+import {
+  reconcileEasyPayDirectExecution,
+  reconcileEasyPayDirectReceipt,
+} from "../reconciliation/easy-pay-direct";
 import type { DomainEvent } from "../domain-events";
 import { closeBillingPeriod } from "../billing/close-period";
 import { activatePendingSubscriptions } from "../billing/activate-pending-subscriptions";
@@ -261,23 +264,26 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
       const pendingReceiptIds = await step.do("load pending provider receipts", async () => {
         if (!executors.has("reconcile_provider_receipts")) return [];
         const result = await this.env.BILLING_DB.prepare(
-          `SELECT id FROM webhook_receipts
-         WHERE provider = 'authorize_net' AND processed_at IS NULL
+          `SELECT id, provider FROM webhook_receipts
+         WHERE provider IN ('authorize_net', 'easy_pay_direct') AND processed_at IS NULL
          ORDER BY received_at ASC LIMIT 100`,
-        ).all<{ id: string }>();
-        return result.results.map((row) => row.id);
+        ).all<{ id: string; provider: "authorize_net" | "easy_pay_direct" }>();
+        return result.results;
       });
 
       let processedReceipts = 0;
       let deferredReceipts = 0;
-      for (const receiptId of pendingReceiptIds) {
+      for (const receipt of pendingReceiptIds) {
         const outcome = await step.do(
-          `reconcile provider receipt ${receiptId}`,
+          `reconcile provider receipt ${receipt.id}`,
           {
             retries: { limit: 5, delay: "10 seconds", backoff: "exponential" },
             timeout: "1 minute",
           },
-          async () => reconcileAuthorizeNetReceipt(this.env, receiptId),
+          async () =>
+            receipt.provider === "easy_pay_direct"
+              ? reconcileEasyPayDirectReceipt(this.env, receipt.id)
+              : reconcileAuthorizeNetReceipt(this.env, receipt.id),
         );
         if (outcome === "processed") processedReceipts += 1;
         else deferredReceipts += 1;
@@ -295,7 +301,8 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           const result = await this.env.BILLING_DB.prepare(
             `SELECT id FROM easy_pay_direct_payment_executions
              WHERE status IN ('processing', 'unknown')
-               AND provider_transaction_id IS NOT NULL
+               AND (provider_transaction_id IS NOT NULL
+                    OR (customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL))
              ORDER BY created_at ASC LIMIT 100`,
           ).all<{ id: string }>();
           return result.results.map((row) => row.id);

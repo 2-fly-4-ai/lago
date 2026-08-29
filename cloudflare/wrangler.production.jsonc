@@ -78,6 +78,16 @@
         "queue": "serp-prod-lago-domain-events",
       },
     ],
+    "consumers": [
+      {
+        "queue": "serp-prod-lago-domain-events",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "serp-prod-lago-domain-events-dlq",
+        "retry_delay": 30,
+      },
+    ],
   },
   "workflows": [
     {
@@ -101,4 +111,7 @@
       "class_name": "PlanDeletionWorkflow",
     },
   ],
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
 }

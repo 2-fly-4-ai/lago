@@ -239,7 +239,7 @@ export default {
         if (event.type === "authorize_net.webhook.received") {
           const outcome = await reconcileAuthorizeNetReceipt(env, event.aggregateId);
           if (outcome === "deferred") {
-            message.ack();
+            message.retry({ delaySeconds: 30 });
             continue;
           }
         }
@@ -247,7 +247,7 @@ export default {
         if (event.type === "easy_pay_direct.webhook.received") {
           const outcome = await reconcileEasyPayDirectReceipt(env, event.aggregateId);
           if (outcome === "deferred") {
-            message.ack();
+            message.retry({ delaySeconds: 30 });
             continue;
           }
         }

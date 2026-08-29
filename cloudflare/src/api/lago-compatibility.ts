@@ -153,6 +153,8 @@ export type InvoiceRow = {
   billing_entity_code: string;
   customer_id: string;
   customer_external_id: string;
+  subscription_id?: string | null;
+  external_subscription_id?: string | null;
   customer_email?: string | null;
   payment_provider: string | null;
   payment_provider_code: string | null;
@@ -1771,6 +1773,7 @@ export async function listInvoices(
   const externalCustomerId =
     url.searchParams.get("external_customer_id")?.trim() ||
     url.searchParams.get("customer_external_id")?.trim();
+  const externalSubscriptionId = url.searchParams.get("external_subscription_id")?.trim() || null;
   const billingEntityIds = [
     ...url.searchParams.getAll("billing_entity_ids[]"),
     ...url.searchParams.getAll("billing_entity_ids"),
@@ -1787,6 +1790,12 @@ export async function listInvoices(
   if (externalCustomerId) {
     predicates.push("c.external_id = ?");
     bindings.push(externalCustomerId);
+  }
+  if (externalSubscriptionId) {
+    predicates.push(
+      "EXISTS (SELECT 1 FROM subscriptions filtered_subscription WHERE filtered_subscription.id = i.subscription_id AND filtered_subscription.organization_id = i.organization_id AND filtered_subscription.external_id = ?)",
+    );
+    bindings.push(externalSubscriptionId);
   }
   if (billingEntityIds.length > 0) {
     predicates.push(`i.billing_entity_id IN (${billingEntityIds.map(() => "?").join(", ")})`);
@@ -1808,6 +1817,11 @@ export async function listInvoices(
               (SELECT code FROM billing_entities WHERE id = i.billing_entity_id)
                 AS billing_entity_code,
               i.customer_id, c.external_id AS customer_external_id,
+              i.subscription_id,
+              (SELECT external_id FROM subscriptions invoice_subscription
+               WHERE invoice_subscription.id = i.subscription_id
+                 AND invoice_subscription.organization_id = i.organization_id LIMIT 1)
+                AS external_subscription_id,
               c.payment_provider, c.payment_provider_code, i.number, i.status,
               i.payment_status, i.invoice_type, i.currency, i.subtotal_minor, i.tax_minor,
               i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
@@ -3421,6 +3435,8 @@ export async function serializeInvoice(
         payment_provider_code: invoice.payment_provider_code,
       },
     },
+    lago_subscription_id: invoice.subscription_id ?? null,
+    external_subscription_id: invoice.external_subscription_id ?? null,
     applied_invoice_custom_sections:
       appliedSections ?? (await serializeInvoiceCustomSections(database, invoice.id)),
   };

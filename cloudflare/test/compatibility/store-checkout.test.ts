@@ -175,7 +175,10 @@ describe("store-new Lago checkout compatibility", () => {
       code: "unsupported_subscription_feature",
     });
 
-    const invoiceQuery = new URLSearchParams(invoiceListQuery).toString();
+    const invoiceQuery = new URLSearchParams({
+      ...invoiceListQuery,
+      external_subscription_id: firstSubscriptionBody.subscription.external_id,
+    }).toString();
     const invoices = await SELF.fetch(`https://lago.test/api/v1/invoices?${invoiceQuery}`, {
       headers: { Authorization: authorization.Authorization },
     });
@@ -186,6 +189,7 @@ describe("store-new Lago checkout compatibility", () => {
         payment_status: string;
         status: string;
         total_due_amount_cents: number;
+        external_subscription_id: string;
       }>;
       meta: { total_count: number };
     }>();
@@ -193,6 +197,18 @@ describe("store-new Lago checkout compatibility", () => {
     expect(invoiceBody.invoices[0]).toMatchObject({
       status: "finalized",
       payment_status: "pending",
+      external_subscription_id: firstSubscriptionBody.subscription.external_id,
+    });
+    const unrelatedInvoices = await SELF.fetch(
+      `https://lago.test/api/v1/invoices?${new URLSearchParams({
+        ...invoiceListQuery,
+        external_subscription_id: "store-safe-unrelated-subscription",
+      })}`,
+      { headers: { Authorization: authorization.Authorization } },
+    );
+    await expect(unrelatedInvoices.json()).resolves.toMatchObject({
+      invoices: [],
+      meta: { total_count: 0 },
     });
     expect(invoiceBody.invoices[0]?.total_due_amount_cents).toBeGreaterThan(0);
     expect(invoiceBody.invoices[0]?.total_due_amount_cents).toBeLessThanOrEqual(1999);

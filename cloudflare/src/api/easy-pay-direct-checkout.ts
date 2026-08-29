@@ -11,6 +11,7 @@ import {
   findEasyPayDirectCustomerByEmail,
   resolveEasyPayDirectSuccessRedirect,
   vaultEasyPayDirectCard,
+  type CommerceOrder,
   type GatewayVaultFailureDetails,
   type GatewayTransactionResult,
 } from "../providers/easy-pay-direct";
@@ -37,9 +38,12 @@ type CheckoutRow = {
 
 type ExecutionRow = {
   id: string;
+  checkout_intent_id: string;
   status: "pending" | "processing" | "succeeded" | "failed" | "unknown";
   payment_token_sha256: string;
   phone_sha256: string;
+  phone_ciphertext: string | null;
+  phone_iv: string | null;
   email_sha256: string | null;
   terms_accepted_at: string | null;
   terms_version: string | null;
@@ -55,6 +59,15 @@ type ExecutionRow = {
   gateway_billing_id: string | null;
   provider_response_code: string | null;
   failure_message: string | null;
+  last_checkpoint:
+    | "created"
+    | "gateway_vaulted"
+    | "provider_customer"
+    | "provider_payment_method"
+    | "provider_product"
+    | "provider_order";
+  resume_count: number;
+  updated_at: string;
 };
 
 type CheckoutSurface = "product_checkout" | "synthetic_qa";
@@ -156,14 +169,15 @@ export async function handleEasyPayDirectCheckoutSubmission(
   const now = new Date().toISOString();
   const termsAcceptedAt = surface === "product_checkout" ? now : null;
   const termsVersion = surface === "product_checkout" ? CHECKOUT_TERMS_VERSION : null;
+  const encryptedPhone = await encryptExecutionPhone(phone, signingSecret, executionId);
   await env.BILLING_DB.prepare(
     `INSERT INTO easy_pay_direct_payment_executions
      (id, organization_id, checkout_intent_id, payment_request_id, provider_account_code,
-      request_sha256, payment_token_sha256, phone_sha256, email_sha256,
+      request_sha256, payment_token_sha256, phone_sha256, phone_ciphertext, phone_iv, email_sha256,
       terms_accepted_at, terms_version,
       customer_idempotency_key, payment_method_idempotency_key,
       product_idempotency_key, order_idempotency_key, status, created_at, updated_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
      WHERE NOT EXISTS (
        SELECT 1 FROM easy_pay_direct_payment_executions WHERE checkout_intent_id = ?
      )
@@ -178,6 +192,8 @@ export async function handleEasyPayDirectCheckoutSubmission(
       checkout.request_sha256,
       paymentTokenHash,
       phoneHash,
+      encryptedPhone.ciphertext,
+      encryptedPhone.iv,
       emailHash,
       termsAcceptedAt,
       termsVersion,
@@ -190,11 +206,11 @@ export async function handleEasyPayDirectCheckoutSubmission(
       checkout.checkout_intent_id,
     )
     .run();
-  let execution = await loadExecution(env.BILLING_DB, checkout.checkout_intent_id);
+  const execution = await loadExecution(env.BILLING_DB, checkout.checkout_intent_id);
   if (!execution || execution.id !== executionId)
     throw new ApiError(409, "easy_pay_direct_checkout_conflict", "Checkout was already submitted");
   if (
-    execution.payment_token_sha256 !== paymentTokenHash ||
+    (execution.payment_token_sha256 !== paymentTokenHash && !execution.customer_vault_id) ||
     execution.phone_sha256 !== phoneHash ||
     execution.email_sha256 !== emailHash
   ) {
@@ -259,12 +275,18 @@ export async function handleEasyPayDirectCheckoutSubmission(
   }
   if (execution.status === "succeeded")
     return successResponse(execution.provider_transaction_id, requestId, true, returnTo);
-  if (execution.status === "processing" && execution.provider_transaction_id)
+  if (
+    (execution.status === "processing" || execution.status === "unknown") &&
+    execution.provider_transaction_id
+  )
     return processingResponse(execution.provider_transaction_id, requestId, true, returnTo);
   if (checkout.payment_status === "succeeded" || checkout.ready_for_payment_processing !== 1) {
     throw new ApiError(409, "easy_pay_direct_checkout_state_changed", "Checkout state changed");
   }
-  if (execution.status !== "pending") {
+  const resumableUnknown =
+    execution.status === "unknown" &&
+    Boolean(execution.customer_vault_id && execution.gateway_billing_id);
+  if (execution.status !== "pending" && !resumableUnknown) {
     throw new ApiError(
       409,
       `easy_pay_direct_${execution.status}`,
@@ -272,7 +294,12 @@ export async function handleEasyPayDirectCheckoutSubmission(
     );
   }
   const claimed = await env.BILLING_DB.prepare(
-    "UPDATE easy_pay_direct_payment_executions SET status = 'processing', updated_at = ? WHERE id = ? AND status = 'pending'",
+    `UPDATE easy_pay_direct_payment_executions
+     SET status = 'processing', completed_at = NULL, failure_code = NULL, failure_message = NULL,
+         resume_count = resume_count + CASE WHEN status = 'unknown' THEN 1 ELSE 0 END,
+         updated_at = ?
+     WHERE id = ? AND status IN ('pending', 'unknown')
+       AND (status = 'pending' OR (customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL))`,
   )
     .bind(new Date().toISOString(), executionId)
     .run();
@@ -308,116 +335,11 @@ export async function handleEasyPayDirectCheckoutSubmission(
       );
     }
 
-    const profile = await loadProfile(env.BILLING_DB, checkout);
-    const vault =
-      surface === "synthetic_qa" || env.EASY_PAY_DIRECT_NETWORK_MODE === "test"
-        ? { customerVaultId: paymentToken, billingId: paymentToken }
-        : await vaultEasyPayDirectCard(
-            env,
-            {
-              paymentToken,
-              billingId: execution.payment_method_idempotency_key,
-              existingCustomerVaultId: profile?.gateway_customer_vault_id,
-            },
-            fetcher,
-          );
-    const names = splitCustomerName(checkout.customer_name, checkout.customer_email);
-    let providerCustomerId = profile?.provider_customer_id ?? null;
-    let providerPaymentMethodId: string | null = null;
-    if (!providerCustomerId) {
-      const existingCustomer = await findEasyPayDirectCustomerByEmail(
-        env,
-        checkout.customer_email,
-        fetcher,
-      );
-      if (existingCustomer) {
-        providerCustomerId = existingCustomer.id;
-      } else {
-        const customer = await createEasyPayDirectCustomer(
-          env,
-          {
-            email: checkout.customer_email,
-            firstName: names.firstName,
-            lastName: names.lastName,
-            phone,
-            gatewayVaultId: vault.customerVaultId,
-            idempotencyKey: execution.customer_idempotency_key,
-            metadata: {
-              lago_customer_id: checkout.customer_id,
-              lago_external_customer_id: checkout.external_customer_id,
-            },
-          },
-          fetcher,
-        );
-        providerCustomerId = customer.id;
-        providerPaymentMethodId = customer.default_payment_method ?? null;
-      }
-    }
-    if (!providerPaymentMethodId) {
-      providerPaymentMethodId = (
-        await addEasyPayDirectPaymentMethod(
-          env,
-          {
-            customerId: providerCustomerId,
-            billingId: vault.billingId,
-            idempotencyKey: execution.payment_method_idempotency_key,
-          },
-          fetcher,
-        )
-      ).id;
-    }
-    await upsertProfile(env.BILLING_DB, checkout, {
-      providerCustomerId,
-      providerPaymentMethodId,
-      gatewayCustomerVaultId: vault.customerVaultId,
-      gatewayBillingId: vault.billingId,
-    });
-    await env.BILLING_DB.prepare(
-      `UPDATE easy_pay_direct_payment_executions
-       SET provider_customer_id = ?, provider_payment_method_id = ?, customer_vault_id = ?,
-           gateway_billing_id = ?, updated_at = ? WHERE id = ? AND status = 'processing'`,
-    )
-      .bind(
-        providerCustomerId,
-        providerPaymentMethodId,
-        vault.customerVaultId,
-        vault.billingId,
-        new Date().toISOString(),
-        executionId,
-      )
-      .run();
-
-    execution = (await loadExecution(env.BILLING_DB, checkout.checkout_intent_id))!;
-    let productId = execution.provider_product_id;
-    if (!productId) {
-      const product = await createEasyPayDirectProduct(
-        env,
-        {
-          paymentRequestId: checkout.payment_request_id,
-          amountMinor: checkout.amount_minor,
-          currency: checkout.currency,
-          idempotencyKey: execution.product_idempotency_key,
-        },
-        fetcher,
-      );
-      productId = product.id;
-      await env.BILLING_DB.prepare(
-        "UPDATE easy_pay_direct_payment_executions SET provider_product_id = ?, updated_at = ? WHERE id = ? AND status = 'processing'",
-      )
-        .bind(productId, new Date().toISOString(), executionId)
-        .run();
-    }
-    const order = await createEasyPayDirectOrder(
+    const order = await advanceEasyPayDirectOrder(
       env,
-      {
-        customerId: providerCustomerId,
-        paymentMethodId: providerPaymentMethodId,
-        productId,
-        paymentRequestId: checkout.payment_request_id,
-        checkoutIntentId: checkout.checkout_intent_id,
-        currency: checkout.currency,
-        idempotencyKey: execution.order_idempotency_key,
-      },
+      checkout,
+      execution,
+      { paymentToken, phone, surface },
       fetcher,
     );
     if (
@@ -458,13 +380,6 @@ export async function handleEasyPayDirectCheckoutSubmission(
         "Easy Pay Direct order requires reconciliation",
       );
     }
-    await env.BILLING_DB.prepare(
-      `UPDATE easy_pay_direct_payment_executions
-       SET provider_transaction_id = ?, provider_response_code = ?, updated_at = ?
-       WHERE id = ? AND status = 'processing'`,
-    )
-      .bind(order.id, order.status, new Date().toISOString(), executionId)
-      .run();
     return processingResponse(order.id, requestId, false, returnTo);
   } catch (error) {
     const current = await loadExecution(env.BILLING_DB, checkout.checkout_intent_id);
@@ -490,6 +405,207 @@ export async function handleEasyPayDirectCheckoutSubmission(
         );
       }
     }
+    throw error;
+  }
+}
+
+type EasyPayDirectAdvanceInput = {
+  paymentToken: string | null;
+  phone: string;
+  surface: CheckoutSurface;
+};
+
+async function advanceEasyPayDirectOrder(
+  env: Env,
+  checkout: CheckoutRow,
+  initialExecution: ExecutionRow,
+  input: EasyPayDirectAdvanceInput,
+  fetcher: typeof fetch,
+): Promise<CommerceOrder> {
+  let execution = initialExecution;
+  const customerEmail = checkout.customer_email;
+  if (!customerEmail) throw new Error("easy_pay_direct_customer_email_missing");
+  const profile = await loadProfile(env.BILLING_DB, checkout);
+  let customerVaultId = execution.customer_vault_id ?? profile?.gateway_customer_vault_id ?? null;
+  let gatewayBillingId = execution.gateway_billing_id ?? profile?.gateway_billing_id ?? null;
+
+  if (!customerVaultId || !gatewayBillingId) {
+    if (!input.paymentToken) throw new Error("easy_pay_direct_vault_checkpoint_missing");
+    const vault =
+      input.surface === "synthetic_qa" || env.EASY_PAY_DIRECT_NETWORK_MODE === "test"
+        ? { customerVaultId: input.paymentToken, billingId: input.paymentToken }
+        : await vaultEasyPayDirectCard(
+            env,
+            {
+              paymentToken: input.paymentToken,
+              billingId: execution.payment_method_idempotency_key,
+              existingCustomerVaultId: profile?.gateway_customer_vault_id,
+            },
+            fetcher,
+          );
+    customerVaultId = vault.customerVaultId;
+    gatewayBillingId = vault.billingId;
+  }
+  await checkpointExecution(env.BILLING_DB, execution.id, "gateway_vaulted", {
+    customerVaultId,
+    gatewayBillingId,
+  });
+
+  execution = (await loadExecution(env.BILLING_DB, checkout.checkout_intent_id))!;
+  const names = splitCustomerName(checkout.customer_name, customerEmail);
+  let providerCustomerId = execution.provider_customer_id ?? profile?.provider_customer_id ?? null;
+  let providerPaymentMethodId =
+    execution.provider_payment_method_id ?? profile?.provider_payment_method_id ?? null;
+  if (!providerCustomerId) {
+    const existingCustomer = await findEasyPayDirectCustomerByEmail(env, customerEmail, fetcher);
+    if (existingCustomer) {
+      providerCustomerId = existingCustomer.id;
+    } else {
+      const customer = await createEasyPayDirectCustomer(
+        env,
+        {
+          email: customerEmail,
+          firstName: names.firstName,
+          lastName: names.lastName,
+          phone: input.phone,
+          gatewayVaultId: customerVaultId,
+          idempotencyKey: execution.customer_idempotency_key,
+          metadata: {
+            lago_customer_id: checkout.customer_id,
+            lago_external_customer_id: checkout.external_customer_id,
+          },
+        },
+        fetcher,
+      );
+      providerCustomerId = customer.id;
+      providerPaymentMethodId = customer.default_payment_method ?? null;
+    }
+  }
+  await checkpointExecution(env.BILLING_DB, execution.id, "provider_customer", {
+    providerCustomerId,
+  });
+
+  if (!providerPaymentMethodId) {
+    providerPaymentMethodId = (
+      await addEasyPayDirectPaymentMethod(
+        env,
+        {
+          customerId: providerCustomerId,
+          billingId: gatewayBillingId,
+          idempotencyKey: execution.payment_method_idempotency_key,
+        },
+        fetcher,
+      )
+    ).id;
+  }
+  await checkpointExecution(env.BILLING_DB, execution.id, "provider_payment_method", {
+    providerPaymentMethodId,
+  });
+  await upsertProfile(env.BILLING_DB, checkout, {
+    providerCustomerId,
+    providerPaymentMethodId,
+    gatewayCustomerVaultId: customerVaultId,
+    gatewayBillingId,
+  });
+
+  execution = (await loadExecution(env.BILLING_DB, checkout.checkout_intent_id))!;
+  let productId = execution.provider_product_id;
+  if (!productId) {
+    productId = (
+      await createEasyPayDirectProduct(
+        env,
+        {
+          paymentRequestId: checkout.payment_request_id,
+          amountMinor: checkout.amount_minor,
+          currency: checkout.currency,
+          idempotencyKey: execution.product_idempotency_key,
+        },
+        fetcher,
+      )
+    ).id;
+  }
+  await checkpointExecution(env.BILLING_DB, execution.id, "provider_product", {
+    providerProductId: productId,
+  });
+
+  const order = await createEasyPayDirectOrder(
+    env,
+    {
+      customerId: providerCustomerId,
+      paymentMethodId: providerPaymentMethodId,
+      productId,
+      paymentRequestId: checkout.payment_request_id,
+      checkoutIntentId: checkout.checkout_intent_id,
+      currency: checkout.currency,
+      idempotencyKey: execution.order_idempotency_key,
+    },
+    fetcher,
+  );
+  await checkpointExecution(env.BILLING_DB, execution.id, "provider_order", {
+    providerTransactionId: order.id,
+    providerResponseCode: order.status,
+  });
+  return order;
+}
+
+export async function resumeEasyPayDirectExecution(
+  env: Env,
+  executionId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<"advanced" | "deferred"> {
+  const loaded = await loadExecutionAndCheckoutById(env.BILLING_DB, executionId);
+  if (!loaded || !["processing", "unknown"].includes(loaded.execution.status)) return "deferred";
+  if (loaded.execution.provider_transaction_id) return "advanced";
+  if (!loaded.execution.customer_vault_id || !loaded.execution.gateway_billing_id)
+    return "deferred";
+
+  const claimed = await env.BILLING_DB.prepare(
+    `UPDATE easy_pay_direct_payment_executions
+     SET status = 'processing', completed_at = NULL, failure_code = NULL, failure_message = NULL,
+         resume_count = resume_count + 1, updated_at = ?
+     WHERE id = ? AND customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL
+       AND (status = 'unknown' OR (status = 'processing' AND updated_at <= ?))`,
+  )
+    .bind(new Date().toISOString(), executionId, new Date(Date.now() - 120_000).toISOString())
+    .run();
+  if (claimed.meta.changes !== 1) return "deferred";
+
+  const signingSecret = env.EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET?.trim();
+  if (!signingSecret) throw new Error("easy_pay_direct_checkout_signing_secret_missing");
+  const phone = await decryptExecutionPhone(
+    loaded.execution.phone_ciphertext,
+    loaded.execution.phone_iv,
+    signingSecret,
+    executionId,
+  );
+  if (!phone) {
+    await markExecution(
+      env.BILLING_DB,
+      executionId,
+      "unknown",
+      null,
+      "Recovery phone checkpoint is unavailable",
+      "easy_pay_direct_recovery_checkpoint_missing",
+    );
+    return "deferred";
+  }
+  try {
+    await advanceEasyPayDirectOrder(
+      env,
+      loaded.checkout,
+      { ...loaded.execution, status: "processing" },
+      { paymentToken: null, phone, surface: "product_checkout" },
+      fetcher,
+    );
+    return "advanced";
+  } catch (error) {
+    await markExecution(
+      env.BILLING_DB,
+      executionId,
+      "unknown",
+      null,
+      "Provider outcome requires reconciliation",
+    );
     throw error;
   }
 }
@@ -608,7 +724,7 @@ async function finalizeGatewayTestOutcome(
   );
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
-     SET status = ?, updated_at = ?, completed_at = ?
+     SET status = ?, updated_at = ?, completed_at = ?, phone_ciphertext = NULL, phone_iv = NULL
      WHERE id = ? AND status = 'processing'`,
   )
     .bind(normalizedStatus, timestamp, timestamp, executionId)
@@ -648,17 +764,70 @@ async function loadExecution(
 ): Promise<ExecutionRow | null> {
   return database
     .prepare(
-      `SELECT id, status, payment_token_sha256, phone_sha256, email_sha256,
+      `SELECT id, checkout_intent_id, status, payment_token_sha256, phone_sha256,
+              phone_ciphertext, phone_iv, email_sha256,
               terms_accepted_at, terms_version,
             customer_idempotency_key,
             payment_method_idempotency_key, product_idempotency_key, order_idempotency_key,
             provider_transaction_id, provider_customer_id, provider_payment_method_id,
             provider_product_id, customer_vault_id, gateway_billing_id,
-            provider_response_code, failure_message
+            provider_response_code, failure_message, last_checkpoint, resume_count, updated_at
      FROM easy_pay_direct_payment_executions WHERE checkout_intent_id = ? LIMIT 1`,
     )
     .bind(checkoutIntentId)
     .first<ExecutionRow>();
+}
+
+async function loadExecutionById(
+  database: D1Database,
+  executionId: string,
+): Promise<ExecutionRow | null> {
+  return database
+    .prepare(
+      `SELECT id, checkout_intent_id, status, payment_token_sha256, phone_sha256,
+              phone_ciphertext, phone_iv, email_sha256, terms_accepted_at, terms_version,
+              customer_idempotency_key, payment_method_idempotency_key,
+              product_idempotency_key, order_idempotency_key, provider_transaction_id,
+              provider_customer_id, provider_payment_method_id, provider_product_id,
+              customer_vault_id, gateway_billing_id, provider_response_code,
+              failure_message, last_checkpoint, resume_count, updated_at
+       FROM easy_pay_direct_payment_executions WHERE id = ? LIMIT 1`,
+    )
+    .bind(executionId)
+    .first<ExecutionRow>();
+}
+
+async function loadCheckoutByIntentId(
+  database: D1Database,
+  intentId: string,
+): Promise<CheckoutRow | null> {
+  return database
+    .prepare(
+      `SELECT intent.id AS checkout_intent_id, intent.organization_id, intent.payment_request_id,
+              intent.customer_id, intent.provider_account_code, intent.request_sha256,
+              intent.expires_at, intent.amount_minor, intent.currency,
+              customer.email AS customer_email, customer.name AS customer_name,
+              customer.external_id AS external_customer_id, request.payment_status,
+              request.ready_for_payment_processing
+       FROM payment_request_checkout_intents intent
+       JOIN customers customer ON customer.id = intent.customer_id
+        AND customer.organization_id = intent.organization_id
+       JOIN payment_requests request ON request.id = intent.payment_request_id
+        AND request.organization_id = intent.organization_id
+       WHERE intent.id = ? AND intent.provider = 'easy_pay_direct' LIMIT 1`,
+    )
+    .bind(intentId)
+    .first<CheckoutRow>();
+}
+
+async function loadExecutionAndCheckoutById(
+  database: D1Database,
+  executionId: string,
+): Promise<{ execution: ExecutionRow; checkout: CheckoutRow } | null> {
+  const execution = await loadExecutionById(database, executionId);
+  if (!execution) return null;
+  const checkout = await loadCheckoutByIntentId(database, execution.checkout_intent_id);
+  return checkout ? { execution, checkout } : null;
 }
 
 function normalizeCheckoutEmail(value: string | null | undefined): string | null {
@@ -726,6 +895,49 @@ async function upsertProfile(
     .run();
 }
 
+async function checkpointExecution(
+  database: D1Database,
+  executionId: string,
+  checkpoint: ExecutionRow["last_checkpoint"],
+  values: {
+    customerVaultId?: string;
+    gatewayBillingId?: string;
+    providerCustomerId?: string;
+    providerPaymentMethodId?: string;
+    providerProductId?: string;
+    providerTransactionId?: string;
+    providerResponseCode?: string;
+  },
+): Promise<void> {
+  const updated = await database
+    .prepare(
+      `UPDATE easy_pay_direct_payment_executions
+       SET customer_vault_id = COALESCE(?, customer_vault_id),
+           gateway_billing_id = COALESCE(?, gateway_billing_id),
+           provider_customer_id = COALESCE(?, provider_customer_id),
+           provider_payment_method_id = COALESCE(?, provider_payment_method_id),
+           provider_product_id = COALESCE(?, provider_product_id),
+           provider_transaction_id = COALESCE(?, provider_transaction_id),
+           provider_response_code = COALESCE(?, provider_response_code),
+           last_checkpoint = ?, updated_at = ?
+       WHERE id = ? AND status = 'processing'`,
+    )
+    .bind(
+      values.customerVaultId ?? null,
+      values.gatewayBillingId ?? null,
+      values.providerCustomerId ?? null,
+      values.providerPaymentMethodId ?? null,
+      values.providerProductId ?? null,
+      values.providerTransactionId ?? null,
+      values.providerResponseCode ?? null,
+      checkpoint,
+      new Date().toISOString(),
+      executionId,
+    )
+    .run();
+  if (updated.meta.changes !== 1) throw new Error("easy_pay_direct_checkpoint_conflict");
+}
+
 async function markExecution(
   database: D1Database,
   executionId: string,
@@ -740,7 +952,10 @@ async function markExecution(
     .prepare(
       `UPDATE easy_pay_direct_payment_executions SET status = ?, provider_transaction_id = ?,
        provider_response_code = ?, failure_code = ?, failure_message = ?, updated_at = ?,
-       completed_at = ? WHERE id = ? AND status = 'processing'`,
+       completed_at = ?,
+       phone_ciphertext = CASE WHEN ? = 'failed' THEN NULL ELSE phone_ciphertext END,
+       phone_iv = CASE WHEN ? = 'failed' THEN NULL ELSE phone_iv END
+       WHERE id = ? AND status = 'processing'`,
     )
     .bind(
       status,
@@ -750,6 +965,8 @@ async function markExecution(
       message.slice(0, 500),
       timestamp,
       timestamp,
+      status,
+      status,
       executionId,
     )
     .run();
@@ -789,6 +1006,71 @@ function splitCustomerName(
     ?.replace(/[^a-z0-9]+/giu, " ")
     .trim();
   return { firstName: local?.slice(0, 100) || "SERP", lastName: "Customer" };
+}
+
+async function encryptExecutionPhone(
+  phone: string,
+  signingSecret: string,
+  executionId: string,
+): Promise<{ ciphertext: string; iv: string }> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await executionPhoneKey(signingSecret, executionId, ["encrypt"]);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(phone),
+  );
+  return {
+    ciphertext: encodeBase64Url(new Uint8Array(ciphertext)),
+    iv: encodeBase64Url(iv),
+  };
+}
+
+async function decryptExecutionPhone(
+  ciphertext: string | null,
+  iv: string | null,
+  signingSecret: string,
+  executionId: string,
+): Promise<string | null> {
+  if (!ciphertext || !iv) return null;
+  try {
+    const key = await executionPhoneKey(signingSecret, executionId, ["decrypt"]);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: decodeBase64Url(iv) },
+      key,
+      decodeBase64Url(ciphertext),
+    );
+    return new TextDecoder().decode(plaintext);
+  } catch {
+    return null;
+  }
+}
+
+async function executionPhoneKey(
+  signingSecret: string,
+  executionId: string,
+  usages: Array<"encrypt" | "decrypt">,
+): Promise<CryptoKey> {
+  const material = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`easy-pay-direct-recovery:${executionId}:${signingSecret}`),
+  );
+  return crypto.subtle.importKey("raw", material, { name: "AES-GCM" }, false, usages);
+}
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
+}
+
+function decodeBase64Url(value: string): Uint8Array {
+  const padded = value
+    .replace(/-/gu, "+")
+    .replace(/_/gu, "/")
+    .padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
 function processingResponse(

@@ -204,12 +204,31 @@ describe("payment requests", () => {
     ).run();
     const response = await createRequest(["invoice-payment-request-one"], "checkout");
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const first = await response.json<{ payment_request: { lago_id: string } }>();
+    expect(first).toMatchObject({
       payment_request: {
         amount_cents: 1000,
         payment_status: "pending",
       },
     });
+    const replay = await createRequest(["invoice-payment-request-one"], "checkout");
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({
+      payment_request: { lago_id: first.payment_request.lago_id },
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total FROM payment_requests
+         WHERE organization_id = 'org-payment-request'`,
+      ).first(),
+    ).resolves.toEqual({ total: 1 });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT COUNT(*) AS total FROM outbox_events
+         WHERE organization_id = 'org-payment-request'
+           AND event_type = 'payment_request.created'`,
+      ).first(),
+    ).resolves.toEqual({ total: 1 });
   });
 
   it("rolls back a request if a linked invoice version or ownership changes", async () => {

@@ -132,8 +132,9 @@ async function setup() {
 }
 
 async function exerciseEvents() {
-  const later = eventPayload(codes.lateEvent, "2", "2026-08-10T00:00:00.000Z");
-  const earlier = eventPayload(codes.earlyEvent, "1", "2026-08-05T00:00:00.000Z");
+  const now = Date.now();
+  const later = eventPayload(codes.lateEvent, "2", new Date(now).toISOString());
+  const earlier = eventPayload(codes.earlyEvent, "1", new Date(now - 1_000).toISOString());
   const lateEvent = await expectJson("/api/v1/events", 200, later);
   const earlyEvent = await expectJson("/api/v1/events", 200, earlier);
   const replay = await expectJson("/api/v1/events", 200, later);

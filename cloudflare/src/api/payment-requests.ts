@@ -153,8 +153,36 @@ async function createPaymentRequest(
       "Payment request amount must be positive",
     );
   }
+  if (collectionMode === "checkout" && invoiceIds.length === 1) {
+    const existingId = await env.BILLING_DB.prepare(
+      `SELECT request.id
+       FROM payment_requests request
+       JOIN invoices_payment_requests link ON link.payment_request_id = request.id
+       WHERE request.organization_id = ? AND request.customer_id = ?
+         AND request.collection_mode = 'checkout'
+         AND request.payment_status IN ('pending', 'succeeded')
+         AND link.invoice_id = ?
+       ORDER BY request.created_at, request.id LIMIT 1`,
+    )
+      .bind(auth.organizationId, customer.id, invoiceIds[0])
+      .first<{ id: string }>();
+    if (existingId) {
+      const existing = await findPaymentRequest(env.BILLING_DB, auth.organizationId, existingId.id);
+      if (!existing) throw new Error("payment_request_idempotency_lookup_failed");
+      return json(
+        { payment_request: await serializePaymentRequest(env.BILLING_DB, existing) },
+        { requestId },
+      );
+    }
+  }
   const email = normalizedEmail(optionalString(input, "email") ?? customer.email);
-  const paymentRequestId = crypto.randomUUID();
+  const paymentRequestId =
+    collectionMode === "checkout" && invoiceIds.length === 1
+      ? await deterministicUuid(
+          "checkout-payment-request",
+          `${auth.organizationId}:${customer.id}:${invoiceIds[0]}`,
+        )
+      : crypto.randomUUID();
   const now = new Date().toISOString();
   const event = paymentRequestCreatedEvent(
     paymentRequestId,
@@ -168,7 +196,7 @@ async function createPaymentRequest(
   );
   const statements: D1PreparedStatement[] = [
     env.BILLING_DB.prepare(
-      `INSERT INTO payment_requests
+      `INSERT OR IGNORE INTO payment_requests
        (id, organization_id, customer_id, amount_minor, currency, email, payment_attempts,
         payment_status, ready_for_payment_processing, version, collection_mode, created_at,
         updated_at)
@@ -188,7 +216,7 @@ async function createPaymentRequest(
   for (const invoice of ownedInvoices) {
     statements.push(
       env.BILLING_DB.prepare(
-        `INSERT INTO invoices_payment_requests
+        `INSERT OR IGNORE INTO invoices_payment_requests
          (id, organization_id, payment_request_id, invoice_id, invoice_version, created_at,
           updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -455,7 +483,7 @@ function outboxStatement(
 ): D1PreparedStatement {
   return database
     .prepare(
-      `INSERT INTO outbox_events
+      `INSERT OR IGNORE INTO outbox_events
        (event_id, organization_id, event_type, event_version, aggregate_type, aggregate_id,
         aggregate_version, causation_id, correlation_id, payload_json, occurred_at, published_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,

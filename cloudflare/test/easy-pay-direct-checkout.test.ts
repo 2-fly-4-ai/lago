@@ -334,6 +334,121 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
     });
   });
 
+  it("persists a live vault checkpoint and resumes Commerce without vaulting twice", async () => {
+    const runtimeEnv = enabledEnv("production");
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const checkout = await env.BILLING_DB.prepare(
+      `SELECT payment_url FROM payment_request_checkout_intents
+       WHERE payment_request_id = ? AND provider = 'easy_pay_direct'`,
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const checkoutToken = new URL(checkout!.payment_url).searchParams.get("checkout")!;
+    let commerceAvailable = false;
+    const providerFetch = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/transact.php")) {
+        return new Response(
+          "response=1&responsetext=Approved&response_code=100&customer_vault_id=vault-live-recovery&billing_id=billing-live-recovery",
+        );
+      }
+      if (!commerceAvailable) {
+        return Response.json(
+          { error: { code: "commerce_unavailable", message: "Try again" } },
+          { status: 503 },
+        );
+      }
+      if (url.includes("/customers?")) return Response.json({ data: [] });
+      if (url.endsWith("/customers")) {
+        return Response.json(
+          { id: "epd-customer-recovered", default_payment_method: "epd-pm-recovered" },
+          { status: 201 },
+        );
+      }
+      if (url.endsWith("/products")) {
+        return Response.json(
+          { id: "epd-product-recovered", pricing: { amount: 1999, currency: "usd" } },
+          { status: 201 },
+        );
+      }
+      if (url.endsWith("/orders")) {
+        return Response.json(
+          { id: "epd-order-recovered", status: "pending", total: 1999, currency: "usd" },
+          { status: 201 },
+        );
+      }
+      throw new Error(`Unexpected EPD request: ${url}`);
+    });
+    const submission = (paymentToken: string) =>
+      new Request("https://lago.test/easy_pay_direct/payment_form", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          checkout: checkoutToken,
+          payment_token: paymentToken,
+          phone: "+15555550126",
+          terms_accepted: true,
+        }),
+      });
+
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        submission("one-time-token-before-outage"),
+        runtimeEnv,
+        "request-epd-recovery-1",
+        providerFetch,
+      ),
+    ).rejects.toMatchObject({ status: 503, code: "commerce_unavailable" });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT status, last_checkpoint, customer_vault_id, gateway_billing_id,
+                provider_transaction_id, phone_ciphertext IS NOT NULL AS has_recovery_phone
+         FROM easy_pay_direct_payment_executions WHERE payment_request_id = ?`,
+      )
+        .bind(paymentRequestId)
+        .first(),
+    ).resolves.toEqual({
+      status: "unknown",
+      last_checkpoint: "gateway_vaulted",
+      customer_vault_id: "vault-live-recovery",
+      gateway_billing_id: "billing-live-recovery",
+      provider_transaction_id: null,
+      has_recovery_phone: 1,
+    });
+
+    commerceAvailable = true;
+    const resumed = await handleEasyPayDirectCheckoutSubmission(
+      submission("fresh-one-time-token-after-outage"),
+      runtimeEnv,
+      "request-epd-recovery-2",
+      providerFetch,
+    );
+    await expect(resumed.json()).resolves.toMatchObject({
+      status: "processing",
+      provider_order_id: "epd-order-recovered",
+    });
+    expect(
+      providerFetch.mock.calls.filter(([input]) => String(input).includes("/api/transact.php")),
+    ).toHaveLength(1);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT status, last_checkpoint, provider_customer_id, provider_payment_method_id,
+                provider_product_id, provider_transaction_id, resume_count
+         FROM easy_pay_direct_payment_executions WHERE payment_request_id = ?`,
+      )
+        .bind(paymentRequestId)
+        .first(),
+    ).resolves.toEqual({
+      status: "processing",
+      last_checkpoint: "provider_order",
+      provider_customer_id: "epd-customer-recovered",
+      provider_payment_method_id: "epd-pm-recovered",
+      provider_product_id: "epd-product-recovered",
+      provider_transaction_id: "epd-order-recovered",
+      resume_count: 1,
+    });
+  });
+
   it("creates a sandbox Commerce order once and waits for the signed webhook before reconciling", async () => {
     const runtimeEnv = enabledEnv();
     await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());

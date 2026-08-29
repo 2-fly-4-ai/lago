@@ -3,6 +3,7 @@ import { sha256Hex } from "../auth/api-key";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { getEasyPayDirectOrder, type CommerceOrder } from "../providers/easy-pay-direct";
+import { resumeEasyPayDirectExecution } from "../api/easy-pay-direct-checkout";
 
 type EasyPayDirectEvent = {
   id?: string;
@@ -27,7 +28,7 @@ type EasyPayDirectExecution = {
   organization_id: string;
   payment_request_id: string;
   provider_account_code: string;
-  provider_transaction_id: string;
+  provider_transaction_id: string | null;
 };
 
 export async function reconcileEasyPayDirectExecution(
@@ -35,18 +36,31 @@ export async function reconcileEasyPayDirectExecution(
   executionId: string,
   fetcher: typeof fetch = fetch,
 ): Promise<"processed" | "deferred"> {
-  const execution = await env.BILLING_DB.prepare(
+  let execution = await env.BILLING_DB.prepare(
     `SELECT id, organization_id, payment_request_id, provider_account_code,
             provider_transaction_id
      FROM easy_pay_direct_payment_executions
      WHERE id = ? AND status IN ('processing', 'unknown')
-       AND provider_transaction_id IS NOT NULL
      LIMIT 1`,
   )
     .bind(executionId)
     .first<EasyPayDirectExecution>();
   if (!execution) return "processed";
   if (String(env.PROVIDER_READS_ENABLED) !== "1") return "deferred";
+
+  if (!execution.provider_transaction_id) {
+    const resumed = await resumeEasyPayDirectExecution(env, executionId, fetcher);
+    if (resumed === "deferred") return "deferred";
+    execution = await env.BILLING_DB.prepare(
+      `SELECT id, organization_id, payment_request_id, provider_account_code,
+              provider_transaction_id
+       FROM easy_pay_direct_payment_executions
+       WHERE id = ? AND status IN ('processing', 'unknown') LIMIT 1`,
+    )
+      .bind(executionId)
+      .first<EasyPayDirectExecution>();
+    if (!execution?.provider_transaction_id) return "deferred";
+  }
 
   const order = await getEasyPayDirectOrder(env, execution.provider_transaction_id, fetcher);
   if (order.id !== execution.provider_transaction_id) {
@@ -104,7 +118,8 @@ export async function reconcileEasyPayDirectExecution(
   );
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
-     SET status = ?, failure_code = ?, failure_message = ?, updated_at = ?, completed_at = ?
+     SET status = ?, failure_code = ?, failure_message = ?, updated_at = ?, completed_at = ?,
+         phone_ciphertext = NULL, phone_iv = NULL
      WHERE id = ? AND status IN ('processing', 'unknown')`,
   )
     .bind(
@@ -195,7 +210,8 @@ export async function reconcileEasyPayDirectReceipt(
   const timestamp = new Date().toISOString();
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
-     SET status = ?, failure_code = ?, failure_message = ?, updated_at = ?, completed_at = ?
+     SET status = ?, failure_code = ?, failure_message = ?, updated_at = ?, completed_at = ?,
+         phone_ciphertext = NULL, phone_iv = NULL
      WHERE provider_account_code = ? AND provider_transaction_id = ?
        AND status IN ('processing', 'unknown')`,
   )

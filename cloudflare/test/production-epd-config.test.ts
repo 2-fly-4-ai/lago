@@ -19,6 +19,11 @@ describe("production EPD canary configuration", () => {
     expect(productionConfig).toContain('"STRIPE_WEBHOOKS_ENABLED": "0"');
     expect(productionConfig).toContain('"STRIPE_LIVEMODE_ALLOWED": "0"');
     expect(productionConfig).toContain('"OUTBOUND_WEBHOOKS_ENABLED": "0"');
+    expect(productionConfig).toContain('"queue": "serp-prod-lago-domain-events"');
+    expect(productionConfig).toContain('"max_retries": 5');
+    expect(productionConfig).toContain('"dead_letter_queue": "serp-prod-lago-domain-events-dlq"');
+    expect(productionConfig).toContain('"retry_delay": 30');
+    expect(productionConfig).toContain('"crons": ["* * * * *"]');
     expect(productionConfig).not.toContain("org-synthetic-e2e-20260815-001");
   });
 
