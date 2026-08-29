@@ -13,6 +13,7 @@ data, webhook payloads, customer records, or signed checkout links to this repos
   <https://serp-prod-lago-native.serpcompany.workers.dev/webhooks/easy_pay_direct/org-serp-billing>
 - EPD Gateway testing reference:
   <https://secure.easypaydirectgateway.com/merchants/resources/integration/integration_portal.php#testing>
+- EPD Commerce API base (reference only): <https://api.epd.com/v1>
 - EPD Collect.js reference:
   <https://secure.easypaydirectgateway.com/merchants/resources/integration/integration_portal.php#collect_js>
 
@@ -64,6 +65,18 @@ Cloudflare Worker secret storage.
   controls remain on direct Stripe.
 - The synthetic outcome selector remains available only at `/easy_pay_direct/sandbox_tool`; it is
   not the customer checkout.
+
+## Production credential checklist
+
+Keep the production Worker disabled while provisioning. Before promotion, verify names only:
+
+- `EASY_PAY_DIRECT_COMMERCE_API_KEY`
+- `EASY_PAY_DIRECT_SECURITY_KEY`
+- `EASY_PAY_DIRECT_TOKENIZATION_KEY`
+- `EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY`
+- `EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET`
+
+Never paste their values into tickets, docs, terminal output, screenshots, or browser snapshots.
 
 The full staged acceptance record is
 [`adult-standard-plan-epd-staging-canary-2026-08-26.md`](../evidence/adult-standard-plan-epd-staging-canary-2026-08-26.md).

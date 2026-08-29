@@ -1,6 +1,6 @@
 # Cloudflare-Native Lago Production Resource Manifest
 
-Last verified: 2026-08-22
+Last verified: 2026-08-29
 
 This is the production inventory for the Cloudflare-native Lago deployment. It records resource
 identifiers and control state, but never credentials, raw Access identities, or customer data.
@@ -9,7 +9,7 @@ identifiers and control state, but never credentials, raw Access identities, or 
 
 | Kind | Name or ID | Binding or purpose |
 | --- | --- | --- |
-| API Worker | `serp-prod-lago-native` / version `04e4a1dc-6264-45dc-aacf-7a3392b3cd75` | Production billing API |
+| API Worker | `serp-prod-lago-native` / active version prefix `368faac1` | Production billing API |
 | Operator Worker | `serp-prod-lago-operator` / version `e55e76c5-7e5f-4df9-b8e8-8681ee9d847d` | Access-protected operator application |
 | Portal Worker | `serp-prod-lago-customer-portal` / version `0244e825-0660-4d4a-b874-4f16d70e3163` | Token-protected customer portal |
 | D1 | `serp-prod-lago-native-d1` / `a0274eda-6f03-429a-896f-a1e0121a9f21` | `BILLING_DB` |
@@ -25,7 +25,7 @@ the retained Lago navigation and Assistant.
 
 ## Database and authority state
 
-- Migrations `0001_foundation.sql` through `0090_provider_recurring_wallet_funding.sql` are applied.
+- All 98 migrations through `0098_production_store_one_time_plan.sql` are applied.
 - `PRAGMA foreign_key_check` returns no violations and there are no pending migrations.
 - D1 Time Travel bookmark after the foundation/control-plane seed:
   `0000001a-00000000-000050ce-8a0cff906580cdd448760bed629c9b16`.
@@ -43,6 +43,8 @@ the retained Lago navigation and Assistant.
 The API has no Cron trigger and no Queue consumer. All external-action gates are disabled:
 
 - `PAYMENT_MUTATIONS_ENABLED=0`
+- `EASY_PAY_DIRECT_NETWORK_MODE=disabled`
+- `EASY_PAY_DIRECT_LIVEMODE_ALLOWED=0`
 - `CREDIT_NOTE_REFUND_MODE=disabled`
 - `WALLET_FUNDING_MODE=disabled`
 - `EXTERNAL_TAX_MODE=disabled`
@@ -53,8 +55,17 @@ The API has no Cron trigger and no Queue consumer. All external-action gates are
 - `OUTBOUND_WEBHOOKS_ENABLED=0`
 
 Verified responses are API `/health` `200`, API `/ready` `200`, unauthenticated API invoice access
-`401`, disabled Stripe webhook `503`, and unauthenticated operator access `302` to Cloudflare Access.
-No production provider credential is attached to the Lago API Worker.
+`401`, missing-token EPD checkout `400`, unsigned EPD webhook `401`, disabled Stripe webhook `503`,
+and unauthenticated operator access `302` to Cloudflare Access.
+
+The EPD Commerce API key, Gateway private API/Cart security key, public Tokenization key, and
+order-webhook signing secret are encrypted Worker secrets alongside the internal checkout-signing
+secret. Secret-only Worker version prefix `368faac1` is active with all disabled gates above
+reverified. The Commerce key is restricted to customer, order, transaction, subscription, product,
+and webhook read/write permissions; it has no delete, administrator, API-key-management, plan, or
+coupon permission. The production webhook is enabled for `order.*` only and resolves to provider
+API version `2026-02-10`. No provider order, payment, customer, or live-card operation was used for
+this preparation.
 
 ## Cutover and rollback boundaries
 
