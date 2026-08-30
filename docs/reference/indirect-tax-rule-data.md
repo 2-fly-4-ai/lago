@@ -55,6 +55,29 @@ Every source adapter must pin the retrieved input checksum, retrieval timestamp,
 effective date, and parser version. A refresh creates a new immutable version; it never updates an
 existing rule in place.
 
+### European Union TEDB snapshot
+
+The read-only TEDB adapter requests the national standard VAT rate for all 27 EU member states from
+the European Commission's fixed SOAP endpoint. It does not accept a caller-supplied URL. It rejects
+redirects, SOAP faults, responses over 5 MiB, incomplete country coverage, ambiguous national
+defaults, invalid rates, and noncanonical dates. It maps TEDB's `EL` source code to ISO country code
+`GR` while retaining the original source code.
+
+Run from `cloudflare/`:
+
+```sh
+pnpm tax-rules:eu-snapshot -- --date 2026-08-31
+pnpm tax-rules:check
+```
+
+The first command performs a read-only retrieval and writes JSON to standard output. The second
+validates both the draft rule artifact and the checked-in offline TEDB snapshot. Neither command
+writes D1 data, changes a registration, activates collection, or calls Stripe.
+
+`cloudflare/fixtures/indirect-tax/eu-tedb-standard-rates-2026-08-31.json` is source evidence, not a
+checkout rule set. A standard-rate table does not prove that the generic software product uses that
+rate, that SERP is registered to collect it, or that the rate applies to a specific customer.
+
 ## Review and activation gates
 
 Before a candidate can become active:

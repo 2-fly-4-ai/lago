@@ -1,0 +1,198 @@
+{
+  "format": "eu-tedb-standard-rates/v1",
+  "source_url": "https://ec.europa.eu/taxation_customs/tedb/ws/VatRetrievalService.wsdl",
+  "situation_on": "2026-08-31",
+  "retrieved_at": "2026-08-30T12:50:51.354Z",
+  "response_sha256": "53bd338b4b5e975bcbe35ce2a2ccd7ff17b6df6764fd85c889d08b088cd7bc84",
+  "rates": [
+    {
+      "country": "AT",
+      "source_member_state": "AT",
+      "rate_percent": "20",
+      "rate_ppm": 200000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "BE",
+      "source_member_state": "BE",
+      "rate_percent": "21",
+      "rate_ppm": 210000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "BG",
+      "source_member_state": "BG",
+      "rate_percent": "20",
+      "rate_ppm": 200000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "CY",
+      "source_member_state": "CY",
+      "rate_percent": "19",
+      "rate_ppm": 190000,
+      "effective_from": "2026-01-01"
+    },
+    {
+      "country": "CZ",
+      "source_member_state": "CZ",
+      "rate_percent": "21",
+      "rate_ppm": 210000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "DE",
+      "source_member_state": "DE",
+      "rate_percent": "19",
+      "rate_ppm": 190000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "DK",
+      "source_member_state": "DK",
+      "rate_percent": "25",
+      "rate_ppm": 250000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "EE",
+      "source_member_state": "EE",
+      "rate_percent": "24",
+      "rate_ppm": 240000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "ES",
+      "source_member_state": "ES",
+      "rate_percent": "21",
+      "rate_ppm": 210000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "FI",
+      "source_member_state": "FI",
+      "rate_percent": "25.5",
+      "rate_ppm": 255000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "FR",
+      "source_member_state": "FR",
+      "rate_percent": "20",
+      "rate_ppm": 200000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "GR",
+      "source_member_state": "EL",
+      "rate_percent": "24",
+      "rate_ppm": 240000,
+      "effective_from": "2025-01-01"
+    },
+    {
+      "country": "HR",
+      "source_member_state": "HR",
+      "rate_percent": "25",
+      "rate_ppm": 250000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "HU",
+      "source_member_state": "HU",
+      "rate_percent": "27",
+      "rate_ppm": 270000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "IE",
+      "source_member_state": "IE",
+      "rate_percent": "23",
+      "rate_ppm": 230000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "IT",
+      "source_member_state": "IT",
+      "rate_percent": "22",
+      "rate_ppm": 220000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "LT",
+      "source_member_state": "LT",
+      "rate_percent": "21",
+      "rate_ppm": 210000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "LU",
+      "source_member_state": "LU",
+      "rate_percent": "17",
+      "rate_ppm": 170000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "LV",
+      "source_member_state": "LV",
+      "rate_percent": "21",
+      "rate_ppm": 210000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "MT",
+      "source_member_state": "MT",
+      "rate_percent": "18",
+      "rate_ppm": 180000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "NL",
+      "source_member_state": "NL",
+      "rate_percent": "21",
+      "rate_ppm": 210000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "PL",
+      "source_member_state": "PL",
+      "rate_percent": "23",
+      "rate_ppm": 230000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "PT",
+      "source_member_state": "PT",
+      "rate_percent": "23",
+      "rate_ppm": 230000,
+      "effective_from": "2026-01-01"
+    },
+    {
+      "country": "RO",
+      "source_member_state": "RO",
+      "rate_percent": "21",
+      "rate_ppm": 210000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "SE",
+      "source_member_state": "SE",
+      "rate_percent": "25",
+      "rate_ppm": 250000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "SI",
+      "source_member_state": "SI",
+      "rate_percent": "22",
+      "rate_ppm": 220000,
+      "effective_from": "2026-07-01"
+    },
+    {
+      "country": "SK",
+      "source_member_state": "SK",
+      "rate_percent": "23",
+      "rate_ppm": 230000,
+      "effective_from": "2026-07-01"
+    }
+  ]
+}

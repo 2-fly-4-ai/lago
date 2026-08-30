@@ -93,6 +93,8 @@ authorize the tax-inclusive total before EPD receives a payment request.
       checkout tests added.
 - [ ] Select and document the authoritative production data source and refresh owner.
 - [x] Implement the guarded draft-only importer and checksummed review candidate artifact.
+- [x] Implement and snapshot the official EU TEDB standard-rate feed with exact 27-country,
+      checksum, ambiguity, and offline-contract validation.
 - [ ] Expand the review candidate to every intended jurisdiction and complete classification,
       boundary, registration, and refresh-owner review.
 - [ ] Select the long-term publisher/signing authority and add artifact signature verification.
