@@ -24,6 +24,7 @@ declare namespace Cloudflare {
     EASY_PAY_DIRECT_TAX_MODE?: "disabled" | "shadow" | "enforced";
     EASY_PAY_DIRECT_TAX_PROVIDER?: "local_d1" | "stripe_test";
     EASY_PAY_DIRECT_TAX_CODE?: string;
+    EASY_PAY_DIRECT_ONE_TIME_TAX_CODE?: string;
     EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS?: string;
     STRIPE_NETWORK_MODE?: "disabled" | "enabled";
     STRIPE_RESTRICTED_API_KEY?: string;
@@ -62,6 +63,7 @@ interface Env {
   EASY_PAY_DIRECT_TAX_MODE?: "disabled" | "shadow" | "enforced";
   EASY_PAY_DIRECT_TAX_PROVIDER?: "local_d1" | "stripe_test";
   EASY_PAY_DIRECT_TAX_CODE?: string;
+  EASY_PAY_DIRECT_ONE_TIME_TAX_CODE?: string;
   EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS?: string;
   STRIPE_NETWORK_MODE?: "disabled" | "enabled";
   STRIPE_RESTRICTED_API_KEY?: string;

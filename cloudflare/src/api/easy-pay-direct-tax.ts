@@ -37,6 +37,7 @@ type TaxableCheckout = {
   credits_minor: number;
   total_due_minor: number;
   invoice_count: number;
+  plan_interval: string | null;
 };
 
 type TaxCalculation = {
@@ -82,7 +83,7 @@ export async function handleEasyPayDirectTaxQuote(
   validateTaxableCheckout(checkout);
   const address = normalizeBillingAddress(objectAt(input, "billing_address"));
   const addressHash = await sha256Hex(stableJson(address));
-  const taxCode = normalizeTaxCode(env.EASY_PAY_DIRECT_TAX_CODE);
+  const taxCode = resolveCheckoutTaxCode(checkout.plan_interval, env);
   const taxableSubtotal = checkout.subtotal_minor - checkout.credits_minor;
   const requestHash = await sha256Hex(
     stableJson({
@@ -657,6 +658,13 @@ async function loadTaxableCheckout(
               invoice.id AS invoice_id, invoice.version AS invoice_version,
               invoice.subtotal_minor, invoice.tax_minor, invoice.credits_minor,
               invoice.total_due_minor,
+              (SELECT plan.interval
+               FROM invoice_subscriptions invoice_subscription
+               JOIN subscriptions subscription
+                 ON subscription.id = invoice_subscription.subscription_id
+               JOIN plans plan ON plan.id = subscription.plan_id
+               WHERE invoice_subscription.invoice_id = invoice.id
+               ORDER BY invoice_subscription.created_at DESC LIMIT 1) AS plan_interval,
               (SELECT COUNT(*) FROM invoices_payment_requests counted
                WHERE counted.payment_request_id = request.id) AS invoice_count
        FROM payment_request_checkout_intents intent
@@ -697,10 +705,31 @@ function validateTaxableCheckout(
   }
 }
 
-function normalizeTaxCode(value: string | undefined): string {
+export function resolveCheckoutTaxCode(
+  interval: string | null,
+  env: Pick<Env, "EASY_PAY_DIRECT_TAX_CODE" | "EASY_PAY_DIRECT_ONE_TIME_TAX_CODE">,
+): string {
+  if (interval === "one_time") {
+    return normalizeTaxCode(env.EASY_PAY_DIRECT_ONE_TIME_TAX_CODE, "one-time");
+  }
+  if (new Set(["weekly", "monthly", "quarterly", "yearly"]).has(interval ?? "")) {
+    return normalizeTaxCode(env.EASY_PAY_DIRECT_TAX_CODE, "recurring");
+  }
+  throw new ApiError(
+    409,
+    "checkout_tax_classification_missing",
+    "Checkout plan tax classification is unavailable",
+  );
+}
+
+function normalizeTaxCode(value: string | undefined, classification: string): string {
   const normalized = value?.trim();
   if (!normalized || !/^txcd_\d{8}$/.test(normalized)) {
-    throw new ApiError(503, "checkout_tax_code_missing", "Checkout tax code is not configured");
+    throw new ApiError(
+      503,
+      "checkout_tax_code_missing",
+      `${classification} checkout tax code is not configured`,
+    );
   }
   return normalized;
 }

@@ -54,12 +54,19 @@ Lago uses these EPD bindings:
 - `EASY_PAY_DIRECT_TAX_MODE`
 - `EASY_PAY_DIRECT_TAX_PROVIDER`
 - `EASY_PAY_DIRECT_TAX_CODE`
+- `EASY_PAY_DIRECT_ONE_TIME_TAX_CODE`
 - `EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS` when the local D1 provider is selected
 - `STRIPE_RESTRICTED_API_KEY` for staging Stripe Tax calculations and transaction commits
 
 The Store uses `LAGO_CHECKOUT_ENABLED`, `LAGO_EASY_PAY_DIRECT_PROVIDER_CODE`, and
 `LAGO_EASY_PAY_DIRECT_CHECKOUT_MODE`. Secret values belong only in the approved secret manager and
 Cloudflare Worker secret storage.
+
+The tax path resolves its product code from the Lago plan interval. Weekly, monthly, quarterly, and
+yearly plans use `EASY_PAY_DIRECT_TAX_CODE` (`txcd_10103100`, SaaS electronic download for personal
+use). A `one_time` plan uses `EASY_PAY_DIRECT_ONE_TIME_TAX_CODE` (`txcd_10202000`, downloadable
+software for personal use). A missing or unsupported interval fails closed; the checkout does not
+guess a classification from customer-facing copy or the routed product slug.
 
 ## Current staging posture
 

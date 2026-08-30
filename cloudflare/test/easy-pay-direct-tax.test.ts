@@ -6,6 +6,7 @@ import { handleEasyPayDirectCheckoutSubmission } from "../src/api/easy-pay-direc
 import {
   commitAppliedCheckoutTaxQuote,
   handleEasyPayDirectTaxQuote,
+  resolveCheckoutTaxCode,
 } from "../src/api/easy-pay-direct-tax";
 import { runCheckoutWorkflow } from "../src/workflows/checkout";
 
@@ -13,12 +14,16 @@ const organizationId = "org-easy-pay-direct-tax";
 let customerId: string;
 let invoiceId: string;
 let paymentRequestId: string;
+let planId: string;
+let subscriptionId: string;
 
 beforeEach(async () => {
   const fixtureId = crypto.randomUUID();
   customerId = `customer-epd-tax-${fixtureId}`;
   invoiceId = `invoice-epd-tax-${fixtureId}`;
   paymentRequestId = `payment-request-epd-tax-${fixtureId}`;
+  planId = `plan-epd-tax-${fixtureId}`;
+  subscriptionId = `subscription-epd-tax-${fixtureId}`;
   const now = new Date().toISOString();
   await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
@@ -33,12 +38,39 @@ beforeEach(async () => {
                'easy_pay_direct', 'epd-tax', ?, ?)`,
     ).bind(customerId, organizationId, `epd-tax-${fixtureId}`, now, now),
     env.BILLING_DB.prepare(
+      `INSERT INTO plans
+       (id, organization_id, code, name, interval, amount_minor, currency, version, active,
+        created_at, updated_at)
+       VALUES (?, ?, ?, 'Easy Pay Direct Tax Plan', 'monthly', 1999, 'USD', 1, 1, ?, ?)`,
+    ).bind(planId, organizationId, planId, now, now),
+    env.BILLING_DB.prepare(
+      `INSERT INTO subscriptions
+       (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+        current_period_start, current_period_end, version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'active', ?, ?, '2026-09-30T00:00:00.000Z', 1, ?, ?)`,
+    ).bind(subscriptionId, organizationId, customerId, planId, subscriptionId, now, now, now, now),
+    env.BILLING_DB.prepare(
       `INSERT INTO invoices
-       (id, organization_id, customer_id, number, status, payment_status, currency,
+       (id, organization_id, customer_id, subscription_id, number, status, payment_status, currency,
         subtotal_minor, tax_minor, credits_minor, total_due_minor, version, finalized_at,
         payment_overdue, ready_for_payment_processing, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'finalized', 'pending', 'USD', 1999, 0, 0, 1999, 1, ?, 1, 1, ?, ?)`,
-    ).bind(invoiceId, organizationId, customerId, `INV-TAX-${fixtureId}`, now, now, now),
+       VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', 'USD', 1999, 0, 0, 1999, 1, ?, 1, 1, ?, ?)`,
+    ).bind(
+      invoiceId,
+      organizationId,
+      customerId,
+      subscriptionId,
+      `INV-TAX-${fixtureId}`,
+      now,
+      now,
+      now,
+    ),
+    env.BILLING_DB.prepare(
+      `INSERT INTO invoice_subscriptions
+       (invoice_id, subscription_id, organization_id, invoicing_reason,
+        period_start, period_end, created_at)
+       VALUES (?, ?, ?, 'subscription_starting', ?, '2026-09-30T00:00:00.000Z', ?)`,
+    ).bind(invoiceId, subscriptionId, organizationId, now, now),
     env.BILLING_DB.prepare(
       `INSERT INTO payment_requests
        (id, organization_id, customer_id, amount_minor, currency, email, payment_attempts,
@@ -54,6 +86,20 @@ beforeEach(async () => {
 });
 
 describe("Easy Pay Direct destination tax checkout", () => {
+  it("selects distinct canonical tax codes by Lago plan interval and fails closed", () => {
+    const runtimeEnv = taxEnv();
+    expect(resolveCheckoutTaxCode("monthly", runtimeEnv)).toBe("txcd_10103100");
+    expect(resolveCheckoutTaxCode("one_time", runtimeEnv)).toBe("txcd_10202000");
+    expect(() => resolveCheckoutTaxCode(null, runtimeEnv)).toThrowError(
+      expect.objectContaining({ code: "checkout_tax_classification_missing" }),
+    );
+    expect(() =>
+      resolveCheckoutTaxCode("one_time", {
+        EASY_PAY_DIRECT_TAX_CODE: "txcd_10103100",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "checkout_tax_code_missing" }));
+  });
+
   it("reprices atomically and charges only the signed tax-inclusive total", async () => {
     const runtimeEnv = taxEnv();
     await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
@@ -337,6 +383,7 @@ function taxEnv(stripeKey = "rk_test_tax_synthetic"): Env {
       if (property === "EASY_PAY_DIRECT_TAX_MODE") return "enforced";
       if (property === "EASY_PAY_DIRECT_TAX_PROVIDER") return "stripe_test";
       if (property === "EASY_PAY_DIRECT_TAX_CODE") return "txcd_10103100";
+      if (property === "EASY_PAY_DIRECT_ONE_TIME_TAX_CODE") return "txcd_10202000";
       if (property === "STRIPE_RESTRICTED_API_KEY") return stripeKey;
       return Reflect.get(target, property, receiver) as unknown;
     },

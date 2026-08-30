@@ -97,6 +97,10 @@ authorize the tax-inclusive total before EPD receives a payment request.
       checksum, ambiguity, and offline-contract validation.
 - [x] Generate a validated 32-country draft for the six likely first-wave market groups from the
       checked EU snapshot and official non-EU authority references.
+- [x] Split recurring and one-time software product codes by Lago plan interval and fail closed when
+      plan classification is unavailable.
+- [x] Generate an untargeted registration review with all six market groups unconfirmed and
+      collection disabled.
 - [ ] Expand the review candidate to every intended jurisdiction and complete classification,
       boundary, registration, and refresh-owner review.
 - [ ] Select the long-term publisher/signing authority and add artifact signature verification.

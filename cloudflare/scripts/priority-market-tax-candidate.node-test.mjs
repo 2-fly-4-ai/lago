@@ -14,9 +14,9 @@ const snapshot = JSON.parse(
 test("builds a validated draft for the six priority market groups", () => {
   const artifact = buildPriorityMarketCandidate(snapshot);
   assert.equal(artifact.status, "draft");
-  assert.equal(artifact.rules.length, 32);
+  assert.equal(artifact.rules.length, 64);
   assert.deepEqual(
-    artifact.rules.map((rule) => rule.country),
+    [...new Set(artifact.rules.map((rule) => rule.country))],
     [
       "AT",
       "BE",
@@ -53,13 +53,20 @@ test("builds a validated draft for the six priority market groups", () => {
     ],
   );
   assert.match(artifact.content_sha256, /^[a-f0-9]{64}$/);
-  assert.ok(artifact.rules.every((rule) => rule.product_tax_code === "txcd_10103100"));
+  assert.deepEqual([...new Set(artifact.rules.map((rule) => rule.product_tax_code))].sort(), [
+    "txcd_10103100",
+    "txcd_10202000",
+  ]);
   assert.ok(artifact.rules.every((rule) => !Object.hasOwn(rule, "registration_scope")));
 });
 
 test("uses the checked TEDB snapshot and the expected non-EU authority rates", () => {
   const artifact = buildPriorityMarketCandidate(snapshot);
-  const rates = Object.fromEntries(artifact.rules.map((rule) => [rule.country, rule.rate_ppm]));
+  const rates = Object.fromEntries(
+    artifact.rules
+      .filter((rule) => rule.product_tax_code === "txcd_10103100")
+      .map((rule) => [rule.country, rule.rate_ppm]),
+  );
   assert.equal(rates.DE, 190_000);
   assert.equal(rates.GB, 200_000);
   assert.equal(rates.IN, 180_000);

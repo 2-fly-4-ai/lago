@@ -4,7 +4,18 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { contentChecksum, validateRuleSetArtifact } from "./indirect-tax-rule-set.mjs";
 import { validateTedbSnapshot } from "./eu-tedb-standard-rates.mjs";
 
-const PRODUCT_TAX_CODE = "txcd_10103100";
+const PRODUCT_CLASSIFICATIONS = [
+  {
+    id: "recurring",
+    taxCode: "txcd_10103100",
+    description: "SaaS electronic download for personal use",
+  },
+  {
+    id: "one-time",
+    taxCode: "txcd_10202000",
+    description: "downloadable software for personal use",
+  },
+];
 const ARTIFACT_DATE = "2026-08-31T00:00:00.000Z";
 const REFERENCE_PATH = "docs/evidence/eu-tedb-standard-rate-snapshot-2026-08-31.md";
 const TEDB_URL = "https://ec.europa.eu/taxation_customs/tedb/ws/VatRetrievalService.wsdl";
@@ -68,8 +79,8 @@ export function buildPriorityMarketCandidate(tedbSnapshot) {
       retrieved_at: ARTIFACT_DATE,
     })),
   ];
-  const euRules = tedb.rates.map((rate) =>
-    rule({
+  const euRules = tedb.rates.flatMap((rate) =>
+    rulesForRate({
       country: rate.country,
       component: "eu-tedb",
       url: TEDB_URL,
@@ -78,8 +89,8 @@ export function buildPriorityMarketCandidate(tedbSnapshot) {
       reference: `TEDB national standard VAT rate of ${rate.rate_percent}% for situation date ${tedb.situation_on}.`,
     }),
   );
-  const marketRules = PRIORITY_MARKETS.map((market) =>
-    rule({
+  const marketRules = PRIORITY_MARKETS.flatMap((market) =>
+    rulesForRate({
       ...market,
       reference: `Authority-published national standard rate of ${formatPercent(market.ratePpm)}%.`,
     }),
@@ -105,22 +116,22 @@ export function buildPriorityMarketCandidate(tedbSnapshot) {
   return validateRuleSetArtifact(artifact);
 }
 
-function rule({ country, component, url, ratePpm, effectiveFrom, reference }) {
-  return {
-    id: `${country.toLowerCase()}-standard-software-priority-v1`,
+function rulesForRate({ country, component, url, ratePpm, effectiveFrom, reference }) {
+  return PRODUCT_CLASSIFICATIONS.map((classification) => ({
+    id: `${country.toLowerCase()}-standard-software-${classification.id}-priority-v1`,
     country,
     region: null,
     postal_prefix: null,
-    product_tax_code: PRODUCT_TAX_CODE,
+    product_tax_code: classification.taxCode,
     taxability: "taxable",
     rate_ppm: ratePpm,
     priority: 0,
     source_component_id: component,
     source_url: url,
-    source_reference: `${reference} Generic-software classification and collection registration require separate review.`,
+    source_reference: `${reference} Candidate ${classification.description} classification; product taxability and collection registration require separate review.`,
     effective_from: effectiveFrom,
     effective_to: null,
-  };
+  }));
 }
 
 function formatPercent(ratePpm) {

@@ -69,6 +69,7 @@ Run from `cloudflare/`:
 pnpm tax-rules:eu-snapshot -- --date 2026-08-31
 pnpm tax-rules:check
 pnpm tax-rules:priority-candidate
+pnpm tax-rules:registration-review
 ```
 
 The first command performs a read-only retrieval and writes JSON to standard output. The second
@@ -77,8 +78,13 @@ writes D1 data, changes a registration, activates collection, or calls Stripe.
 
 The third command deterministically builds a canonical draft candidate for the likely first-wave
 market groups: the 27 EU destination countries plus Great Britain, India, South Korea, Mexico, and
-Switzerland. It writes JSON to standard output and contains no registration scopes. Its
-generic-software classification is explicitly provisional.
+Switzerland. It contains separate candidate rules for recurring SaaS electronic downloads and
+one-time downloadable software, writes JSON to standard output, and contains no registration
+scopes. Its product classifications remain explicitly provisional.
+
+The fourth command creates a separate registration-review artifact. It has no target organization,
+registration reference, or effective date, and all six market groups are `disabled` and
+`unconfirmed`. This review format is intentionally not accepted by the D1 rule importer.
 
 `cloudflare/fixtures/indirect-tax/eu-tedb-standard-rates-2026-08-31.json` is source evidence, not a
 checkout rule set. A standard-rate table does not prove that the generic software product uses that
