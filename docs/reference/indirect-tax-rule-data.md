@@ -26,7 +26,9 @@ node scripts/indirect-tax-rule-set.mjs render-sql \
 ```
 
 The SQL renderer writes to standard output. It inserts a rule set and its rules as `draft`; it does
-not activate anything, create registration scopes, deploy a Worker, or contact a provider.
+not activate anything, create registration scopes, deploy a Worker, or contact a provider. The
+rendered file intentionally omits explicit `BEGIN TRANSACTION` and `COMMIT` statements because a
+remote Cloudflare D1 file import is already transactional and rejects explicit transaction SQL.
 
 ## Current review candidate
 

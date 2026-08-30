@@ -176,7 +176,7 @@ export function renderDraftSql(artifact, createdAt) {
   const statements = [
     "-- Generated from a validated, checksummed candidate artifact.",
     "-- This intentionally creates a draft only. It never activates a rule set or adds registrations.",
-    "BEGIN TRANSACTION;",
+    "-- Cloudflare D1 remote file imports are already transactional; explicit BEGIN/COMMIT is rejected.",
     `INSERT INTO indirect_tax_rule_sets\n  (id, version, status, source_name, source_url, source_published_at, effective_from,\n   effective_to, content_sha256, refreshed_at, created_at, activated_at)\nVALUES\n  (${sql(normalized.id)}, ${normalized.version}, 'draft', ${sql(normalized.source.name)}, ${sql(normalized.source.url)},\n   ${sql(normalized.source.published_at)}, ${sql(normalized.effective_from)}, ${sql(normalized.effective_to)},\n   ${sql(normalized.content_sha256)}, ${sql(normalized.refreshed_at)}, ${sql(createdAt)}, NULL);`,
   ];
   for (const rule of normalized.rules) {
@@ -184,7 +184,6 @@ export function renderDraftSql(artifact, createdAt) {
       `INSERT INTO indirect_tax_rules\n  (id, rule_set_id, country, region, postal_prefix, product_tax_code, taxability,\n   rate_ppm, priority, source_url, source_reference, effective_from, effective_to, created_at)\nVALUES\n  (${sql(rule.id)}, ${sql(normalized.id)}, ${sql(rule.country)}, ${sql(rule.region)},\n   ${sql(rule.postal_prefix)}, ${sql(rule.product_tax_code)}, ${sql(rule.taxability)},\n   ${rule.rate_ppm}, ${rule.priority}, ${sql(rule.source_url)}, ${sql(rule.source_reference)},\n   ${sql(rule.effective_from)}, ${sql(rule.effective_to)}, ${sql(createdAt)});`,
     );
   }
-  statements.push("COMMIT;");
   return `${statements.join("\n\n")}\n`;
 }
 

@@ -66,5 +66,6 @@ test("SQL rendering creates only immutable draft rows and escapes source text", 
   assert.match(sql, /Authority''s published standard rate/);
   assert.doesNotMatch(sql, /indirect_tax_registration_scopes/);
   assert.doesNotMatch(sql, /'active'/);
+  assert.doesNotMatch(sql, /BEGIN TRANSACTION|COMMIT;/);
   assert.doesNotMatch(sql, /activated_at\)\s*VALUES[\s\S]*CURRENT_TIMESTAMP/);
 });
