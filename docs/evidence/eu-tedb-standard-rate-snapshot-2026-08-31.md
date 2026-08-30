@@ -50,13 +50,19 @@ relevant authorities:
 These are rate-source facts only. The standard rate is not yet an approved product-taxability
 classification, registration scope, effective collection date, or production rule.
 
+The deterministic priority-market generator combines the checked EU snapshot with these five
+non-EU authority references into a valid 32-rule `draft` artifact. The generated artifact checksum
+is `825157bc32c9c3d456f2ce4628bd114e6fceb9d8158875e111c982b2be17d288`. It is generated for
+review and is neither loaded nor activated.
+
 ## Verification
 
 - The live public-authority response produced exactly one selected national standard rate for every
   member state.
-- Ten importer/source Node tests passed, including exact snapshot fields and country order, Greece
+- Twelve importer/source Node tests passed, including exact snapshot fields and country order, Greece
   normalization, incomplete-coverage rejection, duplicate-default rejection, SOAP-fault rejection,
-  rate validation, fixed-endpoint enforcement, and draft-only rule import controls.
+  rate validation, fixed-endpoint enforcement, 32-country priority-candidate coverage, and
+  draft-only rule import controls.
 - `tax-rules:check` validates the checked-in snapshot without network access.
 - `oxlint` returned zero warnings and zero errors for the adapter and tests.
 

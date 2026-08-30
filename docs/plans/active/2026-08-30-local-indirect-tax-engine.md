@@ -95,6 +95,8 @@ authorize the tax-inclusive total before EPD receives a payment request.
 - [x] Implement the guarded draft-only importer and checksummed review candidate artifact.
 - [x] Implement and snapshot the official EU TEDB standard-rate feed with exact 27-country,
       checksum, ambiguity, and offline-contract validation.
+- [x] Generate a validated 32-country draft for the six likely first-wave market groups from the
+      checked EU snapshot and official non-EU authority references.
 - [ ] Expand the review candidate to every intended jurisdiction and complete classification,
       boundary, registration, and refresh-owner review.
 - [ ] Select the long-term publisher/signing authority and add artifact signature verification.
