@@ -1,0 +1,82 @@
+{
+  "format": "serp-indirect-tax-rule-set/v1",
+  "id": "official-authority-candidate-2026-08-31",
+  "version": 1,
+  "status": "draft",
+  "source": {
+    "name": "SERP curated official-authority candidate",
+    "url": "docs/reference/indirect-tax-rule-data.md",
+    "published_at": "2026-08-31T00:00:00.000Z",
+    "components": [
+      {
+        "id": "ato-au",
+        "authority": "Australian Taxation Office",
+        "url": "https://www.ato.gov.au/law/view/document?LocID=%22GST%2FGSTR20018%2FNAT%2FATO%2Fft50%22&PiT=20251112000001",
+        "retrieved_at": "2026-08-31T00:00:00.000Z"
+      },
+      {
+        "id": "hmrc-gb",
+        "authority": "HM Revenue & Customs",
+        "url": "https://www.gov.uk/vat-rates",
+        "retrieved_at": "2026-08-31T00:00:00.000Z"
+      },
+      {
+        "id": "ird-nz",
+        "authority": "New Zealand Inland Revenue",
+        "url": "https://www.ird.govt.nz/gst/filing-and-paying-gst-and-refunds/calculating-gst",
+        "retrieved_at": "2026-08-31T00:00:00.000Z"
+      }
+    ]
+  },
+  "effective_from": "2026-08-31T00:00:00.000Z",
+  "effective_to": null,
+  "refreshed_at": "2026-08-31T00:00:00.000Z",
+  "content_sha256": "490a3c3d23ac5a06d6f8a7407ca432871da614c61ea95ceeccc0f78465f287b8",
+  "rules": [
+    {
+      "id": "au-standard-software-candidate-v1",
+      "country": "AU",
+      "region": null,
+      "postal_prefix": null,
+      "product_tax_code": "txcd_10103100",
+      "taxability": "taxable",
+      "rate_ppm": 100000,
+      "priority": 0,
+      "source_component_id": "ato-au",
+      "source_url": "https://www.ato.gov.au/law/view/document?LocID=%22GST%2FGSTR20018%2FNAT%2FATO%2Fft50%22&PiT=20251112000001",
+      "source_reference": "Candidate standard GST rate of 10%. Product classification and collection registration require separate review.",
+      "effective_from": "2000-07-01T00:00:00.000Z",
+      "effective_to": null
+    },
+    {
+      "id": "gb-standard-software-candidate-v1",
+      "country": "GB",
+      "region": null,
+      "postal_prefix": null,
+      "product_tax_code": "txcd_10103100",
+      "taxability": "taxable",
+      "rate_ppm": 200000,
+      "priority": 0,
+      "source_component_id": "hmrc-gb",
+      "source_url": "https://www.gov.uk/vat-rates",
+      "source_reference": "Candidate standard VAT rate of 20%. Product classification and collection registration require separate review.",
+      "effective_from": "2011-01-04T00:00:00.000Z",
+      "effective_to": null
+    },
+    {
+      "id": "nz-standard-software-candidate-v1",
+      "country": "NZ",
+      "region": null,
+      "postal_prefix": null,
+      "product_tax_code": "txcd_10103100",
+      "taxability": "taxable",
+      "rate_ppm": 150000,
+      "priority": 0,
+      "source_component_id": "ird-nz",
+      "source_url": "https://www.ird.govt.nz/gst/filing-and-paying-gst-and-refunds/calculating-gst",
+      "source_reference": "Candidate standard GST rate of 15%. Product classification and collection registration require separate review.",
+      "effective_from": "2010-10-01T00:00:00.000Z",
+      "effective_to": null
+    }
+  ]
+}

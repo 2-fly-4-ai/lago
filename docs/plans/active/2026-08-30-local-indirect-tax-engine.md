@@ -92,7 +92,10 @@ authorize the tax-inclusive total before EPD receives a payment request.
 - [x] Synthetic rounding, specificity, exemption, missing-scope, stale-data, conflict, and end-to-end
       checkout tests added.
 - [ ] Select and document the authoritative production data source and refresh owner.
-- [ ] Implement the reviewed data importer and signed/checksummed candidate artifact.
+- [x] Implement the guarded draft-only importer and checksummed review candidate artifact.
+- [ ] Expand the review candidate to every intended jurisdiction and complete classification,
+      boundary, registration, and refresh-owner review.
+- [ ] Select the long-term publisher/signing authority and add artifact signature verification.
 - [ ] Run the bounded Stripe sandbox/authoritative-source comparison matrix.
 - [ ] Obtain explicit approval for staging migration, data load, shadow deployment, and QA.
 - [ ] Obtain separate explicit approval for any production rollout.
