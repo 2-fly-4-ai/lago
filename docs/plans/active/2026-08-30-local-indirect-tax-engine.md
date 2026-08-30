@@ -105,5 +105,11 @@ authorize the tax-inclusive total before EPD receives a payment request.
       boundary, registration, and refresh-owner review.
 - [ ] Select the long-term publisher/signing authority and add artifact signature verification.
 - [ ] Run the bounded Stripe sandbox/authoritative-source comparison matrix.
-- [ ] Obtain explicit approval for staging migration, data load, shadow deployment, and QA.
+- [x] Obtain explicit approval for staging migration, data load, shadow deployment, and QA.
+- [x] Apply migration `0101` to staging and load the checksummed 64-rule candidate as a draft
+      with zero active rule sets and zero registration scopes.
+- [x] Deploy staging Worker version `0b31a222-1ed1-4724-82a9-078ec67430d7` with Stripe test tax
+      calculations in shadow mode and EPD live mode disabled.
+- [ ] Complete end-to-end shadow quote evidence after the staging Store router sends the selected
+      EPD product to Lago; the current Pornhub Downloader staging path selected Stripe Sandbox.
 - [ ] Obtain separate explicit approval for any production rollout.
