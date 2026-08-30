@@ -45,3 +45,10 @@ checkout token and no Lago shadow tax quote was created.
 This is a Store routing/configuration blocker, not a Lago health, migration, or Worker deployment
 failure. Resolving it requires a separately approved staging `store-new` change or configuration
 update. The temporary Stripe Sandbox checkout was closed without submission.
+
+## Follow-up
+
+The staging Store router was subsequently corrected and now sends the selected product to
+Lago/EPD. Shadow benchmarking and local D1 enforcement were completed afterward; see
+`local-d1-tax-staging-enforcement-2026-08-31.md`. This section remains as the historical state at
+the time of the shadow deployment, not the current staging result.

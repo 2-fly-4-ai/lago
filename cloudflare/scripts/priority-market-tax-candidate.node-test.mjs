@@ -14,6 +14,9 @@ const snapshot = JSON.parse(
 test("builds a validated draft for the six priority market groups", () => {
   const artifact = buildPriorityMarketCandidate(snapshot);
   assert.equal(artifact.status, "draft");
+  assert.equal(artifact.version, 2);
+  assert.ok(Date.parse(artifact.effective_from) <= Date.parse(snapshot.retrieved_at));
+  assert.ok(Date.parse(artifact.refreshed_at) <= Date.parse(snapshot.retrieved_at));
   assert.equal(artifact.rules.length, 64);
   assert.deepEqual(
     [...new Set(artifact.rules.map((rule) => rule.country))],

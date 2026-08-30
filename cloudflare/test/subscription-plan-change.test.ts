@@ -552,27 +552,43 @@ describe("subscription plan generations", () => {
   });
 
   it("uses the ownership graph to credit and finalize a second upgrade", async () => {
+    const now = new Date().toISOString();
     await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, currency, metadata_json, invoice_grace_period,
+          created_at, updated_at)
+         VALUES ('customer-plan-change-chain', 'org-plan-change', 'customer-plan-change-chain',
+                 'USD', '{}', 2, ?, ?)`,
+      ).bind(now, now),
       env.BILLING_DB.prepare(
         `UPDATE plans SET pay_in_advance = CASE WHEN id = 'plan-change-base' THEN 0 ELSE 1 END
          WHERE id IN ('plan-change-base', 'plan-change-upgrade', 'plan-change-upgrade-two')`,
       ),
-      env.BILLING_DB.prepare(
-        "UPDATE customers SET invoice_grace_period = 2 WHERE id = 'customer-plan-change'",
-      ),
     ]);
     expect(
-      (await createSubscription("subscription-upgrade-chain", "plan-change-base")).status,
+      (
+        await createSubscription(
+          "subscription-upgrade-chain",
+          "plan-change-base",
+          undefined,
+          "customer-plan-change-chain",
+        )
+      ).status,
     ).toBe(200);
     const firstUpgrade = await createSubscription(
       "subscription-upgrade-chain",
       "plan-change-upgrade",
+      undefined,
+      "customer-plan-change-chain",
     );
     const firstBody = await firstUpgrade.json<{ subscription: { lago_id: string } }>();
     expect(firstUpgrade.status).toBe(200);
     const secondUpgrade = await createSubscription(
       "subscription-upgrade-chain",
       "plan-change-upgrade-two",
+      undefined,
+      "customer-plan-change-chain",
     );
     expect(secondUpgrade.status).toBe(200);
 
@@ -784,13 +800,14 @@ function createSubscription(
   externalId: string,
   planCode: string,
   usageThresholds?: Array<{ amount_cents: number; recurring?: boolean }>,
+  externalCustomerId = "customer-plan-change",
 ): Promise<Response> {
   return SELF.fetch("https://lago.test/api/v1/subscriptions", {
     method: "POST",
     headers,
     body: JSON.stringify({
       subscription: {
-        external_customer_id: "customer-plan-change",
+        external_customer_id: externalCustomerId,
         external_id: externalId,
         plan_code: planCode,
         ...(usageThresholds === undefined ? {} : { usage_thresholds: usageThresholds }),

@@ -105,3 +105,26 @@ Before a candidate can become active:
 
 Production migration, registration changes, collection, provider calls, and deployment remain
 separate approval-gated actions.
+
+### Synthetic staging activation
+
+The staging activation renderer accepts only the synthetic E2E organization naming contract and
+requires `--acknowledge-staging-only`. It labels every scope as QA-only and not a legal
+registration. Generate ignored artifacts under `dist/`; review the rendered SQL before applying it
+to `serp-dev-lago-native-d1`:
+
+```sh
+pnpm tax-rules:priority-candidate > dist/staging-tax-local/candidate-v2.json
+node scripts/indirect-tax-rule-set.mjs render-sql \
+  dist/staging-tax-local/candidate-v2.json --created-at <canonical-UTC-ISO> \
+  > dist/staging-tax-local/import-v2.sql
+pnpm tax-rules:staging-activation -- \
+  --organization-id org-synthetic-e2e-20260815-001 \
+  --activated-at <same-canonical-UTC-ISO> --acknowledge-staging-only \
+  > dist/staging-tax-local/activate-v2.sql
+```
+
+This path is for staging QA only. It must not target a production organization or be treated as
+proof that the business is registered to collect in any jurisdiction. Before and after applying,
+check normalized duplicate identities, the single-active-set invariant, enabled scope counts,
+foreign keys, and pending migrations.

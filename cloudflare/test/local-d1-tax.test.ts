@@ -78,12 +78,16 @@ describe("local D1 indirect tax calculator", () => {
     ).rejects.toMatchObject({ code: "checkout_tax_rules_stale" });
   });
 
-  it("fails closed when equally specific rules conflict", async () => {
+  it("rejects equally specific duplicate rules at the database boundary", async () => {
     await seedScopeAndRule({ region: "WA", ratePpm: 65_000 });
-    await insertRule({ idSuffix: "conflict", region: "WA", ratePpm: 70_000 });
     await expect(
-      calculate({ country: "US", state: "WA", postalCode: "98104" }, 1000),
-    ).rejects.toMatchObject({ code: "checkout_tax_rule_ambiguous" });
+      insertRule({ idSuffix: "conflict", region: "WA", ratePpm: 70_000 }),
+    ).rejects.toBeDefined();
+  });
+
+  it("rejects duplicate country-wide registration scopes with null regions", async () => {
+    await seedCountryScope("GB", "scope-country-one");
+    await expect(seedCountryScope("GB", "scope-country-two")).rejects.toBeDefined();
   });
 });
 
@@ -155,5 +159,17 @@ async function insertRule(input: {
       input.ratePpm,
       now.toISOString(),
     )
+    .run();
+}
+
+async function seedCountryScope(country: string, id: string) {
+  return env.BILLING_DB.prepare(
+    `INSERT INTO indirect_tax_registration_scopes
+     (id, organization_id, rule_set_id, country, region, status, registration_reference,
+      effective_from, effective_to, created_at, updated_at)
+     VALUES (?, ?, ?, ?, NULL, 'enabled', 'synthetic-only',
+             '2020-01-01T00:00:00.000Z', NULL, ?, ?)`,
+  )
+    .bind(id, organizationId, ruleSetId, country, now.toISOString(), now.toISOString())
     .run();
 }

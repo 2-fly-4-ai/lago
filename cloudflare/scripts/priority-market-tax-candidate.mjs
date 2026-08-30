@@ -16,7 +16,10 @@ const PRODUCT_CLASSIFICATIONS = [
     description: "downloadable software for personal use",
   },
 ];
-const ARTIFACT_DATE = "2026-08-31T00:00:00.000Z";
+// The review is dated August 31 in Fiji, but the source snapshot was fetched on
+// August 30 UTC. Use the real retrieval instant so staging never publishes a
+// ruleset that is effective in the future at the Cloudflare edge.
+const ARTIFACT_DATE = "2026-08-30T12:50:51.354Z";
 const REFERENCE_PATH = "docs/evidence/eu-tedb-standard-rate-snapshot-2026-08-31.md";
 const TEDB_URL = "https://ec.europa.eu/taxation_customs/tedb/ws/VatRetrievalService.wsdl";
 
@@ -97,8 +100,8 @@ export function buildPriorityMarketCandidate(tedbSnapshot) {
   );
   const artifact = {
     format: "serp-indirect-tax-rule-set/v1",
-    id: "priority-market-candidate-2026-08-31",
-    version: 1,
+    id: "priority-market-candidate-2026-08-31-v2",
+    version: 2,
     status: "draft",
     source: {
       name: "SERP priority-market official-authority candidate",
@@ -118,7 +121,7 @@ export function buildPriorityMarketCandidate(tedbSnapshot) {
 
 function rulesForRate({ country, component, url, ratePpm, effectiveFrom, reference }) {
   return PRODUCT_CLASSIFICATIONS.map((classification) => ({
-    id: `${country.toLowerCase()}-standard-software-${classification.id}-priority-v1`,
+    id: `${country.toLowerCase()}-standard-software-${classification.id}-priority-v2`,
     country,
     region: null,
     postal_prefix: null,

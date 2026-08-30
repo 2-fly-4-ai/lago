@@ -104,12 +104,20 @@ authorize the tax-inclusive total before EPD receives a payment request.
 - [ ] Expand the review candidate to every intended jurisdiction and complete classification,
       boundary, registration, and refresh-owner review.
 - [ ] Select the long-term publisher/signing authority and add artifact signature verification.
-- [ ] Run the bounded Stripe sandbox/authoritative-source comparison matrix.
+- [x] Run the bounded Stripe sandbox/authoritative-source comparison matrix; Stripe returned zero
+      outside its sole California sandbox registration, while the local matrix matched reviewed
+      authority rates and deterministic rounding.
 - [x] Obtain explicit approval for staging migration, data load, shadow deployment, and QA.
 - [x] Apply migration `0101` to staging and load the checksummed 64-rule candidate as a draft
       with zero active rule sets and zero registration scopes.
 - [x] Deploy staging Worker version `0b31a222-1ed1-4724-82a9-078ec67430d7` with Stripe test tax
       calculations in shadow mode and EPD live mode disabled.
-- [ ] Complete end-to-end shadow quote evidence after the staging Store router sends the selected
-      EPD product to Lago; the current Pornhub Downloader staging path selected Stripe Sandbox.
+- [x] Complete end-to-end shadow and enforced quote evidence after the staging Store router sent
+      Pornhub Downloader to Lago/EPD, without contact/card data or payment submission.
+- [x] Add normalized-null uniqueness guards in migration `0102`, activate immutable candidate v2
+      for the synthetic staging organization only, and retire the future-effective v1 candidate.
+- [x] Deploy staging Worker version `2ca86009-37b8-480f-bcbf-f27b07d0f6ca` with local D1 tax
+      enforcement and EPD live mode disabled.
+- [x] Verify UK, DE, FR, IN, KR, MX, and CH tax-inclusive totals and unsupported-destination
+      fail-closed behavior on the real staged checkout.
 - [ ] Obtain separate explicit approval for any production rollout.

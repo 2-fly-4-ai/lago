@@ -46,7 +46,9 @@ beforeEach(async () => {
     env.BILLING_DB.prepare(
       `UPDATE subscriptions SET name = NULL, status = 'active', started_at = ?,
        current_period_start = ?, current_period_end = '2026-09-13T00:00:00.000Z',
-       canceled_at = NULL, terminated_at = NULL, version = 1, updated_at = ?
+       ending_at = NULL, canceled_at = NULL, terminated_at = NULL,
+       on_termination_credit_note = NULL, on_termination_invoice = NULL,
+       version = 1, updated_at = ?
        WHERE id = 'subscription-lifecycle'`,
     ).bind(now, now, now),
     env.BILLING_DB.prepare(
