@@ -51,6 +51,11 @@ Lago uses these EPD bindings:
 - `EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY`
 - `EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY_PREVIOUS` during a bounded rotation
 - `EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL`
+- `EASY_PAY_DIRECT_TAX_MODE`
+- `EASY_PAY_DIRECT_TAX_PROVIDER`
+- `EASY_PAY_DIRECT_TAX_CODE`
+- `EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS` when the local D1 provider is selected
+- `STRIPE_RESTRICTED_API_KEY` for staging Stripe Tax calculations and transaction commits
 
 The Store uses `LAGO_CHECKOUT_ENABLED`, `LAGO_EASY_PAY_DIRECT_PROVIDER_CODE`, and
 `LAGO_EASY_PAY_DIRECT_CHECKOUT_MODE`. Secret values belong only in the approved secret manager and
@@ -60,7 +65,16 @@ Cloudflare Worker secret storage.
 
 - `EASY_PAY_DIRECT_NETWORK_MODE=gateway_test`
 - `EASY_PAY_DIRECT_LIVEMODE_ALLOWED=0`
+- `EASY_PAY_DIRECT_TAX_MODE=enforced`
+- `EASY_PAY_DIRECT_TAX_PROVIDER=stripe_test`
 - Hosted card fields use EPD Collect.js; card number, expiry, and CVV do not pass through the Worker.
+- Billing destination is collected before payment. Lago obtains a Stripe Tax test calculation,
+  persists the quote, atomically replaces the invoice/payment-request total, and binds the payment
+  to the replacement signed checkout and address hash.
+- The staging Stripe restricted key needs write permission only for Tax calculations and
+  transactions. A live Stripe key is rejected in the staging tax path.
+- After EPD succeeds, Lago commits the calculation as an off-Stripe Stripe Tax test transaction;
+  transient commit failures remain visible for reconciliation retry.
 - The adult standard-plan staging cohort routes to Lago/EPD. Safe products and adult Plus/Premium
   controls remain on direct Stripe.
 - The synthetic outcome selector remains available only at `/easy_pay_direct/sandbox_tool`; it is
@@ -77,6 +91,16 @@ Keep the production Worker disabled while provisioning. Before promotion, verify
 - `EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET`
 
 Never paste their values into tickets, docs, terminal output, screenshots, or browser snapshots.
+
+Keep `EASY_PAY_DIRECT_TAX_MODE=disabled` in production until the product tax classification,
+recurring-invoice destination reuse/recalculation, refund/reversal handling, and production tax
+registrations have each completed their own acceptance checks.
+
+The alternative `EASY_PAY_DIRECT_TAX_PROVIDER=local_d1` path uses versioned D1 rule sets and
+explicit organization registration scopes. It performs no Stripe request and commits its quote
+locally after EPD success. Missing scopes/rules, stale data, and conflicting rules fail closed. This
+provider is implemented and covered by synthetic tests but is not enabled in staging or production;
+it needs an approved source dataset and importer first.
 
 The full staged acceptance record is
 [`adult-standard-plan-epd-staging-canary-2026-08-26.md`](../evidence/adult-standard-plan-epd-staging-canary-2026-08-26.md).

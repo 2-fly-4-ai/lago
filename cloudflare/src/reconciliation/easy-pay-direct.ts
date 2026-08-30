@@ -4,6 +4,7 @@ import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { getEasyPayDirectOrder, type CommerceOrder } from "../providers/easy-pay-direct";
 import { resumeEasyPayDirectExecution } from "../api/easy-pay-direct-checkout";
+import { commitAppliedCheckoutTaxQuote } from "../api/easy-pay-direct-tax";
 
 type EasyPayDirectEvent = {
   id?: string;
@@ -131,6 +132,9 @@ export async function reconcileEasyPayDirectExecution(
       execution.id,
     )
     .run();
+  if (normalizedStatus === "succeeded") {
+    await commitAppliedCheckoutTaxQuote(env, execution.id, order.id, fetcher);
+  }
   return "processed";
 }
 

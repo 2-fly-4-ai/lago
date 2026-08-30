@@ -15,6 +15,11 @@ remains useful, but SERP-specific decisions must be recorded in this repository.
   dashboards, ownership, configuration names, staging posture, rollout, and rollback.
 - [evidence/global-indirect-tax-and-anrok-cost-estimate-2026-08-29.md](evidence/global-indirect-tax-and-anrok-cost-estimate-2026-08-29.md)
   — production sales distribution, likely tax markets, and Anrok cost scenarios.
+- [evidence/epd-stripe-tax-staging-upgrade-2026-08-30.md](evidence/epd-stripe-tax-staging-upgrade-2026-08-30.md)
+  — staging EPD destination-tax quoting, immutable repricing, Stripe Tax commit, and production
+  safety boundary.
+- [evidence/local-d1-tax-engine-proof-2026-08-30.md](evidence/local-d1-tax-engine-proof-2026-08-30.md)
+  — local D1 tax calculation proof, fail-closed rules, and the remaining production-data boundary.
 - [plans/README.md](plans/README.md) — canonical dated plan lifecycle.
 
 Implementation documentation inside `api/` and `front/` belongs to those submodule histories. A

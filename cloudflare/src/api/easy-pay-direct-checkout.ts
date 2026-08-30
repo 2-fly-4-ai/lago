@@ -16,6 +16,10 @@ import {
   type GatewayTransactionResult,
 } from "../providers/easy-pay-direct";
 import { reconcilePaymentRequest, type PendingReceipt } from "../reconciliation/authorize-net";
+import {
+  commitAppliedCheckoutTaxQuote,
+  requireAppliedCheckoutTaxQuote,
+} from "./easy-pay-direct-tax";
 
 const CHECKOUT_TERMS_VERSION = "apps-serp-terms-and-privacy-2026-08-25";
 
@@ -45,6 +49,8 @@ type ExecutionRow = {
   phone_ciphertext: string | null;
   phone_iv: string | null;
   email_sha256: string | null;
+  tax_quote_id: string | null;
+  billing_address_sha256: string | null;
   terms_accepted_at: string | null;
   terms_version: string | null;
   customer_idempotency_key: string;
@@ -124,6 +130,26 @@ export async function handleEasyPayDirectCheckoutSubmission(
   if (!checkout.expires_at || Date.parse(checkout.expires_at) <= Date.now()) {
     throw new ApiError(410, "easy_pay_direct_checkout_expired", "Checkout link has expired");
   }
+  const appliedTaxQuote =
+    surface === "product_checkout" && env.EASY_PAY_DIRECT_TAX_MODE === "enforced"
+      ? await requireAppliedCheckoutTaxQuote(
+          env.BILLING_DB,
+          checkout.checkout_intent_id,
+          body.tax_quote_id,
+          body.billing_address,
+        )
+      : null;
+  if (
+    surface === "product_checkout" &&
+    env.EASY_PAY_DIRECT_TAX_MODE === "enforced" &&
+    !appliedTaxQuote
+  ) {
+    throw new ApiError(
+      409,
+      "checkout_tax_quote_required",
+      "Confirm the billing address and updated total before paying",
+    );
+  }
   const submittedEmail = typeof body.email === "string" ? body.email : null;
   const customerEmail = normalizeCheckoutEmail(checkout.customer_email ?? submittedEmail);
   if (!customerEmail) {
@@ -174,10 +200,11 @@ export async function handleEasyPayDirectCheckoutSubmission(
     `INSERT INTO easy_pay_direct_payment_executions
      (id, organization_id, checkout_intent_id, payment_request_id, provider_account_code,
       request_sha256, payment_token_sha256, phone_sha256, phone_ciphertext, phone_iv, email_sha256,
+      tax_quote_id, billing_address_sha256,
       terms_accepted_at, terms_version,
       customer_idempotency_key, payment_method_idempotency_key,
       product_idempotency_key, order_idempotency_key, status, created_at, updated_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?
      WHERE NOT EXISTS (
        SELECT 1 FROM easy_pay_direct_payment_executions WHERE checkout_intent_id = ?
      )
@@ -195,6 +222,8 @@ export async function handleEasyPayDirectCheckoutSubmission(
       encryptedPhone.ciphertext,
       encryptedPhone.iv,
       emailHash,
+      appliedTaxQuote?.quoteId ?? null,
+      appliedTaxQuote?.billingAddressHash ?? null,
       termsAcceptedAt,
       termsVersion,
       crypto.randomUUID(),
@@ -212,7 +241,9 @@ export async function handleEasyPayDirectCheckoutSubmission(
   if (
     (execution.payment_token_sha256 !== paymentTokenHash && !execution.customer_vault_id) ||
     execution.phone_sha256 !== phoneHash ||
-    execution.email_sha256 !== emailHash
+    execution.email_sha256 !== emailHash ||
+    execution.tax_quote_id !== (appliedTaxQuote?.quoteId ?? null) ||
+    execution.billing_address_sha256 !== (appliedTaxQuote?.billingAddressHash ?? null)
   ) {
     throw new ApiError(
       409,
@@ -332,6 +363,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
         transaction,
         requestId,
         returnTo,
+        fetcher,
       );
     }
 
@@ -617,6 +649,7 @@ async function finalizeGatewayTestOutcome(
   transaction: GatewayTransactionResult,
   requestId: string,
   returnTo: string | null,
+  fetcher: typeof fetch,
 ): Promise<Response> {
   const timestamp = new Date().toISOString();
   const providerTransactionId = transaction.id?.trim() || null;
@@ -733,6 +766,7 @@ async function finalizeGatewayTestOutcome(
   if (normalizedStatus === "failed") {
     throw new ApiError(422, "easy_pay_direct_declined", failureMessage || "Payment was declined");
   }
+  await commitAppliedCheckoutTaxQuote(env, executionId, providerTransactionId, fetcher);
   return successResponse(providerTransactionId, requestId, false, returnTo);
 }
 
@@ -765,7 +799,7 @@ async function loadExecution(
   return database
     .prepare(
       `SELECT id, checkout_intent_id, status, payment_token_sha256, phone_sha256,
-              phone_ciphertext, phone_iv, email_sha256,
+              phone_ciphertext, phone_iv, email_sha256, tax_quote_id, billing_address_sha256,
               terms_accepted_at, terms_version,
             customer_idempotency_key,
             payment_method_idempotency_key, product_idempotency_key, order_idempotency_key,
@@ -785,7 +819,8 @@ async function loadExecutionById(
   return database
     .prepare(
       `SELECT id, checkout_intent_id, status, payment_token_sha256, phone_sha256,
-              phone_ciphertext, phone_iv, email_sha256, terms_accepted_at, terms_version,
+              phone_ciphertext, phone_iv, email_sha256, tax_quote_id, billing_address_sha256,
+              terms_accepted_at, terms_version,
               customer_idempotency_key, payment_method_idempotency_key,
               product_idempotency_key, order_idempotency_key, provider_transaction_id,
               provider_customer_id, provider_payment_method_id, provider_product_id,

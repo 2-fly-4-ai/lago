@@ -21,6 +21,10 @@ declare namespace Cloudflare {
     WALLET_FUNDING_MODE?: "disabled" | "stripe_test";
     EXTERNAL_TAX_MODE?: "disabled" | "service_binding";
     EXTERNAL_TAX_ADAPTER?: Fetcher;
+    EASY_PAY_DIRECT_TAX_MODE?: "disabled" | "shadow" | "enforced";
+    EASY_PAY_DIRECT_TAX_PROVIDER?: "local_d1" | "stripe_test";
+    EASY_PAY_DIRECT_TAX_CODE?: string;
+    EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS?: string;
     STRIPE_NETWORK_MODE?: "disabled" | "enabled";
     STRIPE_RESTRICTED_API_KEY?: string;
     STRIPE_WEBHOOKS_ENABLED?: string;
@@ -55,6 +59,10 @@ interface Env {
   WALLET_FUNDING_MODE?: "disabled" | "stripe_test";
   EXTERNAL_TAX_MODE?: "disabled" | "service_binding";
   EXTERNAL_TAX_ADAPTER?: Fetcher;
+  EASY_PAY_DIRECT_TAX_MODE?: "disabled" | "shadow" | "enforced";
+  EASY_PAY_DIRECT_TAX_PROVIDER?: "local_d1" | "stripe_test";
+  EASY_PAY_DIRECT_TAX_CODE?: string;
+  EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS?: string;
   STRIPE_NETWORK_MODE?: "disabled" | "enabled";
   STRIPE_RESTRICTED_API_KEY?: string;
   STRIPE_WEBHOOKS_ENABLED?: string;

@@ -25,6 +25,7 @@ import { handleQuotesApi } from "./api/quotes";
 import { handleDataExportsApi } from "./api/data-exports";
 import { handleExternalTaxApi } from "./api/external-tax";
 import { handleEasyPayDirectCheckoutSubmission } from "./api/easy-pay-direct-checkout";
+import { handleEasyPayDirectTaxQuote } from "./api/easy-pay-direct-tax";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -78,6 +79,10 @@ export default {
 
       if (request.method === "POST" && url.pathname === "/easy_pay_direct/payment_form") {
         return await handleEasyPayDirectCheckoutSubmission(request, env, requestId);
+      }
+
+      if (request.method === "POST" && url.pathname === "/easy_pay_direct/tax_quote") {
+        return await handleEasyPayDirectTaxQuote(request, env, requestId);
       }
 
       if (request.method === "GET" && url.pathname === "/easy_pay_direct/sandbox_tool") {
