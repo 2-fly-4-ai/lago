@@ -412,6 +412,19 @@ export async function handleEasyPayDirectCheckoutSubmission(
         "Easy Pay Direct order requires reconciliation",
       );
     }
+    if (order.status === "succeeded") {
+      try {
+        await finalizeCommerceOrderSuccess(env, checkout, executionId, order, fetcher);
+        return successResponse(order.id, requestId, false, returnTo);
+      } catch (error) {
+        console.error("easy_pay_direct_inline_reconciliation_failed", {
+          executionId,
+          paymentRequestId: checkout.payment_request_id,
+          providerTransactionId: order.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     return processingResponse(order.id, requestId, false, returnTo);
   } catch (error) {
     const current = await loadExecution(env.BILLING_DB, checkout.checkout_intent_id);
@@ -768,6 +781,112 @@ async function finalizeGatewayTestOutcome(
   }
   await commitAppliedCheckoutTaxQuote(env, executionId, providerTransactionId, fetcher);
   return successResponse(providerTransactionId, requestId, false, returnTo);
+}
+
+async function finalizeCommerceOrderSuccess(
+  env: Env,
+  checkout: CheckoutRow,
+  executionId: string,
+  order: CommerceOrder,
+  fetcher: typeof fetch,
+): Promise<void> {
+  const timestamp = new Date().toISOString();
+  const receiptId = await deterministicUuid(
+    "easy-pay-direct-inline-confirmation",
+    `${checkout.provider_account_code}:${order.id}:${order.status}`,
+  );
+  const providerEventId = `inline:${order.id}:${order.status}`;
+  const payloadHash = await sha256Hex(
+    JSON.stringify({
+      id: order.id,
+      status: order.status,
+      total: order.total,
+      currency: order.currency,
+    }),
+  );
+  await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      `INSERT INTO webhook_receipts
+       (id, provider, provider_account_code, provider_event_id, signature_valid,
+        payload_sha256, received_at, processed_at, processing_error_code)
+       VALUES (?, 'easy_pay_direct_inline_confirmation', ?, ?, 0, ?, ?, NULL, NULL)
+       ON CONFLICT(provider, provider_account_code, provider_event_id) DO NOTHING`,
+    ).bind(receiptId, checkout.provider_account_code, providerEventId, payloadHash, timestamp),
+    env.BILLING_DB.prepare(
+      `INSERT INTO provider_webhook_events
+       (receipt_id, organization_id, event_type, provider_transaction_id, invoice_id,
+        normalized_status, normalized_at, payment_request_id)
+       VALUES (?, ?, 'order.inline_confirmed', ?, NULL, NULL, NULL, NULL)
+       ON CONFLICT(receipt_id) DO NOTHING`,
+    ).bind(receiptId, checkout.organization_id, order.id),
+  ]);
+
+  try {
+    const receipt: PendingReceipt = {
+      receipt_id: receiptId,
+      organization_id: checkout.organization_id,
+      provider_account_code: checkout.provider_account_code,
+      event_type: "order.inline_confirmed",
+      provider_transaction_id: order.id,
+      archive_key: null,
+      processed_at: null,
+    };
+    try {
+      await reconcilePaymentRequest(
+        env.BILLING_DB,
+        receipt,
+        checkout.payment_request_id,
+        {
+          id: order.id,
+          amountMinor: order.total,
+          failureCode: null,
+          failureMessage: null,
+        },
+        "succeeded",
+        "easy_pay_direct",
+      );
+    } catch (error) {
+      const paymentRequest = await env.BILLING_DB.prepare(
+        "SELECT payment_status FROM payment_requests WHERE id = ? AND organization_id = ? LIMIT 1",
+      )
+        .bind(checkout.payment_request_id, checkout.organization_id)
+        .first<{ payment_status: string }>();
+      if (paymentRequest?.payment_status !== "succeeded") throw error;
+      await reconcilePaymentRequest(
+        env.BILLING_DB,
+        receipt,
+        checkout.payment_request_id,
+        {
+          id: order.id,
+          amountMinor: order.total,
+          failureCode: null,
+          failureMessage: null,
+        },
+        "succeeded",
+        "easy_pay_direct",
+      );
+    }
+
+    await env.BILLING_DB.prepare(
+      `UPDATE easy_pay_direct_payment_executions
+       SET status = 'succeeded', failure_code = NULL, failure_message = NULL,
+           updated_at = ?, completed_at = ?, phone_ciphertext = NULL, phone_iv = NULL
+       WHERE id = ? AND status IN ('processing', 'unknown')`,
+    )
+      .bind(timestamp, timestamp, executionId)
+      .run();
+    await commitAppliedCheckoutTaxQuote(env, executionId, order.id, fetcher);
+  } catch (error) {
+    await env.BILLING_DB.prepare(
+      `UPDATE webhook_receipts
+       SET processed_at = COALESCE(processed_at, ?),
+           processing_error_code = COALESCE(processing_error_code, 'inline_reconciliation_failed')
+       WHERE id = ?`,
+    )
+      .bind(new Date().toISOString(), receiptId)
+      .run();
+    throw error;
+  }
 }
 
 async function loadCheckout(

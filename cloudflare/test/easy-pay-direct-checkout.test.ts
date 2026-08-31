@@ -449,7 +449,7 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
     });
   });
 
-  it("creates a sandbox Commerce order once and waits for the signed webhook before reconciling", async () => {
+  it("reconciles a successful Commerce order before returning from checkout", async () => {
     const runtimeEnv = enabledEnv();
     await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
     const checkout = await env.BILLING_DB.prepare(
@@ -513,7 +513,7 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       "synthetic_qa",
     );
     await expect(first.json()).resolves.toMatchObject({
-      status: "processing",
+      status: "succeeded",
       provider: "easy_pay_direct",
       provider_order_id: "epd-order-1",
       replayed: false,
@@ -525,13 +525,13 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       providerFetch,
       "synthetic_qa",
     );
-    await expect(replay.json()).resolves.toMatchObject({ status: "processing", replayed: true });
+    await expect(replay.json()).resolves.toMatchObject({ status: "succeeded", replayed: true });
     expect(providerFetch).toHaveBeenCalledTimes(4);
     await expect(
       env.BILLING_DB.prepare("SELECT payment_status FROM payment_requests WHERE id = ?")
         .bind(paymentRequestId)
         .first(),
-    ).resolves.toEqual({ payment_status: "pending" });
+    ).resolves.toEqual({ payment_status: "succeeded" });
     await expect(
       env.BILLING_DB.prepare(
         `SELECT provider_customer_id, provider_payment_method_id, gateway_customer_vault_id
@@ -563,14 +563,14 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
     await expect(
       reconcileEasyPayDirectExecution(runtimeEnv, execution!.id, orderRead),
     ).resolves.toBe("processed");
-    expect(orderRead).toHaveBeenCalledOnce();
+    expect(orderRead).not.toHaveBeenCalled();
     await expect(
       env.BILLING_DB.prepare(
         `SELECT provider, signature_valid, processed_at IS NOT NULL AS processed
-         FROM webhook_receipts WHERE provider = 'easy_pay_direct_reconciliation'`,
+         FROM webhook_receipts WHERE provider = 'easy_pay_direct_inline_confirmation'`,
       ).first(),
     ).resolves.toEqual({
-      provider: "easy_pay_direct_reconciliation",
+      provider: "easy_pay_direct_inline_confirmation",
       signature_valid: 0,
       processed: 1,
     });
