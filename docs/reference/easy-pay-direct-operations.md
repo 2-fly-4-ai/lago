@@ -45,6 +45,7 @@ Lago uses these EPD bindings:
 - `EASY_PAY_DIRECT_ACCOUNT_CODE`
 - `EASY_PAY_DIRECT_ORGANIZATION_ID`
 - `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED`
+- `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE`
 - `EASY_PAY_DIRECT_COMMERCE_API_KEY`
 - `EASY_PAY_DIRECT_SECURITY_KEY`
 - `EASY_PAY_DIRECT_TOKENIZATION_KEY`
@@ -79,12 +80,15 @@ guess a classification from customer-facing copy or the routed product slug.
 - Billing destination is collected before payment. Lago calculates from the reviewed, versioned D1
   rule set, atomically replaces the invoice/payment-request total, and binds the payment to the
   replacement signed checkout and address hash. No Stripe request is made.
-- The adult standard-plan staging cohort routes to Lago/EPD. Safe products and adult Plus/Premium
-  controls remain on direct Stripe.
+- Staging routes the 123Movies monthly canary and the existing Pornhub one-time canary to
+  Lago/EPD. Products without an explicit route remain on direct Stripe.
 - The synthetic outcome selector remains available only at `/easy_pay_direct/sandbox_tool`; it is
   not the customer checkout.
 - `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED=0` remains the deployment default. Enable it only
   after the renewal candidate query has been reviewed for the intended environment.
+- `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE=scoped` is the rollout default. In this mode,
+  only subscriptions with an enabled row in `easy_pay_direct_automatic_collection_scopes` may
+  create a new automatic payment execution. Moving to `all` is a separate rollout decision.
 
 ## Automatic subscription collection
 
@@ -103,6 +107,10 @@ When the independent automatic-collection gate is enabled, a finalized renewal i
 deterministic payment request and one deterministic execution. Before charging, Lago recalculates
 tax using the customer's last committed billing destination and the current active D1 rule set.
 Missing, stale, ambiguous, or unregistered tax coverage fails closed without contacting EPD.
+
+The rollout scope is checked when Lago creates the automatic payment execution, including dunning
+executions. Removing or disabling a scope stops new executions for that subscription; executions
+already created remain preserved for idempotent completion or provider-read reconciliation.
 
 The EPD Gateway request uses the Customer Vault and credential-on-file fields required for a
 merchant-initiated recurring charge: `billing_method=recurring`, `initiated_by=merchant`,

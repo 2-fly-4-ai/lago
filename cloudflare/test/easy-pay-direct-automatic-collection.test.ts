@@ -232,6 +232,21 @@ describe("Easy Pay Direct automatic subscription collection", () => {
     await expect(automaticPaymentRequestId(invoiceId)).resolves.toBeNull();
   });
 
+  it("requires an explicit subscription scope in scoped rollout mode", async () => {
+    const runtimeEnv = scopedEnv();
+    await expect(
+      prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "scoped-before-enable"),
+    ).resolves.toBe("not_applicable");
+    await expect(automaticPaymentRequestId(invoiceId)).resolves.toBeNull();
+
+    await enableAutomaticCollectionScope();
+
+    await expect(
+      prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "scoped-after-enable"),
+    ).resolves.toBe("processed");
+    await expect(automaticPaymentRequestId(invoiceId)).resolves.not.toBeNull();
+  });
+
   it("recalculates and persists tax from the last committed billing destination before charging", async () => {
     await seedCommittedBillingDestinationAndTaxRule();
     const runtimeEnv = localTaxEnv();
@@ -370,6 +385,7 @@ function enabledEnv(): Env {
   return new Proxy(env, {
     get(target, property, receiver) {
       if (property === "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED") return "1";
+      if (property === "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE") return "all";
       if (property === "PAYMENT_MUTATIONS_ENABLED") return "1";
       if (property === "PROVIDER_READS_ENABLED") return "1";
       if (property === "EASY_PAY_DIRECT_NETWORK_MODE") return "gateway_test";
@@ -380,6 +396,31 @@ function enabledEnv(): Env {
       return Reflect.get(target, property, receiver) as unknown;
     },
   }) as Env;
+}
+
+function scopedEnv(): Env {
+  return new Proxy(enabledEnv(), {
+    get(target, property, receiver) {
+      if (property === "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE") return "scoped";
+      return Reflect.get(target, property, receiver) as unknown;
+    },
+  }) as Env;
+}
+
+async function enableAutomaticCollectionScope(): Promise<void> {
+  const subscription = await env.BILLING_DB.prepare(
+    "SELECT subscription_id, organization_id FROM invoices WHERE id = ?",
+  )
+    .bind(invoiceId)
+    .first<{ subscription_id: string; organization_id: string }>();
+  const now = new Date().toISOString();
+  await env.BILLING_DB.prepare(
+    `INSERT INTO easy_pay_direct_automatic_collection_scopes
+     (subscription_id, organization_id, status, reason, created_at, updated_at)
+     VALUES (?, ?, 'enabled', 'scoped rollout test', ?, ?)`,
+  )
+    .bind(subscription!.subscription_id, subscription!.organization_id, now, now)
+    .run();
 }
 
 function disabledEnv(): Env {

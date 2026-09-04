@@ -64,7 +64,11 @@ export async function prepareEasyPayDirectAutomaticCollection(
   if (!automaticCollectionEnabled(env)) return "not_applicable";
   const existing = await executionForInvoice(env.BILLING_DB, invoiceId);
   if (existing) return "processed";
-  const candidate = await loadRenewalCandidate(env.BILLING_DB, invoiceId);
+  const candidate = await loadRenewalCandidate(
+    env.BILLING_DB,
+    invoiceId,
+    automaticCollectionScopeMode(env),
+  );
   if (!candidate) return "not_applicable";
 
   const now = new Date().toISOString();
@@ -252,7 +256,7 @@ export async function processEasyPayDirectAutomaticCollection(
   if (!automaticCollectionEnabled(env)) return "not_applicable";
   let execution = await loadExecution(env.BILLING_DB, paymentRequestId);
   if (!execution) {
-    await prepareEasyPayDirectDunningCollection(env.BILLING_DB, paymentRequestId);
+    await prepareEasyPayDirectDunningCollection(env, paymentRequestId);
     execution = await loadExecution(env.BILLING_DB, paymentRequestId);
   }
   if (!execution) return "not_applicable";
@@ -313,12 +317,11 @@ export async function processEasyPayDirectAutomaticCollection(
 }
 
 async function prepareEasyPayDirectDunningCollection(
-  database: D1Database,
+  env: Env,
   paymentRequestId: string,
 ): Promise<void> {
-  const row = await database
-    .prepare(
-      `SELECT request.id AS payment_request_id, request.organization_id, request.customer_id,
+  const row = await env.BILLING_DB.prepare(
+    `SELECT request.id AS payment_request_id, request.organization_id, request.customer_id,
               request.amount_minor, request.currency,
               COALESCE(customer.payment_provider_code, 'default') AS provider_account_code,
               profile.id AS provider_profile_id, profile.gateway_customer_vault_id,
@@ -334,6 +337,16 @@ async function prepareEasyPayDirectDunningCollection(
        WHERE request.id = ? AND request.source = 'dunning'
          AND request.payment_status = 'pending' AND request.ready_for_payment_processing = 1
          AND customer.payment_provider = 'easy_pay_direct'
+         AND (? = 'all' OR EXISTS (
+           SELECT 1
+           FROM invoices_payment_requests scoped_link
+           JOIN invoices scoped_invoice ON scoped_invoice.id = scoped_link.invoice_id
+           JOIN easy_pay_direct_automatic_collection_scopes scope
+             ON scope.subscription_id = scoped_invoice.subscription_id
+            AND scope.organization_id = scoped_invoice.organization_id
+            AND scope.status = 'enabled'
+           WHERE scoped_link.payment_request_id = request.id
+         ))
          AND profile.gateway_customer_vault_id IS NOT NULL
          AND profile.initial_transaction_id IS NOT NULL
          AND lower(profile.gateway_customer_vault_id) NOT LIKE 'vault-test-%'
@@ -354,8 +367,8 @@ async function prepareEasyPayDirectDunningCollection(
              )
          )
        LIMIT 1`,
-    )
-    .bind(paymentRequestId)
+  )
+    .bind(paymentRequestId, automaticCollectionScopeMode(env))
     .first<{
       payment_request_id: string;
       organization_id: string;
@@ -382,15 +395,14 @@ async function prepareEasyPayDirectDunningCollection(
     }),
   );
   const now = new Date().toISOString();
-  await database
-    .prepare(
-      `INSERT INTO easy_pay_direct_automatic_payment_executions
+  await env.BILLING_DB.prepare(
+    `INSERT INTO easy_pay_direct_automatic_payment_executions
        (id, organization_id, payment_request_id, customer_id, provider_profile_id,
         provider_account_code, request_sha256, gateway_customer_vault_id,
         initial_transaction_id, order_reference, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
        ON CONFLICT(payment_request_id) DO NOTHING`,
-    )
+  )
     .bind(
       executionId,
       row.organization_id,
@@ -462,6 +474,12 @@ export async function dispatchPendingEasyPayDirectAutomaticCollections(
        AND (invoice.payment_due_date IS NULL OR date(invoice.payment_due_date) <= date('now'))
        AND subscription.payment_method_type = 'provider'
        AND customer.payment_provider = 'easy_pay_direct'
+       AND (? = 'all' OR EXISTS (
+         SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope
+         WHERE scope.subscription_id = subscription.id
+           AND scope.organization_id = invoice.organization_id
+           AND scope.status = 'enabled'
+       ))
        AND profile.gateway_customer_vault_id IS NOT NULL
        AND profile.initial_transaction_id IS NOT NULL
        AND lower(profile.gateway_customer_vault_id) NOT LIKE 'vault-test-%'
@@ -470,7 +488,9 @@ export async function dispatchPendingEasyPayDirectAutomaticCollections(
          SELECT 1 FROM invoices_payment_requests link WHERE link.invoice_id = invoice.id
        )
      ORDER BY invoice.created_at, invoice.id LIMIT 100`,
-  ).all<{ id: string }>();
+  )
+    .bind(automaticCollectionScopeMode(env))
+    .all<{ id: string }>();
   let dispatched = 0;
   for (const row of rows.results) {
     if (
@@ -498,6 +518,7 @@ export async function pendingEasyPayDirectAutomaticExecutions(
 async function loadRenewalCandidate(
   database: D1Database,
   invoiceId: string,
+  scopeMode: "scoped" | "all",
 ): Promise<RenewalCandidate | null> {
   return database
     .prepare(
@@ -528,6 +549,12 @@ async function loadRenewalCandidate(
          AND subscription.status IN ('active', 'past_due')
          AND plan.interval <> 'one_time'
          AND customer.payment_provider = 'easy_pay_direct'
+         AND (? = 'all' OR EXISTS (
+           SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope
+           WHERE scope.subscription_id = subscription.id
+             AND scope.organization_id = invoice.organization_id
+             AND scope.status = 'enabled'
+         ))
          AND profile.gateway_customer_vault_id IS NOT NULL
          AND profile.initial_transaction_id IS NOT NULL
          AND lower(profile.gateway_customer_vault_id) NOT LIKE 'vault-test-%'
@@ -537,7 +564,7 @@ async function loadRenewalCandidate(
          )
        LIMIT 1`,
     )
-    .bind(invoiceId)
+    .bind(invoiceId, scopeMode)
     .first<RenewalCandidate>();
 }
 
@@ -711,6 +738,10 @@ async function markUnknown(
 
 function automaticCollectionEnabled(env: Env): boolean {
   return String(env.EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED) === "1";
+}
+
+function automaticCollectionScopeMode(env: Env): "scoped" | "all" {
+  return env.EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE === "all" ? "all" : "scoped";
 }
 
 function paymentRequestCreatedEvent(
