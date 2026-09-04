@@ -79,10 +79,12 @@ type ExecutionRow = {
 type CheckoutSurface = "product_checkout" | "synthetic_qa";
 
 type ProviderProfile = {
+  id: string;
   provider_customer_id: string;
   provider_payment_method_id: string | null;
   gateway_customer_vault_id: string | null;
   gateway_billing_id: string | null;
+  initial_transaction_id: string | null;
 };
 
 export async function handleEasyPayDirectCheckoutSubmission(
@@ -768,6 +770,18 @@ async function finalizeGatewayTestOutcome(
     normalizedStatus,
     "easy_pay_direct",
   );
+  if (normalizedStatus === "succeeded" && transaction.customerVaultId) {
+    const existingProfile = await loadProfile(env.BILLING_DB, checkout);
+    await upsertProfile(env.BILLING_DB, checkout, {
+      providerCustomerId:
+        existingProfile?.provider_customer_id ?? `gateway:${checkout.customer_id}`,
+      providerPaymentMethodId: null,
+      gatewayCustomerVaultId: transaction.customerVaultId,
+      gatewayBillingId: null,
+      initialTransactionId: providerTransactionId,
+    });
+    await markCheckoutSubscriptionProvider(env.BILLING_DB, checkout);
+  }
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
      SET status = ?, updated_at = ?, completed_at = ?, phone_ciphertext = NULL, phone_iv = NULL
@@ -875,6 +889,11 @@ async function finalizeCommerceOrderSuccess(
     )
       .bind(timestamp, timestamp, executionId)
       .run();
+    const initialTransactionId = commerceInitialTransactionId(order);
+    if (initialTransactionId) {
+      await recordProfileInitialTransaction(env.BILLING_DB, checkout, initialTransactionId);
+      await markCheckoutSubscriptionProvider(env.BILLING_DB, checkout);
+    }
     await commitAppliedCheckoutTaxQuote(env, executionId, order.id, fetcher);
   } catch (error) {
     await env.BILLING_DB.prepare(
@@ -998,9 +1017,11 @@ async function loadProfile(
 ): Promise<ProviderProfile | null> {
   return database
     .prepare(
-      `SELECT provider_customer_id, provider_payment_method_id, gateway_customer_vault_id, gateway_billing_id
+      `SELECT id, provider_customer_id, provider_payment_method_id, gateway_customer_vault_id,
+              gateway_billing_id, initial_transaction_id
      FROM provider_customer_profiles
-     WHERE customer_id = ? AND provider = 'easy_pay_direct' AND provider_account_code = ? LIMIT 1`,
+     WHERE customer_id = ? AND provider = 'easy_pay_direct' AND provider_account_code = ?
+       AND status = 'active' LIMIT 1`,
     )
     .bind(checkout.customer_id, checkout.provider_account_code)
     .first<ProviderProfile>();
@@ -1011,31 +1032,28 @@ async function upsertProfile(
   checkout: CheckoutRow,
   input: {
     providerCustomerId: string;
-    providerPaymentMethodId: string;
+    providerPaymentMethodId: string | null;
     gatewayCustomerVaultId: string;
-    gatewayBillingId: string;
+    gatewayBillingId: string | null;
+    initialTransactionId?: string | null;
   },
 ): Promise<void> {
   const timestamp = new Date().toISOString();
+  const profileId = await deterministicUuid(
+    "easy-pay-direct-customer-profile",
+    `${checkout.provider_account_code}:${checkout.customer_id}`,
+  );
   await database
     .prepare(
       `INSERT INTO provider_customer_profiles
      (id, organization_id, customer_id, provider, provider_account_code,
       provider_customer_id, provider_payment_method_id, gateway_customer_vault_id,
-      gateway_billing_id, status, created_at, updated_at)
-     VALUES (?, ?, ?, 'easy_pay_direct', ?, ?, ?, ?, ?, 'active', ?, ?)
-     ON CONFLICT(customer_id, provider, provider_account_code) DO UPDATE SET
-       provider_customer_id = excluded.provider_customer_id,
-       provider_payment_method_id = excluded.provider_payment_method_id,
-       gateway_customer_vault_id = excluded.gateway_customer_vault_id,
-       gateway_billing_id = excluded.gateway_billing_id,
-       status = 'active', updated_at = excluded.updated_at`,
+      gateway_billing_id, initial_transaction_id, status, created_at, updated_at)
+     VALUES (?, ?, ?, 'easy_pay_direct', ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+     ON CONFLICT(customer_id, provider, provider_account_code) DO NOTHING`,
     )
     .bind(
-      await deterministicUuid(
-        "easy-pay-direct-customer-profile",
-        `${checkout.provider_account_code}:${checkout.customer_id}`,
-      ),
+      profileId,
       checkout.organization_id,
       checkout.customer_id,
       checkout.provider_account_code,
@@ -1043,9 +1061,103 @@ async function upsertProfile(
       input.providerPaymentMethodId,
       input.gatewayCustomerVaultId,
       input.gatewayBillingId,
+      input.initialTransactionId ?? null,
       timestamp,
       timestamp,
     )
+    .run();
+  const profile = await loadProfile(database, checkout);
+  if (!profile || profile.provider_customer_id !== input.providerCustomerId) {
+    throw new Error("easy_pay_direct_customer_profile_identity_conflict");
+  }
+  await database
+    .prepare(
+      `UPDATE provider_customer_profiles
+       SET provider_payment_method_id = COALESCE(?, provider_payment_method_id),
+           gateway_customer_vault_id = COALESCE(?, gateway_customer_vault_id),
+           gateway_billing_id = COALESCE(?, gateway_billing_id),
+           initial_transaction_id = COALESCE(?, initial_transaction_id),
+           status = 'active', updated_at = ?
+       WHERE id = ? AND organization_id = ? AND customer_id = ?
+         AND provider = 'easy_pay_direct' AND provider_account_code = ?`,
+    )
+    .bind(
+      input.providerPaymentMethodId,
+      input.gatewayCustomerVaultId,
+      input.gatewayBillingId,
+      input.initialTransactionId ?? null,
+      timestamp,
+      profile.id,
+      checkout.organization_id,
+      checkout.customer_id,
+      checkout.provider_account_code,
+    )
+    .run();
+}
+
+async function recordProfileInitialTransaction(
+  database: D1Database,
+  checkout: CheckoutRow,
+  initialTransactionId: string,
+): Promise<void> {
+  const updated = await database
+    .prepare(
+      `UPDATE provider_customer_profiles
+       SET initial_transaction_id = COALESCE(initial_transaction_id, ?), updated_at = ?
+       WHERE customer_id = ? AND organization_id = ? AND provider = 'easy_pay_direct'
+         AND provider_account_code = ? AND status = 'active'
+         AND (initial_transaction_id IS NULL OR initial_transaction_id = ?)`,
+    )
+    .bind(
+      initialTransactionId,
+      new Date().toISOString(),
+      checkout.customer_id,
+      checkout.organization_id,
+      checkout.provider_account_code,
+      initialTransactionId,
+    )
+    .run();
+  if (updated.meta.changes !== 1) throw new Error("easy_pay_direct_initial_transaction_conflict");
+}
+
+function commerceInitialTransactionId(order: CommerceOrder): string | null {
+  const transaction = [...(order.transactions ?? [])]
+    .reverse()
+    .find(
+      (candidate) =>
+        candidate.status?.toLowerCase() === "succeeded" &&
+        !candidate.type?.toLowerCase().includes("refund"),
+    );
+  return transaction?.processor_transaction_id?.trim() || transaction?.id?.trim() || null;
+}
+
+async function markCheckoutSubscriptionProvider(
+  database: D1Database,
+  checkout: CheckoutRow,
+): Promise<void> {
+  const profile = await loadProfile(database, checkout);
+  if (!profile?.initial_transaction_id || !profile.gateway_customer_vault_id) {
+    throw new Error("easy_pay_direct_automatic_profile_incomplete");
+  }
+  const timestamp = new Date().toISOString();
+  await database
+    .prepare(
+      `UPDATE subscriptions
+       SET payment_method_type = 'provider', payment_method_id = ?,
+           version = version + 1, updated_at = ?
+       WHERE organization_id = ?
+         AND id IN (
+           SELECT invoice.subscription_id
+           FROM invoices_payment_requests link
+           JOIN invoices invoice ON invoice.id = link.invoice_id
+           JOIN subscriptions linked_subscription ON linked_subscription.id = invoice.subscription_id
+           JOIN plans plan ON plan.id = linked_subscription.plan_id
+           WHERE link.payment_request_id = ? AND invoice.subscription_id IS NOT NULL
+             AND plan.interval <> 'one_time'
+         )
+         AND (payment_method_type IS NOT 'provider' OR payment_method_id IS NOT ?)`,
+    )
+    .bind(profile.id, timestamp, checkout.organization_id, checkout.payment_request_id, profile.id)
     .run();
 }
 

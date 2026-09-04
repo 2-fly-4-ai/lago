@@ -108,6 +108,45 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
 
   it("charges the product canary through forced Gateway test mode and reconciles once", async () => {
     const runtimeEnv = enabledEnv("gateway_test");
+    const recurringPlanId = `plan-${paymentRequestId}`;
+    const recurringSubscriptionId = `subscription-${paymentRequestId}`;
+    const now = new Date().toISOString();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO provider_customer_profiles
+         (id, organization_id, customer_id, provider, provider_account_code,
+          provider_customer_id, gateway_customer_vault_id, status, created_at, updated_at)
+         VALUES (?, ?, ?, 'easy_pay_direct', 'epd-synthetic',
+                 'gateway:legacy-placeholder', 'vault-test-legacy', 'active', ?, ?)`,
+      ).bind(`legacy-profile-${paymentRequestId}`, organizationId, customerId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO plans
+         (id, organization_id, code, name, interval, amount_minor, currency,
+          version, active, created_at, updated_at)
+         VALUES (?, ?, ?, 'EPD checkout subscription', 'monthly', 1999, 'USD', 1, 1, ?, ?)`,
+      ).bind(recurringPlanId, organizationId, recurringPlanId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, '2026-10-01T00:00:00.000Z', 1, ?, ?)`,
+      ).bind(
+        recurringSubscriptionId,
+        organizationId,
+        customerId,
+        recurringPlanId,
+        recurringSubscriptionId,
+        now,
+        now,
+        now,
+        now,
+      ),
+      env.BILLING_DB.prepare(
+        `UPDATE invoices
+         SET subscription_id = ?, updated_at = ?
+         WHERE id = ? AND organization_id = ?`,
+      ).bind(recurringSubscriptionId, now, invoiceId, organizationId),
+    ]);
     await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
     const checkout = await env.BILLING_DB.prepare(
       `SELECT payment_url, status, provider_account_code FROM payment_request_checkout_intents
@@ -147,7 +186,7 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       expect(body.get("security_key")).toBe("synthetic-security-key");
       expect(body.has("ccnumber")).toBe(false);
       return new Response(
-        "response=1&responsetext=Approved&response_code=100&transactionid=epd-gateway-test-1&authcode=TEST&customer_vault_id=vault-test-1",
+        "response=1&responsetext=Approved&response_code=100&transactionid=epd-gateway-test-1&authcode=TEST&customer_vault_id=87426631",
       );
     });
     const request = () =>
@@ -209,6 +248,26 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       payment_status: "succeeded",
       ready_for_payment_processing: 0,
       invoice_status: "succeeded",
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT profile.gateway_customer_vault_id, profile.initial_transaction_id,
+                profile.status, subscription.payment_method_type,
+                subscription.payment_method_id = profile.id AS profile_bound
+         FROM subscriptions subscription
+         JOIN provider_customer_profiles profile
+           ON profile.organization_id = subscription.organization_id
+          AND profile.id = subscription.payment_method_id
+         WHERE subscription.id = ? AND subscription.organization_id = ?`,
+      )
+        .bind(recurringSubscriptionId, organizationId)
+        .first(),
+    ).resolves.toEqual({
+      gateway_customer_vault_id: "87426631",
+      initial_transaction_id: "epd-gateway-test-1",
+      status: "active",
+      payment_method_type: "provider",
+      profile_bound: 1,
     });
     await expect(
       env.BILLING_DB.prepare(

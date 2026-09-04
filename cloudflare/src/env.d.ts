@@ -16,6 +16,7 @@ declare namespace Cloudflare {
     EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL?: string;
     EASY_PAY_DIRECT_ACCOUNT_CODE?: string;
     EASY_PAY_DIRECT_ORGANIZATION_ID?: string;
+    EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED?: "0" | "1";
     PUBLIC_BASE_URL?: string;
     CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test" | "easy_pay_direct_test";
     WALLET_FUNDING_MODE?: "disabled" | "stripe_test";
@@ -55,6 +56,7 @@ interface Env {
   EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL?: string;
   EASY_PAY_DIRECT_ACCOUNT_CODE?: string;
   EASY_PAY_DIRECT_ORGANIZATION_ID?: string;
+  EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED?: "0" | "1";
   PUBLIC_BASE_URL?: string;
   CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test" | "easy_pay_direct_test";
   WALLET_FUNDING_MODE?: "disabled" | "stripe_test";

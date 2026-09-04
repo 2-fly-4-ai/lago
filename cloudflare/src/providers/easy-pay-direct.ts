@@ -4,6 +4,7 @@ import { ApiError } from "../http";
 const COMMERCE_API_URL = "https://api.epd.com/v1";
 const COMMERCE_API_VERSION = "2026-02-11";
 const PAYMENT_API_URL = "https://secure.easypaydirectgateway.com/api/transact.php";
+const QUERY_API_URL = "https://secure.easypaydirectgateway.com/api/query.php";
 const COLLECT_JS_URL = "https://secure.easypaydirectgateway.com/token/Collect.js";
 const MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024;
 const CHECKOUT_TTL_SECONDS = 20 * 60;
@@ -90,6 +91,11 @@ export type GatewayTransactionResult = {
   orderId: string | null;
   customerVaultId: string | null;
   rawStatus: string | null;
+};
+
+export type GatewayTransactionQueryResult = GatewayTransactionResult & {
+  amountMinor: number | null;
+  currency: string | null;
 };
 
 export async function createEasyPayDirectCheckoutUrl(
@@ -502,9 +508,131 @@ export async function chargeEasyPayDirectGatewayTestToken(
     customer_vault: "add_customer",
     initiated_by: "customer",
     stored_credential_indicator: "stored",
+    billing_method: "recurring",
     merchant_defined_field_1: `lago_idempotency_key=${input.idempotencyKey}`,
   });
   return gatewayTransactionRequest(body, fetcher);
+}
+
+export async function chargeEasyPayDirectStoredMethod(
+  env: EasyPayDirectEnv,
+  input: {
+    amountMinor: number;
+    currency: string;
+    customerVaultId: string;
+    initialTransactionId: string;
+    orderId: string;
+    orderDescription: string;
+    idempotencyKey: string;
+  },
+  fetcher: typeof fetch = fetch,
+): Promise<GatewayTransactionResult> {
+  if (
+    env.EASY_PAY_DIRECT_NETWORK_MODE !== "gateway_test" &&
+    env.EASY_PAY_DIRECT_NETWORK_MODE !== "production"
+  ) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_automatic_collection_network_forbidden",
+      "Easy Pay Direct automatic collection requires Gateway test or production mode",
+    );
+  }
+  const network = assertEasyPayDirectNetwork(env);
+  validateMoney(input.amountMinor, input.currency);
+  validateIdentifier(input.customerVaultId, "customerVaultId");
+  validateIdentifier(input.initialTransactionId, "initialTransactionId");
+  if (/^(?:vault-test-|synthetic-)/iu.test(input.customerVaultId)) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_unverified_customer_vault",
+      "Easy Pay Direct automatic collection requires a provider-issued customer vault ID",
+    );
+  }
+  validateIdentifier(input.orderId, "orderId");
+  validateIdentifier(input.idempotencyKey, "idempotencyKey");
+  const body = new URLSearchParams({
+    type: "sale",
+    security_key: network.gatewaySecurityKey,
+    customer_vault_id: input.customerVaultId,
+    initial_transaction_id: input.initialTransactionId,
+    amount: (input.amountMinor / 100).toFixed(2),
+    currency: input.currency,
+    orderid: input.orderId.slice(0, 255),
+    order_description: input.orderDescription.slice(0, 255),
+    billing_method: "recurring",
+    initiated_by: "merchant",
+    stored_credential_indicator: "used",
+    dup_seconds: "1200",
+    merchant_defined_field_1: `lago_idempotency_key=${input.idempotencyKey}`,
+    ...(env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test" ? { test_mode: "enabled" } : {}),
+  });
+  return gatewayTransactionRequest(body, fetcher);
+}
+
+export async function findEasyPayDirectGatewayTransactionByOrderId(
+  env: EasyPayDirectEnv,
+  orderId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<GatewayTransactionQueryResult | null> {
+  if (
+    env.EASY_PAY_DIRECT_NETWORK_MODE !== "gateway_test" &&
+    env.EASY_PAY_DIRECT_NETWORK_MODE !== "production"
+  ) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_provider_read_network_forbidden",
+      "Easy Pay Direct provider reads require Gateway test or production mode",
+    );
+  }
+  validateIdentifier(orderId, "orderId");
+  const network = assertEasyPayDirectNetwork(env);
+  let response: Response;
+  try {
+    response = await fetcher(QUERY_API_URL, {
+      method: "POST",
+      headers: {
+        Accept: "application/xml",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        security_key: network.gatewaySecurityKey,
+        order_id: orderId.slice(0, 255),
+        result_limit: "10",
+      }),
+    });
+  } catch {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_provider_read_unavailable",
+      "Easy Pay Direct provider read did not return an outcome",
+    );
+  }
+  const raw = await readBoundedResponse(response, MAX_PROVIDER_RESPONSE_BYTES);
+  if (!response.ok) {
+    throw new ApiError(
+      response.status === 429 ? 429 : 503,
+      response.status === 429
+        ? "easy_pay_direct_rate_limited"
+        : "easy_pay_direct_provider_read_failed",
+      "Easy Pay Direct provider read failed",
+    );
+  }
+  const transactions = Array.from(
+    raw.matchAll(/<transaction(?:\s[^>]*)?>([\s\S]*?)<\/transaction>/giu),
+  )
+    .map((match) => parseGatewayQueryTransaction(match[1] ?? ""))
+    .filter((transaction): transaction is GatewayTransactionQueryResult => transaction !== null)
+    .filter((transaction) => transaction.orderId === orderId);
+  if (transactions.length === 0) return null;
+  const uniqueIds = new Set(transactions.map((transaction) => transaction.id));
+  if (uniqueIds.size !== 1) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_provider_read_ambiguous",
+      "Easy Pay Direct returned multiple transactions for one automatic payment",
+    );
+  }
+  return transactions[0]!;
 }
 
 export async function findEasyPayDirectCustomerByEmail(
@@ -878,6 +1006,63 @@ async function gatewayTransactionRequest(
     customerVaultId: values.get("customer_vault_id")?.trim() || null,
     rawStatus,
   };
+}
+
+function parseGatewayQueryTransaction(xml: string): GatewayTransactionQueryResult | null {
+  const id = xmlTag(xml, "transaction_id");
+  const orderId = xmlTag(xml, "order_id");
+  if (!id || !orderId) return null;
+  const condition = xmlTag(xml, "condition")?.toLowerCase() ?? null;
+  const responseCode = lastXmlTag(xml, "response_code");
+  const responseText =
+    lastXmlTag(xml, "response_text") ??
+    lastXmlTag(xml, "processor_response_text") ??
+    condition ??
+    "Unknown provider response";
+  const actionSuccess = lastXmlTag(xml, "success");
+  const status =
+    actionSuccess === "1" || condition === "complete" || condition === "pendingsettlement"
+      ? "succeeded"
+      : actionSuccess === "0" || condition === "failed" || condition === "canceled"
+        ? "failed"
+        : "unknown";
+  const amountText = lastXmlTag(xml, "requested_amount") ?? lastXmlTag(xml, "amount");
+  const amount = amountText ? Number(amountText) : Number.NaN;
+  const amountMinor = Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) : null;
+  return {
+    id,
+    status,
+    responseCode,
+    responseText: responseText.slice(0, 500),
+    authCode: xmlTag(xml, "authorization_code"),
+    orderId,
+    customerVaultId: xmlTag(xml, "customer_vault_id"),
+    rawStatus: condition,
+    amountMinor,
+    currency: xmlTag(xml, "currency")?.toUpperCase() ?? null,
+  };
+}
+
+function xmlTag(xml: string, name: string): string | null {
+  const match = new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${name}>`, "iu").exec(xml);
+  return match?.[1] ? decodeXmlText(match[1]).trim() || null : null;
+}
+
+function lastXmlTag(xml: string, name: string): string | null {
+  const matches = Array.from(
+    xml.matchAll(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${name}>`, "giu")),
+  );
+  const value = matches.at(-1)?.[1];
+  return value ? decodeXmlText(value).trim() || null : null;
+}
+
+function decodeXmlText(value: string): string {
+  return value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
 }
 
 function assertEasyPayDirectNetwork(env: EasyPayDirectEnv): {

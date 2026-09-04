@@ -48,6 +48,11 @@ import {
 } from "../billing/progressive-billing";
 import { processDunningCampaigns } from "../schedules/dunning";
 import { dispatchPendingPaymentRequestCheckouts } from "./checkout";
+import {
+  dispatchPendingEasyPayDirectAutomaticCollections,
+  pendingEasyPayDirectAutomaticExecutions,
+  reconcileEasyPayDirectAutomaticCollection,
+} from "../billing/easy-pay-direct-automatic-collection";
 
 type ReconciliationParams = {
   schedule?: {
@@ -323,6 +328,30 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         else deferredEasyPayDirectExecutions += 1;
       }
 
+      const dispatchedEasyPayDirectAutomaticCollections = await step.do(
+        "dispatch Easy Pay Direct automatic collections",
+        { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+        async () => dispatchPendingEasyPayDirectAutomaticCollections(this.env, runId),
+      );
+      const automaticExecutionIds = await step.do(
+        "load pending Easy Pay Direct automatic executions",
+        async () => pendingEasyPayDirectAutomaticExecutions(this.env.BILLING_DB),
+      );
+      let reconciledEasyPayDirectAutomaticExecutions = 0;
+      let deferredEasyPayDirectAutomaticExecutions = 0;
+      for (const executionId of automaticExecutionIds) {
+        const outcome = await step.do(
+          `reconcile Easy Pay Direct automatic execution ${executionId}`,
+          {
+            retries: { limit: 5, delay: "10 seconds", backoff: "exponential" },
+            timeout: "1 minute",
+          },
+          async () => reconcileEasyPayDirectAutomaticCollection(this.env, executionId),
+        );
+        if (outcome === "processed") reconciledEasyPayDirectAutomaticExecutions += 1;
+        else deferredEasyPayDirectAutomaticExecutions += 1;
+      }
+
       const dueBillingPeriods = await step.do("load due billing periods", async () => {
         if (!executors.has("close_billing_periods")) return [];
         const result = await this.env.BILLING_DB.prepare(
@@ -514,6 +543,10 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         pendingEasyPayDirectExecutions: easyPayDirectExecutionIds.length,
         reconciledEasyPayDirectExecutions,
         deferredEasyPayDirectExecutions,
+        dispatchedEasyPayDirectAutomaticCollections,
+        pendingEasyPayDirectAutomaticExecutions: automaticExecutionIds.length,
+        reconciledEasyPayDirectAutomaticExecutions,
+        deferredEasyPayDirectAutomaticExecutions,
         dueBillingPeriods: dueBillingPeriods.length,
         closedBillingPeriods,
         expiredCoupons,

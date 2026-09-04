@@ -512,9 +512,13 @@ Multi-billing-entity routing and provider-created system sections remain explici
 
 The Cloudflare rewrite retains Authorize.Net and adds Easy Pay Direct as active provider adapters
 used by the pinned Lago compatibility contract. Easy Pay Direct uses Commerce customers, payment
-methods, products, orders, refunds, and signed webhook-first reconciliation. EPD Gateway remains
-only for live Collect.js Customer Vault setup. Store checkout can select it explicitly while its
-independent rollout switch remains off. Lago-managed Stripe checkout, Adyen,
+methods, products, orders, refunds, and signed webhook-first reconciliation. EPD Gateway provides
+Collect.js Customer Vault setup and deterministic merchant-initiated recurring collection. Unknown
+renewal outcomes are never resubmitted; provider-read reconciliation queries the stable gateway
+order reference. Store checkout and automatic collection have independent rollout switches.
+Only profiles created by the current customer-initiated credential-on-file flow are eligible;
+historical or obvious fixture vault references are not inferred into renewable credentials.
+Lago-managed Stripe checkout, Adyen,
 GoCardless, Cashfree, Flutterwave, and MoneyHash remain explicit `not-used` feature-inventory
 entries.
 

@@ -11,6 +11,7 @@ describe("production EPD canary configuration", () => {
     expect(productionConfig).toContain('"PAYMENT_MUTATIONS_ENABLED": "1"');
     expect(productionConfig).toContain('"EASY_PAY_DIRECT_NETWORK_MODE": "production"');
     expect(productionConfig).toContain('"EASY_PAY_DIRECT_LIVEMODE_ALLOWED": "1"');
+    expect(productionConfig).toContain('"EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED": "0"');
     expect(productionConfig).toContain('"PROVIDER_READS_ENABLED": "1"');
     expect(productionConfig).toContain('"CREDIT_NOTE_REFUND_MODE": "disabled"');
     expect(productionConfig).toContain('"WALLET_FUNDING_MODE": "disabled"');
