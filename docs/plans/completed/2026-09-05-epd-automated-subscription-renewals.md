@@ -113,3 +113,7 @@ and production product routes remain unchanged during this plan.
   tests; this definitive-success provider response required no read recovery.
 - The temporary enabled version was `6eddb33e-9c15-4b36-88fb-29e68a65d5b2`. The final deployment
   restored `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED=0`.
+- Follow-up on 2026-09-05: the user approved keeping staging automatic collection enabled. The
+  staging master gate is therefore on in `scoped` mode, with only the reviewed test subscription
+  enabled in D1. Worker version `fa29dd40-603c-48a9-92bb-aa8107e28d37` is healthy in this state;
+  production remains off.

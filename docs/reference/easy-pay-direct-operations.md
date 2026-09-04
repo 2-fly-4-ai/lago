@@ -84,8 +84,9 @@ guess a classification from customer-facing copy or the routed product slug.
   Lago/EPD. Products without an explicit route remain on direct Stripe.
 - The synthetic outcome selector remains available only at `/easy_pay_direct/sandbox_tool`; it is
   not the customer checkout.
-- `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED=0` remains the deployment default. Enable it only
-  after the renewal candidate query has been reviewed for the intended environment.
+- Staging keeps `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED=1` with scoped rollout after the
+  reviewed recurring proof. Only subscriptions with an enabled scope row can create a new
+  automatic execution. Production remains disabled until its separate rollout approval.
 - `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE=scoped` is the rollout default. In this mode,
   only subscriptions with an enabled row in `easy_pay_direct_automatic_collection_scopes` may
   create a new automatic payment execution. Moving to `all` is a separate rollout decision.
