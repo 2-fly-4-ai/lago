@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
 import { closeBillingPeriod } from "../src/billing/close-period";
 import { finalizeDueInvoices } from "../src/schedules/maintenance";
@@ -8,6 +8,8 @@ const apiKey = "subscription-plan-change-key";
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
 
 beforeEach(async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-08-20T12:00:00.000Z"));
   const now = new Date().toISOString();
   await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
@@ -50,6 +52,10 @@ beforeEach(async () => {
        WHERE organization_id = 'org-plan-change'`,
     ),
   ]);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("subscription plan generations", () => {
