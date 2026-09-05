@@ -47,7 +47,14 @@ export async function resolveWashingtonRate(
       redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
-  } catch {
+  } catch (cause) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "washington_tax_rate_fetch_failed",
+        error_name: cause instanceof Error ? cause.name : "UnknownError",
+      }),
+    );
     throw unavailable("Washington tax service is unavailable");
   }
   const length = Number(response.headers.get("content-length"));

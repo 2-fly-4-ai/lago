@@ -95,10 +95,21 @@ describe("Washington public address-rate resolver", () => {
           }),
       ),
     ).rejects.toMatchObject({ status: 503 });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await expect(
       resolveWashingtonRate(input, async () => {
         throw new Error("secret network detail");
       }),
     ).rejects.toMatchObject({ status: 503 });
+    expect(warning).toHaveBeenCalledWith(
+      JSON.stringify({
+        level: "warn",
+        event: "washington_tax_rate_fetch_failed",
+        error_name: "Error",
+      }),
+    );
+    expect(warning.mock.calls.flat().join(" ")).not.toContain("1 Main St");
+    expect(warning.mock.calls.flat().join(" ")).not.toContain("secret network detail");
+    warning.mockRestore();
   });
 });
