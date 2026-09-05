@@ -19,6 +19,7 @@ test("renders guarded synthetic-only v2-to-v21 staging activation", () => {
   assert.match(sql, /staging_activation_preflight/);
   assert.match(sql, /software-us-partial-candidate-2026-09-06-v21/);
   assert.match(sql, /priority-market-candidate-2026-08-31-v2/);
+  assert.match(sql, /3ed5b218afe287548c7b44f88c76064805bf132da92338d3ecbd04784ab25d93/);
   assert.equal((sql.match(/INSERT INTO indirect_tax_registration_scopes/g) ?? []).length, 67);
   assert.equal((sql.match(/'off'\nWHERE/g) ?? []).length, 4);
   assert.match(sql, /staging-synthetic-us-wa-v21/);

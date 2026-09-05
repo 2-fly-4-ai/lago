@@ -11,6 +11,14 @@ const ACKNOWLEDGEMENT = "STAGING_SYNTHETIC_ONLY";
 const SYNTHETIC_ORGANIZATION = /^org-synthetic-e2e-[0-9]{8}-[0-9]+$/;
 const REGISTRATION_REFERENCE =
   "staging-synthetic-qa-only:not-a-legal-registration:expanded-review-2026-09-06";
+// This is the immutable identity actually recorded in staging, documented in
+// docs/evidence/local-d1-tax-staging-enforcement-2026-08-31.md. Do not
+// regenerate its checksum from later source-review code.
+const DEPLOYED_STAGING_BASELINE = {
+  id: "priority-market-candidate-2026-08-31-v2",
+  version: 2,
+  contentSha256: "3ed5b218afe287548c7b44f88c76064805bf132da92338d3ecbd04784ab25d93",
+};
 
 export async function buildStagingExpandedCandidate(asOf) {
   const read = async (name) =>
@@ -44,8 +52,8 @@ export function renderExpandedStagingActivationSql(previous, candidate, options)
     throw new Error("staging activation requires a synthetic E2E organization");
   canonicalIso(options.activatedAt, "activatedAt");
   if (
-    previous.id !== "priority-market-candidate-2026-08-31-v2" ||
-    previous.version !== 2 ||
+    previous.id !== DEPLOYED_STAGING_BASELINE.id ||
+    previous.version !== DEPLOYED_STAGING_BASELINE.version ||
     previous.rules.length !== 64 ||
     candidate.id !== "software-us-partial-candidate-2026-09-06-v21" ||
     candidate.version !== 21 ||
@@ -62,17 +70,20 @@ export function renderExpandedStagingActivationSql(previous, candidate, options)
     "-- STAGING SYNTHETIC QA ONLY. This is not evidence of a legal tax registration.",
     "-- Apply only to serp-dev-lago-native-d1 after importing v21 as a draft.",
     `SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM organizations WHERE id=${organizationId})
- OR NOT EXISTS(SELECT 1 FROM indirect_tax_rule_sets WHERE id=${sql(previous.id)}
-   AND version=${previous.version} AND status='active' AND content_sha256=${sql(previous.content_sha256)})
+ OR NOT EXISTS(SELECT 1 FROM indirect_tax_rule_sets WHERE id=${sql(DEPLOYED_STAGING_BASELINE.id)}
+   AND version=${DEPLOYED_STAGING_BASELINE.version} AND status='active'
+   AND content_sha256=${sql(DEPLOYED_STAGING_BASELINE.contentSha256)})
  OR NOT EXISTS(SELECT 1 FROM indirect_tax_rule_sets WHERE id=${sql(candidate.id)}
    AND version=${candidate.version} AND status='draft' AND content_sha256=${sql(candidate.content_sha256)})
- OR EXISTS(SELECT 1 FROM indirect_tax_rule_sets WHERE status='active' AND id<>${sql(previous.id)})
+ OR EXISTS(SELECT 1 FROM indirect_tax_rule_sets WHERE status='active'
+   AND id<>${sql(DEPLOYED_STAGING_BASELINE.id)})
  THEN abs(-9223372036854775808) ELSE 1 END AS staging_activation_preflight;`,
     `UPDATE indirect_tax_registration_scopes SET status='disabled', updated_at=${activatedAt}
-WHERE organization_id=${organizationId} AND rule_set_id=${sql(previous.id)} AND status='enabled';`,
+WHERE organization_id=${organizationId} AND rule_set_id=${sql(DEPLOYED_STAGING_BASELINE.id)}
+  AND status='enabled';`,
     `UPDATE indirect_tax_rule_sets SET status='retired'
-WHERE id=${sql(previous.id)} AND version=${previous.version} AND status='active'
-  AND content_sha256=${sql(previous.content_sha256)};`,
+WHERE id=${sql(DEPLOYED_STAGING_BASELINE.id)} AND version=${DEPLOYED_STAGING_BASELINE.version}
+  AND status='active' AND content_sha256=${sql(DEPLOYED_STAGING_BASELINE.contentSha256)};`,
     `UPDATE indirect_tax_rule_sets SET status='active', activated_at=${activatedAt}
 WHERE id=${sql(candidate.id)} AND version=${candidate.version} AND status='draft'
   AND content_sha256=${sql(candidate.content_sha256)}
