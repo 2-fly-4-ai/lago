@@ -111,8 +111,10 @@ the previous checked snapshot remains unchanged and has not been stamped fresh.
       checksum, ambiguity, and offline-contract validation.
 - [x] Generate a validated 32-country draft for the six likely first-wave market groups from the
       checked EU snapshot and official non-EU authority references.
-- [x] Split recurring and one-time software product codes by Lago plan interval and fail closed when
-      plan classification is unavailable.
+- [x] Implement the initial recurring/one-time software-code selection by Lago plan interval.
+- [ ] Replace cadence-only classification assumptions with reviewed software-delivery classification
+      before expanding production coverage. Billing frequency alone does not establish SaaS versus
+      downloaded software or its jurisdiction-specific taxability.
 - [x] Generate an untargeted registration review with all six market groups unconfirmed and
       collection disabled.
 - [ ] Expand the review candidate to every intended jurisdiction and complete classification,

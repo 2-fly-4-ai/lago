@@ -154,3 +154,25 @@ Native Slack searches for the fictional test email in money and the exact order 
 accessible channels returned no results. This does not prove the webhook never posted.
 The purchase must not be repeated. Slack acceptance remains incomplete; inspect destination/
 delivery failure before a separately approved retry. No production deployment occurred.
+
+### Checkout diagnosis and verification checkpoint — 2026-09-05
+
+Fixed the hosted checkout error parser to prefer the API's top-level `message` over its
+generic HTTP `error` label. Both tax quoting and payment submission use the same text-only
+helper. Missing tax coverage now retains its specific explanation; this does not add US
+coverage, alter payment amounts, or weaken fail-closed behavior. Three offline regression
+tests execute the embedded helper and verify both call sites. They are part of the full
+`check` gate. Full Lago `check` passed after the change: formatting, lint, Access tests,
+checkout tests, inventory, tax checks/tests, generated types, typecheck, Vitest and every
+development/production dry-run build. No remote deployment or database mutation occurred.
+
+Read-only Cloudflare inspection found Workers Observability disabled on `serp-dev-safe-store`;
+there is no historical Slack error response available there. Native Slack is blocked by the
+locked Mac, and Slack web is not signed in. Do not claim the notification is absent or resend
+it on this evidence. The formatter's displayed order identifier is `lago:<invoice-id>`, not the
+Store order UUID. After unlock, search the exact approved sandbox invoice identifier from
+the Store execution record and the fictional QA email. Preserve the uncertain receipt.
+
+Action-time approval has been requested for only `wrangler deploy --config wrangler.jsonc`
+to `serp-dev-lago-native` for the error-display fix. Production routing, production renewals,
+provider secrets, tax rule sets and registration scopes remain unchanged.
