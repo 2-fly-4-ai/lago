@@ -91,10 +91,22 @@ Remaining genuine gaps (not claimed complete):
   constraints and lifecycle regression coverage, not by removing guards indiscriminately.
 - Bundle base plans are prepared, but Store deliberately keeps non-generic offers on direct Stripe;
   promotions/add-ons/dedicated-offer behavior need their own EPD acceptance before all-product routing.
-- Choose the exact Skool product; prove the two requested recurring canaries end to end in sandbox.
+- User confirmed `skool-video-downloader` (not Skool Bulk) and `onlyfans-downloader`; prove these
+  two requested recurring canaries end to end in sandbox before widening production routing.
 - Production automatic collection is disabled and has zero enabled subscription scopes. The
   production tax gate was disabled before this task and was not changed. Resolve those policies
   before claiming recurring production readiness or enabling Skool/OnlyFans routing.
 - No Store production deployment, provider charge, secret change or existing subscription migration
   occurred in this repair. Lago Worker version remains 7ac94d25-e0c8-4731-8b20-e9ef92bd13f0;
   this was catalog data repair, not another Worker deployment.
+
+## Slack integration follow-up
+
+User clarified Slack, NOT Stripe. Store's `codex/epd-recurring-staging` branch owns the new
+notification receiver and execution record `docs/plans/active/2026-09-05-lago-slack-notifications.md`.
+It consumes the existing signed `payment.succeeded` event, verifies the payment through Lago,
+and reuses Store's Slack sale formatter with persistent transaction-level duplicate protection.
+No Lago runtime change is needed for this contract. A matching tenant-specific endpoint and
+outbound gate review remain required; no webhook/secret configuration was changed here.
+Store production deployment is still on hold. Do not activate Slack or canaries merely because
+the source implementation exists.
