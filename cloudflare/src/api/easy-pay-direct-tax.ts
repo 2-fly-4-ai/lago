@@ -6,6 +6,7 @@ import {
   createEasyPayDirectCheckoutUrl,
   verifyEasyPayDirectCheckoutToken,
 } from "../providers/easy-pay-direct";
+import { encryptBillingAddress } from "../tax/billing-address-vault";
 import { calculateLocalD1Tax } from "../tax/local-d1";
 
 const STRIPE_TAX_CALCULATIONS_URL = "https://api.stripe.com/v1/tax/calculations";
@@ -17,6 +18,8 @@ export type BillingAddress = {
   country: string;
   state: string | null;
   postalCode: string | null;
+  addressLine: string | null;
+  city: string | null;
 };
 
 type TaxableCheckout = {
@@ -37,7 +40,7 @@ type TaxableCheckout = {
   credits_minor: number;
   total_due_minor: number;
   invoice_count: number;
-  plan_interval: string | null;
+  plan_tax_codes_json: string | null;
 };
 
 type TaxCalculation = {
@@ -50,6 +53,16 @@ type TaxCalculation = {
   expiresAt: string;
   localRuleSetId: string | null;
   localRuleId: string | null;
+  localCollectionMode: "collect" | "off" | null;
+  localCalculationMethod: "static" | "wa_dor_address" | null;
+  rateResolution: {
+    locationCode: string;
+    jurisdiction: string;
+    period: string;
+    validThrough: string;
+    stateRatePpm: number;
+    localRatePpm: number;
+  } | null;
 };
 
 export async function handleEasyPayDirectTaxQuote(
@@ -81,13 +94,16 @@ export async function handleEasyPayDirectTaxQuote(
     await sha256Hex(checkoutToken),
   );
   validateTaxableCheckout(checkout);
-  const address = normalizeBillingAddress(objectAt(input, "billing_address"));
-  const addressHash = await sha256Hex(stableJson(address));
-  const taxCode = resolveCheckoutTaxCode(checkout.plan_interval, env);
+  const addressInput = objectAt(input, "billing_address");
+  const address = normalizeBillingAddress(addressInput);
+  const confirmedAddress = addressInput.confirmed === true;
+  const addressIdentity = billingAddressIdentity(address);
+  const addressHash = await sha256Hex(stableJson(addressIdentity));
+  const taxCode = resolveCheckoutTaxCode(checkout.plan_tax_codes_json);
   const taxableSubtotal = checkout.subtotal_minor - checkout.credits_minor;
   const requestHash = await sha256Hex(
     stableJson({
-      address,
+      address: addressIdentity,
       checkout_intent_id: checkout.checkout_intent_id,
       currency: checkout.currency,
       subtotal_minor: taxableSubtotal,
@@ -111,52 +127,48 @@ export async function handleEasyPayDirectTaxQuote(
       : await createLocalTaxCalculation(env, {
           address,
           currency: checkout.currency,
+          fetcher,
           organizationId: checkout.organization_id,
           requestHash,
           subtotalMinor: taxableSubtotal,
           taxCode,
+          confirmedAddress,
         });
   const quoteId = await deterministicUuid(
     "easy-pay-direct-checkout-tax-quote",
     `${checkout.organization_id}:${calculation.providerCode}:${calculation.id}`,
   );
+  const addressEncryption =
+    calculation.localCalculationMethod === "wa_dor_address"
+      ? requireAddressEncryptionConfig(env)
+      : null;
+  const encryptedAddress = addressEncryption
+    ? await encryptBillingAddress(
+        {
+          country: address.country,
+          state: address.state,
+          postalCode: address.postalCode,
+          addressLine: address.addressLine,
+          city: address.city,
+        },
+        addressEncryption.secret,
+        quoteId,
+      )
+    : null;
   const now = new Date().toISOString();
   if (env.EASY_PAY_DIRECT_TAX_MODE === "shadow") {
-    await env.BILLING_DB.prepare(
-      `INSERT INTO easy_pay_direct_checkout_tax_quotes
-       (id, organization_id, payment_request_id, invoice_id, source_checkout_intent_id,
-        provider_code, provider_calculation_id, local_rule_set_id, local_rule_id,
-        request_sha256, billing_address_sha256,
-        billing_country, billing_state, billing_postal_code, currency, subtotal_minor,
-        tax_minor, total_minor, tax_code, status, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quoted', ?, ?, ?)
-       ON CONFLICT(provider_code, provider_calculation_id) DO NOTHING`,
-    )
-      .bind(
-        quoteId,
-        checkout.organization_id,
-        checkout.payment_request_id,
-        checkout.invoice_id,
-        checkout.checkout_intent_id,
-        calculation.providerCode,
-        calculation.id,
-        calculation.localRuleSetId,
-        calculation.localRuleId,
-        requestHash,
-        addressHash,
-        address.country,
-        address.state,
-        address.postalCode,
-        checkout.currency,
-        calculation.subtotalMinor,
-        calculation.taxMinor,
-        calculation.totalMinor,
-        taxCode,
-        calculation.expiresAt,
-        now,
-        now,
-      )
-      .run();
+    await prepareCheckoutTaxQuoteInsert(env.BILLING_DB, {
+      address,
+      addressHash,
+      calculation,
+      checkout,
+      encryptedAddress,
+      addressKeyId: addressEncryption?.keyId ?? null,
+      now,
+      quoteId,
+      requestHash,
+      taxCode,
+    }).run();
     return taxQuoteResponse(
       {
         quoteId,
@@ -198,39 +210,18 @@ export async function handleEasyPayDirectTaxQuote(
        SET status = 'superseded', active_checkout_intent_id = NULL, updated_at = ?
        WHERE active_checkout_intent_id = ? AND status = 'applied'`,
     ).bind(now, checkout.checkout_intent_id),
-    env.BILLING_DB.prepare(
-      `INSERT INTO easy_pay_direct_checkout_tax_quotes
-       (id, organization_id, payment_request_id, invoice_id, source_checkout_intent_id,
-        provider_code, provider_calculation_id, local_rule_set_id, local_rule_id,
-        request_sha256, billing_address_sha256,
-        billing_country, billing_state, billing_postal_code, currency, subtotal_minor,
-        tax_minor, total_minor, tax_code, status, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quoted', ?, ?, ?)
-       ON CONFLICT(provider_code, provider_calculation_id) DO NOTHING`,
-    ).bind(
-      quoteId,
-      checkout.organization_id,
-      checkout.payment_request_id,
-      checkout.invoice_id,
-      checkout.checkout_intent_id,
-      calculation.providerCode,
-      calculation.id,
-      calculation.localRuleSetId,
-      calculation.localRuleId,
-      requestHash,
+    prepareCheckoutTaxQuoteInsert(env.BILLING_DB, {
+      address,
       addressHash,
-      address.country,
-      address.state,
-      address.postalCode,
-      checkout.currency,
-      calculation.subtotalMinor,
-      calculation.taxMinor,
-      calculation.totalMinor,
+      calculation,
+      checkout,
+      encryptedAddress,
+      addressKeyId: addressEncryption?.keyId ?? null,
+      now,
+      quoteId,
+      requestHash,
       taxCode,
-      calculation.expiresAt,
-      now,
-      now,
-    ),
+    }),
     env.BILLING_DB.prepare(
       `INSERT INTO easy_pay_direct_checkout_tax_repricing_guards
        (quote_id, organization_id, payment_request_id, invoice_id,
@@ -391,6 +382,8 @@ export function normalizeBillingAddress(input: Record<string, unknown>): Billing
   const country = requiredString(input, "country").trim().toUpperCase();
   const state = optionalLocationPart(input.state, 100)?.toUpperCase() ?? null;
   const postalCode = optionalLocationPart(input.postal_code, 20)?.toUpperCase() ?? null;
+  const addressLine = optionalLocationPart(input.address_line, 255);
+  const city = optionalLocationPart(input.city, 100);
   if (!/^[A-Z]{2}$/.test(country)) {
     throw new ApiError(422, "invalid_billing_address", "Select a valid billing country");
   }
@@ -401,10 +394,20 @@ export function normalizeBillingAddress(input: Record<string, unknown>): Billing
       "US billing addresses require state and ZIP code",
     );
   }
+  if (
+    country === "US" &&
+    (!/^[A-Z]{2}$/.test(state ?? "") || !/^\d{5}(?:-\d{4})?$/.test(postalCode ?? ""))
+  ) {
+    throw new ApiError(
+      422,
+      "invalid_billing_address",
+      "US billing addresses require a two-letter state and valid ZIP code",
+    );
+  }
   if (["CA", "AU"].includes(country) && !state) {
     throw new ApiError(422, "invalid_billing_address", "State or province is required");
   }
-  return { country, state, postalCode };
+  return { country, state, postalCode, addressLine, city };
 }
 
 export async function requireAppliedCheckoutTaxQuote(
@@ -418,7 +421,7 @@ export async function requireAppliedCheckoutTaxQuote(
     return null;
   }
   const address = normalizeBillingAddress(billingAddress as Record<string, unknown>);
-  const addressHash = await sha256Hex(stableJson(address));
+  const addressHash = await sha256Hex(stableJson(billingAddressIdentity(address)));
   const row = await database
     .prepare(
       `SELECT id FROM easy_pay_direct_checkout_tax_quotes
@@ -549,6 +552,9 @@ async function createStripeTaxCalculation(
     "line_items[0][tax_code]": input.taxCode,
   });
   if (input.address.state) body.set("customer_details[address][state]", input.address.state);
+  if (input.address.addressLine)
+    body.set("customer_details[address][line1]", input.address.addressLine);
+  if (input.address.city) body.set("customer_details[address][city]", input.address.city);
   if (input.address.postalCode) {
     body.set("customer_details[address][postal_code]", input.address.postalCode);
   }
@@ -611,6 +617,9 @@ async function createStripeTaxCalculation(
     expiresAt: new Date(expiresAtSeconds * 1000).toISOString(),
     localRuleSetId: null,
     localRuleId: null,
+    localCollectionMode: null,
+    localCalculationMethod: null,
+    rateResolution: null,
   };
 }
 
@@ -619,10 +628,12 @@ async function createLocalTaxCalculation(
   input: {
     address: BillingAddress;
     currency: string;
+    fetcher: typeof fetch;
     organizationId: string;
     requestHash: string;
     subtotalMinor: number;
     taxCode: string;
+    confirmedAddress: boolean;
   },
 ): Promise<TaxCalculation> {
   const calculation = await calculateLocalD1Tax(env.BILLING_DB, {
@@ -633,13 +644,115 @@ async function createLocalTaxCalculation(
     requestHash: input.requestHash,
     subtotalMinor: input.subtotalMinor,
     taxCode: input.taxCode,
+    fetcher: input.fetcher,
+    confirmedAddress: input.confirmedAddress,
+    beforeAddressLookup: () => {
+      requireAddressEncryptionConfig(env);
+    },
   });
   return {
     ...calculation,
     providerCode: "local_d1",
     localRuleSetId: calculation.ruleSetId,
     localRuleId: calculation.ruleId,
+    localCollectionMode: calculation.collectionMode,
+    localCalculationMethod: calculation.calculationMethod,
+    rateResolution: calculation.rateResolution,
   };
+}
+
+function prepareCheckoutTaxQuoteInsert(
+  database: D1Database,
+  input: {
+    address: BillingAddress;
+    addressHash: string;
+    calculation: TaxCalculation;
+    checkout: TaxableCheckout;
+    encryptedAddress: { ciphertext: string; iv: string } | null;
+    addressKeyId: string | null;
+    now: string;
+    quoteId: string;
+    requestHash: string;
+    taxCode: string;
+  },
+): D1PreparedStatement {
+  const resolution = input.calculation.rateResolution;
+  return database
+    .prepare(
+      `INSERT INTO easy_pay_direct_checkout_tax_quotes
+       (id, organization_id, payment_request_id, invoice_id, source_checkout_intent_id,
+        provider_code, provider_calculation_id, local_rule_set_id, local_rule_id,
+        request_sha256, billing_address_sha256,
+        billing_country, billing_state, billing_postal_code,
+        local_calculation_method, billing_address_ciphertext, billing_address_iv,
+        billing_address_key_id,
+        rate_location_code, rate_jurisdiction, rate_period, rate_valid_through,
+        state_rate_ppm, local_rate_ppm, currency, subtotal_minor,
+        tax_minor, total_minor, tax_code, local_collection_mode, status, expires_at,
+        created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, 'quoted', ?, ?, ?)
+       ON CONFLICT(provider_code, provider_calculation_id) DO NOTHING`,
+    )
+    .bind(
+      input.quoteId,
+      input.checkout.organization_id,
+      input.checkout.payment_request_id,
+      input.checkout.invoice_id,
+      input.checkout.checkout_intent_id,
+      input.calculation.providerCode,
+      input.calculation.id,
+      input.calculation.localRuleSetId,
+      input.calculation.localRuleId,
+      input.requestHash,
+      input.addressHash,
+      input.address.country,
+      input.address.state,
+      input.address.postalCode,
+      input.calculation.localCalculationMethod,
+      input.encryptedAddress?.ciphertext ?? null,
+      input.encryptedAddress?.iv ?? null,
+      input.addressKeyId,
+      resolution?.locationCode ?? null,
+      resolution?.jurisdiction ?? null,
+      resolution?.period ?? null,
+      resolution?.validThrough ?? null,
+      resolution?.stateRatePpm ?? null,
+      resolution?.localRatePpm ?? null,
+      input.checkout.currency,
+      input.calculation.subtotalMinor,
+      input.calculation.taxMinor,
+      input.calculation.totalMinor,
+      input.taxCode,
+      input.calculation.localCollectionMode,
+      input.calculation.expiresAt,
+      input.now,
+      input.now,
+    );
+}
+
+function requireAddressEncryptionConfig(env: Env): { keyId: string; secret: string } {
+  const keyId = env.INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID?.trim();
+  const secret = env.INDIRECT_TAX_ADDRESS_ENCRYPTION_SECRET?.trim();
+  if (!keyId || !/^[A-Za-z0-9._-]{1,50}$/.test(keyId) || !secret || secret.length < 32) {
+    throw new ApiError(
+      503,
+      "checkout_tax_address_encryption_unavailable",
+      "Destination tax address protection is not configured",
+    );
+  }
+  return { keyId, secret };
+}
+
+function billingAddressIdentity(address: BillingAddress): Record<string, string | null> {
+  const identity: Record<string, string | null> = {
+    country: address.country,
+    postalCode: address.postalCode,
+    state: address.state,
+  };
+  if (address.addressLine) identity.addressLine = address.addressLine;
+  if (address.city) identity.city = address.city;
+  return identity;
 }
 
 async function loadTaxableCheckout(
@@ -658,13 +771,15 @@ async function loadTaxableCheckout(
               invoice.id AS invoice_id, invoice.version AS invoice_version,
               invoice.subtotal_minor, invoice.tax_minor, invoice.credits_minor,
               invoice.total_due_minor,
-              (SELECT plan.interval
+              (SELECT json_group_array(json_extract(plan.metadata_json, '$.tax_code'))
                FROM invoice_subscriptions invoice_subscription
                JOIN subscriptions subscription
                  ON subscription.id = invoice_subscription.subscription_id
                JOIN plans plan ON plan.id = subscription.plan_id
                WHERE invoice_subscription.invoice_id = invoice.id
-               ORDER BY invoice_subscription.created_at DESC LIMIT 1) AS plan_interval,
+                 AND invoice_subscription.organization_id = invoice.organization_id
+                 AND subscription.organization_id = invoice.organization_id
+                 AND plan.organization_id = invoice.organization_id) AS plan_tax_codes_json,
               (SELECT COUNT(*) FROM invoices_payment_requests counted
                WHERE counted.payment_request_id = request.id) AS invoice_count
        FROM payment_request_checkout_intents intent
@@ -705,33 +820,25 @@ function validateTaxableCheckout(
   }
 }
 
-export function resolveCheckoutTaxCode(
-  interval: string | null,
-  env: Pick<Env, "EASY_PAY_DIRECT_TAX_CODE" | "EASY_PAY_DIRECT_ONE_TIME_TAX_CODE">,
-): string {
-  if (interval === "one_time") {
-    return normalizeTaxCode(env.EASY_PAY_DIRECT_ONE_TIME_TAX_CODE, "one-time");
+export function resolveCheckoutTaxCode(codesJson: string | null): string {
+  let codes: unknown;
+  try {
+    codes = JSON.parse(codesJson ?? "null");
+  } catch {
+    codes = null;
   }
-  if (new Set(["weekly", "monthly", "quarterly", "yearly"]).has(interval ?? "")) {
-    return normalizeTaxCode(env.EASY_PAY_DIRECT_TAX_CODE, "recurring");
-  }
+  if (
+    Array.isArray(codes) &&
+    codes.length > 0 &&
+    codes.every((code) => typeof code === "string" && /^txcd_\d{8}$/.test(code)) &&
+    new Set(codes).size === 1
+  )
+    return codes[0] as string;
   throw new ApiError(
     409,
     "checkout_tax_classification_missing",
-    "Checkout plan tax classification is unavailable",
+    "Checkout requires one explicitly configured product tax classification",
   );
-}
-
-function normalizeTaxCode(value: string | undefined, classification: string): string {
-  const normalized = value?.trim();
-  if (!normalized || !/^txcd_\d{8}$/.test(normalized)) {
-    throw new ApiError(
-      503,
-      "checkout_tax_code_missing",
-      `${classification} checkout tax code is not configured`,
-    );
-  }
-  return normalized;
 }
 
 function optionalLocationPart(value: unknown, maxLength: number): string | null {
@@ -816,6 +923,7 @@ function taxQuoteResponse(
         total_cents: input.calculation.totalMinor,
         charged_total_cents: input.chargedTotalMinor,
         mode: input.mode,
+        collection_mode: input.calculation.localCollectionMode,
         expires_at: input.calculation.expiresAt,
       },
     },

@@ -1,12 +1,15 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { sha256Hex } from "../src/auth/api-key";
 import {
   pendingEasyPayDirectAutomaticCollectionInvoices,
   prepareEasyPayDirectAutomaticCollection,
   processEasyPayDirectAutomaticCollection,
   reconcileEasyPayDirectAutomaticCollection,
 } from "../src/billing/easy-pay-direct-automatic-collection";
+import { stableJson } from "../src/json";
+import { encryptBillingAddress } from "../src/tax/billing-address-vault";
 
 let invoiceId: string;
 let organizationId: string;
@@ -405,15 +408,22 @@ describe("Easy Pay Direct automatic subscription collection", () => {
     await expect(automaticPaymentRequestId(invoiceId)).resolves.not.toBeNull();
   });
 
-  it("recalculates and persists tax from the last committed billing destination before charging", async () => {
-    await seedCommittedBillingDestinationAndTaxRule();
-    const runtimeEnv = localTaxEnv();
-    await expect(
-      prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "tax-renewal-test"),
-    ).resolves.toBe("processed");
-    await expect(
-      env.BILLING_DB.prepare(
-        `SELECT invoice.tax_minor, invoice.total_due_minor, invoice.version,
+  it.each(["collect", "off"])(
+    "recalculates its subscription tax with collection %s",
+    async (collectionMode) => {
+      await seedCommittedBillingDestinationAndTaxRule();
+      await env.BILLING_DB.prepare(
+        "UPDATE indirect_tax_registration_scopes SET collection_mode = ? WHERE organization_id = ?",
+      )
+        .bind(collectionMode, organizationId)
+        .run();
+      const runtimeEnv = localTaxEnv();
+      await expect(
+        prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "tax-renewal-test"),
+      ).resolves.toBe("processed");
+      await expect(
+        env.BILLING_DB.prepare(
+          `SELECT invoice.tax_minor, invoice.total_due_minor, invoice.version,
                 request.amount_minor, quote.billing_country, quote.billing_state,
                 quote.billing_postal_code, quote.tax_minor AS quote_tax_minor
          FROM invoices invoice
@@ -421,19 +431,93 @@ describe("Easy Pay Direct automatic subscription collection", () => {
          JOIN payment_requests request ON request.id = link.payment_request_id
          JOIN easy_pay_direct_automatic_tax_quotes quote ON quote.invoice_id = invoice.id
          WHERE invoice.id = ?`,
+        )
+          .bind(invoiceId)
+          .first(),
+      ).resolves.toEqual({
+        tax_minor: collectionMode === "off" ? 0 : 90,
+        total_due_minor: collectionMode === "off" ? 900 : 990,
+        version: 2,
+        amount_minor: collectionMode === "off" ? 900 : 990,
+        billing_country: "US",
+        billing_state: "WA",
+        billing_postal_code: "98104",
+        quote_tax_minor: collectionMode === "off" ? 0 : 90,
+      });
+    },
+  );
+
+  it("decrypts and re-resolves a Washington address for a recurring invoice", async () => {
+    await seedCommittedBillingDestinationAndTaxRule(true, "wa_dor_address");
+    const authority = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          `<response result="2" loccode="1726" rate="0.102500">
+           <rate staterate="0.065000" localrate="0.037500" period="Q32026"
+                 jurisdiction="SEATTLE" county="KING" />
+           <results location="700 FIFTH AVE" city="SEATTLE" zip="98104" plus4="" />
+         </response>`,
+          { headers: { "content-type": "application/xml" } },
+        ),
+    );
+    await expect(
+      prepareEasyPayDirectAutomaticCollection(
+        localTaxEnv(),
+        invoiceId,
+        "washington-renewal",
+        authority,
+      ),
+    ).resolves.toBe("processed");
+    expect(authority).toHaveBeenCalledTimes(1);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT invoice.tax_minor, invoice.total_due_minor,
+                quote.local_calculation_method, quote.rate_location_code,
+                quote.rate_period, quote.state_rate_ppm, quote.local_rate_ppm
+         FROM invoices invoice
+         JOIN easy_pay_direct_automatic_tax_quotes quote ON quote.invoice_id = invoice.id
+         WHERE invoice.id = ?`,
       )
         .bind(invoiceId)
         .first(),
     ).resolves.toEqual({
-      tax_minor: 90,
-      total_due_minor: 990,
-      version: 2,
-      amount_minor: 990,
-      billing_country: "US",
-      billing_state: "WA",
-      billing_postal_code: "98101",
-      quote_tax_minor: 90,
+      tax_minor: 92,
+      total_due_minor: 992,
+      local_calculation_method: "wa_dor_address",
+      rate_location_code: "1726",
+      rate_period: "Q32026",
+      state_rate_ppm: 65_000,
+      local_rate_ppm: 37_500,
     });
+  });
+
+  it("refuses a Washington renewal when the stored address key ID is not active", async () => {
+    await seedCommittedBillingDestinationAndTaxRule(true, "wa_dor_address");
+    const wrongKey = new Proxy(localTaxEnv(), {
+      get(target, property, receiver) {
+        if (property === "INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID") return "test-v2";
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    }) as Env;
+    const authority = vi.fn<typeof fetch>();
+    await expect(
+      prepareEasyPayDirectAutomaticCollection(
+        wrongKey,
+        invoiceId,
+        "washington-wrong-address-key",
+        authority,
+      ),
+    ).rejects.toThrow("easy_pay_direct_automatic_tax_address_unavailable");
+    expect(authority).not.toHaveBeenCalled();
+    await expect(automaticPaymentRequestId(invoiceId)).resolves.toBeNull();
+  });
+
+  it("does not borrow a committed tax quote from another purchase by the same customer", async () => {
+    await seedCommittedBillingDestinationAndTaxRule(false);
+    await expect(
+      prepareEasyPayDirectAutomaticCollection(localTaxEnv(), invoiceId, "wrong-source"),
+    ).rejects.toThrow("easy_pay_direct_automatic_tax_address_missing");
+    await expect(automaticPaymentRequestId(invoiceId)).resolves.toBeNull();
   });
 
   it.each(["eligible", "one_time", "unscoped", "mixed_scope"])(
@@ -618,6 +702,13 @@ function enabledEnv(): Env {
       if (property === "EASY_PAY_DIRECT_NETWORK_MODE") return "gateway_test";
       if (property === "EASY_PAY_DIRECT_LIVEMODE_ALLOWED") return "0";
       if (property === "EASY_PAY_DIRECT_SECURITY_KEY") return "synthetic-security-key";
+      if (property === "EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET") {
+        return "synthetic-checkout-signing-secret";
+      }
+      if (property === "INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID") return "test-v1";
+      if (property === "INDIRECT_TAX_ADDRESS_ENCRYPTION_SECRET") {
+        return "synthetic-address-encryption-secret-32-bytes";
+      }
       if (property === "EASY_PAY_DIRECT_COMMERCE_API_KEY") return "epd_synthetic_sk_test_secret";
       if (property === "EASY_PAY_DIRECT_TAX_MODE") return "disabled";
       return Reflect.get(target, property, receiver) as unknown;
@@ -672,7 +763,10 @@ function localTaxEnv(): Env {
   }) as Env;
 }
 
-async function seedCommittedBillingDestinationAndTaxRule(): Promise<void> {
+async function seedCommittedBillingDestinationAndTaxRule(
+  sameSubscription = true,
+  calculationMethod: "static" | "wa_dor_address" = "static",
+): Promise<void> {
   const current = await env.BILLING_DB.prepare(
     "SELECT customer_id, subscription_id FROM invoices WHERE id = ?",
   )
@@ -684,23 +778,59 @@ async function seedCommittedBillingDestinationAndTaxRule(): Promise<void> {
   const priorIntentId = `prior-intent-${fixture}`;
   const ruleSetId = `tax-rules-${fixture}`;
   const ruleId = `tax-rule-${fixture}`;
+  const quoteId = `prior-quote-${fixture}`;
+  const billingAddress = {
+    country: "US",
+    state: "WA",
+    postalCode: "98104",
+    ...(calculationMethod === "wa_dor_address"
+      ? { addressLine: "700 FIFTH AVE", city: "SEATTLE" }
+      : {}),
+  };
+  const billingAddressHash = await sha256Hex(stableJson(billingAddress));
+  const encryptedAddress =
+    calculationMethod === "wa_dor_address"
+      ? await encryptBillingAddress(
+          {
+            country: "US",
+            state: "WA",
+            postalCode: "98104",
+            addressLine: "700 FIFTH AVE",
+            city: "SEATTLE",
+          },
+          "synthetic-address-encryption-secret-32-bytes",
+          quoteId,
+        )
+      : null;
   const now = new Date().toISOString();
   await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      "UPDATE indirect_tax_rule_sets SET status = 'retired' WHERE status = 'active'",
+    ),
     env.BILLING_DB.prepare(
       `INSERT INTO indirect_tax_rule_sets
        (id, version, status, source_name, source_url, source_published_at, effective_from,
         effective_to, content_sha256, refreshed_at, created_at, activated_at)
-       VALUES (?, 1, 'active', 'Renewal test rules', 'https://example.invalid/rules', ?,
+       VALUES (?, (SELECT COALESCE(MAX(version), 0) + 1 FROM indirect_tax_rule_sets), 'active', 'Renewal test rules', 'https://example.invalid/rules', ?,
                '2020-01-01T00:00:00.000Z', NULL, ?, ?, ?, ?)`,
     ).bind(ruleSetId, now, "a".repeat(64), now, now, now),
     env.BILLING_DB.prepare(
       `INSERT INTO indirect_tax_rules
        (id, rule_set_id, country, region, postal_prefix, product_tax_code, taxability,
-        rate_ppm, priority, source_url, source_reference, effective_from, effective_to, created_at)
-       VALUES (?, ?, 'US', 'WA', NULL, 'txcd_10103100', 'taxable', 100000, 0,
-               'https://example.invalid/rules', 'renewal-test',
-               '2020-01-01T00:00:00.000Z', NULL, ?)`,
-    ).bind(ruleId, ruleSetId, now),
+        rate_ppm, priority, source_url, source_reference, effective_from, effective_to, created_at,
+        calculation_method)
+       VALUES (?, ?, 'US', 'WA', NULL, 'txcd_10103100', 'taxable', ?, 0,
+               ?, 'renewal-test', '2020-01-01T00:00:00.000Z', NULL, ?, ?)`,
+    ).bind(
+      ruleId,
+      ruleSetId,
+      calculationMethod === "wa_dor_address" ? 65_000 : 100_000,
+      calculationMethod === "wa_dor_address"
+        ? "https://webgis.dor.wa.gov/webapi/"
+        : "https://example.invalid/rules",
+      now,
+      calculationMethod,
+    ),
     env.BILLING_DB.prepare(
       `INSERT INTO indirect_tax_registration_scopes
        (id, organization_id, rule_set_id, country, region, status,
@@ -719,7 +849,7 @@ async function seedCommittedBillingDestinationAndTaxRule(): Promise<void> {
       priorInvoiceId,
       organizationId,
       current!.customer_id,
-      current!.subscription_id,
+      sameSubscription ? current!.subscription_id : null,
       `PRIOR-${fixture}`,
       now,
       now,
@@ -764,12 +894,14 @@ async function seedCommittedBillingDestinationAndTaxRule(): Promise<void> {
        (id, organization_id, payment_request_id, invoice_id, source_checkout_intent_id,
         provider_code, provider_calculation_id, local_rule_set_id, local_rule_id,
         request_sha256, billing_address_sha256, billing_country, billing_state,
-        billing_postal_code, currency, subtotal_minor, tax_minor, total_minor, tax_code,
-        status, expires_at, created_at, updated_at, committed_at)
-       VALUES (?, ?, ?, ?, ?, 'local_d1', ?, ?, ?, ?, ?, 'US', 'WA', '98101',
-               'USD', 900, 90, 990, 'txcd_10103100', 'committed', ?, ?, ?, ?)`,
+        billing_postal_code, local_calculation_method, billing_address_ciphertext,
+        billing_address_iv, billing_address_key_id, rate_location_code, rate_jurisdiction, rate_period,
+        rate_valid_through, state_rate_ppm, local_rate_ppm, currency, subtotal_minor,
+        tax_minor, total_minor, tax_code, status, expires_at, created_at, updated_at, committed_at)
+       VALUES (?, ?, ?, ?, ?, 'local_d1', ?, ?, ?, ?, ?, 'US', 'WA', '98104', ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?, 'USD', 900, ?, ?, 'txcd_10103100', 'committed', ?, ?, ?, ?)`,
     ).bind(
-      `prior-quote-${fixture}`,
+      quoteId,
       organizationId,
       priorRequestId,
       priorInvoiceId,
@@ -778,7 +910,19 @@ async function seedCommittedBillingDestinationAndTaxRule(): Promise<void> {
       ruleSetId,
       ruleId,
       "d".repeat(64),
-      "e".repeat(64),
+      billingAddressHash,
+      calculationMethod,
+      encryptedAddress?.ciphertext ?? null,
+      encryptedAddress?.iv ?? null,
+      calculationMethod === "wa_dor_address" ? "test-v1" : null,
+      calculationMethod === "wa_dor_address" ? "1726" : null,
+      calculationMethod === "wa_dor_address" ? "SEATTLE, KING" : null,
+      calculationMethod === "wa_dor_address" ? "Q32026" : null,
+      calculationMethod === "wa_dor_address" ? "2026-10-01T00:00:00.000Z" : null,
+      calculationMethod === "wa_dor_address" ? 65_000 : null,
+      calculationMethod === "wa_dor_address" ? 37_500 : null,
+      calculationMethod === "wa_dor_address" ? 92 : 90,
+      calculationMethod === "wa_dor_address" ? 992 : 990,
       new Date(Date.now() + 60_000).toISOString(),
       now,
       now,

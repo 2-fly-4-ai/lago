@@ -1,5 +1,9 @@
 import { sha256Hex } from "../auth/api-key";
-import { resolveCheckoutTaxCode } from "../api/easy-pay-direct-tax";
+import {
+  normalizeBillingAddress,
+  resolveCheckoutTaxCode,
+  type BillingAddress,
+} from "../api/easy-pay-direct-tax";
 import type { DomainEvent } from "../domain-events";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
@@ -9,6 +13,7 @@ import {
   type GatewayTransactionResult,
 } from "../providers/easy-pay-direct";
 import { reconcilePaymentRequest, type PendingReceipt } from "../reconciliation/authorize-net";
+import { decryptBillingAddress } from "../tax/billing-address-vault";
 import { calculateLocalD1Tax } from "../tax/local-d1";
 
 type RenewalCandidate = {
@@ -51,10 +56,15 @@ type AutomaticExecution = {
 
 type SourceTaxQuote = {
   id: string;
+  tax_code: string;
   billing_address_sha256: string;
   billing_country: string;
   billing_state: string | null;
   billing_postal_code: string | null;
+  local_calculation_method: "static" | "wa_dor_address" | null;
+  billing_address_ciphertext: string | null;
+  billing_address_iv: string | null;
+  billing_address_key_id: string | null;
 };
 
 export type AutomaticCollectionOutcome = "processed" | "deferred" | "not_applicable";
@@ -63,6 +73,7 @@ export async function prepareEasyPayDirectAutomaticCollection(
   env: Env,
   invoiceId: string,
   correlationId: string,
+  fetcher: typeof fetch = fetch,
 ): Promise<AutomaticCollectionOutcome> {
   if (!automaticCollectionEnabled(env)) return "not_applicable";
   const existing = await executionForInvoice(env.BILLING_DB, invoiceId);
@@ -85,11 +96,12 @@ export async function prepareEasyPayDirectAutomaticCollection(
     }
     const source = await latestCommittedTaxQuote(env.BILLING_DB, candidate);
     if (!source) throw new Error("easy_pay_direct_automatic_tax_address_missing");
+    const address = await automaticTaxAddress(env, source);
     const taxableSubtotal = candidate.subtotal_minor - candidate.credits_minor;
     if (!Number.isSafeInteger(taxableSubtotal) || taxableSubtotal <= 0) {
       throw new Error("easy_pay_direct_automatic_tax_subtotal_invalid");
     }
-    const taxCode = resolveCheckoutTaxCode(candidate.plan_interval, env);
+    const taxCode = resolveCheckoutTaxCode(JSON.stringify([source.tax_code]));
     const requestHash = await sha256Hex(
       stableJson({
         address_sha256: source.billing_address_sha256,
@@ -100,17 +112,15 @@ export async function prepareEasyPayDirectAutomaticCollection(
       }),
     );
     const calculation = await calculateLocalD1Tax(env.BILLING_DB, {
-      address: {
-        country: source.billing_country,
-        state: source.billing_state,
-        postalCode: source.billing_postal_code,
-      },
+      address,
       currency: candidate.currency,
+      fetcher,
       maxDataAgeDays: env.EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS,
       organizationId: candidate.organization_id,
       requestHash,
       subtotalMinor: taxableSubtotal,
       taxCode,
+      confirmedAddress: source.local_calculation_method === "wa_dor_address",
     });
     const quoteId = await deterministicUuid(
       "easy-pay-direct-automatic-tax",
@@ -121,9 +131,11 @@ export async function prepareEasyPayDirectAutomaticCollection(
         `INSERT INTO easy_pay_direct_automatic_tax_quotes
          (id, organization_id, invoice_id, source_checkout_tax_quote_id,
           local_rule_set_id, local_rule_id, request_sha256, billing_address_sha256,
-          billing_country, billing_state, billing_postal_code, currency, subtotal_minor,
-          tax_minor, total_minor, tax_code, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          billing_country, billing_state, billing_postal_code, local_calculation_method,
+          rate_location_code, rate_jurisdiction, rate_period, rate_valid_through,
+          state_rate_ppm, local_rate_ppm, currency, subtotal_minor,
+          tax_minor, total_minor, tax_code, local_collection_mode, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         quoteId,
         candidate.organization_id,
@@ -136,11 +148,19 @@ export async function prepareEasyPayDirectAutomaticCollection(
         source.billing_country,
         source.billing_state,
         source.billing_postal_code,
+        calculation.calculationMethod,
+        calculation.rateResolution?.locationCode ?? null,
+        calculation.rateResolution?.jurisdiction ?? null,
+        calculation.rateResolution?.period ?? null,
+        calculation.rateResolution?.validThrough ?? null,
+        calculation.rateResolution?.stateRatePpm ?? null,
+        calculation.rateResolution?.localRatePpm ?? null,
         candidate.currency,
         calculation.subtotalMinor,
         calculation.taxMinor,
         calculation.totalMinor,
         taxCode,
+        calculation.collectionMode,
         now,
         now,
       ),
@@ -637,16 +657,71 @@ async function latestCommittedTaxQuote(
 ): Promise<SourceTaxQuote | null> {
   return database
     .prepare(
-      `SELECT quote.id, quote.billing_address_sha256, quote.billing_country,
-              quote.billing_state, quote.billing_postal_code
+      `SELECT quote.id, quote.tax_code, quote.billing_address_sha256, quote.billing_country,
+              quote.billing_state, quote.billing_postal_code, quote.local_calculation_method,
+              quote.billing_address_ciphertext, quote.billing_address_iv,
+              quote.billing_address_key_id
        FROM easy_pay_direct_checkout_tax_quotes quote
        JOIN payment_requests request ON request.id = quote.payment_request_id
+        AND request.organization_id = quote.organization_id
+       JOIN invoices source_invoice ON source_invoice.id = quote.invoice_id
+        AND source_invoice.organization_id = quote.organization_id
+        AND source_invoice.customer_id = request.customer_id
        WHERE quote.organization_id = ? AND request.customer_id = ?
+         AND source_invoice.subscription_id = ?
          AND quote.status = 'committed'
        ORDER BY quote.committed_at DESC, quote.created_at DESC, quote.id DESC LIMIT 1`,
     )
-    .bind(candidate.organization_id, candidate.customer_id)
+    .bind(candidate.organization_id, candidate.customer_id, candidate.subscription_id)
     .first<SourceTaxQuote>();
+}
+
+async function automaticTaxAddress(env: Env, source: SourceTaxQuote): Promise<BillingAddress> {
+  if (source.local_calculation_method !== "wa_dor_address") {
+    return {
+      country: source.billing_country,
+      state: source.billing_state,
+      postalCode: source.billing_postal_code,
+      addressLine: null,
+      city: null,
+    };
+  }
+  const secret = env.INDIRECT_TAX_ADDRESS_ENCRYPTION_SECRET?.trim();
+  const keyId = env.INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID?.trim();
+  if (
+    !secret ||
+    secret.length < 32 ||
+    !keyId ||
+    keyId !== source.billing_address_key_id ||
+    !source.billing_address_ciphertext ||
+    !source.billing_address_iv
+  ) {
+    throw new Error("easy_pay_direct_automatic_tax_address_unavailable");
+  }
+  const decrypted = await decryptBillingAddress(
+    source.billing_address_ciphertext,
+    source.billing_address_iv,
+    secret,
+    source.id,
+  );
+  const address = normalizeBillingAddress({
+    country: decrypted.country,
+    state: decrypted.state,
+    postal_code: decrypted.postalCode,
+    address_line: decrypted.addressLine,
+    city: decrypted.city,
+  });
+  const identity: Record<string, string | null> = {
+    country: address.country,
+    postalCode: address.postalCode,
+    state: address.state,
+  };
+  if (address.addressLine) identity.addressLine = address.addressLine;
+  if (address.city) identity.city = address.city;
+  if ((await sha256Hex(stableJson(identity))) !== source.billing_address_sha256) {
+    throw new Error("easy_pay_direct_automatic_tax_address_mismatch");
+  }
+  return address;
 }
 
 async function executionForInvoice(

@@ -1,6 +1,45 @@
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { buildPriorityMarketCandidate } from "./priority-market-tax-candidate.mjs";
+import { buildExpandedSoftwareCandidate } from "./expanded-software-tax-candidate.mjs";
+import { addCanadianSoftwareRules } from "./canada-software-candidate.mjs";
+import { addUSUniformSoftwareRules } from "./us-uniform-software-candidate.mjs";
+import { addNoSalesTaxSoftwareRules } from "./no-sales-tax-software-candidate.mjs";
+
+const CANADIAN_REGIONS = "AB BC MB NB NL NS NT NU ON PE QC SK YT".split(" ");
+const REVIEW_TIME_ZONE = "Pacific/Fiji";
+
+// These dated review artifacts are produced in SERP's operating timezone. Using UTC here made a
+// newly reviewed source appear to be from the future for part of the Fiji calendar day.
+export function currentReviewDate(now = new Date()) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: REVIEW_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+      .formatToParts(now)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+// Country aggregates cannot establish which state, city or address was served.
+// Regional rule presence must never imply that every payment in a country is covered.
+function candidateCoverage(country, rules) {
+  if (!rules.length) return "none";
+  const unrestricted = rules.filter((rule) => !rule.postal_prefix);
+  if (country === "US") return "regional_partial";
+  if (unrestricted.some((rule) => !rule.region)) return "country_candidate";
+  if (
+    country === "CA" &&
+    CANADIAN_REGIONS.every((region) => unrestricted.some((rule) => rule.region === region))
+  )
+    return "country_candidate";
+  return "regional_partial";
+}
 
 // Offline review only: no provider client, network calls, SQL or activation output.
 export function buildCoverageReview(geography, candidate, authorityReview) {
@@ -57,13 +96,18 @@ export function buildCoverageReview(geography, candidate, authorityReview) {
       const rules = candidate.rules.filter(
         (rule) => rule.country === row.country && rule.product_tax_code === code,
       );
+      const coverage = candidateCoverage(row.country, rules);
       return {
         code,
+        geographic_coverage: coverage,
+        candidate_regions: [...new Set(rules.map((rule) => rule.region).filter(Boolean))].sort(),
         status:
           row.country === "UNKNOWN"
             ? "location_missing"
             : rules.length
-              ? "existing_candidate_unapproved"
+              ? coverage === "regional_partial"
+                ? "partial_regional_candidate_unapproved"
+                : "existing_candidate_unapproved"
               : evidence
                 ? "authority_review_incomplete"
                 : "source_research_required",
@@ -93,6 +137,9 @@ export function buildCoverageReview(geography, candidate, authorityReview) {
     countries_with_both_candidate_codes: rows.filter((row) =>
       row.classifications.every((item) => item.candidate_rule_ids.length > 0),
     ).length,
+    countries_with_countrywide_candidates: rows.filter((row) =>
+      row.classifications.every((item) => item.geographic_coverage === "country_candidate"),
+    ).length,
     rows,
   };
 }
@@ -103,10 +150,11 @@ export function renderCoverageReview(review) {
     "",
     `Known countries/territories: ${review.known_countries}; retained successful payment events: ${review.paid_events}.`,
     `Countries with both existing candidate classifications: ${review.countries_with_both_candidate_codes}. Candidate presence does not mean production ready.`,
+    `Countries with countrywide candidates for both classifications: ${review.countries_with_countrywide_candidates}. Regional candidates do not establish coverage of country-level payment counts.`,
     "",
     "This is an offline gap report, not an importable rate set, registration, or collection instruction. No Stripe API calls. Lifetime history is incomplete. Unknown locations remain explicit.",
     "",
-    "| Country | Paid events | Invoice events | One-time checkouts | Recurring candidate | One-time candidate |",
+    "| Country | Paid events | Invoice events | One-time checkouts | Remote-software candidate | Downloaded-software candidate |",
     "| --- | ---: | ---: | ---: | --- | --- |",
     ...review.rows.map(
       (row) =>
@@ -127,7 +175,42 @@ async function main() {
     read("eu-tedb-standard-rates-2026-08-31.json"),
     read("authority-review-2026-09-05.json"),
   ]);
-  const review = buildCoverageReview(geography, buildPriorityMarketCandidate(tedb), sources);
+  const expansion =
+    process.argv.includes("--expanded") ||
+    process.argv.includes("--canada") ||
+    process.argv.includes("--us")
+      ? await read("software-rate-expansion-2026-09-06.json")
+      : null;
+  const asOf = currentReviewDate();
+  let candidate = expansion
+    ? buildExpandedSoftwareCandidate(tedb, expansion, asOf)
+    : buildPriorityMarketCandidate(tedb);
+  if (process.argv.includes("--canada") || process.argv.includes("--us")) {
+    candidate = addCanadianSoftwareRules(
+      candidate,
+      await read("canada-software-components-2026-09-06.json"),
+      asOf,
+    );
+  }
+  if (process.argv.includes("--us")) {
+    candidate = addNoSalesTaxSoftwareRules(
+      candidate,
+      await read("no-sales-tax-software-2026-09-06.json"),
+      asOf,
+    );
+    candidate = addUSUniformSoftwareRules(candidate, asOf);
+  }
+  for (const held of expansion?.held_regions ?? []) {
+    if (!sources.sources.some((source) => source.country === held.country)) {
+      sources.sources.push({
+        country: held.country,
+        rate_ppm: null,
+        urls: [held.url],
+        review: held.reason,
+      });
+    }
+  }
+  const review = buildCoverageReview(geography, candidate, sources);
   process.stdout.write(
     process.argv.includes("--json")
       ? `${JSON.stringify(review, null, 2)}\n`

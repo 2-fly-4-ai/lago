@@ -1,0 +1,29 @@
+{
+  "format":"serp-canada-software-components/v1",
+  "observed_on":"2026-09-05",
+  "activation_allowed":false,
+  "scope":"B2C prewritten electronically delivered software; no physical goods, custom work, resale, or multi-jurisdiction business use",
+  "sources":{
+    "federal":"https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/gst-hst-businesses/charge-collect-which-rate/calculator.html",
+    "digital":"https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/gst-hst-businesses/digital-economy-gsthst/charge-collect/cross-border.html",
+    "BC":"https://www2.gov.bc.ca/gov/content/taxes/sales-taxes/pst/publications/software",
+    "MB":"https://www.gov.mb.ca/finance/taxation/pubs/bulletins/033.pdf",
+    "SK":"https://www.saskatchewan.ca/business/taxes-licensing-and-reporting/provincial-taxes-policies-and-bulletins/provincial-sales-tax",
+    "QC":"https://www.revenuquebec.ca/en/businesses/consumption-taxes/gsthst-and-qst/collecting-gst-and-qst/calculating-the-taxes/"
+  },
+  "regions":[
+    {"region":"AB","components":[{"code":"GST","rate_ppm":50000}]},
+    {"region":"BC","components":[{"code":"GST","rate_ppm":50000},{"code":"PST","rate_ppm":70000}]},
+    {"region":"MB","components":[{"code":"GST","rate_ppm":50000},{"code":"RST","rate_ppm":70000}]},
+    {"region":"NB","components":[{"code":"HST","rate_ppm":150000}]},
+    {"region":"NL","components":[{"code":"HST","rate_ppm":150000}]},
+    {"region":"NS","components":[{"code":"HST","rate_ppm":140000}]},
+    {"region":"NT","components":[{"code":"GST","rate_ppm":50000}]},
+    {"region":"NU","components":[{"code":"GST","rate_ppm":50000}]},
+    {"region":"ON","components":[{"code":"HST","rate_ppm":130000}]},
+    {"region":"PE","components":[{"code":"HST","rate_ppm":150000}]},
+    {"region":"QC","components":[{"code":"GST","rate_ppm":50000},{"code":"QST","rate_ppm":99750}]},
+    {"region":"SK","components":[{"code":"GST","rate_ppm":50000},{"code":"PST","rate_ppm":60000}]},
+    {"region":"YT","components":[{"code":"GST","rate_ppm":50000}]}
+  ]
+}

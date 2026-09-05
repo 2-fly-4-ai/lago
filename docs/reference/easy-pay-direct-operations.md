@@ -58,17 +58,21 @@ Lago uses these EPD bindings:
 - `EASY_PAY_DIRECT_TAX_CODE`
 - `EASY_PAY_DIRECT_ONE_TIME_TAX_CODE`
 - `EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS` when the local D1 provider is selected
+- `INDIRECT_TAX_ADDRESS_ENCRYPTION_SECRET` for address-resolved jurisdictions; use a dedicated
+  random secret of at least 32 characters, never the checkout-signing secret
+- `INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID` identifying the active address-encryption key
 - `STRIPE_RESTRICTED_API_KEY` for staging Stripe Tax calculations and transaction commits
 
 The Store uses `LAGO_CHECKOUT_ENABLED`, `LAGO_EASY_PAY_DIRECT_PROVIDER_CODE`, and
 `LAGO_EASY_PAY_DIRECT_CHECKOUT_MODE`. Secret values belong only in the approved secret manager and
 Cloudflare Worker secret storage.
 
-The tax path resolves its product code from the Lago plan interval. Weekly, monthly, quarterly, and
-yearly plans use `EASY_PAY_DIRECT_TAX_CODE` (`txcd_10103100`, SaaS electronic download for personal
-use). A `one_time` plan uses `EASY_PAY_DIRECT_ONE_TIME_TAX_CODE` (`txcd_10202000`, downloadable
-software for personal use). A missing or unsupported interval fails closed; the checkout does not
-guess a classification from customer-facing copy or the routed product slug.
+The current local patch resolves the tax product code from explicit, tenant-scoped
+`plans.metadata_json.tax_code`. It does not infer delivery from the billing interval or product
+slug. Missing or mixed classifications fail closed. Monthly downloaded software may use the same
+classification as a one-time download. The old interval-based environment defaults are not a
+substitute for the [reviewed generic-plan metadata](../evidence/generic-plan-tax-classification-2026-09-06.md).
+That metadata must be backfilled before deploying this patch; it has not been applied remotely.
 
 ## Current staging posture
 
@@ -106,8 +110,25 @@ rejected again at runtime.
 
 When the independent automatic-collection gate is enabled, a finalized renewal invoice creates one
 deterministic payment request and one deterministic execution. Before charging, Lago recalculates
-tax using the customer's last committed billing destination and the current active D1 rule set.
+tax using that subscription's committed checkout destination and software classification with the
+current active D1 rule set. The current local patch explicitly rejects a quote belonging to another
+subscription of the same customer; rollout status is tracked in the active tax plan.
 Missing, stale, ambiguous, or unregistered tax coverage fails closed without contacting EPD.
+
+The local Washington patch uses the Washington Department of Revenue's fixed HTTPS address-rate
+endpoint. It sends street, city, ZIP and ZIP+4 (when present) to that public authority and sends no
+email, product name, card data, Lago ID or EPD ID. If the authority standardizes the address, the
+checkout fills the normalized address and requires the customer to review it and press **Update
+total** again. The exact authority location code, jurisdiction, rate period and state/local rate
+components are stored with the immutable quote. Street and city are stored only as AES-GCM
+ciphertext under the dedicated key above so recurring invoices can resolve the then-current local
+rate. A renewal refuses to proceed if the key ID, ciphertext, address hash, current authority
+response or reviewed 6.5% Washington state-rate baseline does not match.
+
+Rotate address encryption by retaining the prior secret until every recurring subscription whose
+latest committed quote uses the prior key ID has either been re-encrypted through a reviewed
+migration or completed a new customer checkout. Changing the key ID without that process makes
+those renewals fail closed, by design.
 
 The rollout scope is checked when Lago creates the automatic payment execution, including dunning
 executions. Removing or disabling a scope stops new executions for that subscription; executions
@@ -137,6 +158,7 @@ Keep the production Worker disabled while provisioning. Before promotion, verify
 - `EASY_PAY_DIRECT_TOKENIZATION_KEY`
 - `EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY`
 - `EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET`
+- `INDIRECT_TAX_ADDRESS_ENCRYPTION_SECRET` when any address-resolved rule is enabled
 
 Never paste their values into tickets, docs, terminal output, screenshots, or browser snapshots.
 

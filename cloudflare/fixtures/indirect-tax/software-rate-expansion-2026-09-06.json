@@ -1,0 +1,317 @@
+{
+  "format": "serp-official-software-rate-expansion/v1",
+  "activation_allowed": false,
+  "customer_type": "consumer",
+  "classification_basis": "delivery-not-billing-frequency",
+  "markets": [
+    {
+      "country": "AU",
+      "rate_ppm": 100000,
+      "authority": "Australian Taxation Office",
+      "rate_url": "https://www.ato.gov.au/about-ato/research-and-statistics/in-detail/tax-gap/a-h-tax-gaps/goods-and-services-tax-gap/overview",
+      "scope_url": "https://softwaredevelopers.ato.gov.au/GSTintangibles",
+      "observed_on": "2026-09-05",
+      "review": "B2C imported software/digital supplies. Verify Australian-consumer status and relevant external-territory exceptions."
+    },
+    {
+      "country": "NZ",
+      "rate_ppm": 150000,
+      "authority": "New Zealand Inland Revenue",
+      "rate_url": "https://www.ird.govt.nz/international-tax/business/non-resident-businesses-and-gst",
+      "scope_url": "https://www.ird.govt.nz/gst-on-remote-services",
+      "observed_on": "2026-09-05",
+      "review": "Remote software/digital supplies to New Zealand consumers; exclude supplies treated under B2B rules."
+    },
+    {
+      "country": "NO",
+      "rate_ppm": 250000,
+      "authority": "Norwegian Tax Administration",
+      "rate_url": "https://www.skatteetaten.no/en/rates/vat-rates-for-remotely-deliverable-services-purchased-from-abroad/",
+      "scope_url": "https://www.skatteetaten.no/en/rates/vat-rates-for-remotely-deliverable-services-purchased-from-abroad/",
+      "observed_on": "2026-09-05",
+      "review": "Authority explicitly lists software access and downloads. Norway VAT area only, not Svalbard or Jan Mayen."
+    },
+    {
+      "country": "SG",
+      "rate_ppm": 90000,
+      "authority": "Inland Revenue Authority of Singapore",
+      "rate_url": "https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/gst-rate-change/gst-rate-change-for-business/overview-of-gst-rate-change",
+      "scope_url": "https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/gst-and-digital-economy/overseas-businesses",
+      "observed_on": "2026-09-05",
+      "review": "9% from 2024-01-01. OVR B2C remote services; registered-business treatment and threshold assessment separate."
+    },
+    {
+      "country": "AE",
+      "rate_ppm": 50000,
+      "authority": "United Arab Emirates Federal Tax Authority",
+      "rate_url": "https://tax.gov.ae/en/faq.aspx?keyword=What+is+the+standard+rate+of+VAT+in+the+UAE%3F",
+      "scope_url": "https://tax.gov.ae/DataFolder/Files/Pdf/E-Commerce%20-%20VAT%20Guide%20-%20EN%20-%2009%2008%202020.pdf",
+      "observed_on": "2026-09-05",
+      "review": "Electronic-service use/enjoyment and nonresident registration review required; not a general rule for all special supplies."
+    },
+    {
+      "country": "MY",
+      "rate_ppm": 80000,
+      "authority": "Royal Malaysian Customs Department",
+      "rate_url": "https://mystods.customs.gov.my/storage/app/media/pdf/guide/guide-on-transitional-rules-for-the-change-in-st-rate-to-8-on-digital-service-provided-by-frp.pdf",
+      "scope_url": "https://mystods.customs.gov.my/storage/app/media/pdf/guide/guide-on-transitional-rules-for-the-change-in-st-rate-to-8-on-digital-service-provided-by-frp.pdf",
+      "observed_on": "2026-09-05",
+      "review": "8% from 2024-03-01; digital-service guide includes software subscriptions. Assess exemptions and transitional payment rules separately."
+    },
+    {
+      "country": "PH",
+      "rate_ppm": 120000,
+      "authority": "Philippines Bureau of Internal Revenue",
+      "rate_url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%203-2025.pdf",
+      "scope_url": "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%203-2025.pdf",
+      "observed_on": "2026-09-05",
+      "review": "RR 3-2025 digital-service rate. Nonresident B2C supplier collection differs from B2B buyer withholding."
+    },
+    {
+      "country": "ZA",
+      "rate_ppm": 150000,
+      "authority": "South African Revenue Service",
+      "rate_url": "https://www.sars.gov.za/types-of-tax/value-added-tax/",
+      "scope_url": "https://www.sars.gov.za/wp-content/uploads/Ops/Guides/Legal-Pub-FAQs-VAT02-FAQs-VAT-on-Supplies-of-Electronic-Services.pdf",
+      "observed_on": "2026-09-05",
+      "review": "15%, not withdrawn proposed 15.5%/16% increases. Registration thresholds changed in 2026; do not infer registration from old guidance."
+    },
+    {
+      "country": "CL",
+      "rate_ppm": 190000,
+      "authority": "Chile Servicio de Impuestos Internos",
+      "rate_url": "https://www.sii.cl/vat/faq1_eng.html",
+      "scope_url": "https://www.sii.cl/vat/faq1_eng.html",
+      "observed_on": "2026-09-05",
+      "review": "Authority expressly includes software under remote services. B2C simplified regime and actual seller status require review."
+    },
+    {
+      "country": "IS",
+      "rate_ppm": 240000,
+      "authority": "Iceland Revenue and Customs",
+      "rate_url": "https://www.skatturinn.is/english/companies/value-added-tax/value-added-tax",
+      "scope_url": "https://www.skatturinn.is/english/companies/value-added-tax/",
+      "observed_on": "2026-09-05",
+      "review": "Standard rate candidate for software, not reduced-rate books or media. VOES and B2B treatment require separate review."
+    },
+    {
+      "country": "KE",
+      "rate_ppm": 160000,
+      "authority": "Kenya Revenue Authority",
+      "rate_url": "https://www.kra.go.ke/individual/filing-paying/types-of-taxes/value-added-tax",
+      "scope_url": "https://www.kra.go.ke/helping-tax-payers/faqs/vat-on-digital-marketplace-supply",
+      "observed_on": "2026-09-05",
+      "review": "16% digital-supply VAT. Older FAQ income-tax/DST discussion is not authority for current income taxes; do not add DST to checkout."
+    },
+    {
+      "country": "JP",
+      "rate_ppm": 100000,
+      "authority": "Japan National Tax Agency",
+      "rate_url": "https://www.nta.go.jp/english/taxes/consumption_tax/01.htm",
+      "scope_url": "https://www.nta.go.jp/english/taxes/consumption_tax/pdf/2025/general_00.pdf",
+      "observed_on": "2026-09-05",
+      "review": "The 10% standard rate includes 7.8% national and 2.2% local consumption tax. Electronic services supplied to recipients with a Japanese address are domestic in principle; food/newspaper reduced rates do not describe software. B2B reverse-charge and platform rules require separate treatment."
+    },
+    {
+      "country": "AR",
+      "rate_ppm": 210000,
+      "authority": "Argentina Agencia de Recaudación y Control Aduanero",
+      "rate_url": "https://www.afip.gob.ar/EspaciosdeDialogoInstitucional/documentos/Acta-21-Espacio-de-Dialogo-AFIP-Camaras-Empresariales-05-03.pdf",
+      "scope_url": "https://www.afip.gov.ar/iva/servicios-digitales/concepto.asp",
+      "observed_on": "2026-09-05",
+      "review": "ARCA classifies software, downloads and SaaS as digital services; its published dialogue identifies the applicable IVA as 21%. The payment-intermediary collection mechanism and provincial turnover taxes are outside this single national IVA rule."
+    },
+    {
+      "country": "CO",
+      "rate_ppm": 190000,
+      "authority": "Colombia Dirección de Impuestos y Aduanas Nacionales",
+      "rate_url": "https://normograma.dian.gov.co/dian/compilacion/docs/oficio_dian_0441_2018.htm",
+      "scope_url": "https://normograma.dian.gov.co/dian/compilacion/docs/oficio_dian_4513_2024.htm",
+      "observed_on": "2026-09-05",
+      "review": "DIAN states that services supplied from abroad are within IVA and the general rate is 19% unless an explicit exclusion or differential rate applies. The separate card-withholding option and provider filing status require operational review."
+    },
+    {
+      "country": "TH",
+      "rate_ppm": 70000,
+      "authority": "Thailand Revenue Department",
+      "rate_url": "https://www.rd.go.th/english/6043.html",
+      "scope_url": "https://eservice.rd.go.th/rd-ves-web/landing",
+      "observed_on": "2026-09-05",
+      "review": "7% VAT on electronic services supplied by nonresident operators to non-VAT-registered Thai customers. The THB 1.8 million annual registration threshold and customer VAT status remain separate controls."
+    },
+    {
+      "country": "TW",
+      "rate_ppm": 50000,
+      "authority": "Taiwan Ministry of Finance Taxation Administration",
+      "rate_url": "https://www.etax.nat.gov.tw/etwmain/en/cbec-tax-area/business-tax/taxation-system-intro/q-and-a/Gz6MjlP",
+      "scope_url": "https://www.etax.nat.gov.tw/etwmain/cbec-tax-area/business-tax/taxation-system-intro",
+      "observed_on": "2026-09-05",
+      "review": "5% business tax for offshore electronic-services entities selling to domestic individuals. Registration threshold, evidence of customer location, and intermediary status require separate review."
+    },
+    {
+      "country": "TR",
+      "rate_ppm": 200000,
+      "authority": "Türkiye Revenue Administration",
+      "rate_url": "https://cdn.gib.gov.tr/api/gibportal-file/file/getFileResources?objectKey=arsiv%2Fyardim-kaynaklar%2Fyararli-bilgiler%2Fkdv-oranlari.pdf",
+      "scope_url": "https://gib.gov.tr/mevzuat/kanun/436/teblig/9085",
+      "observed_on": "2026-09-05",
+      "review": "20% general KDV candidate for electronic services sold by a nonresident to non-KDV-registered individuals. Türkiye's separate digital-services tax is seller-level and is not added to checkout by this rule."
+    },
+    {
+      "country": "SA",
+      "rate_ppm": 150000,
+      "authority": "Saudi Zakat, Tax and Customs Authority",
+      "rate_url": "https://zatca.gov.sa/en/MediaCenter/News/Pages/News-320.aspx",
+      "scope_url": "https://www.zatca.gov.sa/en/HelpCenter/guidelines/Documents/VAT_Digital_Economy_Guidebook_Egnlish.pdf",
+      "observed_on": "2026-09-05",
+      "review": "15% standard VAT candidate for taxable electronic services supplied to a Saudi consumer. Customer residence evidence, marketplace responsibility and registration status remain separate controls."
+    },
+    {
+      "country": "UA",
+      "rate_ppm": 200000,
+      "authority": "State Tax Service of Ukraine",
+      "rate_url": "https://tax.gov.ua/data/material/000/432/537580/InfoList26_Eng.pdf",
+      "scope_url": "https://www.tax.gov.ua/en/baner/for-non-residents-providers-of-e-services/legislation/information-materials-on-electronic-identification--registration-of-no/",
+      "observed_on": "2026-09-05",
+      "review": "20% VAT is added to taxable electronic services supplied by a nonresident to individuals, except exempt operations. Customer VAT status, the registration threshold and statutory exemptions remain separate controls."
+    },
+    {
+      "country": "CR",
+      "rate_ppm": 130000,
+      "authority": "Costa Rica Ministry of Finance",
+      "rate_url": "https://www.hacienda.go.cr/docs/TarifaCreditoFiImpuestoServTransf.pdf",
+      "scope_url": "https://www.hacienda.go.cr/docs/GeneralidadesIVAenSerDigitalesTrans.pdf",
+      "observed_on": "2026-09-05",
+      "review": "13% IVA on the gross value of cross-border digital services and intangible goods, including software. Voluntary supplier registration versus card-issuer withholding must be resolved operationally to prevent double collection."
+    },
+    {
+      "country": "ID",
+      "rate_ppm": 110000,
+      "authority": "Indonesia Directorate General of Taxes",
+      "rate_url": "https://pajak.go.id/en/digitaltax",
+      "scope_url": "https://www.pajak.go.id/en/digital-tax-questions-and-answers",
+      "observed_on": "2026-09-06",
+      "review": "The authority explicitly includes computer software, digital applications and subscriptions. The current statutory 12% rate applies to a deemed base of 11/12 of the pre-VAT payment, producing an 11% checkout amount. Only an appointed PMSE collector may collect; appointment, customer-location evidence and filing remain separate controls."
+    },
+    {
+      "country": "RS",
+      "rate_ppm": 200000,
+      "authority": "Serbian Tax Administration",
+      "rate_url": "https://purs.gov.rs/upload/media/2025/11/28/760480/Law_on_value_added_tax_-_Zakon_o_porezu_na_dodatu_vrednost.pdf",
+      "scope_url": "https://purs.gov.rs/upload/media/2025/11/28/760480/Law_on_value_added_tax_-_Zakon_o_porezu_na_dodatu_vrednost.pdf",
+      "observed_on": "2026-09-06",
+      "review": "Article 23 sets the 20% general VAT rate, while Article 12 places electronically supplied services at the recipient's residence or domicile. Foreign-supplier registration, consumer evidence and any reverse-charge boundary remain separate activation controls."
+    },
+    {
+      "country": "KZ",
+      "rate_ppm": 160000,
+      "authority": "Kazakhstan State Revenue Committee",
+      "rate_url": "https://www.gov.kz/situations/817/intro?lang=en",
+      "scope_url": "https://www.gov.kz/memleket/entities/kgd/press/news/details/1078838?lang=ru",
+      "observed_on": "2026-09-06",
+      "review": "The 2026 Tax Code raises the base VAT rate to 16%. The State Revenue Committee separately confirms VAT administration and conditional registration for foreign internet platforms supplying digital services. Registration status, customer location and exceptions remain separate controls."
+    },
+    {
+      "country": "PE",
+      "rate_ppm": 180000,
+      "authority": "Peru SUNAT",
+      "rate_url": "https://www.gob.pe/institucion/sunat/pages/7910-impuesto-general-a-las-ventas-igv",
+      "scope_url": "https://orientacion.sunat.gob.pe/listado-de-sujetos-no-domiciliados-inscritos-en-el-ruc",
+      "observed_on": "2026-09-06",
+      "review": "The 2026 combined IGV/IPM rate is 18%. SUNAT states that nonresidents providing digital services or online intangible goods to non-business consumers must register. Registration status, customer evidence and exclusions remain separate activation controls."
+    },
+    {
+      "country": "NG",
+      "rate_ppm": 75000,
+      "authority": "Nigeria National Assembly",
+      "rate_url": "https://nass.gov.ng/documents/download/11249",
+      "scope_url": "https://nass.gov.ng/documents/download/11249",
+      "observed_on": "2026-09-06",
+      "review": "Sections 148 and 151 of the Nigeria Tax Act 2025 set VAT at 7.5%, require a nonresident making taxable supplies to Nigeria to register and invoice VAT, and permit the Revenue Service to appoint a nonresident supplier to collect. Actual appointment, customer status, invoice requirements and exempt supplies remain separate activation controls."
+    },
+    {
+      "country": "MA",
+      "rate_ppm": 200000,
+      "authority": "Morocco Directorate General of Taxes",
+      "rate_url": "https://www.finances.gov.ma/Publication/dgi/2024/Note-Circulaire735LF2024.pdf",
+      "scope_url": "https://www.finances.gov.ma/Publication/dgi/2024/Note-Circulaire735LF2024.pdf",
+      "observed_on": "2026-09-06",
+      "review": "Finance Circular 735 uses a downloaded mobile application as an in-scope remotely supplied service and requires a nonresident supplying dematerialized remote services to non-taxable Moroccan customers to register, declare and pay VAT. The standard 20% rate applies unless a specific reduction or exemption does; registration and classification approval remain separate activation controls."
+    },
+    {
+      "country": "EG",
+      "rate_ppm": 140000,
+      "authority": "Egyptian Tax Authority",
+      "rate_url": "https://portal.eta.gov.eg/sites/default/files/2023-03/digital-service-guide-english_0.pdf",
+      "scope_url": "https://www.eta.gov.eg/en/digital-services",
+      "observed_on": "2026-09-06",
+      "review": "The authority's nonresident remote-services guide expressly includes online games, apps, software and software maintenance. The general 14% VAT applies to taxable B2C supplies; the EGP 500,000 registration threshold, customer status, exemptions and B2B reverse charge remain separate activation controls."
+    },
+    {
+      "country": "EC",
+      "rate_ppm": 150000,
+      "authority": "Ecuador Internal Revenue Service",
+      "rate_url": "https://www.sri.gob.ec/o/sri-portlet-biblioteca-alfresco-internet/descargar?id=0f4f83f2-be64-45a5-8957-8200d5c3adcd&nombre=NAC-DGECCGC26-00000004.pdf",
+      "scope_url": "https://www.sri.gob.ec/web/intersri/registro-declaracion-y-pago-del-iva-prestadores-de-servicios-digitales-no-residentes",
+      "observed_on": "2026-09-06",
+      "review": "The authority states that the current IVA rate for digital services is 15% and provides a voluntary registration route for nonresident digital-service providers to collect it. Provider registration versus payment-intermediary withholding, customer status, evidence and specific zero-rated services remain separate activation controls."
+    }
+  ],
+  "held_regions": [
+    {
+      "country": "US",
+      "region": "NY",
+      "rate_ppm": 40000,
+      "kind": "partial_rate",
+      "url": "https://www.tax.ny.gov/bus/st/rates.htm",
+      "reason": "4% is the state component, not a complete rate. Need local boundary resolution and software taxability; postcode prefix alone cannot be assumed sufficient."
+    },
+    {
+      "country": "US",
+      "region": "CA",
+      "rate_ppm": 0,
+      "kind": "classification_review",
+      "url": "https://www.cdtfa.ca.gov/formspubs/pub109/nontaxable-sales.htm",
+      "reason": "Electronic-only downloaded software guidance describes nontaxable sales; do not apply to all delivery models. Recheck 2026 legislation and future-effective changes before an exemption candidate."
+    },
+    {
+      "country": "CA",
+      "region": null,
+      "rate_ppm": null,
+      "kind": "regional_components",
+      "url": "https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/gst-hst-businesses/charge-collect-place-supply.html",
+      "reason": "Federal GST/HST is province-specific. BC/SK/MB PST and Quebec QST are separate; no Canada-wide total.",
+      "federal_rates_ppm": {
+        "AB": 50000,
+        "BC": 50000,
+        "MB": 50000,
+        "NB": 150000,
+        "NL": 150000,
+        "NS": 140000,
+        "NT": 50000,
+        "NU": 50000,
+        "ON": 130000,
+        "PE": 150000,
+        "QC": 50000,
+        "SK": 50000,
+        "YT": 50000
+      }
+    },
+    {
+      "country": "HK",
+      "region": null,
+      "rate_ppm": null,
+      "kind": "non_collection_policy",
+      "url": "https://www.fstb.gov.hk/en/treasury/general/prevailing-tax-policy.htm",
+      "reason": "No VAT/sales-tax regime requires explicit non-collection semantics, not fabricated registration or treating absent data as zero."
+    },
+    {
+      "country": "FJ",
+      "region": null,
+      "rate_ppm": 125000,
+      "kind": "general_rate_only",
+      "url": "https://frcs.org.fj/our-services/taxation-section/non-individuals/reporting-and-paying-taxes/vat-guide/",
+      "reason": "12.5% standard rate from 2025-08-01. Imported software/nonresident collection versus recipient responsibility remains unresolved; rate alone cannot activate checkout tax."
+    }
+  ]
+}

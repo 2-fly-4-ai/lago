@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { runInNewContext } from "node:vm";
+import { runInNewContext, Script } from "node:vm";
 
 // Execute the actual helper embedded in the hosted checkout, not a test copy.
 const source = readFileSync(
@@ -53,4 +53,16 @@ test("tax quoting and payment submission both use the same helper and a text-onl
   assert.ok(source.includes("checkoutErrorMessage(body,'Payment could not be processed')"));
   assert.ok(source.includes("error.textContent=cause instanceof Error?cause.message:"));
   assert.ok(!source.includes("error.innerHTML="));
+});
+
+test("the address-normalization browser script remains syntactically valid", () => {
+  const billingBlock = source.match(
+    /const billingAddress = taxEnabled\s*\? `([\s\S]*?)`\s*: "";/,
+  )?.[1];
+  assert.ok(billingBlock, "The billing-address block must be present");
+  const addressScript = billingBlock.match(
+    /<script nonce="epd-address-script">([\s\S]*?)<\/script>/,
+  )?.[1];
+  assert.ok(addressScript, "The billing-address browser script must be present");
+  assert.doesNotThrow(() => new Script(addressScript));
 });

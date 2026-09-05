@@ -99,7 +99,7 @@ export function buildPriorityMarketCandidate(tedbSnapshot) {
     }),
   );
   const artifact = {
-    format: "serp-indirect-tax-rule-set/v1",
+    format: "serp-indirect-tax-rule-set/v2",
     id: "priority-market-candidate-2026-08-31-v2",
     version: 2,
     status: "draft",
@@ -129,6 +129,7 @@ function rulesForRate({ country, component, url, ratePpm, effectiveFrom, referen
     taxability: "taxable",
     rate_ppm: ratePpm,
     priority: 0,
+    calculation_method: "static",
     source_component_id: component,
     source_url: url,
     source_reference: `${reference} Candidate ${classification.description} classification; product taxability and collection registration require separate review.`,

@@ -1,0 +1,23 @@
+{
+  "format": "serp-plan-tax-classifications/v1",
+  "reviewed_on": "2026-09-06",
+  "source_commit": "d01233ffdc9718ee7e89fe6250c6e163d4e41172",
+  "classification": "downloaded-prewritten-software-consumer",
+  "tax_code": "txcd_10202000",
+  "evidence": "docs/evidence/generic-plan-tax-classification-2026-09-06.md",
+  "plan_codes": [
+    "serp-1-app-plan-monthly",
+    "serp-1-app-plan-yearly",
+    "serp-1-app-plan-one-time",
+    "serp-app-plus-plan-monthly",
+    "serp-app-plus-plan-yearly",
+    "serp-app-plus-plan-one-time",
+    "serp-1-app-plus-plan-monthly",
+    "serp-1-app-plus-plan-yearly",
+    "serp-1-app-plus-plan-one-time",
+    "serp-1-app-premium-plan-monthly",
+    "serp-1-app-premium-plan-yearly",
+    "serp-1-app-premium-plan-one-time",
+    "serp-1-app-lifetime-plan-one-time"
+  ]
+}
