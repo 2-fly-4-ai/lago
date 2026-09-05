@@ -43,6 +43,8 @@ expired processing lease could be reclaimed for submission. Both are covered by 
 tests. The legacy invalid-vault recovery is restricted to executions without a provider transaction
 ID. No-ID definitive failures use a namespaced internal ledger reference, not a claimed gateway
 transaction ID; the execution and provider event preserve their null transaction ID.
+Finalization also resumes safely if the ledger committed before a crash. Successful scheduler
+completion clears a prior error code when the same scheduled minute is replayed.
 
 The user approved staging deployment and scheduled verification on 2026-09-05. This approval does
 not enable production automatic renewals or broaden staging collection scopes.

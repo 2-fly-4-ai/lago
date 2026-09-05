@@ -558,7 +558,8 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
       };
       await step.do("complete schedule run", async () => {
         await this.env.BILLING_DB.prepare(
-          `UPDATE schedule_runs SET status = ?, result_json = ?, updated_at = ?, completed_at = ?
+          `UPDATE schedule_runs SET status = ?, result_json = ?, error_code = NULL,
+             updated_at = ?, completed_at = ?
          WHERE id = ?`,
         )
           .bind(
