@@ -41,11 +41,10 @@ export async function resolveWashingtonRate(
     url.searchParams.set(key, value);
   let response: Response;
   try {
-    response = await fetcher(url, {
+    response = await fetcher(url.toString(), {
       method: "GET",
       headers: { Accept: "application/xml, text/xml" },
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000),
+      redirect: "manual",
     });
   } catch (cause) {
     console.warn(

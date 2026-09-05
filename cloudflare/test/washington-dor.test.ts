@@ -54,8 +54,10 @@ describe("Washington public address-rate resolver", () => {
 
   it("uses only the fixed HTTPS endpoint and does not log the address", async () => {
     const calls: string[] = [];
-    const fetcher: typeof fetch = async (input) => {
+    const init: RequestInit[] = [];
+    const fetcher: typeof fetch = async (input, requestInit) => {
       calls.push(String(input));
+      init.push(requestInit ?? {});
       return new Response(xml(), {
         status: 200,
         headers: { "content-type": "text/xml; charset=utf-8", "content-length": "601" },
@@ -71,6 +73,11 @@ describe("Washington public address-rate resolver", () => {
     const url = new URL(calls[0]!);
     expect(url.origin + url.pathname).toBe("https://webgis.dor.wa.gov/webapi/AddressRates.aspx");
     expect(url.searchParams.get("ver")).toBe("3");
+    expect(init[0]).toMatchObject({
+      method: "GET",
+      redirect: "manual",
+      headers: { Accept: "application/xml, text/xml" },
+    });
     expect(logger).not.toHaveBeenCalled();
     logger.mockRestore();
   });
