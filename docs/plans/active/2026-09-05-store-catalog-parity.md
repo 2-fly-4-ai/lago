@@ -144,3 +144,13 @@ compatibility API regression which failed with null IDs, then passed after the t
 projection fix. Focused compatibility/payment/outbound tests: 16 passed. Full Lago `check`
 passed, including formatting, lint, types, tests, Access/tax gates and every dry-run build.
 The fix does not weaken payment verification or change billing, tax, routing, or renewal policy.
+
+Deployed invoice projection commit `3793f93` to staging version
+`641c3b1b-3094-44b3-bf79-210f1be6620c`. Retried the exact existing notification with
+its prior attempts preserved. Attempt 6 passed verification and created a Store Slack receipt,
+but the receipt is `uncertain` (2026-09-05 10:28:44 UTC); Lago records HTTP 503
+`delivery_requires_review`. Do not reset/delete that receipt or resend automatically.
+Native Slack searches for the fictional test email in money and the exact order ID across
+accessible channels returned no results. This does not prove the webhook never posted.
+The purchase must not be repeated. Slack acceptance remains incomplete; inspect destination/
+delivery failure before a separately approved retry. No production deployment occurred.

@@ -6,7 +6,7 @@ Status: active
 ## Objective
 
 Replace paid per-checkout Stripe Tax calculations for Lago/EPD with a versioned, auditable D1
-calculator while retaining Stripe sandbox as an optional QA benchmark. The customer must see and
+calculator using official tax-authority sources. The customer must see and
 authorize the tax-inclusive total before EPD receives a payment request.
 
 ## Ownership and consumers
@@ -18,8 +18,9 @@ authorize the tax-inclusive total before EPD receives a payment request.
 - The future tax-data publisher owns source licensing, provenance, refresh cadence, review, and
   activation of each immutable rule-set version. That publisher is not yet selected.
 - EPD consumes only the final authorized amount. It does not determine tax.
-- Stripe test mode may be used for bounded comparisons, but Stripe outputs are not the production
-  rule source and no production checkout depends on Stripe Tax.
+- User decision on 2026-09-05: no further Stripe tax requests, including sandbox benchmarking.
+  Use official authorities for rates, software taxability, boundaries and evidence. Existing Stripe
+  checkout/payment functionality is not part of this tax-source change.
 
 ## Scope
 
@@ -58,7 +59,7 @@ authorize the tax-inclusive total before EPD receives a payment request.
 1. Implement and test the local calculator and schema using synthetic fixtures.
 2. Select a lawful, maintainable source for every intended jurisdiction and define its importer.
 3. Build a versioned candidate dataset and review provenance, classification, and registrations.
-4. Compare a bounded address matrix against authoritative examples and Stripe sandbox.
+4. Compare a bounded address matrix against authoritative examples, without Stripe requests.
 5. With explicit approval, apply the migration and candidate dataset to staging in shadow mode.
 6. Review discrepancies and freshness behavior; then explicitly approve staging enforcement.
 7. Treat any production migration, data load, or activation as a new approval-gated rollout.
@@ -85,6 +86,19 @@ authorize the tax-inclusive total before EPD receives a payment request.
 - A reviewed source/update owner and a bounded benchmark report exist before staging activation.
 
 ## Progress
+
+### Official-source expansion — 2026-09-05
+
+The user rejected further Stripe tax requests. New research/refreshes use official authorities
+only; historical Stripe benchmark evidence below remains a record, not a next action.
+The [coverage review](../../evidence/official-tax-coverage-review-2026-09-05.md) tracks all 108
+known countries/territories in retained paid-event geography plus unknown locations. It records
+32 existing candidate countries, 16 additional authority-research entries and 60 remaining
+source-research gaps. This is not complete lifetime or worldwide coverage.
+No new tax rules, scopes or production activations were applied. Billing interval alone is not
+sufficient software classification; no-VAT regimes also need explicit non-collection semantics.
+Twenty-one tax script tests, formatting and lint passed. The official EU refresh failed twice;
+the previous checked snapshot remains unchanged and has not been stamped fresh.
 
 - [x] D1 rule-set, rule, registration-scope, and quote-provenance schema implemented.
 - [x] Local deterministic calculation and fail-closed matching implemented.
