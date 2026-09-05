@@ -30,6 +30,22 @@ Direct invalid-vault failures must terminate once instead of remaining in provid
    checks pass.
 6. Staging verification shows successful scheduled runs, zero one-time renewal candidates, no
    repeatedly-polled invalid-vault execution, and no duplicate charges.
+7. An expired processing lease never permits a second gateway submission; uncertain attempts
+   remain in provider-read reconciliation.
+8. Dunning requires every linked invoice to be recurring and in scope. Eligibility, saved-profile
+   identity, and cancellation/scope state are checked again atomically when claiming a submission.
+9. An old invalid-vault failure cannot disable a subsequently refreshed saved profile.
+
+## Final-review findings
+
+The second review found that the dunning path lacked the recurring-plan exclusion and that an
+expired processing lease could be reclaimed for submission. Both are covered by added regression
+tests. The legacy invalid-vault recovery is restricted to executions without a provider transaction
+ID. No-ID definitive failures use a namespaced internal ledger reference, not a claimed gateway
+transaction ID; the execution and provider event preserve their null transaction ID.
+
+The user approved staging deployment and scheduled verification on 2026-09-05. This approval does
+not enable production automatic renewals or broaden staging collection scopes.
 
 ## Rollback and safety
 

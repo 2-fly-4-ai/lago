@@ -264,7 +264,9 @@ export async function processEasyPayDirectAutomaticCollection(
   }
   if (!execution) return "not_applicable";
   if (execution.status === "succeeded" || execution.status === "failed") return "processed";
-  if (execution.status === "unknown") return "deferred";
+  // A processing lease expiring does not prove that the gateway rejected the charge.
+  // Both states are reconciled by provider reads, never by another submission.
+  if (execution.status === "unknown" || execution.status === "processing") return "deferred";
   if (String(env.PAYMENT_MUTATIONS_ENABLED) !== "1") return "deferred";
 
   const now = new Date();
@@ -273,13 +275,22 @@ export async function processEasyPayDirectAutomaticCollection(
     `UPDATE easy_pay_direct_automatic_payment_executions
      SET status = 'processing', attempt_count = attempt_count + 1,
          lease_expires_at = ?, updated_at = ?
-     WHERE id = ? AND (
-       status = 'pending' OR
-       (status = 'processing' AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
+     WHERE id = ? AND status = 'pending' AND EXISTS (
+       SELECT 1 FROM payment_requests request
+       JOIN provider_customer_profiles profile
+         ON profile.id = easy_pay_direct_automatic_payment_executions.provider_profile_id
+        AND profile.organization_id = request.organization_id
+        AND profile.customer_id = request.customer_id
+        AND profile.provider = 'easy_pay_direct' AND profile.status = 'active'
+        AND profile.gateway_customer_vault_id = easy_pay_direct_automatic_payment_executions.gateway_customer_vault_id
+        AND profile.initial_transaction_id = easy_pay_direct_automatic_payment_executions.initial_transaction_id
+       WHERE request.id = easy_pay_direct_automatic_payment_executions.payment_request_id
+         AND request.payment_status = 'pending' AND request.ready_for_payment_processing = 1
+         AND ${recurringInvoiceEligibilitySql()}
      )
      RETURNING id`,
   )
-    .bind(leaseExpiresAt, now.toISOString(), execution.id, now.toISOString())
+    .bind(leaseExpiresAt, now.toISOString(), execution.id, automaticCollectionScopeMode(env))
     .first<{ id: string }>();
   if (!claimed) return "deferred";
 
@@ -331,6 +342,7 @@ async function prepareEasyPayDirectDunningCollection(
               profile.initial_transaction_id
        FROM payment_requests request
        JOIN customers customer ON customer.id = request.customer_id
+        AND customer.organization_id = request.organization_id
        JOIN provider_customer_profiles profile
          ON profile.organization_id = request.organization_id
         AND profile.customer_id = request.customer_id
@@ -340,35 +352,11 @@ async function prepareEasyPayDirectDunningCollection(
        WHERE request.id = ? AND request.source = 'dunning'
          AND request.payment_status = 'pending' AND request.ready_for_payment_processing = 1
          AND customer.payment_provider = 'easy_pay_direct'
-         AND (? = 'all' OR EXISTS (
-           SELECT 1
-           FROM invoices_payment_requests scoped_link
-           JOIN invoices scoped_invoice ON scoped_invoice.id = scoped_link.invoice_id
-           JOIN easy_pay_direct_automatic_collection_scopes scope
-             ON scope.subscription_id = scoped_invoice.subscription_id
-            AND scope.organization_id = scoped_invoice.organization_id
-            AND scope.status = 'enabled'
-           WHERE scoped_link.payment_request_id = request.id
-         ))
          AND profile.gateway_customer_vault_id IS NOT NULL
          AND profile.initial_transaction_id IS NOT NULL
          AND lower(profile.gateway_customer_vault_id) NOT LIKE 'vault-test-%'
          AND lower(profile.gateway_customer_vault_id) NOT LIKE 'synthetic-%'
-         AND EXISTS (
-           SELECT 1 FROM invoices_payment_requests link
-           WHERE link.payment_request_id = request.id
-         )
-         AND NOT EXISTS (
-           SELECT 1
-           FROM invoices_payment_requests link
-           JOIN invoices invoice ON invoice.id = link.invoice_id
-           LEFT JOIN subscriptions subscription ON subscription.id = invoice.subscription_id
-           WHERE link.payment_request_id = request.id
-             AND (
-               subscription.id IS NULL OR subscription.payment_method_type IS NOT 'provider'
-               OR subscription.payment_method_id IS NOT profile.id
-             )
-         )
+         AND ${recurringInvoiceEligibilitySql()}
        LIMIT 1`,
   )
     .bind(paymentRequestId, automaticCollectionScopeMode(env))
@@ -423,6 +411,40 @@ async function prepareEasyPayDirectDunningCollection(
     .run();
 }
 
+// Every linked invoice must be eligible; one scoped invoice must not authorize a
+// mixed request containing unscoped or one-time purchases.
+function recurringInvoiceEligibilitySql(): string {
+  return `EXISTS (
+    SELECT 1 FROM invoices_payment_requests link WHERE link.payment_request_id = request.id
+  ) AND NOT EXISTS (
+    SELECT 1 FROM invoices_payment_requests link
+    LEFT JOIN invoices invoice ON invoice.id = link.invoice_id
+      AND invoice.organization_id = request.organization_id
+      AND invoice.customer_id = request.customer_id
+    LEFT JOIN subscriptions subscription ON subscription.id = invoice.subscription_id
+      AND subscription.organization_id = request.organization_id
+      AND subscription.customer_id = request.customer_id
+    LEFT JOIN plans plan ON plan.id = subscription.plan_id
+      AND plan.organization_id = request.organization_id
+    WHERE link.payment_request_id = request.id AND (
+      link.organization_id IS NOT request.organization_id
+      OR invoice.id IS NULL OR subscription.id IS NULL OR plan.id IS NULL
+      OR invoice.status IS NOT 'finalized' OR invoice.payment_status = 'succeeded'
+      OR invoice.ready_for_payment_processing IS NOT 1
+      OR invoice.version IS NOT link.invoice_version OR invoice.currency IS NOT request.currency
+      OR subscription.payment_method_type IS NOT 'provider'
+      OR subscription.payment_method_id IS NOT profile.id
+      OR subscription.status NOT IN ('active', 'past_due')
+      OR plan.interval NOT IN ('weekly', 'monthly', 'quarterly', 'yearly')
+      OR (? <> 'all' AND NOT EXISTS (
+        SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope
+        WHERE scope.subscription_id = subscription.id
+          AND scope.organization_id = request.organization_id AND scope.status = 'enabled'
+      ))
+    )
+  )`;
+}
+
 export async function reconcileEasyPayDirectAutomaticCollection(
   env: Env,
   executionId: string,
@@ -434,6 +456,7 @@ export async function reconcileEasyPayDirectAutomaticCollection(
   }
   if (
     execution.status === "unknown" &&
+    execution.provider_transaction_id === null &&
     isInvalidCustomerVaultFailure(execution.failure_code, execution.failure_message)
   ) {
     await reconcileAutomaticOutcome(env, execution, {
@@ -587,7 +610,7 @@ async function loadRenewalCandidate(
          AND (invoice.payment_due_date IS NULL OR date(invoice.payment_due_date) <= date('now'))
          AND subscription.payment_method_type = 'provider'
          AND subscription.status IN ('active', 'past_due')
-         AND plan.interval <> 'one_time'
+         AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
          AND customer.payment_provider = 'easy_pay_direct'
          AND (? = 'all' OR EXISTS (
            SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope
@@ -746,14 +769,24 @@ async function reconcileAutomaticOutcome(
     transaction.status,
     "easy_pay_direct",
   );
-  if (isInvalidCustomerVaultFailure(transaction.responseCode, transaction.responseText)) {
+  if (
+    transaction.status === "failed" &&
+    isInvalidCustomerVaultFailure(transaction.responseCode, transaction.responseText)
+  ) {
     await env.BILLING_DB.prepare(
       `UPDATE provider_customer_profiles
        SET status = 'disabled', updated_at = ?
        WHERE id = ? AND organization_id = ? AND provider = 'easy_pay_direct'
-         AND status = 'active'`,
+         AND status = 'active' AND gateway_customer_vault_id = ?
+         AND initial_transaction_id = ?`,
     )
-      .bind(now, execution.provider_profile_id, execution.organization_id)
+      .bind(
+        now,
+        execution.provider_profile_id,
+        execution.organization_id,
+        execution.gateway_customer_vault_id,
+        execution.initial_transaction_id,
+      )
       .run();
   }
   await env.BILLING_DB.prepare(

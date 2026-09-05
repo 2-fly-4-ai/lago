@@ -274,6 +274,72 @@ describe("Easy Pay Direct automatic subscription collection", () => {
     await expect(providerProfileState()).resolves.toEqual({ status: "disabled" });
   });
 
+  it.each([null, "2020-01-01T00:00:00.000Z"])(
+    "does not resubmit a processing execution with lease %s",
+    async (lease) => {
+      await prepareEasyPayDirectAutomaticCollection(enabledEnv(), invoiceId, "crash-test");
+      const requestId = (await automaticPaymentRequestId(invoiceId))!;
+      await env.BILLING_DB.prepare(
+        `UPDATE easy_pay_direct_automatic_payment_executions
+         SET status = 'processing', attempt_count = 1, lease_expires_at = ?
+         WHERE payment_request_id = ?`,
+      )
+        .bind(lease, requestId)
+        .run();
+      const providerFetch = vi.fn<typeof fetch>();
+      await expect(
+        processEasyPayDirectAutomaticCollection(enabledEnv(), requestId, providerFetch),
+      ).resolves.toBe("deferred");
+      expect(providerFetch).not.toHaveBeenCalled();
+      await expect(collectionState(invoiceId)).resolves.toMatchObject({ attempt_count: 1 });
+    },
+  );
+
+  it.each(["one_time", "canceled", "unscoped", "disabled_profile"])(
+    "rechecks %s eligibility after preparation and before submitting",
+    async (change) => {
+      await enableAutomaticCollectionScope();
+      await prepareEasyPayDirectAutomaticCollection(scopedEnv(), invoiceId, "recheck-test");
+      const requestId = (await automaticPaymentRequestId(invoiceId))!;
+      const sql =
+        change === "one_time"
+          ? "UPDATE plans SET interval = 'one_time' WHERE organization_id = ?"
+          : change === "canceled"
+            ? "UPDATE subscriptions SET status = 'canceled' WHERE organization_id = ?"
+            : change === "unscoped"
+              ? "UPDATE easy_pay_direct_automatic_collection_scopes SET status = 'disabled' WHERE organization_id = ?"
+              : "UPDATE provider_customer_profiles SET status = 'disabled' WHERE organization_id = ?";
+      await env.BILLING_DB.prepare(sql).bind(organizationId).run();
+      const providerFetch = vi.fn<typeof fetch>();
+      await expect(
+        processEasyPayDirectAutomaticCollection(scopedEnv(), requestId, providerFetch),
+      ).resolves.toBe("deferred");
+      expect(providerFetch).not.toHaveBeenCalled();
+      await expect(collectionState(invoiceId)).resolves.toMatchObject({ attempt_count: 0 });
+    },
+  );
+
+  it("does not disable a profile refreshed after the failed execution was prepared", async () => {
+    await prepareEasyPayDirectAutomaticCollection(enabledEnv(), invoiceId, "refreshed-profile");
+    const requestId = (await automaticPaymentRequestId(invoiceId))!;
+    const execution = await env.BILLING_DB.prepare(
+      `UPDATE easy_pay_direct_automatic_payment_executions SET status = 'unknown',
+       failure_code = '300', failure_message = 'Invalid Customer Vault ID specified'
+       WHERE payment_request_id = ? RETURNING id`,
+    )
+      .bind(requestId)
+      .first<{ id: string }>();
+    await env.BILLING_DB.prepare(
+      "UPDATE provider_customer_profiles SET gateway_customer_vault_id = 'refreshed-vault' WHERE organization_id = ?",
+    )
+      .bind(organizationId)
+      .run();
+    await expect(
+      reconcileEasyPayDirectAutomaticCollection(enabledEnv(), execution!.id, vi.fn<typeof fetch>()),
+    ).resolves.toBe("processed");
+    await expect(providerProfileState()).resolves.toEqual({ status: "active" });
+  });
+
   it("converges a legacy invalid-vault unknown without another provider read", async () => {
     const runtimeEnv = enabledEnv();
     await prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "legacy-invalid-vault");
@@ -354,91 +420,159 @@ describe("Easy Pay Direct automatic subscription collection", () => {
     });
   });
 
-  it("automatically retries an eligible dunning request through the same saved profile", async () => {
-    const runtimeEnv = enabledEnv();
-    await prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "dunning-initial");
-    const initialRequestId = (await automaticPaymentRequestId(invoiceId))!;
-    await processEasyPayDirectAutomaticCollection(
-      runtimeEnv,
-      initialRequestId,
-      vi.fn<typeof fetch>(
-        async () =>
-          new Response(
-            `response=2&responsetext=Declined&response_code=200&transactionid=dunning-initial-decline&orderid=${initialRequestId}`,
-          ),
-      ),
-    );
-    const invoice = await env.BILLING_DB.prepare(
-      "SELECT customer_id, version FROM invoices WHERE id = ?",
-    )
-      .bind(invoiceId)
-      .first<{ customer_id: string; version: number }>();
-    const fixture = crypto.randomUUID();
-    const campaignId = `campaign-${fixture}`;
-    const thresholdId = `threshold-${fixture}`;
-    const dunningRequestId = `dunning-request-${fixture}`;
-    const now = new Date().toISOString();
-    await env.BILLING_DB.batch([
-      env.BILLING_DB.prepare(
-        "UPDATE invoices SET payment_overdue = 1 WHERE id = ? AND organization_id = ?",
-      ).bind(invoiceId, organizationId),
-      env.BILLING_DB.prepare(
-        `INSERT INTO dunning_campaigns
+  it.each(["eligible", "one_time", "unscoped", "mixed_scope"])(
+    "checks every invoice in a %s dunning request",
+    async (scenario) => {
+      const runtimeEnv = enabledEnv();
+      await prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "dunning-initial");
+      const initialRequestId = (await automaticPaymentRequestId(invoiceId))!;
+      await processEasyPayDirectAutomaticCollection(
+        runtimeEnv,
+        initialRequestId,
+        vi.fn<typeof fetch>(
+          async () =>
+            new Response(
+              `response=2&responsetext=Declined&response_code=200&transactionid=dunning-initial-decline-${initialRequestId}&orderid=${initialRequestId}`,
+            ),
+        ),
+      );
+      const invoice = await env.BILLING_DB.prepare(
+        "SELECT customer_id, version FROM invoices WHERE id = ?",
+      )
+        .bind(invoiceId)
+        .first<{ customer_id: string; version: number }>();
+      const fixture = crypto.randomUUID();
+      const campaignId = `campaign-${fixture}`;
+      const thresholdId = `threshold-${fixture}`;
+      const dunningRequestId = `dunning-request-${fixture}`;
+      const now = new Date().toISOString();
+      await env.BILLING_DB.batch([
+        env.BILLING_DB.prepare(
+          "UPDATE invoices SET payment_overdue = 1 WHERE id = ? AND organization_id = ?",
+        ).bind(invoiceId, organizationId),
+        env.BILLING_DB.prepare(
+          `INSERT INTO dunning_campaigns
          (id, organization_id, code, name, bcc_emails_json, days_between_attempts,
           max_attempts, active, version, request_sha256, created_at, updated_at)
          VALUES (?, ?, ?, 'Renewal retry', '[]', 1, 3, 1, 1, ?, ?, ?)`,
-      ).bind(campaignId, organizationId, campaignId, "f".repeat(64), now, now),
-      env.BILLING_DB.prepare(
-        `INSERT INTO dunning_campaign_thresholds
+        ).bind(campaignId, organizationId, campaignId, "f".repeat(64), now, now),
+        env.BILLING_DB.prepare(
+          `INSERT INTO dunning_campaign_thresholds
          (id, organization_id, dunning_campaign_id, amount_minor, currency,
           created_at, updated_at)
          VALUES (?, ?, ?, 1, 'USD', ?, ?)`,
-      ).bind(thresholdId, organizationId, campaignId, now, now),
-      env.BILLING_DB.prepare(
-        `INSERT INTO payment_requests
+        ).bind(thresholdId, organizationId, campaignId, now, now),
+        env.BILLING_DB.prepare(
+          `INSERT INTO payment_requests
          (id, organization_id, customer_id, amount_minor, currency, email, payment_attempts,
           payment_status, ready_for_payment_processing, version, source,
           dunning_campaign_id, dunning_campaign_threshold_id, dunning_attempt,
           collection_mode, created_at, updated_at)
          VALUES (?, ?, ?, 900, 'USD', 'renewal@example.test', 0, 'pending', 1, 1,
                  'dunning', ?, ?, 1, 'overdue', ?, ?)`,
-      ).bind(
-        dunningRequestId,
-        organizationId,
-        invoice!.customer_id,
-        campaignId,
-        thresholdId,
-        now,
-        now,
-      ),
-      env.BILLING_DB.prepare(
-        `INSERT INTO invoices_payment_requests
+        ).bind(
+          dunningRequestId,
+          organizationId,
+          invoice!.customer_id,
+          campaignId,
+          thresholdId,
+          now,
+          now,
+        ),
+        env.BILLING_DB.prepare(
+          `INSERT INTO invoices_payment_requests
          (id, organization_id, payment_request_id, invoice_id, invoice_version,
           created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(
-        `dunning-link-${fixture}`,
-        organizationId,
-        dunningRequestId,
-        invoiceId,
-        invoice!.version,
-        now,
-        now,
-      ),
-    ]);
-    const providerFetch = vi.fn<typeof fetch>(
-      async () =>
-        new Response(
-          `response=1&responsetext=Approved&response_code=100&transactionid=dunning-approved&orderid=${dunningRequestId}`,
+        ).bind(
+          `dunning-link-${fixture}`,
+          organizationId,
+          dunningRequestId,
+          invoiceId,
+          invoice!.version,
+          now,
+          now,
         ),
-    );
-    await expect(
-      processEasyPayDirectAutomaticCollection(runtimeEnv, dunningRequestId, providerFetch),
-    ).resolves.toBe("processed");
-    expect(providerFetch).toHaveBeenCalledOnce();
-    await expect(
-      env.BILLING_DB.prepare(
-        `SELECT request.payment_status AS request_status,
+      ]);
+      const providerFetch = vi.fn<typeof fetch>(
+        async () =>
+          new Response(
+            `response=1&responsetext=Approved&response_code=100&transactionid=dunning-approved&orderid=${dunningRequestId}`,
+          ),
+      );
+      if (scenario === "one_time") {
+        await env.BILLING_DB.prepare(
+          "UPDATE plans SET interval = 'one_time' WHERE organization_id = ?",
+        )
+          .bind(organizationId)
+          .run();
+      }
+      if (scenario === "mixed_scope") {
+        await enableAutomaticCollectionScope();
+        await env.BILLING_DB.batch([
+          env.BILLING_DB.prepare(
+            `INSERT INTO subscriptions
+           (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+            current_period_start, current_period_end, payment_method_type, payment_method_id,
+            version, created_at, updated_at)
+           SELECT ?, organization_id, customer_id, plan_id, ?, status, started_at,
+             current_period_start, current_period_end, payment_method_type, payment_method_id,
+             version, created_at, updated_at FROM subscriptions WHERE organization_id = ?`,
+          ).bind(`unscoped-${fixture}`, `unscoped-${fixture}`, organizationId),
+          env.BILLING_DB.prepare(
+            `INSERT INTO invoices
+           (id, organization_id, customer_id, subscription_id, number, status, payment_status,
+            currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
+            ready_for_payment_processing, payment_overdue, created_at, updated_at)
+           SELECT ?, organization_id, customer_id, ?, ?, status, payment_status,
+             currency, subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
+               ready_for_payment_processing, payment_overdue, created_at, updated_at FROM invoices WHERE id = ?`,
+          ).bind(
+            `unscoped-invoice-${fixture}`,
+            `unscoped-${fixture}`,
+            `UNSCOPED-${fixture}`,
+            invoiceId,
+          ),
+          env.BILLING_DB.prepare(
+            `INSERT INTO invoices_payment_requests
+           (id, organization_id, payment_request_id, invoice_id, invoice_version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          ).bind(
+            `unscoped-link-${fixture}`,
+            organizationId,
+            dunningRequestId,
+            `unscoped-invoice-${fixture}`,
+            invoice!.version,
+            now,
+            now,
+          ),
+        ]);
+      }
+      if (scenario !== "eligible") {
+        await expect(
+          processEasyPayDirectAutomaticCollection(
+            scenario === "one_time" ? runtimeEnv : scopedEnv(),
+            dunningRequestId,
+            providerFetch,
+          ),
+        ).resolves.toBe("not_applicable");
+        expect(providerFetch).not.toHaveBeenCalled();
+        await expect(
+          env.BILLING_DB.prepare(
+            "SELECT COUNT(*) AS count FROM easy_pay_direct_automatic_payment_executions WHERE payment_request_id = ?",
+          )
+            .bind(dunningRequestId)
+            .first(),
+        ).resolves.toEqual({ count: 0 });
+        return;
+      }
+      await expect(
+        processEasyPayDirectAutomaticCollection(runtimeEnv, dunningRequestId, providerFetch),
+      ).resolves.toBe("processed");
+      expect(providerFetch).toHaveBeenCalledOnce();
+      await expect(
+        env.BILLING_DB.prepare(
+          `SELECT request.payment_status AS request_status,
                 execution.status AS execution_status, invoice.payment_status AS invoice_status
          FROM payment_requests request
          JOIN easy_pay_direct_automatic_payment_executions execution
@@ -446,15 +580,16 @@ describe("Easy Pay Direct automatic subscription collection", () => {
          JOIN invoices_payment_requests link ON link.payment_request_id = request.id
          JOIN invoices invoice ON invoice.id = link.invoice_id
          WHERE request.id = ?`,
-      )
-        .bind(dunningRequestId)
-        .first(),
-    ).resolves.toEqual({
-      request_status: "succeeded",
-      execution_status: "succeeded",
-      invoice_status: "succeeded",
-    });
-  });
+        )
+          .bind(dunningRequestId)
+          .first(),
+      ).resolves.toEqual({
+        request_status: "succeeded",
+        execution_status: "succeeded",
+        invoice_status: "succeeded",
+      });
+    },
+  );
 });
 
 function enabledEnv(): Env {
