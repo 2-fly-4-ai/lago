@@ -112,7 +112,11 @@ describe("Canadian component-aware tax calculation", () => {
       await expect(quote(region)).rejects.toMatchObject({ code: "checkout_tax_rule_missing" });
   });
   it("preserves immutable levy evidence after activation", async () => {
-    const id = "ca-bc-txcd_10202000-20260906";
+    const id = artifact.rules.find(
+      (rule: { country: string; region: string | null; product_tax_code: string }) =>
+        rule.country === "CA" && rule.region === "BC" && rule.product_tax_code === "txcd_10202000",
+    )?.id;
+    expect(id).toBeTruthy();
     await expect(
       env.BILLING_DB.prepare("UPDATE indirect_tax_rule_components SET rate_ppm=1 WHERE rule_id=?")
         .bind(id)
