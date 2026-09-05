@@ -196,6 +196,9 @@ describe("Easy Pay Direct provider", () => {
     expect(body).toContain("checkout_tax_address_correction_required");
     expect(body).toContain("normalized_address");
     expect(body).toContain("Enter your street address and city");
+    expect(body).toContain("document.getElementById('tax-amount').textContent='—'");
+    expect(body).toContain("document.getElementById('total-due').textContent='—'");
+    expect(body).toContain("document.getElementById('headline-total').textContent='—'");
   });
 
   it("labels one-time product checkouts as purchases instead of subscriptions", async () => {

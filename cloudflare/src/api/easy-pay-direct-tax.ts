@@ -155,11 +155,6 @@ export async function handleEasyPayDirectTaxQuote(
         quoteId,
       )
     : null;
-  if (calculation.localCalculationMethod === "wa_dor_address") {
-    console.info(
-      JSON.stringify({ level: "info", event: "washington_tax_address_encryption_completed" }),
-    );
-  }
   const now = new Date().toISOString();
   if (env.EASY_PAY_DIRECT_TAX_MODE === "shadow") {
     await prepareCheckoutTaxQuoteInsert(env.BILLING_DB, {
@@ -206,11 +201,6 @@ export async function handleEasyPayDirectTaxQuote(
   const generated = await createEasyPayDirectCheckoutUrl(env, {
     checkoutIntentId: replacementIntentId,
   });
-  if (calculation.localCalculationMethod === "wa_dor_address") {
-    console.info(
-      JSON.stringify({ level: "info", event: "washington_tax_checkout_rotation_completed" }),
-    );
-  }
   const generatedTokenHash = await sha256Hex(generated.token);
   const replacementIdempotencyKey = `${checkout.idempotency_key}:tax:${quoteId}`;
   const eventId = `payment-request-checkout-tax-applied:${quoteId}`;
@@ -382,9 +372,6 @@ export async function handleEasyPayDirectTaxQuote(
     );
     throw new ApiError(503, "checkout_tax_storage_failed", "Tax quote could not be stored");
   });
-  if (calculation.localCalculationMethod === "wa_dor_address") {
-    console.info(JSON.stringify({ level: "info", event: "washington_tax_batch_completed" }));
-  }
   if (
     results[3]?.meta.changes !== 1 ||
     results[4]?.meta.changes !== 1 ||
