@@ -361,7 +361,27 @@ export async function handleEasyPayDirectTaxQuote(
       }),
       now,
     ),
-  ]);
+  ]).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : "";
+    const errorCategory = message.includes("invalid_checkout_address_rate_identity")
+      ? "address_rate_identity"
+      : /foreign key/i.test(message)
+        ? "foreign_key"
+        : /unique/i.test(message)
+          ? "unique"
+          : /check constraint/i.test(message)
+            ? "check_constraint"
+            : "other";
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "checkout_tax_storage_failed",
+        requestId,
+        error_category: errorCategory,
+      }),
+    );
+    throw new ApiError(503, "checkout_tax_storage_failed", "Tax quote could not be stored");
+  });
   if (calculation.localCalculationMethod === "wa_dor_address") {
     console.info(JSON.stringify({ level: "info", event: "washington_tax_batch_completed" }));
   }
