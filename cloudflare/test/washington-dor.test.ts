@@ -119,4 +119,18 @@ describe("Washington public address-rate resolver", () => {
     expect(warning.mock.calls.flat().join(" ")).not.toContain("secret network detail");
     warning.mockRestore();
   });
+
+  it("converts response body failures into a fail-closed API error", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const response = new Response(xml(), { headers: { "content-type": "text/xml" } });
+    vi.spyOn(response, "text").mockRejectedValueOnce(new Error("secret response detail"));
+    await expect(
+      resolveWashingtonRate(
+        { addressLine: "1 Main St", city: "Seattle", zip: "98101" },
+        async () => response,
+      ),
+    ).rejects.toMatchObject({ status: 503, code: "checkout_tax_address_rate_unavailable" });
+    expect(warning.mock.calls.flat().join(" ")).not.toContain("secret response detail");
+    warning.mockRestore();
+  });
 });

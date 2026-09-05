@@ -56,18 +56,30 @@ export async function resolveWashingtonRate(
     );
     throw unavailable("Washington tax service is unavailable");
   }
-  const length = Number(response.headers.get("content-length"));
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  if (
-    !response.ok ||
-    (Number.isFinite(length) && length > MAX_BYTES) ||
-    !/^\s*(application|text)\/xml\b/.test(contentType)
-  )
+  try {
+    const length = Number(response.headers.get("content-length"));
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (
+      !response.ok ||
+      (Number.isFinite(length) && length > MAX_BYTES) ||
+      !/^\s*(application|text)\/xml\b/.test(contentType)
+    )
+      throw unavailable("Washington tax service returned an invalid response");
+    const xml = await response.text();
+    if (xml.length > MAX_BYTES || /<!DOCTYPE|<!ENTITY/i.test(xml))
+      throw unavailable("Washington tax service returned unsafe XML");
+    return parseWashingtonRate(xml);
+  } catch (cause) {
+    if (cause instanceof ApiError) throw cause;
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "washington_tax_rate_response_failed",
+        error_name: cause instanceof Error ? cause.name : "UnknownError",
+      }),
+    );
     throw unavailable("Washington tax service returned an invalid response");
-  const xml = await response.text();
-  if (xml.length > MAX_BYTES || /<!DOCTYPE|<!ENTITY/i.test(xml))
-    throw unavailable("Washington tax service returned unsafe XML");
-  return parseWashingtonRate(xml);
+  }
 }
 
 export function parseWashingtonRate(xml: string): WashingtonRateResolution {
