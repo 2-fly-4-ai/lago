@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { addCanadianSoftwareRules } from "./canada-software-candidate.mjs";
+import { buildExpandedSoftwareCandidate } from "./expanded-software-tax-candidate.mjs";
+import { addNoSalesTaxSoftwareRules } from "./no-sales-tax-software-candidate.mjs";
 import { buildPriorityMarketCandidate } from "./priority-market-tax-candidate.mjs";
 import { addUSUniformSoftwareRules } from "./us-uniform-software-candidate.mjs";
-const fixture = JSON.parse(
-  await readFile(
-    new URL("../fixtures/indirect-tax/eu-tedb-standard-rates-2026-08-31.json", import.meta.url),
-    "utf8",
-  ),
-);
+const read = async (name) =>
+  JSON.parse(await readFile(new URL(`../fixtures/indirect-tax/${name}`, import.meta.url), "utf8"));
+const fixture = await read("eu-tedb-standard-rates-2026-08-31.json");
 const base = buildPriorityMarketCandidate(fixture);
 
 test("adds only supported state and delivery combinations, not a national fallback", () => {
@@ -41,4 +41,27 @@ test("rejects stale or future evidence and merging over existing US rules", () =
     () => addUSUniformSoftwareRules(addUSUniformSoftwareRules(base, "2026-09-05"), "2026-09-05"),
     /already present/,
   );
+});
+
+test("final v21 rule ids cannot collide with the already-deployed v2 baseline", async () => {
+  const expanded = buildExpandedSoftwareCandidate(
+    fixture,
+    await read("software-rate-expansion-2026-09-06.json"),
+    "2026-09-06",
+  );
+  const canada = addCanadianSoftwareRules(
+    expanded,
+    await read("canada-software-components-2026-09-06.json"),
+    "2026-09-06",
+  );
+  const noSalesTax = addNoSalesTaxSoftwareRules(
+    canada,
+    await read("no-sales-tax-software-2026-09-06.json"),
+    "2026-09-06",
+  );
+  const final = addUSUniformSoftwareRules(noSalesTax, "2026-09-06");
+  const deployedIds = new Set(base.rules.map((rule) => rule.id));
+  assert.equal(final.rules.length, 157);
+  assert.ok(final.rules.every((rule) => /^tax-rule-v21-[a-f0-9]{16}$/.test(rule.id)));
+  assert.ok(final.rules.every((rule) => !deployedIds.has(rule.id)));
 });

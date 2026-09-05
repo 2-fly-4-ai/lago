@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildExpandedSoftwareCandidate } from "./expanded-software-tax-candidate.mjs";
 import {
+  assignVersionedRuleIds,
   contentChecksum,
   validateRuleSetArtifact,
   renderDraftSql,
@@ -103,6 +104,7 @@ export function addCanadianSoftwareRules(base, evidence, asOf) {
   artifact.version = 19;
   artifact.source.name = "Official software rate review with Canadian levy components";
   artifact.source.url = "docs/evidence/canadian-tax-components-2026-09-06.md";
+  artifact.rules = assignVersionedRuleIds(artifact.rules, artifact.version);
   artifact.content_sha256 = contentChecksum(artifact);
   return validateRuleSetArtifact(artifact);
 }

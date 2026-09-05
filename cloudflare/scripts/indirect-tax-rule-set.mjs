@@ -181,6 +181,24 @@ export function contentChecksum(artifact) {
   return createHash("sha256").update(stableJson(payload)).digest("hex");
 }
 
+// Rule ids are global primary keys in D1, so every immutable rule-set version
+// must receive its own ids even when it carries forward an unchanged match.
+export function assignVersionedRuleIds(rules, version) {
+  integer(version, "version", 1, Number.MAX_SAFE_INTEGER);
+  if (!Array.isArray(rules) || !rules.length) fail("rules must be a non-empty array");
+  return rules.map((rule) => {
+    const match = [
+      rule.country,
+      rule.region ?? "",
+      rule.postal_prefix ?? "",
+      rule.product_tax_code,
+      rule.priority,
+    ];
+    const digest = createHash("sha256").update(JSON.stringify(match)).digest("hex").slice(0, 16);
+    return { ...rule, id: `tax-rule-v${version}-${digest}` };
+  });
+}
+
 export function renderDraftSql(artifact, createdAt, options = {}) {
   const normalized = validateRuleSetArtifact(artifact);
   if (

@@ -1,4 +1,8 @@
-import { contentChecksum, validateRuleSetArtifact } from "./indirect-tax-rule-set.mjs";
+import {
+  assignVersionedRuleIds,
+  contentChecksum,
+  validateRuleSetArtifact,
+} from "./indirect-tax-rule-set.mjs";
 
 const REVIEWED = [
   {
@@ -92,6 +96,7 @@ export function addUSUniformSoftwareRules(base, asOf) {
   artifact.version = 21;
   artifact.source.name = "Official software rules with partial US state coverage";
   artifact.source.url = "docs/evidence/us-software-source-review-2026-09-06.md";
+  artifact.rules = assignVersionedRuleIds(artifact.rules, artifact.version);
   artifact.content_sha256 = contentChecksum(artifact);
   return validateRuleSetArtifact(artifact);
 }

@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { buildPriorityMarketCandidate } from "./priority-market-tax-candidate.mjs";
-import { contentChecksum, validateRuleSetArtifact } from "./indirect-tax-rule-set.mjs";
+import {
+  assignVersionedRuleIds,
+  contentChecksum,
+  validateRuleSetArtifact,
+} from "./indirect-tax-rule-set.mjs";
 
 // Reviewed authority hosts are code-owned, never supplied by the evidence file itself.
 const AUTHORITIES = {
@@ -131,6 +135,7 @@ export function buildExpandedSoftwareCandidate(tedb, evidence, asOf) {
     artifact.source.components.some((source) => source.retrieved_at.slice(0, 10) > asOf)
   )
     throw new Error("Future or stale retained source evidence");
+  artifact.rules = assignVersionedRuleIds(artifact.rules, artifact.version);
   artifact.content_sha256 = contentChecksum(artifact);
   return validateRuleSetArtifact(artifact);
 }
