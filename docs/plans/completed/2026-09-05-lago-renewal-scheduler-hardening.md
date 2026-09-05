@@ -1,6 +1,7 @@
 # Lago renewal scheduler hardening
 
 Opened: 2026-09-05
+Completed: 2026-09-05
 
 ## Objective
 
@@ -56,3 +57,41 @@ not enable production automatic renewals or broaden staging collection scopes.
   state.
 - Preserve all payment evidence. Resolve the known staging unknown execution through the hardened
   reconciliation path; do not delete it or submit another charge.
+
+## Verification evidence — 2026-09-05
+
+- Code commits: `36d3f78` (candidate selection), `96b472a` (dunning and atomic submission guard),
+  `f270ada` (ledger-finalization crash recovery), `02a259f` (clear recovered scheduler error).
+- Final staging API Worker: `baf75f95-b992-4fd2-a71e-d7e58b9ce7e5`, deployed from `02a259f`.
+  No schema, credentials, Store deployment, or production changes were made in this hardening pass.
+- Final `pnpm run check`: all 76 Vitest files / 452 tests passed; 5 Access tests and 17 tax-rule
+  script tests passed; format, lint, generated types, TypeScript, inventories, tax fixtures, and all
+  seven development/production dry-run builds passed. Root harness check passed.
+- Staging D1 migrations: no pending migrations. Foreign-key violations: zero.
+- Staging API and Store health: HTTP 200. Unauthenticated operator redirected to the expected
+  Cloudflare Access hostname (HTTP 302).
+- `qa-renewal-hardening-20260905-0530` completed, closing all 45 overdue monthly fixture periods
+  that had been blocked by the one-time rows. Monthly billing-cycle count rose from 2 to 47;
+  one-time billing cycles and one-time automatic executions remained zero.
+- `qa-renewal-hardening-20260905-final-replay` completed with zero due/closed billing periods.
+  It exposed the stale error-code label fixed in `02a259f`; the final clean replay verifies that fix.
+- `qa-renewal-hardening-20260905-clean-replay` completed on Workflow version
+  `ac9ddae4-2f35-41a7-857b-912adf5fc337`. The schedule row had zero due/closed periods, zero
+  deferred automatic executions, and a null error code. All final aggregate counts below remained
+  unchanged on that deployed version.
+- Payment execution counts stayed at two total: one earlier successful test renewal with one
+  submission and one earlier invalid-vault test failure with one submission. The latter moved
+  from unknown to failed without a new gateway submission. No duplicate provider transaction
+  references, unknown invalid-vault executions, or matching still-active invalid profiles remained.
+- The single approved test subscription remains the only enabled automatic-collection scope.
+  There was no new purchase or renewal charge during these verification runs.
+- Store worktree remained clean at `d01233ffd`; its prior acceptance checks were not represented
+  as new tests in this pass. Existing production checkout and Stripe behavior were not changed.
+
+## Scope of completion
+
+This plan covers recurring scheduler and collection hardening, not approval to enable all products
+or production renewals. A genuinely ambiguous provider outcome remains deferred for provider-read
+reconciliation/manual review; it is not interpreted as a failed charge and never blindly resubmitted.
+Keep the active Lago and Store worktrees for the user's staging review; neither is disposable while
+the broader rollout remains in progress.
