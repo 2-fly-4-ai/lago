@@ -1,6 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { closeBillingPeriod } from "../src/billing/close-period";
+import { closeBillingPeriod, dueBillingPeriodsForClosing } from "../src/billing/close-period";
 import { activatePendingSubscriptions } from "../src/billing/activate-pending-subscriptions";
 import { sha256Hex } from "../src/auth/api-key";
 import monthEndGolden from "../fixtures/billing/month-end-reconciliation.json";
@@ -78,6 +78,55 @@ beforeEach(async () => {
 });
 
 describe("billing period close", () => {
+  it("loads only recurring plans as due billing periods", async () => {
+    const fixture = crypto.randomUUID();
+    const recurringPlanId = `plan-recurring-${fixture}`;
+    const oneTimePlanId = `plan-one-time-${fixture}`;
+    const recurringSubscriptionId = `subscription-recurring-${fixture}`;
+    const oneTimeSubscriptionId = `subscription-one-time-${fixture}`;
+    const now = new Date().toISOString();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO plans
+         (id, organization_id, code, name, interval, amount_minor, currency,
+          version, active, created_at, updated_at)
+         VALUES (?, 'org-cycle', ?, 'Recurring candidate', 'monthly', 900, 'USD',
+                 1, 1, ?, ?)`,
+      ).bind(recurringPlanId, recurringPlanId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO plans
+         (id, organization_id, code, name, interval, amount_minor, currency,
+          version, active, created_at, updated_at)
+         VALUES (?, 'org-cycle', ?, 'One-time candidate', 'one_time', 900, 'USD',
+                 1, 1, ?, ?)`,
+      ).bind(oneTimePlanId, oneTimePlanId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, version, created_at, updated_at)
+         VALUES (?, 'org-cycle', 'customer-cycle', ?, ?, 'active',
+                 '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z',
+                 '2026-09-01T00:00:00.000Z', 1, ?, ?)`,
+      ).bind(recurringSubscriptionId, recurringPlanId, recurringSubscriptionId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions
+         (id, organization_id, customer_id, plan_id, external_id, status, started_at,
+          current_period_start, current_period_end, version, created_at, updated_at)
+         VALUES (?, 'org-cycle', 'customer-cycle', ?, ?, 'active',
+                 '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z',
+                 '2026-09-01T00:00:00.000Z', 1, ?, ?)`,
+      ).bind(oneTimeSubscriptionId, oneTimePlanId, oneTimeSubscriptionId, now, now),
+    ]);
+
+    const due = await dueBillingPeriodsForClosing(env.BILLING_DB, "2026-09-02T00:00:00.000Z");
+
+    expect(due).toContainEqual({
+      id: recurringSubscriptionId,
+      current_period_end: "2026-09-01T00:00:00.000Z",
+    });
+    expect(due.some((period) => period.id === oneTimeSubscriptionId)).toBe(false);
+  });
+
   it("does not create an initial invoice for an in-arrears plan", async () => {
     const now = new Date().toISOString();
     await env.BILLING_DB.prepare(

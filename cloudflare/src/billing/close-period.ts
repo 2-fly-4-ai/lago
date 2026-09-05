@@ -27,6 +27,34 @@ export type CloseBillingPeriodResult = {
   nextPeriodEnd: string;
 };
 
+export type DueBillingPeriod = {
+  id: string;
+  current_period_end: string;
+};
+
+export async function dueBillingPeriodsForClosing(
+  database: D1Database,
+  dueAt: string,
+): Promise<DueBillingPeriod[]> {
+  const result = await database
+    .prepare(
+      `SELECT subscription.id, subscription.current_period_end
+       FROM subscriptions subscription
+       JOIN plans plan
+         ON plan.id = subscription.plan_id
+        AND plan.organization_id = subscription.organization_id
+       WHERE subscription.status IN ('active', 'past_due')
+         AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
+         AND subscription.current_period_end IS NOT NULL
+         AND subscription.current_period_end <= ?
+         AND (subscription.ending_at IS NULL OR subscription.ending_at > ?)
+       ORDER BY subscription.current_period_end, subscription.id LIMIT 100`,
+    )
+    .bind(dueAt, dueAt)
+    .all<DueBillingPeriod>();
+  return [...result.results];
+}
+
 export async function closeBillingPeriod(
   env: Env,
   subscriptionId: string,

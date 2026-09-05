@@ -35,6 +35,7 @@ type AutomaticExecution = {
   organization_id: string;
   payment_request_id: string;
   customer_id: string;
+  provider_profile_id: string;
   provider_account_code: string;
   request_sha256: string;
   gateway_customer_vault_id: string;
@@ -42,6 +43,8 @@ type AutomaticExecution = {
   order_reference: string;
   status: "pending" | "processing" | "succeeded" | "failed" | "unknown";
   provider_transaction_id: string | null;
+  failure_code: string | null;
+  failure_message: string | null;
   amount_minor: number;
   currency: string;
 };
@@ -303,7 +306,7 @@ export async function processEasyPayDirectAutomaticCollection(
     await markUnknown(env.BILLING_DB, execution.id, "easy_pay_direct_order_identity_mismatch");
     return "deferred";
   }
-  if (transaction.status === "unknown" || !transaction.id) {
+  if (transaction.status === "unknown" || (transaction.status === "succeeded" && !transaction.id)) {
     await markUnknown(
       env.BILLING_DB,
       execution.id,
@@ -429,6 +432,22 @@ export async function reconcileEasyPayDirectAutomaticCollection(
   if (!execution || execution.status === "succeeded" || execution.status === "failed") {
     return "processed";
   }
+  if (
+    execution.status === "unknown" &&
+    isInvalidCustomerVaultFailure(execution.failure_code, execution.failure_message)
+  ) {
+    await reconcileAutomaticOutcome(env, execution, {
+      id: null,
+      status: "failed",
+      responseCode: execution.failure_code,
+      responseText: execution.failure_message ?? "Invalid Customer Vault ID",
+      authCode: null,
+      orderId: execution.order_reference,
+      customerVaultId: execution.gateway_customer_vault_id,
+      rawStatus: null,
+    });
+    return "processed";
+  }
   if (String(env.PROVIDER_READS_ENABLED) !== "1") return "deferred";
   const transaction = await findEasyPayDirectGatewayTransactionByOrderId(
     env,
@@ -457,49 +476,70 @@ export async function dispatchPendingEasyPayDirectAutomaticCollections(
   correlationId: string,
 ): Promise<number> {
   if (!automaticCollectionEnabled(env)) return 0;
-  const rows = await env.BILLING_DB.prepare(
-    `SELECT invoice.id
-     FROM invoices invoice
-     JOIN subscriptions subscription ON subscription.id = invoice.subscription_id
-     JOIN customers customer ON customer.id = invoice.customer_id
-     JOIN provider_customer_profiles profile
-       ON profile.id = subscription.payment_method_id
-      AND profile.customer_id = customer.id
-      AND profile.provider = 'easy_pay_direct'
-      AND profile.status = 'active'
-     WHERE invoice.status = 'finalized' AND invoice.payment_status = 'pending'
-       AND invoice.ready_for_payment_processing = 1
-       AND invoice.total_due_minor > 0
-       AND invoice.net_payment_term = 0
-       AND (invoice.payment_due_date IS NULL OR date(invoice.payment_due_date) <= date('now'))
-       AND subscription.payment_method_type = 'provider'
-       AND customer.payment_provider = 'easy_pay_direct'
-       AND (? = 'all' OR EXISTS (
-         SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope
-         WHERE scope.subscription_id = subscription.id
-           AND scope.organization_id = invoice.organization_id
-           AND scope.status = 'enabled'
-       ))
-       AND profile.gateway_customer_vault_id IS NOT NULL
-       AND profile.initial_transaction_id IS NOT NULL
-       AND lower(profile.gateway_customer_vault_id) NOT LIKE 'vault-test-%'
-       AND lower(profile.gateway_customer_vault_id) NOT LIKE 'synthetic-%'
-       AND NOT EXISTS (
-         SELECT 1 FROM invoices_payment_requests link WHERE link.invoice_id = invoice.id
-       )
-     ORDER BY invoice.created_at, invoice.id LIMIT 100`,
-  )
-    .bind(automaticCollectionScopeMode(env))
-    .all<{ id: string }>();
+  const invoiceIds = await pendingEasyPayDirectAutomaticCollectionInvoices(
+    env.BILLING_DB,
+    automaticCollectionScopeMode(env),
+  );
   let dispatched = 0;
-  for (const row of rows.results) {
+  for (const invoiceId of invoiceIds) {
     if (
-      (await prepareEasyPayDirectAutomaticCollection(env, row.id, correlationId)) === "processed"
+      (await prepareEasyPayDirectAutomaticCollection(env, invoiceId, correlationId)) === "processed"
     ) {
       dispatched += 1;
     }
   }
   return dispatched;
+}
+
+export async function pendingEasyPayDirectAutomaticCollectionInvoices(
+  database: D1Database,
+  scopeMode: "scoped" | "all",
+): Promise<string[]> {
+  const rows = await database
+    .prepare(
+      `SELECT invoice.id
+       FROM invoices invoice
+       JOIN subscriptions subscription
+         ON subscription.id = invoice.subscription_id
+        AND subscription.organization_id = invoice.organization_id
+       JOIN plans plan
+         ON plan.id = subscription.plan_id
+        AND plan.organization_id = subscription.organization_id
+       JOIN customers customer
+         ON customer.id = invoice.customer_id
+        AND customer.organization_id = invoice.organization_id
+       JOIN provider_customer_profiles profile
+         ON profile.id = subscription.payment_method_id
+        AND profile.customer_id = customer.id
+        AND profile.provider = 'easy_pay_direct'
+        AND profile.status = 'active'
+       WHERE invoice.status = 'finalized' AND invoice.payment_status = 'pending'
+         AND invoice.ready_for_payment_processing = 1
+         AND invoice.total_due_minor > 0
+         AND invoice.net_payment_term = 0
+         AND (invoice.payment_due_date IS NULL OR date(invoice.payment_due_date) <= date('now'))
+         AND subscription.payment_method_type = 'provider'
+         AND subscription.status IN ('active', 'past_due')
+         AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
+         AND customer.payment_provider = 'easy_pay_direct'
+         AND (? = 'all' OR EXISTS (
+           SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope
+           WHERE scope.subscription_id = subscription.id
+             AND scope.organization_id = invoice.organization_id
+             AND scope.status = 'enabled'
+         ))
+         AND profile.gateway_customer_vault_id IS NOT NULL
+         AND profile.initial_transaction_id IS NOT NULL
+         AND lower(profile.gateway_customer_vault_id) NOT LIKE 'vault-test-%'
+         AND lower(profile.gateway_customer_vault_id) NOT LIKE 'synthetic-%'
+         AND NOT EXISTS (
+           SELECT 1 FROM invoices_payment_requests link WHERE link.invoice_id = invoice.id
+         )
+       ORDER BY invoice.created_at, invoice.id LIMIT 100`,
+    )
+    .bind(scopeMode)
+    .all<{ id: string }>();
+  return rows.results.map((row) => row.id);
 }
 
 export async function pendingEasyPayDirectAutomaticExecutions(
@@ -625,10 +665,12 @@ async function loadExecutionById(
 
 function executionSelect(): string {
   return `SELECT execution.id, execution.organization_id, execution.payment_request_id,
-                 execution.customer_id, execution.provider_account_code,
+                 execution.customer_id, execution.provider_profile_id,
+                 execution.provider_account_code,
                  execution.request_sha256, execution.gateway_customer_vault_id,
                  execution.initial_transaction_id, execution.order_reference,
                  execution.status, execution.provider_transaction_id,
+                 execution.failure_code, execution.failure_message,
                  request.amount_minor, request.currency
           FROM easy_pay_direct_automatic_payment_executions execution
           JOIN payment_requests request ON request.id = execution.payment_request_id`;
@@ -639,20 +681,28 @@ async function reconcileAutomaticOutcome(
   execution: AutomaticExecution,
   transaction: GatewayTransactionResult,
 ): Promise<void> {
-  const transactionId = transaction.id;
-  if (!transactionId) throw new Error("easy_pay_direct_automatic_transaction_id_missing");
+  const providerTransactionId = transaction.id;
+  if (!providerTransactionId && transaction.status !== "failed") {
+    throw new Error("easy_pay_direct_automatic_transaction_id_missing");
+  }
+  const reconciliationReference =
+    providerTransactionId ??
+    `no-provider-transaction:${await deterministicUuid(
+      "easy-pay-direct-automatic-definitive-failure",
+      `${execution.provider_account_code}:${execution.order_reference}:${transaction.responseCode ?? "failed"}`,
+    )}`;
   const now = new Date().toISOString();
   const receiptId = await deterministicUuid(
     "easy-pay-direct-automatic-receipt",
-    `${execution.provider_account_code}:${transactionId}:${transaction.status}`,
+    `${execution.provider_account_code}:${reconciliationReference}:${transaction.status}`,
   );
-  const providerEventId = `automatic:${transactionId}:${transaction.status}`;
+  const providerEventId = `automatic:${reconciliationReference}:${transaction.status}`;
   const payloadHash = await sha256Hex(
     stableJson({
       order_reference: execution.order_reference,
       response_code: transaction.responseCode,
       status: transaction.status,
-      transaction_id: transactionId,
+      transaction_id: providerTransactionId,
     }),
   );
   await env.BILLING_DB.batch([
@@ -669,14 +719,14 @@ async function reconcileAutomaticOutcome(
         normalized_status, normalized_at, payment_request_id)
        VALUES (?, ?, 'transaction.automatic.reconciled', ?, NULL, NULL, NULL, NULL)
        ON CONFLICT(receipt_id) DO NOTHING`,
-    ).bind(receiptId, execution.organization_id, transactionId),
+    ).bind(receiptId, execution.organization_id, providerTransactionId),
   ]);
   const receipt: PendingReceipt = {
     receipt_id: receiptId,
     organization_id: execution.organization_id,
     provider_account_code: execution.provider_account_code,
     event_type: "transaction.automatic.reconciled",
-    provider_transaction_id: transactionId,
+    provider_transaction_id: providerTransactionId,
     archive_key: null,
     processed_at: null,
   };
@@ -685,7 +735,7 @@ async function reconcileAutomaticOutcome(
     receipt,
     execution.payment_request_id,
     {
-      id: transactionId,
+      id: reconciliationReference,
       amountMinor: execution.amount_minor,
       failureCode:
         transaction.status === "failed"
@@ -696,6 +746,16 @@ async function reconcileAutomaticOutcome(
     transaction.status,
     "easy_pay_direct",
   );
+  if (isInvalidCustomerVaultFailure(transaction.responseCode, transaction.responseText)) {
+    await env.BILLING_DB.prepare(
+      `UPDATE provider_customer_profiles
+       SET status = 'disabled', updated_at = ?
+       WHERE id = ? AND organization_id = ? AND provider = 'easy_pay_direct'
+         AND status = 'active'`,
+    )
+      .bind(now, execution.provider_profile_id, execution.organization_id)
+      .run();
+  }
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_automatic_payment_executions
      SET status = ?, provider_transaction_id = ?, provider_response_code = ?,
@@ -705,7 +765,7 @@ async function reconcileAutomaticOutcome(
   )
     .bind(
       transaction.status,
-      transactionId,
+      providerTransactionId,
       transaction.responseCode,
       transaction.status === "failed"
         ? (transaction.responseCode ?? "easy_pay_direct_declined")
@@ -716,6 +776,13 @@ async function reconcileAutomaticOutcome(
       execution.id,
     )
     .run();
+}
+
+function isInvalidCustomerVaultFailure(
+  responseCode: string | null,
+  responseText: string | null,
+): boolean {
+  return responseCode === "300" && /invalid customer vault id/iu.test(responseText ?? "");
 }
 
 async function markUnknown(

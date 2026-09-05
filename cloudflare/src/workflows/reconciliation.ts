@@ -5,7 +5,7 @@ import {
   reconcileEasyPayDirectReceipt,
 } from "../reconciliation/easy-pay-direct";
 import type { DomainEvent } from "../domain-events";
-import { closeBillingPeriod } from "../billing/close-period";
+import { closeBillingPeriod, dueBillingPeriodsForClosing } from "../billing/close-period";
 import { activatePendingSubscriptions } from "../billing/activate-pending-subscriptions";
 import { terminateEndedSubscriptions } from "../billing/terminate-subscription";
 import { enqueueTerminationAlerts } from "../billing/termination-alerts";
@@ -354,16 +354,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
 
       const dueBillingPeriods = await step.do("load due billing periods", async () => {
         if (!executors.has("close_billing_periods")) return [];
-        const result = await this.env.BILLING_DB.prepare(
-          `SELECT id, current_period_end FROM subscriptions
-         WHERE status IN ('active', 'past_due') AND current_period_end IS NOT NULL
-           AND current_period_end <= ?
-           AND (ending_at IS NULL OR ending_at > ?)
-         ORDER BY current_period_end, id LIMIT 100`,
-        )
-          .bind(triggeredAtIso, triggeredAtIso)
-          .all<{ id: string; current_period_end: string }>();
-        return [...result.results];
+        return dueBillingPeriodsForClosing(this.env.BILLING_DB, triggeredAtIso);
       });
 
       let closedBillingPeriods = 0;

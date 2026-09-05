@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  pendingEasyPayDirectAutomaticCollectionInvoices,
   prepareEasyPayDirectAutomaticCollection,
   processEasyPayDirectAutomaticCollection,
   reconcileEasyPayDirectAutomaticCollection,
@@ -85,6 +86,26 @@ beforeEach(async () => {
 });
 
 describe("Easy Pay Direct automatic subscription collection", () => {
+  it("does not include one-time invoices in the automatic renewal candidate scan", async () => {
+    await expect(
+      pendingEasyPayDirectAutomaticCollectionInvoices(env.BILLING_DB, "all"),
+    ).resolves.toContain(invoiceId);
+    await env.BILLING_DB.prepare(
+      `UPDATE plans SET interval = 'one_time', updated_at = ?
+       WHERE id = (SELECT plan_id FROM subscriptions WHERE id =
+         (SELECT subscription_id FROM invoices WHERE id = ?))`,
+    )
+      .bind(new Date().toISOString(), invoiceId)
+      .run();
+
+    await expect(
+      pendingEasyPayDirectAutomaticCollectionInvoices(env.BILLING_DB, "all"),
+    ).resolves.not.toContain(invoiceId);
+    await expect(
+      prepareEasyPayDirectAutomaticCollection(enabledEnv(), invoiceId, "one-time-test"),
+    ).resolves.toBe("not_applicable");
+  });
+
   it("refuses placeholder vault references before creating a payment request", async () => {
     await env.BILLING_DB.prepare(
       `UPDATE provider_customer_profiles
@@ -223,6 +244,61 @@ describe("Easy Pay Direct automatic subscription collection", () => {
       request_status: "succeeded",
       attempt_count: 1,
     });
+  });
+
+  it("records a definitive invalid-vault response once and disables the unusable profile", async () => {
+    const runtimeEnv = enabledEnv();
+    await prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "invalid-vault-test");
+    const paymentRequestId = (await automaticPaymentRequestId(invoiceId))!;
+    const providerFetch = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          `response=3&responsetext=Invalid Customer Vault ID specified&response_code=300&orderid=${paymentRequestId}`,
+        ),
+    );
+
+    await expect(
+      processEasyPayDirectAutomaticCollection(runtimeEnv, paymentRequestId, providerFetch),
+    ).resolves.toBe("processed");
+    await expect(
+      processEasyPayDirectAutomaticCollection(runtimeEnv, paymentRequestId, providerFetch),
+    ).resolves.toBe("processed");
+    expect(providerFetch).toHaveBeenCalledOnce();
+    await expect(collectionState(invoiceId)).resolves.toMatchObject({
+      execution_status: "failed",
+      invoice_status: "failed",
+      request_status: "failed",
+      attempt_count: 1,
+    });
+    await expect(automaticExecutionProviderTransactionId()).resolves.toBeNull();
+    await expect(providerProfileState()).resolves.toEqual({ status: "disabled" });
+  });
+
+  it("converges a legacy invalid-vault unknown without another provider read", async () => {
+    const runtimeEnv = enabledEnv();
+    await prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "legacy-invalid-vault");
+    const paymentRequestId = (await automaticPaymentRequestId(invoiceId))!;
+    const execution = await env.BILLING_DB.prepare(
+      `UPDATE easy_pay_direct_automatic_payment_executions
+       SET status = 'unknown', attempt_count = 1, failure_code = '300',
+           failure_message = 'Invalid Customer Vault ID specified', updated_at = ?
+       WHERE payment_request_id = ? RETURNING id`,
+    )
+      .bind(new Date().toISOString(), paymentRequestId)
+      .first<{ id: string }>();
+    const providerRead = vi.fn<typeof fetch>();
+
+    await expect(
+      reconcileEasyPayDirectAutomaticCollection(runtimeEnv, execution!.id, providerRead),
+    ).resolves.toBe("processed");
+    expect(providerRead).not.toHaveBeenCalled();
+    await expect(collectionState(invoiceId)).resolves.toMatchObject({
+      execution_status: "failed",
+      invoice_status: "failed",
+      request_status: "failed",
+      attempt_count: 1,
+    });
+    await expect(providerProfileState()).resolves.toEqual({ status: "disabled" });
   });
 
   it("is fail-closed when the automatic collection gate is disabled", async () => {
@@ -587,4 +663,29 @@ async function collectionState(value: string): Promise<Record<string, unknown> |
   )
     .bind(value)
     .first<Record<string, unknown>>();
+}
+
+async function providerProfileState(): Promise<{ status: string } | null> {
+  return env.BILLING_DB.prepare(
+    `SELECT profile.status
+     FROM provider_customer_profiles profile
+     JOIN invoices invoice ON invoice.customer_id = profile.customer_id
+     WHERE invoice.id = ? AND profile.organization_id = invoice.organization_id
+       AND profile.provider = 'easy_pay_direct' LIMIT 1`,
+  )
+    .bind(invoiceId)
+    .first<{ status: string }>();
+}
+
+async function automaticExecutionProviderTransactionId(): Promise<string | null> {
+  const execution = await env.BILLING_DB.prepare(
+    `SELECT execution.provider_transaction_id
+     FROM easy_pay_direct_automatic_payment_executions execution
+     JOIN invoices_payment_requests link
+       ON link.payment_request_id = execution.payment_request_id
+     WHERE link.invoice_id = ? LIMIT 1`,
+  )
+    .bind(invoiceId)
+    .first<{ provider_transaction_id: string | null }>();
+  return execution?.provider_transaction_id ?? null;
 }
