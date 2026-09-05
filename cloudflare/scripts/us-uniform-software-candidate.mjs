@@ -26,7 +26,15 @@ const REVIEWED = [
 ];
 
 // No US wildcard, no local-rate estimate, no production activation or registration.
+export function addUSUniformSoftwareRulesV21(base, asOf) {
+  return addUSUniformSoftwareRulesVersion(base, asOf, 21, false);
+}
+
 export function addUSUniformSoftwareRules(base, asOf) {
+  return addUSUniformSoftwareRulesVersion(base, asOf, 22, true);
+}
+
+function addUSUniformSoftwareRulesVersion(base, asOf, version, correctRuleSetEffectiveFrom) {
   const reviewed = "2026-09-05";
   const age = (Date.parse(asOf) - Date.parse(reviewed)) / 86400000;
   if (
@@ -92,10 +100,13 @@ export function addUSUniformSoftwareRules(base, asOf) {
       effective_from: `${reviewed}T00:00:00.000Z`,
       effective_to: null,
     });
-  artifact.id = "software-us-partial-candidate-2026-09-06-v21";
-  artifact.version = 21;
+  artifact.id = `software-us-partial-candidate-2026-09-06-v${version}`;
+  artifact.version = version;
   artifact.source.name = "Official software rules with partial US state coverage";
   artifact.source.url = "docs/evidence/us-software-source-review-2026-09-06.md";
+  if (correctRuleSetEffectiveFrom) {
+    artifact.effective_from = artifact.rules.map((rule) => rule.effective_from).sort()[0];
+  }
   artifact.rules = assignVersionedRuleIds(artifact.rules, artifact.version);
   artifact.content_sha256 = contentChecksum(artifact);
   return validateRuleSetArtifact(artifact);

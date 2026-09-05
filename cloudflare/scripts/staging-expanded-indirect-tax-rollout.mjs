@@ -4,20 +4,21 @@ import { pathToFileURL } from "node:url";
 import { addCanadianSoftwareRules, renderCanadianDraftSql } from "./canada-software-candidate.mjs";
 import { buildExpandedSoftwareCandidate } from "./expanded-software-tax-candidate.mjs";
 import { addNoSalesTaxSoftwareRules } from "./no-sales-tax-software-candidate.mjs";
-import { buildPriorityMarketCandidate } from "./priority-market-tax-candidate.mjs";
-import { addUSUniformSoftwareRules } from "./us-uniform-software-candidate.mjs";
+import {
+  addUSUniformSoftwareRules,
+  addUSUniformSoftwareRulesV21,
+} from "./us-uniform-software-candidate.mjs";
 
 const ACKNOWLEDGEMENT = "STAGING_SYNTHETIC_ONLY";
 const SYNTHETIC_ORGANIZATION = /^org-synthetic-e2e-[0-9]{8}-[0-9]+$/;
 const REGISTRATION_REFERENCE =
   "staging-synthetic-qa-only:not-a-legal-registration:expanded-review-2026-09-06";
-// This is the immutable identity actually recorded in staging, documented in
-// docs/evidence/local-d1-tax-staging-enforcement-2026-08-31.md. Do not
-// regenerate its checksum from later source-review code.
+// This is the immutable v21 identity actually recorded in staging. Do not
+// regenerate its checksum after changing candidate-generation code.
 const DEPLOYED_STAGING_BASELINE = {
-  id: "priority-market-candidate-2026-08-31-v2",
-  version: 2,
-  contentSha256: "3ed5b218afe287548c7b44f88c76064805bf132da92338d3ecbd04784ab25d93",
+  id: "software-us-partial-candidate-2026-09-06-v21",
+  version: 21,
+  contentSha256: "c64a6f4207b9da659f43c06e575c08877bba788319ed796fcdea0e2b653eeb5c",
 };
 
 export async function buildStagingExpandedCandidate(asOf) {
@@ -26,7 +27,6 @@ export async function buildStagingExpandedCandidate(asOf) {
       await readFile(new URL(`../fixtures/indirect-tax/${name}`, import.meta.url), "utf8"),
     );
   const tedb = await read("eu-tedb-standard-rates-2026-08-31.json");
-  const previous = buildPriorityMarketCandidate(tedb);
   const expanded = buildExpandedSoftwareCandidate(
     tedb,
     await read("software-rate-expansion-2026-09-06.json"),
@@ -42,7 +42,10 @@ export async function buildStagingExpandedCandidate(asOf) {
     await read("no-sales-tax-software-2026-09-06.json"),
     asOf,
   );
-  return { previous, candidate: addUSUniformSoftwareRules(noSalesTax, asOf) };
+  return {
+    previous: addUSUniformSoftwareRulesV21(noSalesTax, asOf),
+    candidate: addUSUniformSoftwareRules(noSalesTax, asOf),
+  };
 }
 
 export function renderExpandedStagingActivationSql(previous, candidate, options) {
@@ -54,13 +57,13 @@ export function renderExpandedStagingActivationSql(previous, candidate, options)
   if (
     previous.id !== DEPLOYED_STAGING_BASELINE.id ||
     previous.version !== DEPLOYED_STAGING_BASELINE.version ||
-    previous.rules.length !== 64 ||
-    candidate.id !== "software-us-partial-candidate-2026-09-06-v21" ||
-    candidate.version !== 21 ||
+    previous.rules.length !== 157 ||
+    candidate.id !== "software-us-partial-candidate-2026-09-06-v22" ||
+    candidate.version !== 22 ||
     candidate.rules.length !== 157 ||
     new Set(candidate.rules.map((rule) => rule.country)).size !== 65
   )
-    throw new Error("staging activation requires the reviewed v2-to-v21 candidate chain");
+    throw new Error("staging activation requires the reviewed v21-to-v22 candidate chain");
 
   const scopes = buildScopes(candidate);
   if (scopes.length !== 67) throw new Error("staging scope coverage is incomplete");
@@ -68,7 +71,7 @@ export function renderExpandedStagingActivationSql(previous, candidate, options)
   const activatedAt = sql(options.activatedAt);
   const statements = [
     "-- STAGING SYNTHETIC QA ONLY. This is not evidence of a legal tax registration.",
-    "-- Apply only to serp-dev-lago-native-d1 after importing v21 as a draft.",
+    "-- Apply only to serp-dev-lago-native-d1 after importing v22 as a draft.",
     `SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM organizations WHERE id=${organizationId})
  OR NOT EXISTS(SELECT 1 FROM indirect_tax_rule_sets WHERE id=${sql(DEPLOYED_STAGING_BASELINE.id)}
    AND version=${DEPLOYED_STAGING_BASELINE.version} AND status='active'
@@ -91,7 +94,7 @@ WHERE id=${sql(candidate.id)} AND version=${candidate.version} AND status='draft
   ];
 
   for (const scope of scopes) {
-    const id = `staging-synthetic-${scope.country.toLowerCase()}-${(scope.region ?? "all").toLowerCase()}-v21`;
+    const id = `staging-synthetic-${scope.country.toLowerCase()}-${(scope.region ?? "all").toLowerCase()}-v22`;
     statements.push(`INSERT INTO indirect_tax_registration_scopes
   (id,organization_id,rule_set_id,country,region,status,registration_reference,
    effective_from,effective_to,created_at,updated_at,collection_mode)
@@ -101,7 +104,7 @@ WHERE EXISTS(SELECT 1 FROM indirect_tax_rule_sets WHERE id=${sql(candidate.id)} 
   AND NOT EXISTS(SELECT 1 FROM indirect_tax_registration_scopes WHERE id=${sql(id)});`);
   }
   statements.push(
-    "-- Required postflight: v21 active, v2 retired, 157 v21 rules, 67 enabled v21 scopes,",
+    "-- Required postflight: v22 active, v21 retired, 157 v22 rules, 67 enabled v22 scopes,",
     "-- four collection-off scopes, zero foreign-key violations, and no pending staging migrations.",
   );
   return `${statements.join("\n\n")}\n`;
