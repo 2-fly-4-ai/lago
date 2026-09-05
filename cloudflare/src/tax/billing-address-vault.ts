@@ -8,14 +8,22 @@ export async function encryptBillingAddress(
   secret: string,
   quoteId: string,
 ): Promise<{ ciphertext: string; iv: string }> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = new TextEncoder().encode(stableJson(address));
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, additionalData: context(quoteId) },
-    await addressKey(secret, quoteId, ["encrypt"]),
-    plaintext,
-  );
-  return { ciphertext: encode(new Uint8Array(ciphertext)), iv: encode(iv) };
+  try {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const plaintext = new TextEncoder().encode(stableJson(address));
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv, additionalData: context(quoteId) },
+      await addressKey(secret, quoteId, ["encrypt"]),
+      plaintext,
+    );
+    return { ciphertext: encode(new Uint8Array(ciphertext)), iv: encode(iv) };
+  } catch {
+    throw new ApiError(
+      503,
+      "checkout_tax_address_encryption_unavailable",
+      "Destination tax address protection is unavailable",
+    );
+  }
 }
 
 export async function decryptBillingAddress(

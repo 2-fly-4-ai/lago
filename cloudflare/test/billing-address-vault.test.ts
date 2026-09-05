@@ -31,4 +31,11 @@ describe("billing address vault", () => {
       });
     }
   });
+
+  it("fails closed with an API error when encryption context is invalid", async () => {
+    await expect(encryptBillingAddress({ country: "US" }, "", "quote-1")).rejects.toMatchObject({
+      status: 503,
+      code: "checkout_tax_address_encryption_unavailable",
+    });
+  });
 });
