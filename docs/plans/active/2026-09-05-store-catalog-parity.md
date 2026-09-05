@@ -129,3 +129,18 @@ registration is separate. The checkout's error parser also hides the API's speci
 message behind generic Service Unavailable. Neither is claimed fixed by this Slack test.
 No production deployment, production route expansion, live charge or renewal scope change occurred
 in this notification rollout. Store production deployment remains on hold.
+
+### Staging notification follow-up — 2026-09-05
+
+With approval, deployed routing commit `1f5b2ac` as staging Worker version
+`f6d1e739-324d-4d56-b901-3d606c378073`. Retried only the existing notification;
+no payment or reconciliation billing action was replayed. The event now reaches Store, which
+returns `verification_or_delivery_pending` before creating a Slack receipt.
+
+The next defect is in `findInvoice`: the list query selects subscription identity, but the
+single-invoice query omitted both internal and external subscription IDs. The signed-sale
+receiver requires this identity and correctly rejects an unverifiable sale. Added a real
+compatibility API regression which failed with null IDs, then passed after the tenant-scoped
+projection fix. Focused compatibility/payment/outbound tests: 16 passed. Full Lago `check`
+passed, including formatting, lint, types, tests, Access/tax gates and every dry-run build.
+The fix does not weaken payment verification or change billing, tax, routing, or renewal policy.
