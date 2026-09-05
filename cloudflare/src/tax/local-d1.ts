@@ -128,6 +128,9 @@ export async function calculateLocalD1Tax(
       now,
       input.confirmedAddress === true,
     );
+    console.info(
+      JSON.stringify({ level: "info", event: "washington_tax_rate_resolution_completed" }),
+    );
     if (resolved.stateRatePpm !== selectedRule.rate_ppm) {
       throw new ApiError(
         503,
@@ -166,6 +169,9 @@ export async function calculateLocalD1Tax(
       tax_code: input.taxCode,
     }),
   );
+  if (selectedRule.calculation_method === "wa_dor_address") {
+    console.info(JSON.stringify({ level: "info", event: "washington_tax_calculation_completed" }));
+  }
   return {
     id: `localtax_${fingerprint}`,
     currency: input.currency,
