@@ -46,7 +46,7 @@
     "STRIPE_LIVEMODE_ALLOWED": "0",
     "STRIPE_ACCOUNT_CODE": "acct_1Rba2Z06JrOmKRCm",
     "STRIPE_ORGANIZATION_ID": "org-synthetic-e2e-20260815-001",
-    "OUTBOUND_WEBHOOKS_ENABLED": "0",
+    "OUTBOUND_WEBHOOKS_ENABLED": "1",
   },
   "d1_databases": [
     {
