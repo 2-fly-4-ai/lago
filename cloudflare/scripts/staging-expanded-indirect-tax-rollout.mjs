@@ -124,6 +124,16 @@ function canonicalIso(value, name) {
     throw new Error(`${name} must be a canonical UTC ISO timestamp`);
 }
 
+export function validateReviewDate(value) {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) !== value
+  )
+    throw new Error("review-date must be a valid YYYY-MM-DD Fiji operating date");
+  return value;
+}
+
 function sql(value) {
   if (value === null) return "NULL";
   return `'${String(value).replaceAll("'", "''")}'`;
@@ -141,8 +151,11 @@ async function main() {
   if (!new Set(["draft-sql", "activation-sql"]).has(command))
     throw new Error("Usage: staging-expanded-indirect-tax-rollout.mjs <draft-sql|activation-sql>");
   const timestamp = valueAfter(args, command === "draft-sql" ? "--created-at" : "--activated-at");
+  const reviewDate = valueAfter(args, "--review-date");
   canonicalIso(timestamp, "timestamp");
-  const { previous, candidate } = await buildStagingExpandedCandidate(timestamp.slice(0, 10));
+  const { previous, candidate } = await buildStagingExpandedCandidate(
+    validateReviewDate(reviewDate),
+  );
   if (command === "draft-sql") {
     process.stdout.write(renderCanadianDraftSql(candidate, timestamp));
     return;

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   buildStagingExpandedCandidate,
   renderExpandedStagingActivationSql,
+  validateReviewDate,
 } from "./staging-expanded-indirect-tax-rollout.mjs";
 
 const built = await buildStagingExpandedCandidate("2026-09-06");
@@ -46,4 +47,12 @@ test("rejects missing acknowledgement, production tenants and changed candidates
       ),
     /candidate chain/,
   );
+});
+
+test("CLI review date is independent from the UTC deployment timestamp", async () => {
+  const result = await buildStagingExpandedCandidate("2026-09-06");
+  assert.equal(result.candidate.version, 21);
+  assert.equal(validateReviewDate("2026-09-06"), "2026-09-06");
+  for (const value of ["2026-09-31", "2026-9-6", "bad"])
+    assert.throws(() => validateReviewDate(value), /Fiji operating date/);
 });
