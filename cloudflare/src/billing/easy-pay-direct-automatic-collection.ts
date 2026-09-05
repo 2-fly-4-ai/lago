@@ -753,22 +753,30 @@ async function reconcileAutomaticOutcome(
     archive_key: null,
     processed_at: null,
   };
-  await reconcilePaymentRequest(
-    env.BILLING_DB,
-    receipt,
-    execution.payment_request_id,
-    {
-      id: reconciliationReference,
-      amountMinor: execution.amount_minor,
-      failureCode:
-        transaction.status === "failed"
-          ? (transaction.responseCode ?? "easy_pay_direct_declined")
-          : null,
-      failureMessage: transaction.status === "failed" ? transaction.responseText : null,
-    },
-    transaction.status,
-    "easy_pay_direct",
-  );
+  // The ledger batch and execution update are separate. A crash between them
+  // must resume finalization without inserting the same reconciliation guard.
+  const savedReceipt = await env.BILLING_DB.prepare(
+    "SELECT processed_at FROM webhook_receipts WHERE id = ?",
+  )
+    .bind(receiptId)
+    .first<{ processed_at: string | null }>();
+  if (!savedReceipt?.processed_at)
+    await reconcilePaymentRequest(
+      env.BILLING_DB,
+      receipt,
+      execution.payment_request_id,
+      {
+        id: reconciliationReference,
+        amountMinor: execution.amount_minor,
+        failureCode:
+          transaction.status === "failed"
+            ? (transaction.responseCode ?? "easy_pay_direct_declined")
+            : null,
+        failureMessage: transaction.status === "failed" ? transaction.responseText : null,
+      },
+      transaction.status,
+      "easy_pay_direct",
+    );
   if (
     transaction.status === "failed" &&
     isInvalidCustomerVaultFailure(transaction.responseCode, transaction.responseText)

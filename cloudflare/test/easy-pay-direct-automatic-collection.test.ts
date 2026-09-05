@@ -272,6 +272,22 @@ describe("Easy Pay Direct automatic subscription collection", () => {
     });
     await expect(automaticExecutionProviderTransactionId()).resolves.toBeNull();
     await expect(providerProfileState()).resolves.toEqual({ status: "disabled" });
+    // Simulate the ledger committing followed by a crash before execution finalization.
+    const execution = await env.BILLING_DB.prepare(
+      `UPDATE easy_pay_direct_automatic_payment_executions SET status = 'unknown'
+       WHERE payment_request_id = ? RETURNING id`,
+    )
+      .bind(paymentRequestId)
+      .first<{ id: string }>();
+    const providerRead = vi.fn<typeof fetch>();
+    await expect(
+      reconcileEasyPayDirectAutomaticCollection(runtimeEnv, execution!.id, providerRead),
+    ).resolves.toBe("processed");
+    expect(providerRead).not.toHaveBeenCalled();
+    await expect(collectionState(invoiceId)).resolves.toMatchObject({
+      execution_status: "failed",
+      attempt_count: 1,
+    });
   });
 
   it.each([null, "2020-01-01T00:00:00.000Z"])(
