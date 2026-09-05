@@ -106,7 +106,18 @@ User clarified Slack, NOT Stripe. Store's `codex/epd-recurring-staging` branch o
 notification receiver and execution record `docs/plans/active/2026-09-05-lago-slack-notifications.md`.
 It consumes the existing signed `payment.succeeded` event, verifies the payment through Lago,
 and reuses Store's Slack sale formatter with persistent transaction-level duplicate protection.
-No Lago runtime change is needed for this contract. A matching tenant-specific endpoint and
-outbound gate review remain required; no webhook/secret configuration was changed here.
-Store production deployment is still on hold. Do not activate Slack or canaries merely because
-the source implementation exists.
+No new Lago event implementation is needed for this contract. On 2026-09-05, the user-approved
+staging deployment enabled the existing outbound publisher in source commit `6883717` and
+Worker version `07076ca7-c2cb-441a-8a28-b3afe34fd9e8`. The exact staging endpoint
+`eb3d7346-1553-4fdc-aaf1-33912eb90baa` subscribes only to `payment.succeeded` for
+`org-synthetic-e2e-20260815-001`, sending to Store staging `/api/webhooks/lago`. Preflight found
+no other active endpoints. Newly generated staging signing keys were provisioned through CLI
+stdin without reading existing secrets or exposing values.
+
+Store staging migration 0013 and receiver are deployed; signed/unsigned/wrong-tenant HTTP probes
+passed. Full Lago `check` passed after the staging configuration change. Real TEST-labeled Slack
+delivery remains pending. A fictional US test address exposed missing US coverage in the existing
+staging tax dataset; a supported UK test address successfully calculated $10.80 including test tax.
+The Store execution record contains versions, migration evidence and remaining acceptance steps.
+No production deployment, production route expansion, live charge or renewal scope change occurred
+in this notification rollout. Store production deployment remains on hold.
