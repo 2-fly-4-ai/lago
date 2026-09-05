@@ -188,7 +188,12 @@ export default {
         return apiErrorResponse(error, requestId);
       }
       console.error(
-        JSON.stringify({ level: "error", event: "unhandled_request_error", requestId }),
+        JSON.stringify({
+          level: "error",
+          event: "unhandled_request_error",
+          requestId,
+          error_name: error instanceof Error ? error.name : "UnknownError",
+        }),
       );
       return apiErrorResponse(
         new ApiError(500, "internal_error", "An unexpected error occurred"),
