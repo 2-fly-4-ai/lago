@@ -4,7 +4,8 @@
   "account_id": "cec5f04e1d18bcc65f2be0aefb04f059",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-12",
-  "compatibility_flags": ["nodejs_compat"],
+  // Public webhooks may target another Worker in the same workers.dev zone.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,

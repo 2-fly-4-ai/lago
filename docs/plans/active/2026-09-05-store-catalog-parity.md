@@ -119,5 +119,13 @@ passed. Full Lago `check` passed after the staging configuration change. Real TE
 delivery remains pending. A fictional US test address exposed missing US coverage in the existing
 staging tax dataset; a supported UK test address successfully calculated $10.80 including test tax.
 The Store execution record contains versions, migration evidence and remaining acceptance steps.
+The approved $10.80 recurring sandbox checkout subsequently succeeded, but its first notification
+failed with Cloudflare error 1042 before reaching Store. A staging-only
+`global_fetch_strictly_public` compatibility flag is prepared for the existing public-webhook
+contract; outbound tests (3), typecheck and dry-run pass. Deployment and exact notification retry
+await action-time approval. Do not repeat the purchase. See the Store execution record for IDs.
+US coverage is still absent from the 32-country local candidate; Stripe's sandbox California
+registration is separate. The checkout's error parser also hides the API's specific top-level
+message behind generic Service Unavailable. Neither is claimed fixed by this Slack test.
 No production deployment, production route expansion, live charge or renewal scope change occurred
 in this notification rollout. Store production deployment remains on hold.
