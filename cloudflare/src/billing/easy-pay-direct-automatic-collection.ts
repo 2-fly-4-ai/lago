@@ -316,12 +316,19 @@ export async function processEasyPayDirectAutomaticCollection(
 
   let transaction: GatewayTransactionResult;
   try {
+    const method = await env.BILLING_DB.prepare(
+      "SELECT gateway_billing_id FROM provider_customer_profiles WHERE id = ? AND organization_id = ?",
+    )
+      .bind(execution.provider_profile_id, execution.organization_id)
+      .first<{ gateway_billing_id: string | null }>();
+    if (!method) throw new Error("easy_pay_direct_renewal_profile_missing");
     transaction = await chargeEasyPayDirectStoredMethod(
       env,
       {
         amountMinor: execution.amount_minor,
         currency: execution.currency,
         customerVaultId: execution.gateway_customer_vault_id,
+        billingId: method.gateway_billing_id,
         initialTransactionId: execution.initial_transaction_id,
         orderId: execution.order_reference,
         orderDescription: `SERP subscription renewal ${execution.payment_request_id}`,

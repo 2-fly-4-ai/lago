@@ -521,6 +521,7 @@ export async function chargeEasyPayDirectStoredMethod(
     currency: string;
     customerVaultId: string;
     initialTransactionId: string;
+    billingId?: string | null;
     orderId: string;
     orderDescription: string;
     idempotencyKey: string;
@@ -541,6 +542,7 @@ export async function chargeEasyPayDirectStoredMethod(
   validateMoney(input.amountMinor, input.currency);
   validateIdentifier(input.customerVaultId, "customerVaultId");
   validateIdentifier(input.initialTransactionId, "initialTransactionId");
+  if (input.billingId) validateIdentifier(input.billingId, "billingId");
   if (/^(?:vault-test-|synthetic-)/iu.test(input.customerVaultId)) {
     throw new ApiError(
       503,
@@ -554,6 +556,7 @@ export async function chargeEasyPayDirectStoredMethod(
     type: "sale",
     security_key: network.gatewaySecurityKey,
     customer_vault_id: input.customerVaultId,
+    ...(input.billingId ? { billing_id: input.billingId } : {}),
     initial_transaction_id: input.initialTransactionId,
     amount: (input.amountMinor / 100).toFixed(2),
     currency: input.currency,
@@ -589,6 +592,7 @@ export async function findEasyPayDirectGatewayTransactionByOrderId(
   let response: Response;
   try {
     response = await fetcher(QUERY_API_URL, {
+      signal: AbortSignal.timeout(15_000),
       method: "POST",
       headers: {
         Accept: "application/xml",
@@ -877,6 +881,7 @@ async function commerceRequest<T>(
   let response: Response;
   try {
     response = await fetcher(`${COMMERCE_API_URL}${path}`, {
+      signal: AbortSignal.timeout(15_000),
       method: options.method,
       headers: {
         Accept: "application/json",
@@ -924,6 +929,7 @@ async function gatewayVaultRequest(
   let response: Response;
   try {
     response = await fetcher(PAYMENT_API_URL, {
+      signal: AbortSignal.timeout(15_000),
       method: "POST",
       headers: {
         Accept: "application/x-www-form-urlencoded",
@@ -979,6 +985,7 @@ async function gatewayTransactionRequest(
   let response: Response;
   try {
     response = await fetcher(PAYMENT_API_URL, {
+      signal: AbortSignal.timeout(15_000),
       method: "POST",
       headers: {
         Accept: "application/x-www-form-urlencoded",

@@ -474,7 +474,9 @@ async function advanceEasyPayDirectOrder(
   if (!customerEmail) throw new Error("easy_pay_direct_customer_email_missing");
   const profile = await loadProfile(env.BILLING_DB, checkout);
   let customerVaultId = execution.customer_vault_id ?? profile?.gateway_customer_vault_id ?? null;
-  let gatewayBillingId = execution.gateway_billing_id ?? profile?.gateway_billing_id ?? null;
+  // A saved customer profile is not authorization to ignore the card submitted
+  // for this checkout. Only this execution's durable checkpoint may be replayed.
+  let gatewayBillingId = execution.gateway_billing_id ?? null;
   const hasCommerceCompatibleBillingId =
     env.EASY_PAY_DIRECT_NETWORK_MODE !== "production" ||
     (gatewayBillingId !== null && /^\d{1,32}$/u.test(gatewayBillingId));
@@ -504,8 +506,7 @@ async function advanceEasyPayDirectOrder(
   execution = (await loadExecution(env.BILLING_DB, checkout.checkout_intent_id))!;
   const names = splitCustomerName(checkout.customer_name, customerEmail);
   let providerCustomerId = execution.provider_customer_id ?? profile?.provider_customer_id ?? null;
-  let providerPaymentMethodId =
-    execution.provider_payment_method_id ?? profile?.provider_payment_method_id ?? null;
+  let providerPaymentMethodId = execution.provider_payment_method_id ?? null;
   if (!providerCustomerId) {
     const existingCustomer = await findEasyPayDirectCustomerByEmail(env, customerEmail, fetcher);
     if (existingCustomer) {
@@ -1017,6 +1018,7 @@ function normalizeCheckoutEmail(value: string | null | undefined): string | null
 async function loadProfile(
   database: D1Database,
   checkout: CheckoutRow,
+  checkoutOnly = false,
 ): Promise<ProviderProfile | null> {
   return database
     .prepare(
@@ -1024,9 +1026,15 @@ async function loadProfile(
               gateway_billing_id, initial_transaction_id
      FROM provider_customer_profiles
      WHERE customer_id = ? AND provider = 'easy_pay_direct' AND provider_account_code = ?
-       AND status = 'active' LIMIT 1`,
+       AND status = 'active' AND (? = 0 OR checkout_intent_id = ?)
+       ORDER BY created_at DESC, id LIMIT 1`,
     )
-    .bind(checkout.customer_id, checkout.provider_account_code)
+    .bind(
+      checkout.customer_id,
+      checkout.provider_account_code,
+      checkoutOnly ? 1 : 0,
+      checkout.checkout_intent_id,
+    )
     .first<ProviderProfile>();
 }
 
@@ -1044,16 +1052,16 @@ async function upsertProfile(
   const timestamp = new Date().toISOString();
   const profileId = await deterministicUuid(
     "easy-pay-direct-customer-profile",
-    `${checkout.provider_account_code}:${checkout.customer_id}`,
+    `${checkout.provider_account_code}:${checkout.customer_id}:${checkout.checkout_intent_id}`,
   );
   await database
     .prepare(
       `INSERT INTO provider_customer_profiles
      (id, organization_id, customer_id, provider, provider_account_code,
       provider_customer_id, provider_payment_method_id, gateway_customer_vault_id,
-      gateway_billing_id, initial_transaction_id, status, created_at, updated_at)
-     VALUES (?, ?, ?, 'easy_pay_direct', ?, ?, ?, ?, ?, ?, 'active', ?, ?)
-     ON CONFLICT(customer_id, provider, provider_account_code) DO NOTHING`,
+      gateway_billing_id, initial_transaction_id, status, created_at, updated_at, checkout_intent_id)
+     VALUES (?, ?, ?, 'easy_pay_direct', ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
     )
     .bind(
       profileId,
@@ -1067,35 +1075,20 @@ async function upsertProfile(
       input.initialTransactionId ?? null,
       timestamp,
       timestamp,
+      checkout.checkout_intent_id,
     )
     .run();
-  const profile = await loadProfile(database, checkout);
+  const profile = await loadProfile(database, checkout, true);
   if (!profile || profile.provider_customer_id !== input.providerCustomerId) {
     throw new Error("easy_pay_direct_customer_profile_identity_conflict");
   }
-  await database
-    .prepare(
-      `UPDATE provider_customer_profiles
-       SET provider_payment_method_id = COALESCE(?, provider_payment_method_id),
-           gateway_customer_vault_id = COALESCE(?, gateway_customer_vault_id),
-           gateway_billing_id = COALESCE(?, gateway_billing_id),
-           initial_transaction_id = COALESCE(?, initial_transaction_id),
-           status = 'active', updated_at = ?
-       WHERE id = ? AND organization_id = ? AND customer_id = ?
-         AND provider = 'easy_pay_direct' AND provider_account_code = ?`,
-    )
-    .bind(
-      input.providerPaymentMethodId,
-      input.gatewayCustomerVaultId,
-      input.gatewayBillingId,
-      input.initialTransactionId ?? null,
-      timestamp,
-      profile.id,
-      checkout.organization_id,
-      checkout.customer_id,
-      checkout.provider_account_code,
-    )
-    .run();
+  if (
+    profile.provider_payment_method_id !== input.providerPaymentMethodId ||
+    profile.gateway_customer_vault_id !== input.gatewayCustomerVaultId ||
+    profile.gateway_billing_id !== input.gatewayBillingId
+  ) {
+    throw new Error("easy_pay_direct_checkout_profile_conflict");
+  }
 }
 
 async function recordProfileInitialTransaction(
@@ -1109,6 +1102,7 @@ async function recordProfileInitialTransaction(
        SET initial_transaction_id = COALESCE(initial_transaction_id, ?), updated_at = ?
        WHERE customer_id = ? AND organization_id = ? AND provider = 'easy_pay_direct'
          AND provider_account_code = ? AND status = 'active'
+         AND checkout_intent_id = ?
          AND (initial_transaction_id IS NULL OR initial_transaction_id = ?)`,
     )
     .bind(
@@ -1117,6 +1111,7 @@ async function recordProfileInitialTransaction(
       checkout.customer_id,
       checkout.organization_id,
       checkout.provider_account_code,
+      checkout.checkout_intent_id,
       initialTransactionId,
     )
     .run();
@@ -1134,11 +1129,35 @@ function commerceInitialTransactionId(order: CommerceOrder): string | null {
   return transaction?.processor_transaction_id?.trim() || transaction?.id?.trim() || null;
 }
 
+// Delayed approvals must bind the same immutable checkout card as synchronous
+// approvals. Only a verified provider order with a successful transaction can
+// authorize future merchant-initiated collection.
+export async function bindEasyPayDirectRenewalProfile(
+  database: D1Database,
+  executionId: string,
+  order: CommerceOrder,
+): Promise<void> {
+  if (order.status !== "succeeded") return;
+  const initialTransactionId = commerceInitialTransactionId(order);
+  if (!initialTransactionId) return;
+  const execution = await database
+    .prepare(
+      "SELECT checkout_intent_id FROM easy_pay_direct_payment_executions WHERE id = ? AND provider_transaction_id = ?",
+    )
+    .bind(executionId, order.id)
+    .first<{ checkout_intent_id: string }>();
+  if (!execution) return;
+  const checkout = await loadCheckoutByIntentId(database, execution.checkout_intent_id);
+  if (!checkout || !(await loadProfile(database, checkout, true))) return;
+  await recordProfileInitialTransaction(database, checkout, initialTransactionId);
+  await markCheckoutSubscriptionProvider(database, checkout);
+}
+
 async function markCheckoutSubscriptionProvider(
   database: D1Database,
   checkout: CheckoutRow,
 ): Promise<void> {
-  const profile = await loadProfile(database, checkout);
+  const profile = await loadProfile(database, checkout, true);
   if (!profile?.initial_transaction_id || !profile.gateway_customer_vault_id) {
     throw new Error("easy_pay_direct_automatic_profile_incomplete");
   }

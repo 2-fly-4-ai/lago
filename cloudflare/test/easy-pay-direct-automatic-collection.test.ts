@@ -89,6 +89,30 @@ beforeEach(async () => {
 });
 
 describe("Easy Pay Direct automatic subscription collection", () => {
+  it("preserves referenced legacy profiles through the checkout-profile migration", async () => {
+    await prepareEasyPayDirectAutomaticCollection(enabledEnv(), invoiceId, "migration-test");
+    const before = await env.BILLING_DB.prepare(
+      "SELECT * FROM provider_customer_profiles WHERE organization_id = ?",
+    )
+      .bind(organizationId)
+      .all();
+    const migration = env.TEST_MIGRATIONS?.find((item) =>
+      item.name.includes("0111_checkout_payment_profiles"),
+    );
+    expect(migration).toBeDefined();
+    await env.BILLING_DB.batch(migration!.queries.map((query) => env.BILLING_DB.prepare(query)));
+    expect(
+      (
+        await env.BILLING_DB.prepare(
+          "SELECT * FROM provider_customer_profiles WHERE organization_id = ?",
+        )
+          .bind(organizationId)
+          .all()
+      ).results,
+    ).toEqual(before.results);
+    expect((await env.BILLING_DB.prepare("PRAGMA foreign_key_check").all()).results).toEqual([]);
+  });
+
   it("does not include one-time invoices in the automatic renewal candidate scan", async () => {
     await expect(
       pendingEasyPayDirectAutomaticCollectionInvoices(env.BILLING_DB, "all"),
@@ -126,6 +150,11 @@ describe("Easy Pay Direct automatic subscription collection", () => {
 
   it("charges a vaulted method as a merchant-initiated recurring payment exactly once", async () => {
     const runtimeEnv = enabledEnv();
+    await env.BILLING_DB.prepare(
+      "UPDATE provider_customer_profiles SET gateway_billing_id = '123456' WHERE organization_id = ?",
+    )
+      .bind(organizationId)
+      .run();
     await expect(
       prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "renewal-test"),
     ).resolves.toBe("processed");
@@ -134,6 +163,7 @@ describe("Easy Pay Direct automatic subscription collection", () => {
       expect(String(input)).toContain("/api/transact.php");
       const body = new URLSearchParams(String(init?.body));
       expect(body.get("customer_vault_id")).toMatch(/^vault-/);
+      expect(body.get("billing_id")).toBe("123456");
       expect(body.get("initial_transaction_id")).toMatch(/^initial-/);
       expect(body.get("billing_method")).toBe("recurring");
       expect(body.get("initiated_by")).toBe("merchant");
