@@ -1,6 +1,6 @@
 # Sprout recurring canary launch
 
-Status: active. User authorized deep verification and the Sprout production canary.
+Status: completed 2026-09-07. Sprout-only production canary and automatic renewals enabled.
 
 ## Owners and rollout
 
@@ -56,7 +56,7 @@ Status: active. User authorized deep verification and the Sprout production cana
 - PR: https://github.com/2-fly-4-ai/lago/pull/7 (harness passed;
   automated CodeRabbit review skipped by repository policy).
 
-## Production hold and exact promotion
+## Approved production promotion
 
 The user explicitly approved the exact production operation on 2026-09-07:
 apply `0113_product_scoped_renewals.sql` to `serp-prod-lago-native-d1`, then deploy
@@ -84,6 +84,30 @@ it, preserve its evidence, and make no provider request. Customer-initiated repa
 with a fresh token remains supported. Regression checks repeat reconciliation twice,
 assert no provider calls or execution changes, then prove fresh-token recovery.
 This does not mark the unresolved historical payment successful or failed.
+
+Recovery guard merged through PR 8 (`ff370a185e6bb9fc60dcf157238f21e15f6681ae`);
+full Lago check passed again (526 tests plus format/lint/typecheck/Access/tax and
+all dry-run builds), and GitHub harness passed. Staging native Worker
+`4338ecff-2613-43e5-b353-ba27df356527` passed readiness before production native
+`f1dab951-7e1f-417b-876d-772a6d748098`. Final source tree matches merged main.
+The guard changed no production bindings. Production native health/readiness
+return 200; anonymous API returns 401; operator requires Cloudflare Access.
+Production Store and Lago databases both have zero foreign-key violations.
+
+Natural production run `maintenance-202609061630` completed on the final code:
+one legacy execution deferred, zero execution reconciliations, no error. Production
+automatic execution and scope counts remained zero, confirming no historical
+enrollment or automatic charge. New paid Sprout subscriptions can enroll through
+their immutable product attribution and checkout-bound saved payment profile.
+
+Sprout copy deployed on apps.serp.co (`35531253-af55-496b-9479-2b3af443e733`) and
+downloaderextension.com (`644deb8c-5acd-4273-9960-1802280d3b18`): both return 200
+and show subscription access rather than the old one-time/lifetime claim.
+
+One historical checkout remains unknown and requires separate evidence-based
+review. It is not enrolled for renewals and must not be blindly resubmitted or
+marked paid/failed. No live payment was submitted by the agent; the next live
+validation is a customer-initiated Sprout purchase.
 
 Emergency containment: disable automatic collection / Sprout product policy and
 stop new Lago checkouts; retain schema and reconciliation evidence. Never retry an
