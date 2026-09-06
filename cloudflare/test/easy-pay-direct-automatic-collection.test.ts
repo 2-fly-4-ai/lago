@@ -90,6 +90,24 @@ beforeEach(async () => {
 });
 
 describe("Easy Pay Direct automatic subscription collection", () => {
+  it("does not let a historical manual scope authorize a product-scoped renewal", async () => {
+    await enableAutomaticCollectionScope();
+    expect(
+      await pendingEasyPayDirectAutomaticCollectionInvoices(env.BILLING_DB, "scoped"),
+    ).toContain(invoiceId);
+    expect(
+      await pendingEasyPayDirectAutomaticCollectionInvoices(env.BILLING_DB, "product_scoped"),
+    ).not.toContain(invoiceId);
+    const runtimeEnv = new Proxy(enabledEnv(), {
+      get(target, property, receiver) {
+        if (property === "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE") return "product_scoped";
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    }) as Env;
+    await expect(
+      prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "unattributed"),
+    ).resolves.toBe("not_applicable");
+  });
   it("preserves referenced legacy profiles through the checkout-profile migration", async () => {
     await prepareEasyPayDirectAutomaticCollection(enabledEnv(), invoiceId, "migration-test");
     const before = await env.BILLING_DB.prepare(

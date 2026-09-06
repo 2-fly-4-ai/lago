@@ -68,6 +68,70 @@ type SourceTaxQuote = {
 };
 
 export type AutomaticCollectionOutcome = "processed" | "deferred" | "not_applicable";
+type CollectionScopeMode = "scoped" | "product_scoped" | "all";
+
+function productPolicyEligibilitySql(mode: CollectionScopeMode): string {
+  if (mode !== "product_scoped") return "1 = 1";
+  return `EXISTS (
+    SELECT 1 FROM subscription_checkout_products attribution
+    JOIN easy_pay_direct_product_collection_policies policy
+      ON policy.organization_id = attribution.organization_id
+      AND policy.product_slug = attribution.product_slug AND policy.status = 'enabled'
+    WHERE attribution.subscription_id = subscription.id
+      AND attribution.organization_id = subscription.organization_id
+  )`;
+}
+
+// Only proven paid checkouts can enroll; neither shared plans nor a customer's
+// latest metadata authorize another subscription. Operator-disabled scopes stay off.
+export async function enrollProductScopedAutomaticCollections(
+  database: D1Database,
+): Promise<number> {
+  const now = new Date().toISOString();
+  const result = await database
+    .prepare(`
+    INSERT INTO easy_pay_direct_automatic_collection_scopes
+      (subscription_id, organization_id, status, reason, created_at, updated_at)
+    SELECT subscription.id, subscription.organization_id, 'enabled',
+      'paid product-scoped checkout', ?, ?
+    FROM subscriptions subscription
+    JOIN plans plan ON plan.id = subscription.plan_id AND plan.organization_id = subscription.organization_id
+    JOIN customers customer ON customer.id = subscription.customer_id AND customer.organization_id = subscription.organization_id
+    JOIN provider_customer_profiles profile ON profile.id = subscription.payment_method_id
+      AND profile.organization_id = subscription.organization_id AND profile.customer_id = subscription.customer_id
+      AND profile.provider = 'easy_pay_direct' AND profile.status = 'active'
+    JOIN payment_request_checkout_intents intent ON intent.id = profile.checkout_intent_id
+      AND intent.organization_id = subscription.organization_id AND intent.customer_id = subscription.customer_id
+      AND intent.provider = 'easy_pay_direct'
+    JOIN payment_requests request ON request.id = intent.payment_request_id
+      AND request.organization_id = subscription.organization_id AND request.customer_id = subscription.customer_id
+      AND request.payment_status = 'succeeded'
+    JOIN easy_pay_direct_payment_executions execution ON execution.checkout_intent_id = intent.id
+      AND execution.organization_id = subscription.organization_id
+      AND execution.status = 'succeeded' AND execution.terms_accepted_at IS NOT NULL
+    WHERE subscription.status IN ('active', 'past_due') AND subscription.payment_method_type = 'provider'
+      AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
+      AND profile.initial_transaction_id IS NOT NULL AND profile.initial_transaction_id <> ''
+      AND profile.gateway_customer_vault_id IS NOT NULL AND profile.gateway_customer_vault_id <> ''
+      AND customer.payment_provider = 'easy_pay_direct'
+      AND profile.provider_account_code = COALESCE(customer.payment_provider_code, 'default')
+      AND ${productPolicyEligibilitySql("product_scoped")}
+      AND NOT EXISTS (SELECT 1 FROM customer_closure_holds hold WHERE hold.customer_id = customer.id)
+      AND NOT EXISTS (SELECT 1 FROM customer_closure_email_holds hold WHERE hold.organization_id = customer.organization_id AND hold.email = lower(customer.email))
+      AND EXISTS (
+        SELECT 1 FROM invoices_payment_requests link
+        JOIN invoices invoice ON invoice.id = link.invoice_id AND invoice.organization_id = subscription.organization_id
+        JOIN subscription_invoice_contexts context ON context.invoice_id = invoice.id AND context.context_type = 'initial'
+        WHERE link.payment_request_id = request.id AND link.organization_id = subscription.organization_id
+          AND invoice.subscription_id = subscription.id AND invoice.customer_id = subscription.customer_id
+          AND invoice.payment_status = 'succeeded' AND invoice.status = 'finalized'
+      )
+    ON CONFLICT(subscription_id) DO NOTHING
+  `)
+    .bind(now, now)
+    .run();
+  return result.meta.changes;
+}
 
 export async function prepareEasyPayDirectAutomaticCollection(
   env: Env,
@@ -310,7 +374,7 @@ export async function processEasyPayDirectAutomaticCollection(
         AND profile.initial_transaction_id = easy_pay_direct_automatic_payment_executions.initial_transaction_id
        WHERE request.id = easy_pay_direct_automatic_payment_executions.payment_request_id
          AND request.payment_status = 'pending' AND request.ready_for_payment_processing = 1
-         AND ${recurringInvoiceEligibilitySql()}
+         AND ${recurringInvoiceEligibilitySql(automaticCollectionScopeMode(env))}
      )
      RETURNING id`,
   )
@@ -387,7 +451,7 @@ async function prepareEasyPayDirectDunningCollection(
          AND profile.initial_transaction_id IS NOT NULL
          AND lower(profile.gateway_customer_vault_id) NOT LIKE 'vault-test-%'
          AND lower(profile.gateway_customer_vault_id) NOT LIKE 'synthetic-%'
-         AND ${recurringInvoiceEligibilitySql()}
+         AND ${recurringInvoiceEligibilitySql(automaticCollectionScopeMode(env))}
        LIMIT 1`,
   )
     .bind(paymentRequestId, automaticCollectionScopeMode(env))
@@ -444,7 +508,7 @@ async function prepareEasyPayDirectDunningCollection(
 
 // Every linked invoice must be eligible; one scoped invoice must not authorize a
 // mixed request containing unscoped or one-time purchases.
-function recurringInvoiceEligibilitySql(): string {
+function recurringInvoiceEligibilitySql(mode: CollectionScopeMode): string {
   return `EXISTS (
     SELECT 1 FROM invoices_payment_requests link WHERE link.payment_request_id = request.id
   ) AND NOT EXISTS (
@@ -467,6 +531,7 @@ function recurringInvoiceEligibilitySql(): string {
       OR subscription.payment_method_id IS NOT profile.id
       OR subscription.status NOT IN ('active', 'past_due')
       OR plan.interval NOT IN ('weekly', 'monthly', 'quarterly', 'yearly')
+      OR NOT (${productPolicyEligibilitySql(mode)})
       OR (? <> 'all' AND NOT EXISTS (
         SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope
         WHERE scope.subscription_id = subscription.id
@@ -530,6 +595,7 @@ export async function dispatchPendingEasyPayDirectAutomaticCollections(
   correlationId: string,
 ): Promise<number> {
   if (!automaticCollectionEnabled(env)) return 0;
+  await enrollProductScopedAutomaticCollections(env.BILLING_DB);
   const invoiceIds = await pendingEasyPayDirectAutomaticCollectionInvoices(
     env.BILLING_DB,
     automaticCollectionScopeMode(env),
@@ -547,7 +613,7 @@ export async function dispatchPendingEasyPayDirectAutomaticCollections(
 
 export async function pendingEasyPayDirectAutomaticCollectionInvoices(
   database: D1Database,
-  scopeMode: "scoped" | "all",
+  scopeMode: CollectionScopeMode,
 ): Promise<string[]> {
   const rows = await database
     .prepare(
@@ -576,6 +642,7 @@ export async function pendingEasyPayDirectAutomaticCollectionInvoices(
          AND subscription.status IN ('active', 'past_due')
          AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
          AND customer.payment_provider = 'easy_pay_direct'
+         AND ${productPolicyEligibilitySql(scopeMode)}
          AND (? = 'all' OR EXISTS (
            SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope
            WHERE scope.subscription_id = subscription.id
@@ -612,7 +679,7 @@ export async function pendingEasyPayDirectAutomaticExecutions(
 async function loadRenewalCandidate(
   database: D1Database,
   invoiceId: string,
-  scopeMode: "scoped" | "all",
+  scopeMode: CollectionScopeMode,
 ): Promise<RenewalCandidate | null> {
   return database
     .prepare(
@@ -643,6 +710,7 @@ async function loadRenewalCandidate(
          AND subscription.status IN ('active', 'past_due')
          AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
          AND customer.payment_provider = 'easy_pay_direct'
+         AND ${productPolicyEligibilitySql(scopeMode)}
          AND (? = 'all' OR EXISTS (
            SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope
            WHERE scope.subscription_id = subscription.id
@@ -934,7 +1002,9 @@ function automaticCollectionEnabled(env: Env): boolean {
   return String(env.EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED) === "1";
 }
 
-function automaticCollectionScopeMode(env: Env): "scoped" | "all" {
+function automaticCollectionScopeMode(env: Env): CollectionScopeMode {
+  if (env.EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE === "product_scoped")
+    return "product_scoped";
   return env.EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE === "all" ? "all" : "scoped";
 }
 
