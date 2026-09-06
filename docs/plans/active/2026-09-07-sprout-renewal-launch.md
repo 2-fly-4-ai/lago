@@ -58,16 +58,33 @@ Status: active. User authorized deep verification and the Sprout production cana
 
 ## Production hold and exact promotion
 
-No production mutation or deployment performed in this verification run.
-Repository safety requires explicit approval for the exact production operation:
+The user explicitly approved the exact production operation on 2026-09-07:
 apply `0113_product_scoped_renewals.sql` to `serp-prod-lago-native-d1`, then deploy
 the reviewed Lago version with automatic collection enabled in `product_scoped`
 mode. It creates two new tables and tenant/immutability guards, seeds Sprout only,
 and does not attribute or enroll historical subscriptions.
 
-After approval: fresh D1 recovery bookmark and aggregate preflight; apply only 0113;
-deploy Lago before Store. Preserve tax disabled and all non-Sprout Stripe routes.
-Capture production versions and verify no historical scopes become eligible.
+Migration 0113 applied successfully after a fresh D1 recovery bookmark:
+`000001d3-000018a8-000050de-c2a9a443f4dca5e52aadd9a91ad2f01b`.
+No pending migrations, zero foreign-key violations, no historical attribution or
+automatic scopes/executions. Only `org-serp-billing` / `sprout-video-downloader`
+has an enabled product collection policy.
+
+Initial production promotion deployed Lago `cd048e75-ed20-41bd-adb8-cb1751107e4b`
+before Store `5cc60532-5f36-4379-b412-7f39c9046072`. Lago settings changed only
+automatic collection to `1` and scope mode to `product_scoped`; Store settings
+changed only build metadata. No bindings removed; tax remains disabled.
+Both source trees match their merged main trees (Lago PR 7, Store PR 70).
+
+Post-deploy verification found the 16:15 UTC reconciliation run failed on one
+legacy alphanumeric billing checkpoint (`easy_pay_direct_vault_checkpoint_missing`).
+New minute runs completed, but receipt reconciliation must not fail every 15 minutes.
+Added a production recovery guard: defer an incompatible checkpoint before claiming
+it, preserve its evidence, and make no provider request. Customer-initiated repair
+with a fresh token remains supported. Regression checks repeat reconciliation twice,
+assert no provider calls or execution changes, then prove fresh-token recovery.
+This does not mark the unresolved historical payment successful or failed.
+
 Emergency containment: disable automatic collection / Sprout product policy and
 stop new Lago checkouts; retain schema and reconciliation evidence. Never retry an
 uncertain charge through a second provider or blindly roll back the database.

@@ -910,6 +910,28 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       provider_payment_method_id: null,
     });
 
+    const execution = await env.BILLING_DB.prepare(
+      `SELECT id, status, last_checkpoint, resume_count, failure_code, updated_at
+       FROM easy_pay_direct_payment_executions WHERE payment_request_id = ?`,
+    )
+      .bind(paymentRequestId)
+      .first<{ id: string }>();
+    const callsBeforeRecovery = providerFetch.mock.calls.length;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(
+        reconcileEasyPayDirectExecution(runtimeEnv, execution!.id, providerFetch),
+      ).resolves.toBe("deferred");
+    }
+    expect(providerFetch).toHaveBeenCalledTimes(callsBeforeRecovery);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT id, status, last_checkpoint, resume_count, failure_code, updated_at
+         FROM easy_pay_direct_payment_executions WHERE payment_request_id = ?`,
+      )
+        .bind(paymentRequestId)
+        .first(),
+    ).resolves.toEqual(execution);
+
     const recovered = await handleEasyPayDirectCheckoutSubmission(
       submission("fresh-token-for-recovery"),
       runtimeEnv,
