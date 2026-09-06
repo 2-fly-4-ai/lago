@@ -1,4 +1,5 @@
 import type { AuthContext } from "../auth/api-key";
+import { holdCustomerForClosure, holdEmailForClosure } from "./customer-closure";
 import { sha256Hex } from "../auth/api-key";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
@@ -306,6 +307,23 @@ export async function handleCustomerCompatibilityRequest(
   requestId: string,
 ): Promise<Response | null> {
   const url = new URL(request.url);
+  const closureMatch = url.pathname.match(/^\/api\/v1\/customers\/([^/]+)\/closure$/);
+  if (request.method === "POST" && url.pathname === "/api/v1/customer_closure") {
+    return holdEmailForClosure(
+      env.BILLING_DB,
+      auth,
+      requiredString(await parseJsonObject(request), "email"),
+      requestId,
+    );
+  }
+  if (request.method === "POST" && closureMatch?.[1]) {
+    return holdCustomerForClosure(
+      env.BILLING_DB,
+      auth,
+      decodeURIComponent(closureMatch[1]),
+      requestId,
+    );
+  }
   if (request.method === "POST" && url.pathname === "/api/v1/customers") {
     return upsertCustomer(request, null, env, auth, requestId);
   }

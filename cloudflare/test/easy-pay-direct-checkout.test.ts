@@ -3,6 +3,7 @@ import type { WorkflowStep } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleEasyPayDirectCheckoutSubmission } from "../src/api/easy-pay-direct-checkout";
 import { sha256Hex } from "../src/auth/api-key";
+import { holdCustomerForClosure } from "../src/api/customer-closure";
 import {
   easyPayDirectPaymentForm,
   verifyEasyPayDirectCheckoutToken,
@@ -85,6 +86,45 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
         providerFetch,
       ),
     ).rejects.toMatchObject({ code: "easy_pay_direct_terms_required", status: 422 });
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects an already-issued checkout after a customer closure hold without calling EPD", async () => {
+    const runtimeEnv = enabledEnv("gateway_test");
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const checkout = await env.BILLING_DB.prepare(
+      "SELECT payment_url FROM payment_request_checkout_intents WHERE payment_request_id = ?",
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const customer = await env.BILLING_DB.prepare("SELECT external_id FROM customers WHERE id = ?")
+      .bind(customerId)
+      .first<{ external_id: string }>();
+    const response = await holdCustomerForClosure(
+      env.BILLING_DB,
+      { organizationId, organizationExternalId: organizationId, apiKeyId: "test" },
+      customer!.external_id,
+      "hold-test",
+    );
+    expect(response.status).toBe(200);
+    const providerFetch = vi.fn<typeof fetch>();
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        new Request("https://lago.test/easy_pay_direct/payment_form", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            checkout: new URL(checkout!.payment_url).searchParams.get("checkout"),
+            payment_token: "hosted-token-closed",
+            phone: "+15555550123",
+            terms_accepted: true,
+          }),
+        }),
+        runtimeEnv,
+        "closed-test",
+        providerFetch,
+      ),
+    ).rejects.toMatchObject({ status: 409 });
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
@@ -391,6 +431,130 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       failure_code: "300",
       failure_message: "Service Unavailable",
     });
+  });
+
+  it("uses the newly submitted card instead of a returning customer's saved method", async () => {
+    const runtimeEnv = enabledEnv("production");
+    const now = new Date().toISOString();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO provider_customer_profiles
+       (id, organization_id, customer_id, provider, provider_account_code,
+        provider_customer_id, provider_payment_method_id, gateway_customer_vault_id,
+        gateway_billing_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'easy_pay_direct', 'epd-synthetic', 'returning-customer',
+               'old-card-method', 'returning-vault', '111111', 'active', ?, ?)`,
+    )
+      .bind(`profile-${paymentRequestId}`, organizationId, customerId, now, now)
+      .run();
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const checkout = await env.BILLING_DB.prepare(
+      `SELECT payment_url FROM payment_request_checkout_intents WHERE payment_request_id = ?`,
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const providerFetch = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/transact.php")) {
+        const body = new URLSearchParams(String(init?.body));
+        expect(body.get("payment_token")).toBe("new-card-token");
+        expect(body.get("customer_vault_id")).toBe("returning-vault");
+        expect(body.get("customer_vault")).toBe("add_billing");
+        return new Response(
+          `response=1&customer_vault_id=returning-vault&billing_id=${body.get("billing_id")}`,
+        );
+      }
+      if (url.endsWith("/payment_methods")) {
+        const body = JSON.parse(String(init?.body));
+        expect(body.billing_id).not.toBe("111111");
+        return Response.json({ id: "new-card-method" }, { status: 201 });
+      }
+      if (url.endsWith("/products"))
+        return Response.json({
+          id: "new-card-product",
+          pricing: { amount: 1999, currency: "usd" },
+        });
+      if (url.endsWith("/orders")) {
+        expect(JSON.parse(String(init?.body)).payment_method_id).toBe("new-card-method");
+        return Response.json({
+          id: "new-card-order",
+          status: "pending",
+          total: 1999,
+          currency: "usd",
+        });
+      }
+      throw new Error(`Unexpected EPD request: ${url}`);
+    });
+    const response = await handleEasyPayDirectCheckoutSubmission(
+      new Request("https://lago.test/easy_pay_direct/payment_form", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          checkout: new URL(checkout!.payment_url).searchParams.get("checkout"),
+          payment_token: "new-card-token",
+          phone: "+15555550126",
+          terms_accepted: true,
+        }),
+      }),
+      runtimeEnv,
+      "returning-card-regression",
+      providerFetch,
+    );
+    expect(response.status).toBeLessThan(300);
+    const profiles = await env.BILLING_DB.prepare(
+      "SELECT provider_payment_method_id, checkout_intent_id FROM provider_customer_profiles WHERE customer_id = ?",
+    )
+      .bind(customerId)
+      .all<{ provider_payment_method_id: string; checkout_intent_id: string | null }>();
+    expect(profiles.results).toHaveLength(2);
+    expect(
+      profiles.results.find((profile) => profile.checkout_intent_id === null)
+        ?.provider_payment_method_id,
+    ).toBe("old-card-method");
+    expect(
+      profiles.results.find((profile) => profile.checkout_intent_id !== null)
+        ?.provider_payment_method_id,
+    ).toBe("new-card-method");
+    const execution = await env.BILLING_DB.prepare(
+      "SELECT id FROM easy_pay_direct_payment_executions WHERE payment_request_id = ?",
+    )
+      .bind(paymentRequestId)
+      .first<{ id: string }>();
+    await reconcileEasyPayDirectExecution(
+      runtimeEnv,
+      execution!.id,
+      vi.fn<typeof fetch>(async () =>
+        Response.json({
+          id: "new-card-order",
+          status: "succeeded",
+          total: 1999,
+          currency: "usd",
+          transactions: [
+            {
+              id: "new-card-transaction",
+              processor_transaction_id: "new-card-processor",
+              status: "succeeded",
+              type: "sale",
+            },
+          ],
+        }),
+      ),
+    );
+    const approvedProfiles = await env.BILLING_DB.prepare(
+      "SELECT checkout_intent_id, initial_transaction_id FROM provider_customer_profiles WHERE customer_id = ?",
+    )
+      .bind(customerId)
+      .all<{ checkout_intent_id: string | null; initial_transaction_id: string | null }>();
+    expect(
+      approvedProfiles.results.find((profile) => profile.checkout_intent_id !== null)
+        ?.initial_transaction_id,
+    ).toBe("new-card-processor");
+    expect(
+      approvedProfiles.results.find((profile) => profile.checkout_intent_id === null)
+        ?.initial_transaction_id,
+    ).toBeNull();
+    expect(
+      providerFetch.mock.calls.filter(([input]) => String(input).includes("/api/transact.php")),
+    ).toHaveLength(1);
   });
 
   it("persists a live vault checkpoint and resumes Commerce without vaulting twice", async () => {

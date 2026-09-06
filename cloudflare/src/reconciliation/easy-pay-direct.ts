@@ -3,7 +3,10 @@ import { sha256Hex } from "../auth/api-key";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { getEasyPayDirectOrder, type CommerceOrder } from "../providers/easy-pay-direct";
-import { resumeEasyPayDirectExecution } from "../api/easy-pay-direct-checkout";
+import {
+  resumeEasyPayDirectExecution,
+  bindEasyPayDirectRenewalProfile,
+} from "../api/easy-pay-direct-checkout";
 import { commitAppliedCheckoutTaxQuote } from "../api/easy-pay-direct-tax";
 
 type EasyPayDirectEvent = {
@@ -117,6 +120,9 @@ export async function reconcileEasyPayDirectExecution(
     normalizedStatus,
     "easy_pay_direct",
   );
+  if (normalizedStatus === "succeeded") {
+    await bindEasyPayDirectRenewalProfile(env.BILLING_DB, execution.id, order);
+  }
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
      SET status = ?, failure_code = ?, failure_message = ?, updated_at = ?, completed_at = ?,
@@ -212,6 +218,10 @@ export async function reconcileEasyPayDirectReceipt(
     "easy_pay_direct",
   );
   const timestamp = new Date().toISOString();
+  // A success webhook finalizes the invoice, but the execution remains readable
+  // until provider reconciliation captures the processor transaction/card binding.
+  // Never issue another charge while waiting for that provider read.
+  if (status === "succeeded") return "processed";
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
      SET status = ?, failure_code = ?, failure_message = ?, updated_at = ?, completed_at = ?,

@@ -35,6 +35,88 @@ beforeEach(async () => {
 });
 
 describe("coupon ledger API", () => {
+  it("keeps regional pricing scoped to the selected subscription and its renewals", async () => {
+    await createPercentageCoupon("REGIONAL", 50, "forever");
+    const payload = {
+      applied_coupon: {
+        external_customer_id: "customer-coupon-external",
+        external_subscription_id: "regional-sub",
+        coupon_code: "REGIONAL",
+      },
+    };
+    const applied = await request("/api/v1/applied_coupons", "POST", payload, {
+      "Idempotency-Key": "regional-scope",
+    });
+    expect(applied.status).toBe(200);
+    await expect(applied.json()).resolves.toMatchObject({
+      applied_coupon: { external_subscription_id: "regional-sub" },
+    });
+    const { calculateCouponCredits } = await import("../src/billing/coupon-credits");
+    for (const invoice of ["initial-regional", "renewal-regional"]) {
+      const credits = await calculateCouponCredits(
+        env.BILLING_DB,
+        "org-coupon",
+        "customer-coupon",
+        invoice,
+        "USD",
+        [{ id: "base", amountMinor: 3700 }],
+        undefined,
+        "regional-sub",
+      );
+      expect(credits.map((credit) => credit.amountMinor)).toEqual([1850]);
+    }
+    for (const scope of [undefined, "other-sub"]) {
+      expect(
+        await calculateCouponCredits(
+          env.BILLING_DB,
+          "org-coupon",
+          "customer-coupon",
+          "other-invoice",
+          "USD",
+          [{ id: "base", amountMinor: 3700 }],
+          undefined,
+          scope,
+        ),
+      ).toEqual([]);
+    }
+    expect(
+      (
+        await request(
+          "/api/v1/applied_coupons",
+          "POST",
+          { applied_coupon: { ...payload.applied_coupon, external_subscription_id: "other-sub" } },
+          { "Idempotency-Key": "regional-scope" },
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await request("/api/v1/plans", "POST", {
+          plan: {
+            code: "regional-plan",
+            name: "Regional plan",
+            interval: "monthly",
+            amount_cents: 3700,
+            amount_currency: "USD",
+            pay_in_advance: true,
+          },
+        })
+      ).status,
+    ).toBe(200);
+    const selected = await createSubscription("regional-sub", "regional-plan");
+    await expect(invoiceForSubscription(selected)).resolves.toEqual({
+      coupons_minor: 1850,
+      tax_minor: 0,
+      total_due_minor: 1850,
+    });
+    const other = await createSubscription("other-sub", "regional-plan");
+    await expect(invoiceForSubscription(other)).resolves.toEqual({
+      coupons_minor: 0,
+      tax_minor: 0,
+      total_due_minor: 3700,
+    });
+  });
+
   it("creates and replays fixed and plan-targeted coupons", async () => {
     const payload = {
       coupon: {

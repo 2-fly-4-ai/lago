@@ -296,6 +296,10 @@ export async function processEasyPayDirectAutomaticCollection(
      SET status = 'processing', attempt_count = attempt_count + 1,
          lease_expires_at = ?, updated_at = ?
      WHERE id = ? AND status = 'pending' AND EXISTS (
+       SELECT 1 FROM customers customer WHERE customer.id = easy_pay_direct_automatic_payment_executions.customer_id
+       AND NOT EXISTS (SELECT 1 FROM customer_closure_holds h WHERE h.customer_id = customer.id)
+       AND NOT EXISTS (SELECT 1 FROM customer_closure_email_holds h WHERE h.organization_id = customer.organization_id AND h.email = lower(customer.email))
+     ) AND EXISTS (
        SELECT 1 FROM payment_requests request
        JOIN provider_customer_profiles profile
          ON profile.id = easy_pay_direct_automatic_payment_executions.provider_profile_id
@@ -316,12 +320,19 @@ export async function processEasyPayDirectAutomaticCollection(
 
   let transaction: GatewayTransactionResult;
   try {
+    const method = await env.BILLING_DB.prepare(
+      "SELECT gateway_billing_id FROM provider_customer_profiles WHERE id = ? AND organization_id = ?",
+    )
+      .bind(execution.provider_profile_id, execution.organization_id)
+      .first<{ gateway_billing_id: string | null }>();
+    if (!method) throw new Error("easy_pay_direct_renewal_profile_missing");
     transaction = await chargeEasyPayDirectStoredMethod(
       env,
       {
         amountMinor: execution.amount_minor,
         currency: execution.currency,
         customerVaultId: execution.gateway_customer_vault_id,
+        billingId: method.gateway_billing_id,
         initialTransactionId: execution.initial_transaction_id,
         orderId: execution.order_reference,
         orderDescription: `SERP subscription renewal ${execution.payment_request_id}`,

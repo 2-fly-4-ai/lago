@@ -51,6 +51,7 @@ export async function calculateCouponCredits(
   currency: string,
   lines: CouponApplicableLine[],
   planId?: string,
+  externalSubscriptionId?: string | null,
 ): Promise<CouponCredit[]> {
   const result = await database
     .prepare(
@@ -63,10 +64,11 @@ export async function calculateCouponCredits(
        FROM applied_coupons ac JOIN coupons cp ON cp.id = ac.coupon_id
        WHERE ac.organization_id = ? AND ac.customer_id = ? AND ac.status = 'active'
          AND cp.status = 'active'
+         AND (ac.external_subscription_id IS NULL OR ac.external_subscription_id = ?)
          AND (cp.expiration = 'no_expiration' OR cp.expiration_at > ?)
        ORDER BY ac.created_at, ac.id`,
     )
-    .bind(organizationId, customerId, new Date().toISOString())
+    .bind(organizationId, customerId, externalSubscriptionId ?? null, new Date().toISOString())
     .all<ApplicableCouponRow>();
   const targetRows =
     result.results.length === 0

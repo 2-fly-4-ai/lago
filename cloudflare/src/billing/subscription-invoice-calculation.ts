@@ -126,7 +126,7 @@ export type SubscriptionInvoiceCalculation = {
 export type InvoiceAllocationOwner = Pick<
   BillableSubscription,
   "organization_id" | "customer_id" | "currency"
-> & { plan_id?: string };
+> & { plan_id?: string; external_id?: string };
 
 export type InvoiceAllocationCalculation = Omit<
   SubscriptionInvoiceCalculation,
@@ -370,6 +370,16 @@ export async function calculateInvoiceAllocations(
   }
   const subtotalAfterProgressiveCredit = subtotalMinor - progressiveBillingCreditMinor;
   const progressiveDiscounts = allocateInvoiceLineDiscounts(lines, progressiveBillingCreditMinor);
+  const persistedSubscription = owner.external_id
+    ? null
+    : await database
+        .prepare(
+          `SELECT subscription.external_id FROM invoices invoice
+     JOIN subscriptions subscription ON subscription.id = invoice.subscription_id
+     WHERE invoice.id = ? AND invoice.organization_id = ? AND invoice.customer_id = ?`,
+        )
+        .bind(invoiceId, owner.organization_id, owner.customer_id)
+        .first<{ external_id: string }>();
   const couponCredits = await calculateCouponCredits(
     database,
     owner.organization_id,
@@ -382,6 +392,7 @@ export async function calculateInvoiceAllocations(
       billableMetricId: line.billableMetricId,
     })),
     owner.plan_id,
+    owner.external_id ?? persistedSubscription?.external_id,
   );
   const couponsMinor = couponCredits.reduce(
     (total, credit) => safeAdd(total, credit.amountMinor),

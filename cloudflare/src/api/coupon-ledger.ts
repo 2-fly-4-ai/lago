@@ -35,6 +35,7 @@ type AppliedCouponRow = {
   coupon_status: string;
   customer_id: string;
   customer_external_id: string;
+  external_subscription_id: string | null;
   status: string;
   amount_minor: number | null;
   currency: string | null;
@@ -294,6 +295,7 @@ async function applyCoupon(
 ): Promise<Response> {
   const input = objectAt(await parseJsonObject(request), "applied_coupon");
   const externalCustomerId = requiredString(input, "external_customer_id");
+  const externalSubscriptionId = optionalString(input, "external_subscription_id");
   const couponCode = requiredString(input, "coupon_code");
   const customer = await env.BILLING_DB.prepare(
     "SELECT id, currency FROM customers WHERE organization_id = ? AND external_id = ? LIMIT 1",
@@ -311,7 +313,13 @@ async function applyCoupon(
   }
   const idempotencyKey = normalizedIdempotencyKey(request.headers.get("Idempotency-Key"));
   const requestHash = await sha256Hex(
-    stableJson({ couponCode, externalCustomerId, idempotencyKey, ...terms }),
+    stableJson({
+      couponCode,
+      externalCustomerId,
+      idempotencyKey,
+      ...terms,
+      ...(externalSubscriptionId ? { externalSubscriptionId } : {}),
+    }),
   );
   if (idempotencyKey) {
     const replay = await findAppliedByIdempotency(
@@ -390,8 +398,8 @@ async function applyCoupon(
         `INSERT INTO applied_coupons
          (id, organization_id, customer_id, coupon_id, amount_minor, currency, percentage_rate,
           frequency, frequency_duration, frequency_duration_remaining, status, termination_reason,
-          reuse_slot, idempotency_key, request_sha256, version, created_at, updated_at, terminated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?, ?, 1, ?, ?, NULL)`,
+          reuse_slot, idempotency_key, request_sha256, version, created_at, updated_at, terminated_at, external_subscription_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?, ?, 1, ?, ?, NULL, ?)`,
       ).bind(
         id,
         auth.organizationId,
@@ -408,6 +416,7 @@ async function applyCoupon(
         requestHash,
         now,
         now,
+        externalSubscriptionId,
       ),
       env.BILLING_DB.prepare(
         "UPDATE customers SET currency = COALESCE(currency, ?), updated_at = ? WHERE id = ?",
@@ -563,7 +572,7 @@ async function findCoupon(database: D1Database, organizationId: string, code: st
 function appliedCouponSelect() {
   return `SELECT ac.id, ac.coupon_id, cp.code AS coupon_code, cp.name AS coupon_name,
     cp.description AS coupon_description, cp.status AS coupon_status, ac.customer_id,
-    c.external_id AS customer_external_id, ac.status, ac.amount_minor, ac.currency,
+    c.external_id AS customer_external_id, ac.external_subscription_id, ac.status, ac.amount_minor, ac.currency,
     ac.percentage_rate, ac.frequency, ac.frequency_duration,
     ac.frequency_duration_remaining, cp.expiration_at, ac.idempotency_key,
     ac.request_sha256, ac.created_at, ac.terminated_at, ac.termination_reason, ac.version,
@@ -635,6 +644,7 @@ async function serializeCoupon(
     lago_id: row.id,
     name: row.name,
     code: row.code,
+    supports_subscription_scope: true,
     description: row.description,
     coupon_type: row.coupon_type,
     amount_cents: row.amount_minor,
@@ -668,6 +678,7 @@ function serializeAppliedCoupon(row: AppliedCouponRow): Record<string, unknown> 
     coupon_status: row.coupon_status,
     lago_customer_id: row.customer_id,
     external_customer_id: row.customer_external_id,
+    external_subscription_id: row.external_subscription_id,
     status: row.status,
     amount_cents: row.amount_minor,
     amount_cents_remaining: remaining,
