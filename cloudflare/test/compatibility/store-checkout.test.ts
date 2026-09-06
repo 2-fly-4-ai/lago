@@ -10,6 +10,8 @@ const apiKey = "test-lago-api-key";
 const authorization = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
 
 beforeEach(async () => {
+  (env as unknown as { PUBLIC_BASE_URL: string }).PUBLIC_BASE_URL =
+    "https://serp-dev-lago-native.serpcompany.workers.dev";
   const now = "2026-08-12T00:00:00.000Z";
   await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
@@ -48,6 +50,43 @@ afterEach(() => {
 });
 
 describe("store-new Lago checkout compatibility", () => {
+  it("binds an immutable product to subscription creation and rejects conflicting replay", async () => {
+    await SELF.fetch("https://lago.test/api/v1/customers", {
+      method: "POST",
+      headers: authorization,
+      body: JSON.stringify(customerRequest),
+    });
+    const input = {
+      subscription: {
+        ...subscriptionRequest.subscription,
+        external_id: "immutable-attribution-subscription",
+        checkout_product_slug: "sprout-video-downloader",
+      },
+    };
+    const create = () =>
+      SELF.fetch("https://lago.test/api/v1/subscriptions", {
+        method: "POST",
+        headers: authorization,
+        body: JSON.stringify(input),
+      });
+    const first = await create();
+    expect(first.status).toBe(200);
+    const payload = await first.json<{
+      subscription: { lago_id: string; checkout_product_slug: string };
+    }>();
+    expect(payload.subscription.checkout_product_slug).toBe("sprout-video-downloader");
+    expect((await create()).status).toBe(200);
+    input.subscription.checkout_product_slug = "another-product";
+    expect((await create()).status).toBe(409);
+    await expect(
+      env.BILLING_DB.prepare(
+        "UPDATE subscription_checkout_products SET product_slug = 'another-product' WHERE subscription_id = ?",
+      )
+        .bind(payload.subscription.lago_id)
+        .run(),
+    ).rejects.toThrow("immutable_subscription_checkout_product");
+    expect((await env.BILLING_DB.prepare("PRAGMA foreign_key_check").all()).results).toEqual([]);
+  });
   it("upserts a customer, creates one subscription/invoice, and returns Lago field names", async () => {
     const firstCustomer = await SELF.fetch("https://lago.test/api/v1/customers", {
       method: "POST",
@@ -127,8 +166,11 @@ describe("store-new Lago checkout compatibility", () => {
     const initialEvents = await env.BILLING_DB.prepare(
       `SELECT event_type, aggregate_type FROM outbox_events
        WHERE event_type IN ('subscription.created', 'subscription.started', 'invoice.finalized')
+         AND (aggregate_id = ? OR aggregate_id IN (SELECT id FROM invoices WHERE subscription_id = ?))
        ORDER BY event_type`,
-    ).all<{ event_type: string; aggregate_type: string }>();
+    )
+      .bind(firstSubscriptionBody.subscription.lago_id, firstSubscriptionBody.subscription.lago_id)
+      .all<{ event_type: string; aggregate_type: string }>();
     expect(initialEvents.results).toEqual([
       { event_type: "invoice.finalized", aggregate_type: "invoice" },
       { event_type: "subscription.created", aggregate_type: "subscription" },

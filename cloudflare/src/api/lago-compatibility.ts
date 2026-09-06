@@ -856,6 +856,10 @@ export async function createSubscription(
   const externalId = requiredString(input, "external_id");
   const planCode = requiredString(input, "plan_code");
   const name = optionalString(input, "name");
+  const checkoutProduct = optionalString(input, "checkout_product_slug");
+  if (checkoutProduct && !/^[a-z0-9][a-z0-9-]{0,159}$/u.test(checkoutProduct)) {
+    throw new ApiError(422, "validation_error", "checkout_product_slug is invalid");
+  }
   const now = new Date();
   const timestamp = now.toISOString();
   const subscriptionAt = normalizeSubscriptionAt(input.subscription_at);
@@ -871,6 +875,7 @@ export async function createSubscription(
     ? { billingTime, externalCustomerId, externalId, name, planCode, subscriptionAt }
     : { billingTime, externalCustomerId, externalId, name, planCode };
   if (endingAt) requestIdentity.endingAt = endingAt;
+  if (checkoutProduct) requestIdentity.checkoutProduct = checkoutProduct;
   if (onTerminationCreditNote) requestIdentity.onTerminationCreditNote = onTerminationCreditNote;
   if (onTerminationInvoice) requestIdentity.onTerminationInvoice = onTerminationInvoice;
   if (paymentMethod !== undefined) requestIdentity.paymentMethod = paymentMethod;
@@ -1034,6 +1039,16 @@ export async function createSubscription(
     timestamp,
   );
   const effectiveStart = subscriptionAt ?? timestamp;
+  const productStatements = checkoutProduct
+    ? [
+        database
+          .prepare(
+            `INSERT INTO subscription_checkout_products
+         (subscription_id, organization_id, product_slug, created_at) VALUES (?, ?, ?, ?)`,
+          )
+          .bind(subscriptionId, auth.organizationId, checkoutProduct, timestamp),
+      ]
+    : [];
   const futureActivation = subscriptionAt !== null && Date.parse(subscriptionAt) > now.getTime();
   const backdated =
     subscriptionAt !== null &&
@@ -1116,6 +1131,7 @@ export async function createSubscription(
             customSections?.skip === true ? 1 : 0,
           ),
         ...usageThresholdStatements,
+        ...productStatements,
         ...customSectionLinkStatements(
           database,
           auth.organizationId,
@@ -1270,6 +1286,7 @@ export async function createSubscription(
             customSections?.skip === true ? 1 : 0,
           ),
         ...usageThresholdStatements,
+        ...productStatements,
         ...customSectionLinkStatements(
           database,
           auth.organizationId,
@@ -1471,6 +1488,7 @@ export async function createSubscription(
           customSections?.skip === true ? 1 : 0,
         ),
       ...usageThresholdStatements,
+      ...productStatements,
       database
         .prepare(
           `INSERT INTO invoices
@@ -1613,7 +1631,8 @@ export async function createSubscription(
     }
     const results = await database.batch(statements);
     if (!draft) {
-      const firstCouponUpdate = 3 + calculation.lines.length + usageThresholdStatements.length;
+      const firstCouponUpdate =
+        3 + calculation.lines.length + usageThresholdStatements.length + productStatements.length;
       for (let offset = 0; offset < calculation.couponCredits.length; offset += 1) {
         const update = results[firstCouponUpdate + offset * 3];
         if (!update || update.meta.changes < 1) throw new Error("coupon_version_conflict");
@@ -3316,7 +3335,7 @@ async function serializeSubscription(
   database: D1Database,
   subscription: SubscriptionRow,
 ): Promise<Record<string, unknown>> {
-  const [usageThresholds, applicableThresholds] = await Promise.all([
+  const [usageThresholds, applicableThresholds, checkoutProduct] = await Promise.all([
     ownedUsageThresholds(database, subscription.organization_id, {
       subscriptionId: subscription.id,
     }),
@@ -3326,12 +3345,19 @@ async function serializeSubscription(
       subscription.id,
       subscription.plan_id,
     ),
+    database
+      .prepare(
+        "SELECT product_slug FROM subscription_checkout_products WHERE subscription_id = ? AND organization_id = ?",
+      )
+      .bind(subscription.id, subscription.organization_id)
+      .first<{ product_slug: string }>(),
   ]);
   return {
     lago_id: subscription.id,
     lago_billing_entity_id: subscription.billing_entity_id,
     billing_entity_code: subscription.billing_entity_code,
     external_id: subscription.external_id,
+    ...(checkoutProduct ? { checkout_product_slug: checkoutProduct.product_slug } : {}),
     lago_customer_id: subscription.customer_id,
     external_customer_id: subscription.customer_external_id,
     name: subscription.name,

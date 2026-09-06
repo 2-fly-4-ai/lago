@@ -13,6 +13,11 @@ import {
   reconcileEasyPayDirectReceipt,
 } from "../src/reconciliation/easy-pay-direct";
 import { runCheckoutWorkflow } from "../src/workflows/checkout";
+import {
+  enrollProductScopedAutomaticCollections,
+  prepareEasyPayDirectAutomaticCollection,
+  processEasyPayDirectAutomaticCollection,
+} from "../src/billing/easy-pay-direct-automatic-collection";
 
 const organizationId = "org-easy-pay-direct-checkout";
 let customerId: string;
@@ -309,6 +314,131 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       payment_method_type: "provider",
       profile_bound: 1,
     });
+    // A paid checkout alone cannot authorize renewal of every generic-plan product.
+    expect(await enrollProductScopedAutomaticCollections(env.BILLING_DB)).toBe(0);
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(`INSERT INTO subscription_checkout_products
+        (subscription_id, organization_id, product_slug, created_at) VALUES (?, ?, 'sprout-video-downloader', ?)`).bind(
+        recurringSubscriptionId,
+        organizationId,
+        now,
+      ),
+      env.BILLING_DB.prepare(`INSERT INTO subscription_invoice_contexts
+        (invoice_id, organization_id, subscription_id, context_type, period_start, period_end, created_at)
+        VALUES (?, ?, ?, 'initial', ?, '2026-10-01T00:00:00.000Z', ?)`).bind(
+        invoiceId,
+        organizationId,
+        recurringSubscriptionId,
+        now,
+        now,
+      ),
+    ]);
+    expect(await enrollProductScopedAutomaticCollections(env.BILLING_DB)).toBe(0);
+    await env.BILLING_DB.prepare(`INSERT INTO easy_pay_direct_product_collection_policies
+      (organization_id, product_slug, status, created_at) VALUES (?, 'sprout-video-downloader', 'enabled', ?)`)
+      .bind(organizationId, now)
+      .run();
+    expect(await enrollProductScopedAutomaticCollections(env.BILLING_DB)).toBe(1);
+    expect(await enrollProductScopedAutomaticCollections(env.BILLING_DB)).toBe(0);
+
+    const renewalInvoice = `renewal-${invoiceId}`;
+    await env.BILLING_DB.prepare(`INSERT INTO invoices
+      (id, organization_id, customer_id, subscription_id, number, status, payment_status, currency,
+       subtotal_minor, tax_minor, credits_minor, total_due_minor, version, finalized_at,
+       payment_overdue, ready_for_payment_processing, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'finalized', 'pending', 'USD', 1999, 0, 1000, 999, 1, ?, 1, 1, ?, ?)`)
+      .bind(
+        renewalInvoice,
+        organizationId,
+        customerId,
+        recurringSubscriptionId,
+        renewalInvoice,
+        now,
+        now,
+        now,
+      )
+      .run();
+    const renewalEnv = new Proxy(runtimeEnv, {
+      get(target, property, receiver) {
+        if (property === "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED") return "1";
+        if (property === "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE") return "product_scoped";
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    }) as Env;
+    await expect(
+      prepareEasyPayDirectAutomaticCollection(renewalEnv, renewalInvoice, "canary-renewal"),
+    ).resolves.toBe("processed");
+    const automatic = await env.BILLING_DB.prepare(`SELECT execution.payment_request_id
+      FROM easy_pay_direct_automatic_payment_executions execution JOIN invoices_payment_requests link
+      ON link.payment_request_id = execution.payment_request_id WHERE link.invoice_id = ?`)
+      .bind(renewalInvoice)
+      .first<{ payment_request_id: string }>();
+    expect(automatic).not.toBeNull();
+    const renewalFetch = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.get("customer_vault_id")).toBe("87426631");
+      expect(body.get("initial_transaction_id")).toBe("epd-gateway-test-1");
+      expect(body.get("amount")).toBe("9.99");
+      expect(body.get("initiated_by")).toBe("merchant");
+      expect(body.get("test_mode")).toBe("enabled");
+      expect(body.has("payment_token")).toBe(false);
+      return new Response(
+        `response=1&responsetext=Approved&response_code=100&transactionid=canary-renewal&orderid=${automatic!.payment_request_id}`,
+      );
+    });
+    // Both product pause and subscription pause are checked immediately before charge.
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_product_collection_policies SET status = 'disabled' WHERE organization_id = ?",
+    )
+      .bind(organizationId)
+      .run();
+    await expect(
+      processEasyPayDirectAutomaticCollection(
+        renewalEnv,
+        automatic!.payment_request_id,
+        renewalFetch,
+      ),
+    ).resolves.toBe("deferred");
+    expect(renewalFetch).not.toHaveBeenCalled();
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_product_collection_policies SET status = 'enabled' WHERE organization_id = ?",
+    )
+      .bind(organizationId)
+      .run();
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_automatic_collection_scopes SET status = 'disabled' WHERE subscription_id = ?",
+    )
+      .bind(recurringSubscriptionId)
+      .run();
+    expect(await enrollProductScopedAutomaticCollections(env.BILLING_DB)).toBe(0);
+    await expect(
+      processEasyPayDirectAutomaticCollection(
+        renewalEnv,
+        automatic!.payment_request_id,
+        renewalFetch,
+      ),
+    ).resolves.toBe("deferred");
+    expect(renewalFetch).not.toHaveBeenCalled();
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_automatic_collection_scopes SET status = 'enabled' WHERE subscription_id = ?",
+    )
+      .bind(recurringSubscriptionId)
+      .run();
+    await expect(
+      processEasyPayDirectAutomaticCollection(
+        renewalEnv,
+        automatic!.payment_request_id,
+        renewalFetch,
+      ),
+    ).resolves.toBe("processed");
+    await expect(
+      processEasyPayDirectAutomaticCollection(
+        renewalEnv,
+        automatic!.payment_request_id,
+        renewalFetch,
+      ),
+    ).resolves.toBe("processed");
+    expect(renewalFetch).toHaveBeenCalledOnce();
     await expect(
       env.BILLING_DB.prepare(
         `SELECT provider, signature_valid, processed_at IS NOT NULL AS processed
