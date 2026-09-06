@@ -60,3 +60,23 @@ Production migration 0111 removes the old customer-wide unique constraint. Pause
 new EPD routing before applying it, deploy the matching API, verify, then restore
 only the approved canary. The old Worker must not serve EPD writes against the new
 schema. This production sequence has not been executed.
+
+## Staging deployment and browser verification — 2026-09-06
+
+- Lago commit `f495c57`, Worker version `7d5ffc74-f057-4c93-9f65-8e8b27c22948`.
+- Staging D1 migrations 0110 and 0111 applied successfully; remote foreign-key
+  check returned zero rows and no pending migrations remain.
+- Store commit `49889ec49`, Worker
+  version `cfbfa74e-4ad8-4ea4-8dae-19ab38a9f539`.
+- Fresh staging `/checkout/sprout-video-downloader` handoff reached the real
+  Collect.js hosted test form. Monthly base $9.00, discount $4.50, total $4.50.
+- California test destination required street/city before quoting; a completed
+  fictional address produced a $0.00 tax quote and preserved the $4.50 total.
+- EPD `gateway_test`, live mode disabled. No production deployment or live charge.
+- Approved browser sandbox submission succeeded. Store rendered "Success! Your
+  app is ready" and a $4.50 billing amount; reloading converged to the same order.
+- Read-only D1 verification after reload: one execution, one payment, succeeded
+  payment request and invoice, 900-cent base, 450-cent credits, zero tax, 450-cent
+  total, and ready_for_payment_processing=0.
+- Returning-card purchase, one-time purchase, account delivery, and renewal proof
+  remain pending; initial payment success does not complete the lifecycle matrix.

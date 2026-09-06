@@ -3,6 +3,7 @@ import type { WorkflowStep } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleEasyPayDirectCheckoutSubmission } from "../src/api/easy-pay-direct-checkout";
 import { sha256Hex } from "../src/auth/api-key";
+import { holdCustomerForClosure } from "../src/api/customer-closure";
 import {
   easyPayDirectPaymentForm,
   verifyEasyPayDirectCheckoutToken,
@@ -85,6 +86,45 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
         providerFetch,
       ),
     ).rejects.toMatchObject({ code: "easy_pay_direct_terms_required", status: 422 });
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects an already-issued checkout after a customer closure hold without calling EPD", async () => {
+    const runtimeEnv = enabledEnv("gateway_test");
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const checkout = await env.BILLING_DB.prepare(
+      "SELECT payment_url FROM payment_request_checkout_intents WHERE payment_request_id = ?",
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const customer = await env.BILLING_DB.prepare("SELECT external_id FROM customers WHERE id = ?")
+      .bind(customerId)
+      .first<{ external_id: string }>();
+    const response = await holdCustomerForClosure(
+      env.BILLING_DB,
+      { organizationId, organizationExternalId: organizationId, apiKeyId: "test" },
+      customer!.external_id,
+      "hold-test",
+    );
+    expect(response.status).toBe(200);
+    const providerFetch = vi.fn<typeof fetch>();
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        new Request("https://lago.test/easy_pay_direct/payment_form", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            checkout: new URL(checkout!.payment_url).searchParams.get("checkout"),
+            payment_token: "hosted-token-closed",
+            phone: "+15555550123",
+            terms_accepted: true,
+          }),
+        }),
+        runtimeEnv,
+        "closed-test",
+        providerFetch,
+      ),
+    ).rejects.toMatchObject({ status: 409 });
     expect(providerFetch).not.toHaveBeenCalled();
   });
 

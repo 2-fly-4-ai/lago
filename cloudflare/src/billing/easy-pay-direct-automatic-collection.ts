@@ -296,6 +296,10 @@ export async function processEasyPayDirectAutomaticCollection(
      SET status = 'processing', attempt_count = attempt_count + 1,
          lease_expires_at = ?, updated_at = ?
      WHERE id = ? AND status = 'pending' AND EXISTS (
+       SELECT 1 FROM customers customer WHERE customer.id = easy_pay_direct_automatic_payment_executions.customer_id
+       AND NOT EXISTS (SELECT 1 FROM customer_closure_holds h WHERE h.customer_id = customer.id)
+       AND NOT EXISTS (SELECT 1 FROM customer_closure_email_holds h WHERE h.organization_id = customer.organization_id AND h.email = lower(customer.email))
+     ) AND EXISTS (
        SELECT 1 FROM payment_requests request
        JOIN provider_customer_profiles profile
          ON profile.id = easy_pay_direct_automatic_payment_executions.provider_profile_id

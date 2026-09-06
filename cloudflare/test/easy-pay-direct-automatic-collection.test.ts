@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { sha256Hex } from "../src/auth/api-key";
+import { holdCustomerForClosure } from "../src/api/customer-closure";
 import {
   pendingEasyPayDirectAutomaticCollectionInvoices,
   prepareEasyPayDirectAutomaticCollection,
@@ -146,6 +147,47 @@ describe("Easy Pay Direct automatic subscription collection", () => {
       prepareEasyPayDirectAutomaticCollection(enabledEnv(), invoiceId, "placeholder-vault-test"),
     ).resolves.toBe("not_applicable");
     await expect(automaticPaymentRequestId(invoiceId)).resolves.toBeNull();
+  });
+
+  it("holds closure pending until an already claimed renewal is reconciled", async () => {
+    await prepareEasyPayDirectAutomaticCollection(enabledEnv(), invoiceId, "closure-flight-test");
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_automatic_payment_executions SET status = 'unknown' WHERE organization_id = ?",
+    )
+      .bind(organizationId)
+      .run();
+    const customer = await env.BILLING_DB.prepare(
+      "SELECT external_id FROM customers WHERE organization_id = ?",
+    )
+      .bind(organizationId)
+      .first<{ external_id: string }>();
+    const response = await holdCustomerForClosure(
+      env.BILLING_DB,
+      { organizationId, organizationExternalId: organizationId, apiKeyId: "test" },
+      customer!.external_id,
+      "flight-test",
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ closure: { held: true, ready: false } });
+  });
+
+  it("does not dispatch a prepared renewal after the closure hold commits", async () => {
+    const runtimeEnv = enabledEnv();
+    await prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "closure-test");
+    await env.BILLING_DB.prepare(
+      "INSERT INTO customer_closure_holds (customer_id, organization_id) SELECT id, organization_id FROM customers WHERE organization_id = ?",
+    )
+      .bind(organizationId)
+      .run();
+    const providerFetch = vi.fn<typeof fetch>();
+    await expect(
+      processEasyPayDirectAutomaticCollection(
+        runtimeEnv,
+        (await automaticPaymentRequestId(invoiceId))!,
+        providerFetch,
+      ),
+    ).resolves.toBe("deferred");
+    expect(providerFetch).not.toHaveBeenCalled();
   });
 
   it("charges a vaulted method as a merchant-initiated recurring payment exactly once", async () => {

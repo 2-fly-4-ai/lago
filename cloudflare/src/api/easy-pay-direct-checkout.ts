@@ -332,6 +332,8 @@ export async function handleEasyPayDirectCheckoutSubmission(
          resume_count = resume_count + CASE WHEN status = 'unknown' THEN 1 ELSE 0 END,
          updated_at = ?
      WHERE id = ? AND status IN ('pending', 'unknown')
+       AND NOT EXISTS (SELECT 1 FROM customer_closure_email_holds h JOIN customers c ON c.organization_id = h.organization_id AND lower(c.email) = h.email JOIN payment_request_checkout_intents i ON i.customer_id = c.id WHERE i.id = easy_pay_direct_payment_executions.checkout_intent_id)
+       AND NOT EXISTS (SELECT 1 FROM customer_closure_holds h JOIN payment_request_checkout_intents c ON c.customer_id = h.customer_id WHERE c.id = easy_pay_direct_payment_executions.checkout_intent_id)
        AND (status = 'pending' OR (customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL))`,
   )
     .bind(new Date().toISOString(), executionId)
@@ -615,6 +617,8 @@ export async function resumeEasyPayDirectExecution(
      SET status = 'processing', completed_at = NULL, failure_code = NULL, failure_message = NULL,
          resume_count = resume_count + 1, updated_at = ?
      WHERE id = ? AND customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM customer_closure_email_holds h JOIN customers c ON c.organization_id = h.organization_id AND lower(c.email) = h.email JOIN payment_request_checkout_intents i ON i.customer_id = c.id WHERE i.id = easy_pay_direct_payment_executions.checkout_intent_id)
+       AND NOT EXISTS (SELECT 1 FROM customer_closure_holds h JOIN payment_request_checkout_intents c ON c.customer_id = h.customer_id WHERE c.id = easy_pay_direct_payment_executions.checkout_intent_id)
        AND (status = 'unknown' OR (status = 'processing' AND updated_at <= ?))`,
   )
     .bind(new Date().toISOString(), executionId, new Date(Date.now() - 120_000).toISOString())
