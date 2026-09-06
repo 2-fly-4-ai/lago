@@ -686,6 +686,13 @@ export async function addEasyPayDirectPaymentMethod(
   input: { customerId: string; billingId: string; idempotencyKey: string },
   fetcher: typeof fetch = fetch,
 ): Promise<CommercePaymentMethod> {
+  if (env.EASY_PAY_DIRECT_NETWORK_MODE === "production" && !/^\d{1,32}$/u.test(input.billingId)) {
+    throw new ApiError(
+      422,
+      "easy_pay_direct_gateway_billing_id_invalid",
+      "Payment details need to be entered again. No charge was made.",
+    );
+  }
   return commerceRequest<CommercePaymentMethod>(
     env,
     `/customers/${encodeURIComponent(input.customerId)}/payment_methods`,
@@ -831,10 +838,13 @@ export async function vaultEasyPayDirectCard(
     );
   }
   validateIdentifier(input.billingId, "billingId");
-  // NMI/EPD billing identifiers are limited to 32 characters. Lago's
-  // idempotency keys are UUIDs (36 characters), so derive a stable,
-  // collision-resistant gateway identifier instead of sending the UUID.
-  const gatewayBillingId = (await sha256Hex(input.billingId)).slice(0, 32);
+  // EPD Commerce's pinned payment-method contract accepts a numeric gateway
+  // billing ID. The underlying gateway permits 32-character identifiers, but
+  // an alphanumeric ID cannot subsequently be attached through Commerce.
+  // Preserve deterministic retry behavior while constraining the identifier
+  // to the shared contract understood by both systems.
+  const billingHash = await sha256Hex(input.billingId);
+  const gatewayBillingId = (BigInt(`0x${billingHash}`) % 10n ** 32n).toString().padStart(32, "0");
   const securityKey = assertEasyPayDirectNetwork(env).gatewaySecurityKey;
   const existingCustomerVaultId = input.existingCustomerVaultId?.trim() || null;
   const vault = await gatewayVaultRequest(

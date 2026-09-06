@@ -149,6 +149,20 @@ To stop new renewals immediately, set `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENAB
 all pending and unknown executions for provider-read reconciliation; do not delete or recreate
 them.
 
+## Gateway and Commerce billing-ID contract
+
+The live checkout crosses two EPD surfaces: Collect.js produces a single-use browser token, the
+Gateway stores that token in its Customer Vault, and EPD Commerce attaches the resulting billing
+record to its customer. The shared `billing_id` must be numeric and at most 32 digits. Lago derives
+that value deterministically from the payment-method idempotency key; do not substitute a UUID or
+hexadecimal digest.
+
+A numeric checkpoint is safe to resume without vaulting again. A legacy alphanumeric checkpoint
+cannot be sent to Commerce. It may be replaced only during a fresh customer-initiated checkout:
+use the newly produced Collect.js token to add a billing record to the existing Gateway vault, then
+checkpoint the replacement numeric ID before continuing. Automated reconciliation without a fresh
+token must remain deferred and must not make a second vault request.
+
 ## Production credential checklist
 
 Keep the production Worker disabled while provisioning. Before promotion, verify names only:
