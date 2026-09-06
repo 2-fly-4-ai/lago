@@ -611,6 +611,15 @@ export async function resumeEasyPayDirectExecution(
   if (loaded.execution.provider_transaction_id) return "advanced";
   if (!loaded.execution.customer_vault_id || !loaded.execution.gateway_billing_id)
     return "deferred";
+  // Legacy billing checkpoints require a fresh customer token to re-vault.
+  // Background recovery has no token: preserve the unresolved evidence instead
+  // of claiming/retrying the execution and aborting unrelated reconciliation.
+  if (
+    env.EASY_PAY_DIRECT_NETWORK_MODE === "production" &&
+    !/^\d{1,32}$/u.test(loaded.execution.gateway_billing_id)
+  ) {
+    return "deferred";
+  }
 
   const claimed = await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
