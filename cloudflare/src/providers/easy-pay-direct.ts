@@ -47,6 +47,9 @@ export type CommerceCustomer = {
   id: string;
   email?: string | null;
   default_payment_method?: string | null;
+  // Legacy Gateway bridge only. Current public Elements documentation does not
+  // promise this field. Its absence is NOT evidence that a vault can be inferred.
+  epd_gateway_customer_vault_id?: string | null;
 };
 export type CommercePaymentMethod = { id: string; customer?: string };
 export type CommerceProduct = { id: string; pricing?: { amount?: number; currency?: string } };
@@ -644,13 +647,45 @@ export async function findEasyPayDirectCustomerByEmail(
   email: string,
   fetcher: typeof fetch = fetch,
 ): Promise<CommerceCustomer | null> {
-  const result = await commerceRequest<{ data?: CommerceCustomer[] }>(
+  const result = await commerceRequest<{ data?: CommerceCustomer[]; has_more?: boolean }>(
     env,
-    `/customers?email=${encodeURIComponent(email)}&limit=1`,
+    `/customers?email=${encodeURIComponent(email)}&limit=2`,
     { method: "GET" },
     fetcher,
   );
-  return result.data?.[0] ?? null;
+  if (!result || !Array.isArray(result.data)) {
+    throw new ApiError(503, "easy_pay_direct_invalid_response", "Customer lookup is unavailable");
+  }
+  if (result.data.length > 1 || result.has_more) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_customer_ambiguous",
+      "Payment setup needs review. Please contact support before trying again.",
+    );
+  }
+  return result.data[0] ?? null;
+}
+
+export async function retrieveEasyPayDirectCustomer(
+  env: EasyPayDirectEnv,
+  customerId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<CommerceCustomer> {
+  validateIdentifier(customerId, "customerId");
+  const customer = await commerceRequest<CommerceCustomer>(
+    env,
+    `/customers/${encodeURIComponent(customerId)}`,
+    { method: "GET" },
+    fetcher,
+  );
+  if (!customer || customer.id !== customerId) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_customer_vault_mismatch",
+      "Payment setup needs review. Please contact support before trying again.",
+    );
+  }
+  return customer;
 }
 
 export async function createEasyPayDirectCustomer(
@@ -697,16 +732,44 @@ export async function addEasyPayDirectPaymentMethod(
       "Payment details need to be entered again. No charge was made.",
     );
   }
-  return commerceRequest<CommercePaymentMethod>(
-    env,
-    `/customers/${encodeURIComponent(input.customerId)}/payment_methods`,
-    {
-      method: "POST",
-      idempotencyKey: input.idempotencyKey,
-      body: { billing_id: input.billingId, set_as_default: true, update_subscriptions: false },
-    },
-    fetcher,
-  );
+  let method: CommercePaymentMethod;
+  try {
+    method = await commerceRequest<CommercePaymentMethod>(
+      env,
+      `/customers/${encodeURIComponent(input.customerId)}/payment_methods`,
+      {
+        method: "POST",
+        idempotencyKey: input.idempotencyKey,
+        body: { billing_id: input.billingId, set_as_default: true, update_subscriptions: false },
+      },
+      fetcher,
+    );
+  } catch (error) {
+    // This operation attaches a card; it does not create an order. Do not leak
+    // vault identifiers/provider diagnostics into the public checkout, and do
+    // not treat a definitive validation rejection as a retryable payment.
+    if (error instanceof ApiError && [400, 402, 404, 422].includes(error.status)) {
+      throw new ApiError(
+        422,
+        "easy_pay_direct_payment_method_rejected",
+        "Payment details could not be linked. No order was submitted. Please contact support before trying again.",
+      );
+    }
+    throw error;
+  }
+  if (
+    !method ||
+    typeof method.id !== "string" ||
+    !method.id.trim() ||
+    (method.customer && method.customer !== input.customerId)
+  ) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_customer_vault_mismatch",
+      "Payment setup needs review. Please contact support before trying again.",
+    );
+  }
+  return method;
 }
 
 export async function createEasyPayDirectProduct(
@@ -861,6 +924,13 @@ export async function vaultEasyPayDirectCard(
     }),
     fetcher,
   );
+  if (existingCustomerVaultId && vault.customerVaultId !== existingCustomerVaultId) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_customer_vault_mismatch",
+      "Payment setup needs review. Please contact support before trying again.",
+    );
+  }
   return {
     customerVaultId: existingCustomerVaultId ?? vault.customerVaultId,
     billingId: vault.billingId ?? gatewayBillingId,

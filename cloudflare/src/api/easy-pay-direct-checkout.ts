@@ -9,9 +9,11 @@ import {
   createEasyPayDirectProduct,
   easyPayDirectPaymentTokenHash,
   findEasyPayDirectCustomerByEmail,
+  retrieveEasyPayDirectCustomer,
   resolveEasyPayDirectSuccessRedirect,
   vaultEasyPayDirectCard,
   type CommerceOrder,
+  type CommerceCustomer,
   type GatewayVaultFailureDetails,
   type GatewayTransactionResult,
 } from "../providers/easy-pay-direct";
@@ -65,6 +67,7 @@ type ExecutionRow = {
   gateway_billing_id: string | null;
   provider_response_code: string | null;
   failure_message: string | null;
+  failure_code: string | null;
   last_checkpoint:
     | "created"
     | "gateway_vaulted"
@@ -318,6 +321,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
   }
   const resumableUnknown =
     execution.status === "unknown" &&
+    !isPaymentSetupReviewCode(execution.failure_code) &&
     Boolean(execution.customer_vault_id && execution.gateway_billing_id);
   if (execution.status !== "pending" && !resumableUnknown) {
     throw new ApiError(
@@ -332,6 +336,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
          resume_count = resume_count + CASE WHEN status = 'unknown' THEN 1 ELSE 0 END,
          updated_at = ?
      WHERE id = ? AND status IN ('pending', 'unknown')
+       AND COALESCE(failure_code, '') NOT IN ('easy_pay_direct_customer_vault_mismatch', 'easy_pay_direct_customer_vault_unverified', 'easy_pay_direct_customer_ambiguous', 'easy_pay_direct_payment_method_rejected')
        AND NOT EXISTS (SELECT 1 FROM customer_closure_email_holds h JOIN customers c ON c.organization_id = h.organization_id AND lower(c.email) = h.email JOIN payment_request_checkout_intents i ON i.customer_id = c.id WHERE i.id = easy_pay_direct_payment_executions.checkout_intent_id)
        AND NOT EXISTS (SELECT 1 FROM customer_closure_holds h JOIN payment_request_checkout_intents c ON c.customer_id = h.customer_id WHERE c.id = easy_pay_direct_payment_executions.checkout_intent_id)
        AND (status = 'pending' OR (customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL))`,
@@ -444,6 +449,15 @@ export async function handleEasyPayDirectCheckoutSubmission(
           error instanceof ApiError ? error.code : "easy_pay_direct_gateway_vault_failed",
           gatewayFailure.providerResponseCode,
         );
+      } else if (error instanceof ApiError && isPaymentSetupReviewCode(error.code)) {
+        await markExecution(
+          env.BILLING_DB,
+          executionId,
+          "unknown",
+          null,
+          error.message,
+          error.code,
+        );
       } else {
         await markExecution(
           env.BILLING_DB,
@@ -464,6 +478,34 @@ type EasyPayDirectAdvanceInput = {
   surface: CheckoutSurface;
 };
 
+function isPaymentSetupReviewCode(code: string | null): boolean {
+  return (
+    code === "easy_pay_direct_customer_vault_mismatch" ||
+    code === "easy_pay_direct_customer_vault_unverified" ||
+    code === "easy_pay_direct_customer_ambiguous" ||
+    code === "easy_pay_direct_payment_method_rejected"
+  );
+}
+
+function verifiedCustomerVault(customer: CommerceCustomer, email: string): string {
+  const vaultId = customer.epd_gateway_customer_vault_id;
+  if (typeof vaultId !== "string" || !vaultId.trim() || typeof customer.email !== "string") {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_customer_vault_unverified",
+      "Payment setup could not be verified. Please contact support before trying again.",
+    );
+  }
+  if (customer.email.trim().toLowerCase() !== email.trim().toLowerCase()) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_customer_vault_mismatch",
+      "Payment setup needs review. Please contact support before trying again.",
+    );
+  }
+  return vaultId.trim();
+}
+
 async function advanceEasyPayDirectOrder(
   env: Env,
   checkout: CheckoutRow,
@@ -476,6 +518,29 @@ async function advanceEasyPayDirectOrder(
   if (!customerEmail) throw new Error("easy_pay_direct_customer_email_missing");
   const profile = await loadProfile(env.BILLING_DB, checkout);
   let customerVaultId = execution.customer_vault_id ?? profile?.gateway_customer_vault_id ?? null;
+  let providerCustomerId = execution.provider_customer_id ?? profile?.provider_customer_id ?? null;
+  const production = env.EASY_PAY_DIRECT_NETWORK_MODE === "production";
+  // Resolve the Commerce customer's authoritative vault BEFORE consuming a
+  // Collect.js token. An interrupted prior checkout may have created the
+  // customer without ever reaching the local reusable-profile checkpoint.
+  if (production) {
+    const candidate = providerCustomerId
+      ? { id: providerCustomerId }
+      : await findEasyPayDirectCustomerByEmail(env, customerEmail, fetcher);
+    if (candidate) {
+      const customer = await retrieveEasyPayDirectCustomer(env, candidate.id, fetcher);
+      const linkedVaultId = verifiedCustomerVault(customer, customerEmail);
+      if (customerVaultId && customerVaultId !== linkedVaultId) {
+        throw new ApiError(
+          409,
+          "easy_pay_direct_customer_vault_mismatch",
+          "Payment setup needs review. Please contact support before trying again.",
+        );
+      }
+      providerCustomerId = customer.id;
+      customerVaultId = linkedVaultId;
+    }
+  }
   // A saved customer profile is not authorization to ignore the card submitted
   // for this checkout. Only this execution's durable checkpoint may be replayed.
   let gatewayBillingId = execution.gateway_billing_id ?? null;
@@ -507,10 +572,13 @@ async function advanceEasyPayDirectOrder(
 
   execution = (await loadExecution(env.BILLING_DB, checkout.checkout_intent_id))!;
   const names = splitCustomerName(checkout.customer_name, customerEmail);
-  let providerCustomerId = execution.provider_customer_id ?? profile?.provider_customer_id ?? null;
   let providerPaymentMethodId = execution.provider_payment_method_id ?? null;
   if (!providerCustomerId) {
-    const existingCustomer = await findEasyPayDirectCustomerByEmail(env, customerEmail, fetcher);
+    // Production lookup already happened before vaulting. Never do a second
+    // email lookup here and silently adopt a different customer after a race.
+    const existingCustomer = production
+      ? null
+      : await findEasyPayDirectCustomerByEmail(env, customerEmail, fetcher);
     if (existingCustomer) {
       providerCustomerId = existingCustomer.id;
     } else {
@@ -531,7 +599,18 @@ async function advanceEasyPayDirectOrder(
         fetcher,
       );
       providerCustomerId = customer.id;
-      providerPaymentMethodId = customer.default_payment_method ?? null;
+      if (production) {
+        const createdCustomer = await retrieveEasyPayDirectCustomer(env, customer.id, fetcher);
+        if (verifiedCustomerVault(createdCustomer, customerEmail) !== customerVaultId) {
+          throw new ApiError(
+            409,
+            "easy_pay_direct_customer_vault_mismatch",
+            "Payment setup needs review. Please contact support before trying again.",
+          );
+        }
+      } else {
+        providerPaymentMethodId = customer.default_payment_method ?? null;
+      }
     }
   }
   await checkpointExecution(env.BILLING_DB, execution.id, "provider_customer", {
@@ -609,6 +688,7 @@ export async function resumeEasyPayDirectExecution(
   const loaded = await loadExecutionAndCheckoutById(env.BILLING_DB, executionId);
   if (!loaded || !["processing", "unknown"].includes(loaded.execution.status)) return "deferred";
   if (loaded.execution.provider_transaction_id) return "advanced";
+  if (isPaymentSetupReviewCode(loaded.execution.failure_code)) return "deferred";
   if (!loaded.execution.customer_vault_id || !loaded.execution.gateway_billing_id)
     return "deferred";
   // Legacy billing checkpoints require a fresh customer token to re-vault.
@@ -626,6 +706,7 @@ export async function resumeEasyPayDirectExecution(
      SET status = 'processing', completed_at = NULL, failure_code = NULL, failure_message = NULL,
          resume_count = resume_count + 1, updated_at = ?
      WHERE id = ? AND customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL
+       AND COALESCE(failure_code, '') NOT IN ('easy_pay_direct_customer_vault_mismatch', 'easy_pay_direct_customer_vault_unverified', 'easy_pay_direct_customer_ambiguous', 'easy_pay_direct_payment_method_rejected')
        AND NOT EXISTS (SELECT 1 FROM customer_closure_email_holds h JOIN customers c ON c.organization_id = h.organization_id AND lower(c.email) = h.email JOIN payment_request_checkout_intents i ON i.customer_id = c.id WHERE i.id = easy_pay_direct_payment_executions.checkout_intent_id)
        AND NOT EXISTS (SELECT 1 FROM customer_closure_holds h JOIN payment_request_checkout_intents c ON c.customer_id = h.customer_id WHERE c.id = easy_pay_direct_payment_executions.checkout_intent_id)
        AND (status = 'unknown' OR (status = 'processing' AND updated_at <= ?))`,
@@ -663,6 +744,10 @@ export async function resumeEasyPayDirectExecution(
     );
     return "advanced";
   } catch (error) {
+    if (error instanceof ApiError && isPaymentSetupReviewCode(error.code)) {
+      await markExecution(env.BILLING_DB, executionId, "unknown", null, error.message, error.code);
+      return "deferred";
+    }
     await markExecution(
       env.BILLING_DB,
       executionId,
@@ -960,7 +1045,7 @@ async function loadExecution(
             payment_method_idempotency_key, product_idempotency_key, order_idempotency_key,
             provider_transaction_id, provider_customer_id, provider_payment_method_id,
             provider_product_id, customer_vault_id, gateway_billing_id,
-            provider_response_code, failure_message, last_checkpoint, resume_count, updated_at
+            provider_response_code, failure_code, failure_message, last_checkpoint, resume_count, updated_at
      FROM easy_pay_direct_payment_executions WHERE checkout_intent_id = ? LIMIT 1`,
     )
     .bind(checkoutIntentId)
@@ -980,7 +1065,7 @@ async function loadExecutionById(
               product_idempotency_key, order_idempotency_key, provider_transaction_id,
               provider_customer_id, provider_payment_method_id, provider_product_id,
               customer_vault_id, gateway_billing_id, provider_response_code,
-              failure_message, last_checkpoint, resume_count, updated_at
+              failure_code, failure_message, last_checkpoint, resume_count, updated_at
        FROM easy_pay_direct_payment_executions WHERE id = ? LIMIT 1`,
     )
     .bind(executionId)

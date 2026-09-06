@@ -9,6 +9,8 @@ import {
   createEasyPayDirectProduct,
   easyPayDirectPaymentForm,
   easyPayDirectSandboxTool,
+  findEasyPayDirectCustomerByEmail,
+  retrieveEasyPayDirectCustomer,
   getEasyPayDirectOrder,
   refundEasyPayDirectOrder,
   resolveEasyPayDirectSuccessRedirect,
@@ -32,6 +34,64 @@ const gatewayTestEnv = {
 } satisfies EasyPayDirectEnv;
 
 describe("Easy Pay Direct provider", () => {
+  it.each([{ data: [{ id: "one" }, { id: "two" }] }, { data: [{ id: "one" }], has_more: true }])(
+    "rejects ambiguous email lookup rather than selecting the first customer",
+    async (body) => {
+      const providerFetch = vi.fn<typeof fetch>(async (input) => {
+        expect(new URL(String(input)).searchParams.get("limit")).toBe("2");
+        return Response.json(body);
+      });
+      await expect(
+        findEasyPayDirectCustomerByEmail(providerEnv, "fixture@example.test", providerFetch),
+      ).rejects.toMatchObject({ code: "easy_pay_direct_customer_ambiguous" });
+    },
+  );
+
+  it("does not turn a malformed customer lookup into permission to create another customer", async () => {
+    await expect(
+      findEasyPayDirectCustomerByEmail(providerEnv, "fixture@example.test", async () =>
+        Response.json({}),
+      ),
+    ).rejects.toMatchObject({ code: "easy_pay_direct_invalid_response" });
+  });
+
+  it("rejects a customer read that returns a different identity", async () => {
+    await expect(
+      retrieveEasyPayDirectCustomer(providerEnv, "expected-customer", async () =>
+        Response.json({ id: "wrong-customer" }),
+      ),
+    ).rejects.toMatchObject({ code: "easy_pay_direct_customer_vault_mismatch" });
+  });
+
+  it("rejects a payment method returned for another customer", async () => {
+    await expect(
+      addEasyPayDirectPaymentMethod(
+        providerEnv,
+        { customerId: "expected-customer", billingId: "1234", idempotencyKey: "fixture-key" },
+        async () => Response.json({ id: "method-1", customer: "wrong-customer" }),
+      ),
+    ).rejects.toMatchObject({ code: "easy_pay_direct_customer_vault_mismatch" });
+  });
+
+  it("does not hide a gateway response that names a different vault", async () => {
+    await expect(
+      vaultEasyPayDirectCard(
+        {
+          ...providerEnv,
+          EASY_PAY_DIRECT_NETWORK_MODE: "production",
+          EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+          EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
+        },
+        {
+          paymentToken: "fictional-token",
+          billingId: "fixture-key",
+          existingCustomerVaultId: "expected-vault",
+        },
+        async () => new Response("response=1&customer_vault_id=wrong-vault&billing_id=123"),
+      ),
+    ).rejects.toMatchObject({ code: "easy_pay_direct_customer_vault_mismatch" });
+  });
+
   it("allows only the configured Store success route and preserves its checkout state", () => {
     const configured = "https://store.test/checkout/success";
     expect(

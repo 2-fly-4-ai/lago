@@ -151,13 +151,39 @@ them.
 
 ## Gateway and Commerce billing-ID contract
 
+### 2026-09-07 incident: deployment hold
+
+The Sprout production checkout failed at Commerce payment-method attachment. A numeric billing ID
+is **not sufficient evidence for recovery**: it belongs to a specific Gateway vault, and that vault
+must be the one linked to the Commerce customer. The original implementation vaulted first and
+then reused a customer by email, without verifying that relationship. An incomplete earlier
+checkout can create a Commerce customer before a reusable local profile exists.
+
+The repair on `codex/epd-vault-binding-repair` resolves and verifies the customer before vaulting,
+rejects mismatched or unverified bindings, explicitly attaches the submitted card, and prevents
+review-required executions from being re-claimed by a browser replay or background reconciliation.
+It preserves the existing evidence and does not change a customer's linked vault. It is not
+deployed and does not establish live checkout readiness.
+
+Current public [EPD customer docs](https://docs.api.epd.com/api-reference/customers) and the
+[card-vaulting guide](https://docs.api.epd.com/api-reference/card-vaulting) describe an Elements
+`card_token` flow. They do not promise the legacy `epd_gateway_customer_vault_id` response field.
+The repair deliberately fails closed when that field is absent. Verify the actual pinned API
+contract before deployment; do not assume the field exists because a mock supplies it.
+
+`gateway_test` checkout skips Commerce attachment. Its provider-backed purchase/renewal proof
+does not validate the live Gateway-to-Commerce bridge. Keep both test results explicitly separate.
+The incident's owner, outstanding provider verification, and rollout gates are tracked in
+[the repair plan](../plans/active/2026-09-07-epd-vault-binding-repair.md).
+
 The live checkout crosses two EPD surfaces: Collect.js produces a single-use browser token, the
 Gateway stores that token in its Customer Vault, and EPD Commerce attaches the resulting billing
 record to its customer. The shared `billing_id` must be numeric and at most 32 digits. Lago derives
 that value deterministically from the payment-method idempotency key; do not substitute a UUID or
 hexadecimal digest.
 
-A numeric checkpoint is safe to resume without vaulting again. A legacy alphanumeric checkpoint
+A numeric checkpoint can resume without vaulting again only after the customer/vault relationship
+is verified and no review-required failure is present. A legacy alphanumeric checkpoint
 cannot be sent to Commerce. It may be replaced only during a fresh customer-initiated checkout:
 use the newly produced Collect.js token to add a billing record to the existing Gateway vault, then
 checkpoint the replacement numeric ID before continuing. Automated reconciliation without a fresh

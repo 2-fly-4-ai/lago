@@ -1,7 +1,10 @@
 import { env } from "cloudflare:test";
 import type { WorkflowStep } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { handleEasyPayDirectCheckoutSubmission } from "../src/api/easy-pay-direct-checkout";
+import {
+  handleEasyPayDirectCheckoutSubmission,
+  resumeEasyPayDirectExecution,
+} from "../src/api/easy-pay-direct-checkout";
 import { sha256Hex } from "../src/auth/api-key";
 import { holdCustomerForClosure } from "../src/api/customer-closure";
 import {
@@ -72,6 +75,194 @@ beforeEach(async () => {
 });
 
 describe("Easy Pay Direct Commerce checkout execution", () => {
+  it("looks up the existing Commerce vault before saving a card when no local profile exists", async () => {
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture();
+    const response = await handleEasyPayDirectCheckoutSubmission(
+      request(),
+      runtimeEnv,
+      "vault-link",
+      provider.fetcher,
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      status: "processing",
+      provider_order_id: `fixture-order-${paymentRequestId}`,
+    });
+    expect(provider.operations).toEqual([
+      "lookup",
+      "read_customer",
+      "add_billing",
+      "attach",
+      "product",
+      "order",
+    ]);
+    expect(provider.savedVaults).toEqual(["fixture-existing-vault"]);
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT provider_customer_id, gateway_customer_vault_id, provider_payment_method_id FROM provider_customer_profiles WHERE customer_id = ?",
+      )
+        .bind(customerId)
+        .first(),
+    ).resolves.toEqual({
+      provider_customer_id: "fixture-customer",
+      gateway_customer_vault_id: "fixture-existing-vault",
+      provider_payment_method_id: "fixture-new-method",
+    });
+    const calls = provider.fetcher.mock.calls.length;
+    await handleEasyPayDirectCheckoutSubmission(
+      request(),
+      runtimeEnv,
+      "vault-link-replay",
+      provider.fetcher,
+    );
+    expect(provider.fetcher).toHaveBeenCalledTimes(calls);
+  });
+
+  it("attaches the submitted card explicitly even when new-customer creation returns a default", async () => {
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture({ existing: false });
+    await handleEasyPayDirectCheckoutSubmission(
+      request(),
+      runtimeEnv,
+      "new-vault-link",
+      provider.fetcher,
+    );
+    expect(provider.operations).toEqual([
+      "lookup",
+      "add_customer",
+      "create_customer",
+      "read_customer",
+      "attach",
+      "product",
+      "order",
+    ]);
+    expect(provider.savedVaults).toEqual(["fixture-new-vault"]);
+  });
+
+  it("does not consume a card token when Commerce omits the legacy vault binding", async () => {
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture({ exposeBinding: false });
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "missing-vault",
+        provider.fetcher,
+      ),
+    ).rejects.toMatchObject({ code: "easy_pay_direct_customer_vault_unverified" });
+    expect(provider.operations).toEqual(["lookup", "read_customer"]);
+    const execution = await executionForTest();
+    expect(execution).toMatchObject({
+      status: "unknown",
+      failure_code: "easy_pay_direct_customer_vault_unverified",
+      provider_transaction_id: null,
+    });
+    await expect(
+      resumeEasyPayDirectExecution(runtimeEnv, execution!.id, provider.fetcher),
+    ).resolves.toBe("deferred");
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "missing-vault-again",
+        provider.fetcher,
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(provider.operations).toEqual(["lookup", "read_customer"]);
+  });
+
+  it("quarantines an old wrong-vault checkpoint without another attachment, charge, or retry loop", async () => {
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture({ exposeBinding: false });
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "seed-execution",
+        provider.fetcher,
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    // Reproduce the persisted pre-fix state, using only synthetic local D1 rows.
+    await env.BILLING_DB.prepare(
+      `UPDATE easy_pay_direct_payment_executions SET customer_vault_id = 'wrong-vault', gateway_billing_id = '123456',
+       provider_customer_id = 'fixture-customer', last_checkpoint = 'provider_customer', failure_code = NULL
+       WHERE payment_request_id = ?`,
+    )
+      .bind(paymentRequestId)
+      .run();
+    const verifiedProvider = commerceVaultFixture();
+    const execution = await executionForTest();
+    await expect(
+      resumeEasyPayDirectExecution(runtimeEnv, execution!.id, verifiedProvider.fetcher),
+    ).resolves.toBe("deferred");
+    expect(verifiedProvider.operations).toEqual(["read_customer"]);
+    await expect(executionForTest()).resolves.toMatchObject({
+      status: "unknown",
+      failure_code: "easy_pay_direct_customer_vault_mismatch",
+      customer_vault_id: "wrong-vault",
+      gateway_billing_id: "123456",
+      provider_transaction_id: null,
+    });
+    await expect(
+      resumeEasyPayDirectExecution(runtimeEnv, execution!.id, verifiedProvider.fetcher),
+    ).resolves.toBe("deferred");
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "wrong-vault-again",
+        verifiedProvider.fetcher,
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(verifiedProvider.operations).toEqual(["read_customer"]);
+  });
+
+  it("stops a definitive attachment rejection and hides the provider's vault identifiers", async () => {
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture({ rejectAttach: true });
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "attach-rejected",
+        provider.fetcher,
+      ),
+    ).rejects.toMatchObject({
+      code: "easy_pay_direct_payment_method_rejected",
+      message: expect.not.stringContaining("private-vault"),
+    });
+    expect(provider.operations).toEqual(["lookup", "read_customer", "add_billing", "attach"]);
+    const execution = await executionForTest();
+    expect(execution).toMatchObject({
+      status: "unknown",
+      failure_code: "easy_pay_direct_payment_method_rejected",
+      provider_transaction_id: null,
+    });
+    await expect(
+      resumeEasyPayDirectExecution(runtimeEnv, execution!.id, provider.fetcher),
+    ).resolves.toBe("deferred");
+    expect(provider.operations).toEqual(["lookup", "read_customer", "add_billing", "attach"]);
+  });
+
+  it("stops before attachment when newly created Commerce customer is not linked to the requested vault", async () => {
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture({ existing: false, ignoreRequestedBinding: true });
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "create-binding-mismatch",
+        provider.fetcher,
+      ),
+    ).rejects.toMatchObject({ code: "easy_pay_direct_customer_vault_mismatch" });
+    expect(provider.operations).toEqual([
+      "lookup",
+      "add_customer",
+      "create_customer",
+      "read_customer",
+    ]);
+  });
+
   it("rejects a product checkout before provider or database work when terms are not accepted", async () => {
     const providerFetch = vi.fn<typeof fetch>();
     await expect(
@@ -521,11 +712,12 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       .bind(paymentRequestId)
       .first<{ payment_url: string }>();
     const checkoutToken = new URL(checkout!.payment_url).searchParams.get("checkout")!;
-    const providerFetch = vi.fn<typeof fetch>(
-      async () =>
-        new Response(
-          "response=3&responsetext=Service+Unavailable&response_code=300&transactionid=0&refid=ref-123",
-        ),
+    const providerFetch = vi.fn<typeof fetch>(async (input) =>
+      String(input).includes("/customers?")
+        ? Response.json({ data: [] })
+        : new Response(
+            "response=3&responsetext=Service+Unavailable&response_code=300&transactionid=0&refid=ref-123",
+          ),
     );
 
     await expect(
@@ -545,7 +737,7 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
         providerFetch,
       ),
     ).rejects.toMatchObject({ status: 422, code: "300" });
-    expect(providerFetch).toHaveBeenCalledOnce();
+    expect(providerFetch).toHaveBeenCalledTimes(2);
     await expect(
       env.BILLING_DB.prepare(
         `SELECT status, provider_transaction_id, provider_response_code, failure_code,
@@ -584,6 +776,12 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       .first<{ payment_url: string }>();
     const providerFetch = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input);
+      if (url.endsWith("/customers/returning-customer"))
+        return Response.json({
+          id: "returning-customer",
+          email: "synthetic@example.com",
+          epd_gateway_customer_vault_id: "returning-vault",
+        });
       if (url.includes("/api/transact.php")) {
         const body = new URLSearchParams(String(init?.body));
         expect(body.get("payment_token")).toBe("new-card-token");
@@ -705,19 +903,26 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
           "response=1&responsetext=Approved&response_code=100&customer_vault_id=vault-live-recovery&billing_id=12345678901234567890123456789012",
         );
       }
+      if (url.includes("/customers?")) return Response.json({ data: [] });
       if (!commerceAvailable) {
         return Response.json(
           { error: { code: "commerce_unavailable", message: "Try again" } },
           { status: 503 },
         );
       }
-      if (url.includes("/customers?")) return Response.json({ data: [] });
       if (url.endsWith("/customers")) {
         return Response.json(
           { id: "epd-customer-recovered", default_payment_method: "epd-pm-recovered" },
           { status: 201 },
         );
       }
+      if (url.endsWith("/customers/epd-customer-recovered"))
+        return Response.json({
+          id: "epd-customer-recovered",
+          email: "synthetic@example.com",
+          epd_gateway_customer_vault_id: "vault-live-recovery",
+        });
+      if (url.endsWith("/payment_methods")) return Response.json({ id: "epd-pm-recovered" });
       if (url.endsWith("/products")) {
         return Response.json(
           { id: "epd-product-recovered", pricing: { amount: 1999, currency: "usd" } },
@@ -835,17 +1040,23 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
         );
       }
       if (url.includes("/customers?")) {
+        return Response.json({ data: [] });
+      }
+      if (url.endsWith("/customers")) {
         if (gatewayCalls === 1) {
           return Response.json(
             { error: { code: "commerce_unavailable", message: "Try again" } },
             { status: 503 },
           );
         }
-        return Response.json({ data: [] });
-      }
-      if (url.endsWith("/customers")) {
         return Response.json({ id: "epd-customer-legacy-recovery" }, { status: 201 });
       }
+      if (url.endsWith("/customers/epd-customer-legacy-recovery"))
+        return Response.json({
+          id: "epd-customer-legacy-recovery",
+          email: "synthetic@example.com",
+          epd_gateway_customer_vault_id: "vault-legacy",
+        });
       if (url.includes("/payment_methods")) {
         paymentMethodCalls += 1;
         const body = JSON.parse(String(init?.body)) as { billing_id?: string };
@@ -1286,6 +1497,126 @@ function checkoutParams() {
     idempotencyKey: id,
     correlationId: id,
   };
+}
+
+async function productionSubmission() {
+  const runtimeEnv = enabledEnv("production");
+  await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+  const checkout = await env.BILLING_DB.prepare(
+    "SELECT payment_url FROM payment_request_checkout_intents WHERE payment_request_id = ?",
+  )
+    .bind(paymentRequestId)
+    .first<{ payment_url: string }>();
+  return {
+    runtimeEnv,
+    request: () =>
+      new Request("https://lago.test/easy_pay_direct/payment_form", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          checkout: new URL(checkout!.payment_url).searchParams.get("checkout"),
+          payment_token: "fictional-hosted-token",
+          phone: "+15555550123",
+          terms_accepted: true,
+        }),
+      }),
+  };
+}
+
+function executionForTest() {
+  return env.BILLING_DB.prepare(`SELECT id, status, failure_code, customer_vault_id, gateway_billing_id, provider_transaction_id
+    FROM easy_pay_direct_payment_executions WHERE payment_request_id = ?`)
+    .bind(paymentRequestId)
+    .first<{ id: string; status: string; failure_code: string | null }>();
+}
+
+// Stateful contract fixture, NOT provider-backed acceptance. Billing IDs belong
+// to one specific Gateway vault; a Commerce customer cannot see another vault.
+function commerceVaultFixture(
+  options: {
+    existing?: boolean;
+    exposeBinding?: boolean;
+    rejectAttach?: boolean;
+    ignoreRequestedBinding?: boolean;
+  } = {},
+) {
+  let exists = options.existing ?? true;
+  let linkedVault = "fixture-existing-vault";
+  const billings = new Map<string, Set<string>>();
+  const operations: string[] = [];
+  const savedVaults: string[] = [];
+  const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+    const url = String(input);
+    if (url.includes("/customers?")) {
+      operations.push("lookup");
+      return Response.json({
+        data: exists ? [{ id: "fixture-customer", email: "synthetic@example.com" }] : [],
+      });
+    }
+    if (url.endsWith("/customers/fixture-customer")) {
+      operations.push("read_customer");
+      expect(init?.method).toBe("GET");
+      return Response.json({
+        id: "fixture-customer",
+        email: "synthetic@example.com",
+        ...(options.exposeBinding === false ? {} : { epd_gateway_customer_vault_id: linkedVault }),
+      });
+    }
+    if (url.includes("/api/transact.php")) {
+      const body = new URLSearchParams(String(init?.body));
+      operations.push(body.get("customer_vault")!);
+      const vault = body.get("customer_vault_id") ?? "fixture-new-vault";
+      const billing = body.get("billing_id")!;
+      expect(body.get("payment_token")).toBe("fictional-hosted-token");
+      expect(body.has("type")).toBe(false); // Vault only, never charge.
+      billings.set(vault, new Set([billing]));
+      savedVaults.push(vault);
+      return new Response(`response=1&customer_vault_id=${vault}&billing_id=${billing}`);
+    }
+    if (url.endsWith("/customers")) {
+      operations.push("create_customer");
+      expect(exists).toBe(false);
+      exists = true;
+      if (!options.ignoreRequestedBinding)
+        linkedVault = JSON.parse(String(init?.body)).epd_gateway_customer_vault_id;
+      return Response.json({
+        id: "fixture-customer",
+        default_payment_method: "not-the-submitted-card",
+      });
+    }
+    if (url.endsWith("/payment_methods")) {
+      operations.push("attach");
+      expect(url.endsWith("/customers/fixture-customer/payment_methods")).toBe(true);
+      const billing = JSON.parse(String(init?.body)).billing_id;
+      if (!billings.get(linkedVault)?.has(billing) || options.rejectAttach)
+        return Response.json(
+          {
+            error: {
+              code: "validation_error",
+              message: "Billing ID private-vault-reference not found",
+            },
+          },
+          { status: 400 },
+        );
+      return Response.json({ id: "fixture-new-method", customer: "fixture-customer" });
+    }
+    if (url.endsWith("/products")) {
+      operations.push("product");
+      return Response.json({ id: "fixture-product", pricing: { amount: 1999, currency: "usd" } });
+    }
+    if (url.endsWith("/orders")) {
+      operations.push("order");
+      expect(JSON.parse(String(init?.body)).payment_method_id).toBe("fixture-new-method");
+      return Response.json({
+        id: `fixture-order-${paymentRequestId}`,
+        status: "pending",
+        total: 1999,
+        currency: "usd",
+      });
+    }
+    throw new Error(`Unexpected fixture endpoint: ${url}`);
+  });
+  return { fetcher, operations, savedVaults };
 }
 
 function enabledEnv(mode: "test" | "gateway_test" | "production" = "test"): Env {
