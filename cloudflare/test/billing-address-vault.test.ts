@@ -19,8 +19,9 @@ describe("billing address vault", () => {
 
   it("rejects tampering and the wrong quote or secret", async () => {
     const encrypted = await encryptBillingAddress({ country: "US" }, "test-secret", "quote-1");
+    const tamperedCiphertext = `${encrypted.ciphertext[0] === "A" ? "B" : "A"}${encrypted.ciphertext.slice(1)}`;
     for (const [ciphertext, secret, quote] of [
-      [`${encrypted.ciphertext.slice(0, -1)}A`, "test-secret", "quote-1"],
+      [tamperedCiphertext, "test-secret", "quote-1"],
       [encrypted.ciphertext, "wrong-secret", "quote-1"],
       [encrypted.ciphertext, "test-secret", "quote-2"],
     ] as const) {

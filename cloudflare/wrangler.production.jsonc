@@ -46,7 +46,7 @@
     "STRIPE_NETWORK_MODE": "disabled",
     "STRIPE_WEBHOOKS_ENABLED": "0",
     "STRIPE_LIVEMODE_ALLOWED": "0",
-    "OUTBOUND_WEBHOOKS_ENABLED": "0",
+    "OUTBOUND_WEBHOOKS_ENABLED": "1",
   },
   "d1_databases": [
     {
