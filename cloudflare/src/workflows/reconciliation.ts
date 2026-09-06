@@ -5,7 +5,7 @@ import {
   reconcileEasyPayDirectReceipt,
 } from "../reconciliation/easy-pay-direct";
 import type { DomainEvent } from "../domain-events";
-import { closeBillingPeriod } from "../billing/close-period";
+import { closeBillingPeriod, dueBillingPeriodsForClosing } from "../billing/close-period";
 import { activatePendingSubscriptions } from "../billing/activate-pending-subscriptions";
 import { terminateEndedSubscriptions } from "../billing/terminate-subscription";
 import { enqueueTerminationAlerts } from "../billing/termination-alerts";
@@ -48,6 +48,11 @@ import {
 } from "../billing/progressive-billing";
 import { processDunningCampaigns } from "../schedules/dunning";
 import { dispatchPendingPaymentRequestCheckouts } from "./checkout";
+import {
+  dispatchPendingEasyPayDirectAutomaticCollections,
+  pendingEasyPayDirectAutomaticExecutions,
+  reconcileEasyPayDirectAutomaticCollection,
+} from "../billing/easy-pay-direct-automatic-collection";
 
 type ReconciliationParams = {
   schedule?: {
@@ -323,18 +328,33 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         else deferredEasyPayDirectExecutions += 1;
       }
 
+      const dispatchedEasyPayDirectAutomaticCollections = await step.do(
+        "dispatch Easy Pay Direct automatic collections",
+        { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+        async () => dispatchPendingEasyPayDirectAutomaticCollections(this.env, runId),
+      );
+      const automaticExecutionIds = await step.do(
+        "load pending Easy Pay Direct automatic executions",
+        async () => pendingEasyPayDirectAutomaticExecutions(this.env.BILLING_DB),
+      );
+      let reconciledEasyPayDirectAutomaticExecutions = 0;
+      let deferredEasyPayDirectAutomaticExecutions = 0;
+      for (const executionId of automaticExecutionIds) {
+        const outcome = await step.do(
+          `reconcile Easy Pay Direct automatic execution ${executionId}`,
+          {
+            retries: { limit: 5, delay: "10 seconds", backoff: "exponential" },
+            timeout: "1 minute",
+          },
+          async () => reconcileEasyPayDirectAutomaticCollection(this.env, executionId),
+        );
+        if (outcome === "processed") reconciledEasyPayDirectAutomaticExecutions += 1;
+        else deferredEasyPayDirectAutomaticExecutions += 1;
+      }
+
       const dueBillingPeriods = await step.do("load due billing periods", async () => {
         if (!executors.has("close_billing_periods")) return [];
-        const result = await this.env.BILLING_DB.prepare(
-          `SELECT id, current_period_end FROM subscriptions
-         WHERE status IN ('active', 'past_due') AND current_period_end IS NOT NULL
-           AND current_period_end <= ?
-           AND (ending_at IS NULL OR ending_at > ?)
-         ORDER BY current_period_end, id LIMIT 100`,
-        )
-          .bind(triggeredAtIso, triggeredAtIso)
-          .all<{ id: string; current_period_end: string }>();
-        return [...result.results];
+        return dueBillingPeriodsForClosing(this.env.BILLING_DB, triggeredAtIso);
       });
 
       let closedBillingPeriods = 0;
@@ -514,6 +534,10 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         pendingEasyPayDirectExecutions: easyPayDirectExecutionIds.length,
         reconciledEasyPayDirectExecutions,
         deferredEasyPayDirectExecutions,
+        dispatchedEasyPayDirectAutomaticCollections,
+        pendingEasyPayDirectAutomaticExecutions: automaticExecutionIds.length,
+        reconciledEasyPayDirectAutomaticExecutions,
+        deferredEasyPayDirectAutomaticExecutions,
         dueBillingPeriods: dueBillingPeriods.length,
         closedBillingPeriods,
         expiredCoupons,
@@ -534,7 +558,8 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
       };
       await step.do("complete schedule run", async () => {
         await this.env.BILLING_DB.prepare(
-          `UPDATE schedule_runs SET status = ?, result_json = ?, updated_at = ?, completed_at = ?
+          `UPDATE schedule_runs SET status = ?, result_json = ?, error_code = NULL,
+             updated_at = ?, completed_at = ?
          WHERE id = ?`,
         )
           .bind(

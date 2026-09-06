@@ -40,8 +40,9 @@ beforeEach(async () => {
     env.BILLING_DB.prepare(
       `INSERT INTO plans
        (id, organization_id, code, name, interval, amount_minor, currency, version, active,
-        created_at, updated_at)
-       VALUES (?, ?, ?, 'Easy Pay Direct Tax Plan', 'monthly', 1999, 'USD', 1, 1, ?, ?)`,
+        metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, 'Easy Pay Direct Tax Plan', 'monthly', 1999, 'USD', 1, 1,
+               '{"tax_code":"txcd_10103100"}', ?, ?)`,
     ).bind(planId, organizationId, planId, now, now),
     env.BILLING_DB.prepare(
       `INSERT INTO subscriptions
@@ -86,18 +87,22 @@ beforeEach(async () => {
 });
 
 describe("Easy Pay Direct destination tax checkout", () => {
-  it("selects distinct canonical tax codes by Lago plan interval and fails closed", () => {
-    const runtimeEnv = taxEnv();
-    expect(resolveCheckoutTaxCode("monthly", runtimeEnv)).toBe("txcd_10103100");
-    expect(resolveCheckoutTaxCode("one_time", runtimeEnv)).toBe("txcd_10202000");
-    expect(() => resolveCheckoutTaxCode(null, runtimeEnv)).toThrowError(
-      expect.objectContaining({ code: "checkout_tax_classification_missing" }),
-    );
-    expect(() =>
-      resolveCheckoutTaxCode("one_time", {
-        EASY_PAY_DIRECT_TAX_CODE: "txcd_10103100",
-      }),
-    ).toThrowError(expect.objectContaining({ code: "checkout_tax_code_missing" }));
+  it("requires explicit matching product codes, never inferring from billing cadence", () => {
+    expect(resolveCheckoutTaxCode('["txcd_10103100"]')).toBe("txcd_10103100");
+    expect(resolveCheckoutTaxCode('["txcd_10202000","txcd_10202000"]')).toBe("txcd_10202000");
+    for (const input of [
+      null,
+      "monthly",
+      "one_time",
+      "[]",
+      "[null]",
+      '["txcd_10103100",null]',
+      '["txcd_10103100","txcd_10202000"]',
+    ]) {
+      expect(() => resolveCheckoutTaxCode(input)).toThrowError(
+        expect.objectContaining({ code: "checkout_tax_classification_missing" }),
+      );
+    }
   });
 
   it("reprices atomically and charges only the signed tax-inclusive total", async () => {
@@ -253,8 +258,34 @@ describe("Easy Pay Direct destination tax checkout", () => {
     expect(stripeFetch).not.toHaveBeenCalled();
   });
 
-  it("uses a registered local D1 rule without calling Stripe", async () => {
+  it("rejects an unclassified plan before any tax network request", async () => {
+    await env.BILLING_DB.prepare("UPDATE plans SET metadata_json = '{}' WHERE id = ?")
+      .bind(planId)
+      .run();
     const runtimeEnv = localTaxEnv();
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const intent = await env.BILLING_DB.prepare(
+      "SELECT payment_url FROM payment_request_checkout_intents WHERE payment_request_id = ? AND status = 'succeeded'",
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const network = vi.fn<typeof fetch>();
+    await expect(
+      handleEasyPayDirectTaxQuote(
+        taxQuoteRequest(new URL(intent!.payment_url).searchParams.get("checkout")!),
+        runtimeEnv,
+        "missing-classification",
+        network,
+      ),
+    ).rejects.toMatchObject({ code: "checkout_tax_classification_missing" });
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("uses the explicit local classification for a one-time purchase without calling Stripe", async () => {
+    const runtimeEnv = localTaxEnv();
+    await env.BILLING_DB.prepare("UPDATE plans SET interval = 'one_time' WHERE id = ?")
+      .bind(planId)
+      .run();
     await seedLocalTaxRule(100_000);
     await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
     const original = await env.BILLING_DB.prepare(
@@ -288,7 +319,7 @@ describe("Easy Pay Direct destination tax checkout", () => {
     expect(noTaxNetwork).not.toHaveBeenCalled();
     await expect(
       env.BILLING_DB.prepare(
-        `SELECT provider_code, local_rule_set_id, local_rule_id
+        `SELECT provider_code, local_rule_set_id, local_rule_id, local_collection_mode, tax_code
          FROM easy_pay_direct_checkout_tax_quotes WHERE id = ?`,
       )
         .bind(quoteBody.tax_quote.id)
@@ -297,17 +328,47 @@ describe("Easy Pay Direct destination tax checkout", () => {
       provider_code: "local_d1",
       local_rule_set_id: "local-tax-rules-synthetic",
       local_rule_id: "local-tax-rule-wa-synthetic",
+      local_collection_mode: "collect",
+      tax_code: "txcd_10103100",
     });
+
+    await expect(
+      env.BILLING_DB.prepare(
+        "UPDATE easy_pay_direct_checkout_tax_quotes SET local_collection_mode = 'off' WHERE id = ?",
+      )
+        .bind(quoteBody.tax_quote.id)
+        .run(),
+    ).rejects.toThrow("immutable_checkout_tax_collection_mode");
+    await env.BILLING_DB.prepare(
+      "UPDATE indirect_tax_registration_scopes SET collection_mode = 'off' WHERE organization_id = ?",
+    )
+      .bind(organizationId)
+      .run();
+    const offResponse = await handleEasyPayDirectTaxQuote(
+      taxQuoteRequest(quoteBody.tax_quote.checkout),
+      runtimeEnv,
+      "collection-off",
+      noTaxNetwork,
+    );
+    const offBody = await offResponse.json<{ tax_quote: { id: string; checkout: string } }>();
+    expect(offBody.tax_quote).toMatchObject({
+      subtotal_cents: 1999,
+      tax_cents: 0,
+      total_cents: 1999,
+      collection_mode: "off",
+    });
+    expect(offBody.tax_quote.id).not.toBe(quoteBody.tax_quote.id);
+    expect(noTaxNetwork).not.toHaveBeenCalled();
 
     const gatewayFetch = vi.fn<typeof fetch>(async (_input, init) => {
       const form = new URLSearchParams(String(init?.body));
-      expect(form.get("amount")).toBe("21.99");
+      expect(form.get("amount")).toBe("19.99");
       return new Response(
         "response=1&responsetext=Approved&response_code=100&transactionid=epd-local-tax-test-1&authcode=TEST&customer_vault_id=vault-local-tax-1",
       );
     });
     const paid = await handleEasyPayDirectCheckoutSubmission(
-      paymentRequest(quoteBody.tax_quote.checkout, quoteBody.tax_quote.id),
+      paymentRequest(offBody.tax_quote.checkout, offBody.tax_quote.id),
       runtimeEnv,
       "request-local-tax-payment",
       gatewayFetch,
@@ -316,21 +377,192 @@ describe("Easy Pay Direct destination tax checkout", () => {
     expect(gatewayFetch).toHaveBeenCalledTimes(1);
     await expect(
       env.BILLING_DB.prepare(
-        "SELECT status, committed_at IS NOT NULL AS committed FROM easy_pay_direct_checkout_tax_quotes WHERE id = ?",
+        "SELECT status, local_collection_mode, committed_at IS NOT NULL AS committed FROM easy_pay_direct_checkout_tax_quotes WHERE id = ?",
       )
-        .bind(quoteBody.tax_quote.id)
+        .bind(offBody.tax_quote.id)
         .first(),
-    ).resolves.toEqual({ status: "committed", committed: 1 });
+    ).resolves.toEqual({ status: "committed", local_collection_mode: "off", committed: 1 });
+  });
+
+  it("persists an encrypted Washington address and the exact authority rate snapshot", async () => {
+    const runtimeEnv = localTaxEnv();
+    await seedLocalTaxRule(65_000, "wa_dor_address", `correction-${paymentRequestId}`);
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const original = await env.BILLING_DB.prepare(
+      `SELECT payment_url FROM payment_request_checkout_intents
+       WHERE payment_request_id = ? AND status = 'succeeded'`,
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const authority = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          `<response result="0" loccode="1726" rate="0.102500">
+           <rate staterate="0.065000" localrate="0.037500" period="Q32026"
+                 jurisdiction="SEATTLE" county="KING" />
+           <results location="700 FIFTH AVE" city="SEATTLE" zip="98104" plus4="" />
+         </response>`,
+          { headers: { "content-type": "application/xml" } },
+        ),
+    );
+    const response = await handleEasyPayDirectTaxQuote(
+      taxQuoteRequest(new URL(original!.payment_url).searchParams.get("checkout")!, true),
+      runtimeEnv,
+      "request-washington-tax-quote",
+      authority,
+    );
+    const body = await response.json<{ tax_quote: { id: string; tax_cents: number } }>();
+    expect(body.tax_quote.tax_cents).toBe(205);
+    expect(authority).toHaveBeenCalledTimes(1);
+    const stored = await env.BILLING_DB.prepare(
+      `SELECT local_calculation_method, billing_address_ciphertext, billing_address_iv,
+              billing_address_key_id,
+              rate_location_code, rate_jurisdiction, rate_period, rate_valid_through,
+              state_rate_ppm, local_rate_ppm
+       FROM easy_pay_direct_checkout_tax_quotes WHERE id = ?`,
+    )
+      .bind(body.tax_quote.id)
+      .first<Record<string, unknown>>();
+    expect(stored).toMatchObject({
+      local_calculation_method: "wa_dor_address",
+      billing_address_key_id: "test-v1",
+      rate_location_code: "1726",
+      rate_jurisdiction: "SEATTLE, KING",
+      rate_period: "Q32026",
+      rate_valid_through: "2026-10-01T00:00:00.000Z",
+      state_rate_ppm: 65_000,
+      local_rate_ppm: 37_500,
+    });
+    expect(String(stored!.billing_address_ciphertext)).not.toContain("FIFTH");
+    expect(String(stored!.billing_address_ciphertext)).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(String(stored!.billing_address_iv)).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it("fails before the Washington authority request when address encryption is unavailable", async () => {
+    await seedLocalTaxRule(65_000, "wa_dor_address", `missing-key-${paymentRequestId}`);
+    await runCheckoutWorkflow(localTaxEnv(), checkoutParams(), immediateStep());
+    const original = await env.BILLING_DB.prepare(
+      `SELECT payment_url FROM payment_request_checkout_intents
+       WHERE payment_request_id = ? AND status = 'succeeded'`,
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const token = new URL(original!.payment_url).searchParams.get("checkout")!;
+    const missingSecret = new Proxy(localTaxEnv(), {
+      get(target, property, receiver) {
+        if (property === "INDIRECT_TAX_ADDRESS_ENCRYPTION_SECRET") return undefined;
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    }) as Env;
+    const authority = vi.fn<typeof fetch>();
+    await expect(
+      handleEasyPayDirectTaxQuote(
+        washingtonTaxQuoteRequest(token, {
+          address_line: "700 FIFTH AVE",
+          city: "SEATTLE",
+          postal_code: "98104",
+        }),
+        missingSecret,
+        "request-washington-missing-address-key",
+        authority,
+      ),
+    ).rejects.toMatchObject({
+      status: 503,
+      code: "checkout_tax_address_encryption_unavailable",
+    });
+    expect(authority).not.toHaveBeenCalled();
+  });
+
+  it("requires the customer to review a Washington-standardized address before quoting", async () => {
+    const runtimeEnv = localTaxEnv();
+    await seedLocalTaxRule(65_000, "wa_dor_address");
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const original = await env.BILLING_DB.prepare(
+      `SELECT payment_url FROM payment_request_checkout_intents
+       WHERE payment_request_id = ? AND status = 'succeeded'`,
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const token = new URL(original!.payment_url).searchParams.get("checkout")!;
+    const authority: typeof fetch = async () =>
+      new Response(
+        `<response result="2" loccode="1726" rate="0.102500">
+           <rate staterate="0.065000" localrate="0.037500" period="Q32026"
+                 jurisdiction="SEATTLE" county="KING" />
+           <results location="700 FIFTH AVE" city="SEATTLE" zip="98104" plus4="5058" />
+         </response>`,
+        { headers: { "content-type": "application/xml" } },
+      );
+    await expect(
+      handleEasyPayDirectTaxQuote(
+        washingtonTaxQuoteRequest(token, {
+          address_line: "700 Fifth Avenue",
+          city: "Seattle",
+          postal_code: "98104",
+        }),
+        runtimeEnv,
+        "request-washington-correction",
+        authority,
+      ),
+    ).rejects.toMatchObject({
+      code: "checkout_tax_address_correction_required",
+      details: {
+        normalized_address: {
+          address_line: "700 FIFTH AVE",
+          city: "SEATTLE",
+          state: "WA",
+          postal_code: "98104-5058",
+        },
+      },
+    });
+    const confirmed = await handleEasyPayDirectTaxQuote(
+      washingtonTaxQuoteRequest(token, {
+        address_line: "700 FIFTH AVE",
+        city: "SEATTLE",
+        postal_code: "98104-5058",
+        confirmed: true,
+      }),
+      runtimeEnv,
+      "request-washington-confirmed",
+      authority,
+    );
+    await expect(confirmed.json()).resolves.toMatchObject({
+      tax_quote: { tax_cents: 205, total_cents: 2204 },
+    });
   });
 });
 
-function taxQuoteRequest(checkout: string) {
+function washingtonTaxQuoteRequest(
+  checkout: string,
+  address: {
+    address_line: string;
+    city: string;
+    postal_code: string;
+    confirmed?: boolean;
+  },
+) {
   return new Request("https://lago.test/easy_pay_direct/tax_quote", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       checkout,
-      billing_address: { country: "US", state: "WA", postal_code: "98104" },
+      billing_address: { country: "US", state: "WA", ...address },
+    }),
+  });
+}
+
+function taxQuoteRequest(checkout: string, fullWashingtonAddress = false) {
+  return new Request("https://lago.test/easy_pay_direct/tax_quote", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      checkout,
+      billing_address: {
+        country: "US",
+        state: "WA",
+        postal_code: "98104",
+        ...(fullWashingtonAddress ? { address_line: "700 Fifth Avenue", city: "Seattle" } : {}),
+      },
     }),
   });
 }
@@ -381,6 +613,10 @@ function taxEnv(stripeKey = "rk_test_tax_synthetic"): Env {
       if (property === "EASY_PAY_DIRECT_NETWORK_MODE") return "gateway_test";
       if (property === "EASY_PAY_DIRECT_LIVEMODE_ALLOWED") return "0";
       if (property === "EASY_PAY_DIRECT_TAX_MODE") return "enforced";
+      if (property === "INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID") return "test-v1";
+      if (property === "INDIRECT_TAX_ADDRESS_ENCRYPTION_SECRET") {
+        return "synthetic-address-encryption-secret-32-bytes";
+      }
       if (property === "EASY_PAY_DIRECT_TAX_PROVIDER") return "stripe_test";
       if (property === "EASY_PAY_DIRECT_TAX_CODE") return "txcd_10103100";
       if (property === "EASY_PAY_DIRECT_ONE_TIME_TAX_CODE") return "txcd_10202000";
@@ -401,32 +637,45 @@ function localTaxEnv(): Env {
   }) as Env;
 }
 
-async function seedLocalTaxRule(ratePpm: number) {
+async function seedLocalTaxRule(
+  ratePpm: number,
+  calculationMethod: "static" | "wa_dor_address" = "static",
+  uniqueSuffix?: string,
+) {
   const now = new Date().toISOString();
+  const suffix =
+    uniqueSuffix ?? (calculationMethod === "static" ? "synthetic" : "synthetic-address");
+  const ruleSetId = `local-tax-rules-${suffix}`;
+  const ruleId = `local-tax-rule-wa-${suffix}`;
   await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(
+      "UPDATE indirect_tax_rule_sets SET status = 'retired' WHERE status = 'active'",
+    ),
     env.BILLING_DB.prepare(
       `INSERT INTO indirect_tax_rule_sets
        (id, version, status, source_name, source_url, source_published_at, effective_from,
         effective_to, content_sha256, refreshed_at, created_at, activated_at)
-       VALUES ('local-tax-rules-synthetic', 1, 'active', 'Synthetic tax fixture',
+       VALUES (?, (SELECT COALESCE(MAX(version), 0) + 1 FROM indirect_tax_rule_sets),
+               'active', 'Synthetic tax fixture',
                'https://example.invalid/tax-fixture', ?, '2020-01-01T00:00:00.000Z', NULL,
                ?, ?, ?, ?)`,
-    ).bind(now, "a".repeat(64), now, now, now),
+    ).bind(ruleSetId, now, "a".repeat(64), now, now, now),
     env.BILLING_DB.prepare(
       `INSERT INTO indirect_tax_rules
        (id, rule_set_id, country, region, postal_prefix, product_tax_code, taxability,
-        rate_ppm, priority, source_url, source_reference, effective_from, effective_to, created_at)
-       VALUES ('local-tax-rule-wa-synthetic', 'local-tax-rules-synthetic', 'US', 'WA', NULL,
-               'txcd_10103100', 'taxable', ?, 0, 'https://example.invalid/tax-fixture',
-               'synthetic-only', '2020-01-01T00:00:00.000Z', NULL, ?)`,
-    ).bind(ratePpm, now),
+        rate_ppm, priority, source_url, source_reference, effective_from, effective_to, created_at,
+        calculation_method)
+       VALUES (?, ?, 'US', 'WA', NULL,
+               'txcd_10103100', 'taxable', ?, 0, 'https://webgis.dor.wa.gov/webapi/',
+               'synthetic-only', '2020-01-01T00:00:00.000Z', NULL, ?, ?)`,
+    ).bind(ruleId, ruleSetId, ratePpm, now, calculationMethod),
     env.BILLING_DB.prepare(
       `INSERT INTO indirect_tax_registration_scopes
        (id, organization_id, rule_set_id, country, region, status, registration_reference,
         effective_from, effective_to, created_at, updated_at)
-       VALUES ('local-tax-scope-wa-synthetic', ?, 'local-tax-rules-synthetic', 'US', 'WA',
+       VALUES (?, ?, ?, 'US', 'WA',
                'enabled', 'synthetic-only', '2020-01-01T00:00:00.000Z', NULL, ?, ?)`,
-    ).bind(organizationId, now, now),
+    ).bind(`local-tax-scope-wa-${suffix}`, organizationId, ruleSetId, now, now),
   ]);
 }
 

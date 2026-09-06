@@ -1,0 +1,164 @@
+{
+  "format": "serp-tax-authority-review/v1",
+  "reviewed_on": "2026-09-05",
+  "activation_allowed": false,
+  "sources": [
+    {
+      "country": "US",
+      "authority": "State tax authorities and Streamlined Sales Tax",
+      "urls": [
+        "https://www.streamlinedsalestax.org/Shared-Pages/rate-and-boundary-files/rate-and-boundary-file-updates",
+        "https://sst.streamlinedsalestax.org/otm",
+        "https://cdtfa.ca.gov/formspubs/pub109/nontaxable-sales.htm",
+        "https://www.tax.ny.gov/pubs_and_bulls/tg_bulletins/st/computer_software.htm"
+      ],
+      "rate_ppm": null,
+      "review": "State/local boundaries and software taxability required. California electronic-only downloaded software is generally exempt; New York prewritten software by download or remote access is taxable. No national fallback; no inference that subscription cadence means SaaS. SST is not all-state coverage; future-effective quarterly files must not activate early."
+    },
+    {
+      "country": "AU",
+      "authority": "Australian Taxation Office",
+      "urls": [
+        "https://softwaredevelopers.ato.gov.au/GSTintangibles",
+        "https://www.ato.gov.au/about-ato/research-and-statistics/in-detail/tax-gap/a-h-tax-gaps/goods-and-services-tax-gap/overview"
+      ],
+      "rate_ppm": 100000,
+      "review": "National standard-rate evidence and imported digital-product regime located. Product supply, customer status, effective dates, territory and registration review still required."
+    },
+    {
+      "country": "CA",
+      "authority": "Canada Revenue Agency",
+      "urls": [
+        "https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/gst-hst-businesses/digital-economy-gsthst/charge-collect/cross-border.html"
+      ],
+      "rate_ppm": null,
+      "review": "GST/HST is province-dependent; provincial PST and Quebec QST need separate authority review. Do not use a single Canada rate or assume federal registration covers provincial taxes."
+    },
+    {
+      "country": "NZ",
+      "authority": "New Zealand Inland Revenue",
+      "urls": [
+        "https://www.ird.govt.nz/gst-on-remote-services",
+        "https://www.ird.govt.nz/gst/charging-gst"
+      ],
+      "rate_ppm": 150000,
+      "review": "Remote-service guidance includes apps/software. Customer location evidence and registration are separate gates; legal applicability to these offers not approved."
+    },
+    {
+      "country": "NO",
+      "authority": "Norwegian Tax Administration",
+      "urls": [
+        "https://www.skatteetaten.no/en/rates/vat-rates-for-remotely-deliverable-services-purchased-from-abroad/"
+      ],
+      "rate_ppm": 250000,
+      "review": "Authority explicitly lists software access/downloads and updates at 25%. Norway VAT-area boundaries and registration still need review; not a rule for Svalbard/Jan Mayen."
+    },
+    {
+      "country": "SG",
+      "authority": "Inland Revenue Authority of Singapore",
+      "urls": [
+        "https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/gst-and-digital-economy/overseas-businesses",
+        "https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/charging-gst-(output-tax)/when-to-charge-goods-and-services-tax-(gst)"
+      ],
+      "rate_ppm": 90000,
+      "review": "Current standard rate and overseas-vendor remote-service guidance located. Customer/registration and product applicability remain unapproved."
+    },
+    {
+      "country": "AE",
+      "authority": "United Arab Emirates Federal Tax Authority",
+      "urls": [
+        "https://tax.gov.ae/en/faq.aspx?keyword=Does+VAT+apply+to+all+goods+and+services%3F",
+        "https://tax.gov.ae/DataFolder/Files/Pdf/E-Commerce%20-%20VAT%20Guide%20-%20EN%20-%2009%2008%202020.pdf"
+      ],
+      "rate_ppm": 50000,
+      "review": "Standard rate and electronic-service place-of-use guidance located. Actual product classification, customer location and registration still require review."
+    },
+    {
+      "country": "JP",
+      "authority": "Japan National Tax Agency",
+      "urls": [
+        "https://www.nta.go.jp/english/taxes/consumption_tax/05.htm",
+        "https://www.nta.go.jp/english/taxes/consumption_tax/0024004-028_01.pdf"
+      ],
+      "rate_ppm": null,
+      "review": "B2C electronic-service and 2025 platform-taxation guidance located. Confirm direct-vendor vs designated-platform treatment, applicable rate and effective dates before candidate import."
+    },
+    {
+      "country": "PH",
+      "authority": "Philippines Bureau of Internal Revenue",
+      "urls": [
+        "https://www.bir.gov.ph/vat-on-ds",
+        "https://bir-cdn.bir.gov.ph/BIR/pdf/RR%203-2025.pdf"
+      ],
+      "rate_ppm": 120000,
+      "review": "Digital-service VAT regulations located. B2C collection vs B2B withholding, effective date, registration and product scope require review."
+    },
+    {
+      "country": "BR",
+      "authority": "Brazil Receita Federal",
+      "urls": [
+        "https://www.gov.br/receitafederal/pt-br/acesso-a-informacao/acoes-e-programas/programas-e-atividades/reforma-tributaria-do-consumo/orientacoes-2026"
+      ],
+      "rate_ppm": null,
+      "review": "2026 IBS/CBS transition and compliance-dependent collection treatment make a single old Brazil percentage unsafe. Imported software, existing taxes and supply-specific obligations require specialist/source review."
+    },
+    {
+      "country": "HK",
+      "authority": "Hong Kong Financial Services and the Treasury Bureau",
+      "urls": [
+        "https://www.fstb.gov.hk/en/treasury/general/prevailing-tax-policy.htm"
+      ],
+      "rate_ppm": null,
+      "review": "Authority states no VAT or sales tax. This is a no-tax-regime candidate, not missing data and not a fabricated tax registration. An explicit reviewed non-collection policy is needed; current local engine cannot express that distinction."
+    },
+    {
+      "country": "ZA",
+      "authority": "South African Revenue Service",
+      "urls": [
+        "https://www.sars.gov.za/types-of-tax/value-added-tax/",
+        "https://www.sars.gov.za/wp-content/uploads/Ops/Guides/LAPD-VAT-G16-VAT-FAQs-Supplies-of-electronic-services.pdf"
+      ],
+      "rate_ppm": null,
+      "review": "Foreign electronic-service guidance and current VAT page located. Confirm current rate against withdrawn 2025 rate-change proposals, B2B exceptions and registration before importing."
+    },
+    {
+      "country": "TH",
+      "authority": "Thailand Revenue Department",
+      "urls": [
+        "https://eservice.rd.go.th/",
+        "https://www.rd.go.th/fileadmin/download/eService.pdf",
+        "https://www.rd.go.th/english/6043.html"
+      ],
+      "rate_ppm": null,
+      "review": "Foreign electronic-service regime located. Confirm currently effective reduced rate and expiry/extension dates, customer type and registration; do not hardcode an old reduced rate indefinitely."
+    },
+    {
+      "country": "MY",
+      "authority": "Royal Malaysian Customs Department",
+      "urls": [
+        "https://mystods.customs.gov.my/",
+        "https://mystods.customs.gov.my/storage/app/media/pdf/guide/guide-on-transitional-rules-for-the-change-in-st-rate-to-8-on-digital-service-provided-by-frp.pdf"
+      ],
+      "rate_ppm": 80000,
+      "review": "Digital-service 8% transition guidance located. Confirm effective-date, exemption and product scope under subsequent changes before candidate activation."
+    },
+    {
+      "country": "VN",
+      "authority": "Vietnam General Department of Taxation",
+      "urls": [
+        "https://www.gdt.gov.vn/wps/portal/home/documents/detail?1dmy=&current=true&urile=wcm%3Apath%3AGDT+Content%2Fsa_gdt%2Fcctthc%2Ftthchh%2Fsa_tthc_vanban%2Fsa_tthc_vb_vbqd%2F03d0b378-d75f-428e-9461-e7272b424e25"
+      ],
+      "rate_ppm": null,
+      "review": "Foreign-supplier registration procedure located, not sufficient rate or software-taxability evidence. Software-specific treatment and current law remain unresolved."
+    },
+    {
+      "country": "CN",
+      "authority": "China State Taxation Administration",
+      "urls": [
+        "https://www.chinatax.gov.cn/eng/c101269/c5246628/content.html"
+      ],
+      "rate_ppm": null,
+      "review": "2026 VAT implementing-law announcement located. Cross-border software/intangibles, withholding, rates and detailed implementing rules need review; announcement alone is not rate evidence."
+    }
+  ]
+}

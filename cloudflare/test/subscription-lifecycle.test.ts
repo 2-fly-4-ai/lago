@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
 import { activatePendingSubscriptions } from "../src/billing/activate-pending-subscriptions";
 import {
@@ -63,6 +63,9 @@ beforeEach(async () => {
 });
 
 describe("subscription lifecycle", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
   it("creates and replaces subscription thresholds with plan fallback semantics", async () => {
     const now = "2026-08-15T00:00:00.000Z";
     await env.BILLING_DB.batch([
@@ -157,6 +160,8 @@ describe("subscription lifecycle", () => {
   });
 
   it("updates only the safe name field with an optimistic outbox event", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-20T12:00:00.000Z"));
     const updated = await api("/api/v1/subscriptions/subscription-external", "PUT", {
       subscription: { name: "Renamed subscription" },
     });

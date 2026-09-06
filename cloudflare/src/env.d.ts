@@ -16,6 +16,8 @@ declare namespace Cloudflare {
     EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL?: string;
     EASY_PAY_DIRECT_ACCOUNT_CODE?: string;
     EASY_PAY_DIRECT_ORGANIZATION_ID?: string;
+    EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED?: "0" | "1";
+    EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE?: "scoped" | "all";
     PUBLIC_BASE_URL?: string;
     CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test" | "easy_pay_direct_test";
     WALLET_FUNDING_MODE?: "disabled" | "stripe_test";
@@ -26,6 +28,8 @@ declare namespace Cloudflare {
     EASY_PAY_DIRECT_TAX_CODE?: string;
     EASY_PAY_DIRECT_ONE_TIME_TAX_CODE?: string;
     EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS?: string;
+    INDIRECT_TAX_ADDRESS_ENCRYPTION_SECRET?: string;
+    INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID?: string;
     STRIPE_NETWORK_MODE?: "disabled" | "enabled";
     STRIPE_RESTRICTED_API_KEY?: string;
     STRIPE_WEBHOOKS_ENABLED?: string;
@@ -55,6 +59,8 @@ interface Env {
   EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL?: string;
   EASY_PAY_DIRECT_ACCOUNT_CODE?: string;
   EASY_PAY_DIRECT_ORGANIZATION_ID?: string;
+  EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED?: "0" | "1";
+  EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE?: "scoped" | "all";
   PUBLIC_BASE_URL?: string;
   CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test" | "easy_pay_direct_test";
   WALLET_FUNDING_MODE?: "disabled" | "stripe_test";
@@ -65,6 +71,8 @@ interface Env {
   EASY_PAY_DIRECT_TAX_CODE?: string;
   EASY_PAY_DIRECT_ONE_TIME_TAX_CODE?: string;
   EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS?: string;
+  INDIRECT_TAX_ADDRESS_ENCRYPTION_SECRET?: string;
+  INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID?: string;
   STRIPE_NETWORK_MODE?: "disabled" | "enabled";
   STRIPE_RESTRICTED_API_KEY?: string;
   STRIPE_WEBHOOKS_ENABLED?: string;

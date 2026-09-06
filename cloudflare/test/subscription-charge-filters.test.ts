@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
 import {
   calculateSubscriptionInvoice,
@@ -16,6 +16,8 @@ const originalFilter = {
 };
 
 beforeEach(async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-08-20T12:00:00.000Z"));
   const now = "2026-08-15T00:00:00.000Z";
   await env.BILLING_DB.batch([
     env.BILLING_DB.prepare("DELETE FROM tax_targets WHERE organization_id = 'org-sub-filter'"),
@@ -140,6 +142,10 @@ beforeEach(async () => {
                '2026-09-01T00:00:00.000Z', 1, ?, ?)`,
     ).bind(now, now),
   ]);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("subscription charge-filter overrides", () => {

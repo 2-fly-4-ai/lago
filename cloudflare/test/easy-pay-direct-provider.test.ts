@@ -163,6 +163,44 @@ describe("Easy Pay Direct provider", () => {
     );
   });
 
+  it("collects a complete US billing address before requesting a tax-inclusive total", async () => {
+    const now = Date.parse("2026-08-22T00:00:00.000Z");
+    const checkout = await createEasyPayDirectCheckoutUrl(
+      gatewayTestEnv,
+      { checkoutIntentId: "intent-gateway-tax-address" },
+      now,
+    );
+    const taxEnv = {
+      ...gatewayTestEnv,
+      EASY_PAY_DIRECT_TAX_MODE: "enforced",
+    } satisfies EasyPayDirectEnv;
+    const response = await easyPayDirectPaymentForm(new URL(checkout.paymentUrl), taxEnv, now, {
+      title: "SERP App Plan",
+      description: "One SERP app.",
+      interval: "monthly",
+      amountMinor: 900,
+      subtotalMinor: 900,
+      taxMinor: 0,
+      creditsMinor: 0,
+      currency: "USD",
+      customerEmail: null,
+    });
+    const body = await response.text();
+    expect(response.headers.get("Content-Security-Policy")).toContain("'nonce-epd-address-script'");
+    expect(body).toContain('id="address-line"');
+    expect(body).toContain('id="city"');
+    expect(body).toContain('id="state"');
+    expect(body).toContain('id="postal-code"');
+    expect(body).toContain("address_line:addressLine?.value.trim()||null");
+    expect(body).toContain("confirmed:addressConfirmed");
+    expect(body).toContain("checkout_tax_address_correction_required");
+    expect(body).toContain("normalized_address");
+    expect(body).toContain("Enter your street address and city");
+    expect(body).toContain("document.getElementById('tax-amount').textContent='—'");
+    expect(body).toContain("document.getElementById('total-due').textContent='—'");
+    expect(body).toContain("document.getElementById('headline-total').textContent='—'");
+  });
+
   it("labels one-time product checkouts as purchases instead of subscriptions", async () => {
     const now = Date.parse("2026-08-22T00:00:00.000Z");
     const checkout = await createEasyPayDirectCheckoutUrl(

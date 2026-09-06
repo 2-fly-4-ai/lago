@@ -26,6 +26,10 @@ import { handleDataExportsApi } from "./api/data-exports";
 import { handleExternalTaxApi } from "./api/external-tax";
 import { handleEasyPayDirectCheckoutSubmission } from "./api/easy-pay-direct-checkout";
 import { handleEasyPayDirectTaxQuote } from "./api/easy-pay-direct-tax";
+import {
+  prepareEasyPayDirectAutomaticCollection,
+  processEasyPayDirectAutomaticCollection,
+} from "./billing/easy-pay-direct-automatic-collection";
 
 export { BillingAccount } from "./durable-objects/billing-account";
 export { CheckoutWorkflow } from "./workflows/checkout";
@@ -184,7 +188,12 @@ export default {
         return apiErrorResponse(error, requestId);
       }
       console.error(
-        JSON.stringify({ level: "error", event: "unhandled_request_error", requestId }),
+        JSON.stringify({
+          level: "error",
+          event: "unhandled_request_error",
+          requestId,
+          error_name: error instanceof Error ? error.name : "UnknownError",
+        }),
       );
       return apiErrorResponse(
         new ApiError(500, "internal_error", "An unexpected error occurred"),
@@ -251,6 +260,22 @@ export default {
 
         if (event.type === "easy_pay_direct.webhook.received") {
           const outcome = await reconcileEasyPayDirectReceipt(env, event.aggregateId);
+          if (outcome === "deferred") {
+            message.retry({ delaySeconds: 30 });
+            continue;
+          }
+        }
+
+        if (event.type === "invoice.finalized") {
+          await prepareEasyPayDirectAutomaticCollection(
+            env,
+            event.aggregateId,
+            event.correlationId,
+          );
+        }
+
+        if (event.type === "payment_request.created") {
+          const outcome = await processEasyPayDirectAutomaticCollection(env, event.aggregateId);
           if (outcome === "deferred") {
             message.retry({ delaySeconds: 30 });
             continue;

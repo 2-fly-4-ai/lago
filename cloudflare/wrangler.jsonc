@@ -4,7 +4,8 @@
   "account_id": "cec5f04e1d18bcc65f2be0aefb04f059",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-12",
-  "compatibility_flags": ["nodejs_compat"],
+  // Public webhooks may target another Worker in the same workers.dev zone.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
@@ -25,6 +26,8 @@
     "APP_ENV": "development",
     "PUBLIC_BASE_URL": "https://serp-dev-lago-native.serpcompany.workers.dev",
     "PAYMENT_MUTATIONS_ENABLED": "1",
+    "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED": "1",
+    "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE": "scoped",
     "EASY_PAY_DIRECT_NETWORK_MODE": "gateway_test",
     "EASY_PAY_DIRECT_LIVEMODE_ALLOWED": "0",
     "EASY_PAY_DIRECT_ACCOUNT_CODE": "easy-pay-direct",
@@ -38,13 +41,14 @@
     "EASY_PAY_DIRECT_TAX_CODE": "txcd_10103100",
     "EASY_PAY_DIRECT_ONE_TIME_TAX_CODE": "txcd_10202000",
     "EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS": "45",
+    "INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID": "v1",
     "PROVIDER_READS_ENABLED": "1",
     "STRIPE_NETWORK_MODE": "enabled",
     "STRIPE_WEBHOOKS_ENABLED": "1",
     "STRIPE_LIVEMODE_ALLOWED": "0",
     "STRIPE_ACCOUNT_CODE": "acct_1Rba2Z06JrOmKRCm",
     "STRIPE_ORGANIZATION_ID": "org-synthetic-e2e-20260815-001",
-    "OUTBOUND_WEBHOOKS_ENABLED": "0",
+    "OUTBOUND_WEBHOOKS_ENABLED": "1",
   },
   "d1_databases": [
     {

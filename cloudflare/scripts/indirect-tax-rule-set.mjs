@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const FORMAT = "serp-indirect-tax-rule-set/v1";
+const FORMATS = new Set(["serp-indirect-tax-rule-set/v1", "serp-indirect-tax-rule-set/v2"]);
 const TAX_CODE = /^txcd_\d{8}$/;
 const COUNTRY = /^[A-Z]{2}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -35,7 +35,7 @@ export function validateRuleSetArtifact(value) {
     ],
     "artifact",
   );
-  equal(artifact.format, FORMAT, "artifact.format");
+  if (!FORMATS.has(artifact.format)) fail("artifact.format is unsupported");
   identifier(artifact.id, "artifact.id");
   integer(artifact.version, "artifact.version", 1, Number.MAX_SAFE_INTEGER);
   equal(artifact.status, "draft", "artifact.status");
@@ -76,25 +76,23 @@ export function validateRuleSetArtifact(value) {
   for (const [index, item] of artifact.rules.entries()) {
     const path = `artifact.rules[${index}]`;
     const rule = object(item, path);
-    exactKeys(
-      rule,
-      [
-        "id",
-        "country",
-        "region",
-        "postal_prefix",
-        "product_tax_code",
-        "taxability",
-        "rate_ppm",
-        "priority",
-        "source_component_id",
-        "source_url",
-        "source_reference",
-        "effective_from",
-        "effective_to",
-      ],
-      path,
-    );
+    const ruleKeys = [
+      "id",
+      "country",
+      "region",
+      "postal_prefix",
+      "product_tax_code",
+      "taxability",
+      "rate_ppm",
+      "priority",
+      "source_component_id",
+      "source_url",
+      "source_reference",
+      "effective_from",
+      "effective_to",
+    ];
+    if (artifact.format === "serp-indirect-tax-rule-set/v2") ruleKeys.push("calculation_method");
+    exactKeys(rule, ruleKeys, path);
     identifier(rule.id, `${path}.id`);
     unique(ruleIds, rule.id, `duplicate rule id ${rule.id}`);
     boundedString(rule.country, `${path}.country`, 2, 2);
@@ -111,6 +109,19 @@ export function validateRuleSetArtifact(value) {
       fail(`${path}.rate_ppm must be zero for an exemption`);
     }
     integer(rule.priority, `${path}.priority`, 0, 1000);
+    if (artifact.format === "serp-indirect-tax-rule-set/v2") {
+      if (!new Set(["static", "wa_dor_address"]).has(rule.calculation_method))
+        fail(`${path}.calculation_method is invalid`);
+      if (
+        rule.calculation_method === "wa_dor_address" &&
+        (rule.country !== "US" ||
+          rule.region !== "WA" ||
+          rule.postal_prefix !== null ||
+          rule.taxability !== "taxable" ||
+          rule.rate_ppm !== 65000)
+      )
+        fail(`${path}.wa_dor_address must be a Washington 6.5% state-component rule`);
+    }
     identifier(rule.source_component_id, `${path}.source_component_id`);
     if (!sourceIds.has(rule.source_component_id)) {
       fail(`${path}.source_component_id does not identify an artifact source component`);
@@ -170,8 +181,34 @@ export function contentChecksum(artifact) {
   return createHash("sha256").update(stableJson(payload)).digest("hex");
 }
 
-export function renderDraftSql(artifact, createdAt) {
+// Rule ids are global primary keys in D1, so every immutable rule-set version
+// must receive its own ids even when it carries forward an unchanged match.
+export function assignVersionedRuleIds(rules, version) {
+  integer(version, "version", 1, Number.MAX_SAFE_INTEGER);
+  if (!Array.isArray(rules) || !rules.length) fail("rules must be a non-empty array");
+  return rules.map((rule) => {
+    const match = [
+      rule.country,
+      rule.region ?? "",
+      rule.postal_prefix ?? "",
+      rule.product_tax_code,
+      rule.priority,
+    ];
+    const digest = createHash("sha256").update(JSON.stringify(match)).digest("hex").slice(0, 16);
+    return { ...rule, id: `tax-rule-v${version}-${digest}` };
+  });
+}
+
+export function renderDraftSql(artifact, createdAt, options = {}) {
   const normalized = validateRuleSetArtifact(artifact);
+  if (
+    normalized.rules.some((rule) => rule.country === "CA" && rule.taxability === "taxable") &&
+    options.includeCanadianComponents !== true
+  ) {
+    fail(
+      "Canadian taxable rules require renderCanadianDraftSql so levy components are not omitted",
+    );
+  }
   isoDateTime(createdAt, "createdAt");
   const statements = [
     "-- Generated from a validated, checksummed candidate artifact.",
@@ -181,7 +218,7 @@ export function renderDraftSql(artifact, createdAt) {
   ];
   for (const rule of normalized.rules) {
     statements.push(
-      `INSERT INTO indirect_tax_rules\n  (id, rule_set_id, country, region, postal_prefix, product_tax_code, taxability,\n   rate_ppm, priority, source_url, source_reference, effective_from, effective_to, created_at)\nVALUES\n  (${sql(rule.id)}, ${sql(normalized.id)}, ${sql(rule.country)}, ${sql(rule.region)},\n   ${sql(rule.postal_prefix)}, ${sql(rule.product_tax_code)}, ${sql(rule.taxability)},\n   ${rule.rate_ppm}, ${rule.priority}, ${sql(rule.source_url)}, ${sql(rule.source_reference)},\n   ${sql(rule.effective_from)}, ${sql(rule.effective_to)}, ${sql(createdAt)});`,
+      `INSERT INTO indirect_tax_rules\n  (id, rule_set_id, country, region, postal_prefix, product_tax_code, taxability,\n   rate_ppm, priority, calculation_method, source_url, source_reference, effective_from, effective_to, created_at)\nVALUES\n  (${sql(rule.id)}, ${sql(normalized.id)}, ${sql(rule.country)}, ${sql(rule.region)},\n   ${sql(rule.postal_prefix)}, ${sql(rule.product_tax_code)}, ${sql(rule.taxability)},\n   ${rule.rate_ppm}, ${rule.priority}, ${sql(rule.calculation_method ?? "static")}, ${sql(rule.source_url)}, ${sql(rule.source_reference)},\n   ${sql(rule.effective_from)}, ${sql(rule.effective_to)}, ${sql(createdAt)});`,
     );
   }
   return `${statements.join("\n\n")}\n`;

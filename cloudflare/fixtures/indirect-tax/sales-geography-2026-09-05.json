@@ -1,0 +1,663 @@
+{
+  "format": "serp-sales-geography-aggregate/v1",
+  "observed_on": "2026-09-05",
+  "source": "serp-prod-safe-store-d1.stripe_webhook_events (existing database only; no Stripe API call)",
+  "history_complete": false,
+  "method": "Successful positive-value live invoice.payment_succeeded events plus paid checkout.session.completed events with mode=payment. Subscription checkout events excluded to avoid first-payment double counting. All 3891 invoice events had parent.subscription_details.subscription. This is retained-event coverage, not proof of complete lifetime sales history. Counts are payment events, not unique customers; refunds are not subtracted.",
+  "countries": [
+    {
+      "country": "US",
+      "paid_events": 1861,
+      "invoice_events": 1756,
+      "one_time_checkouts": 105
+    },
+    {
+      "country": "GB",
+      "paid_events": 268,
+      "invoice_events": 250,
+      "one_time_checkouts": 18
+    },
+    {
+      "country": "AU",
+      "paid_events": 203,
+      "invoice_events": 185,
+      "one_time_checkouts": 18
+    },
+    {
+      "country": "CA",
+      "paid_events": 178,
+      "invoice_events": 168,
+      "one_time_checkouts": 10
+    },
+    {
+      "country": "DE",
+      "paid_events": 140,
+      "invoice_events": 129,
+      "one_time_checkouts": 11
+    },
+    {
+      "country": "UNKNOWN",
+      "paid_events": 99,
+      "invoice_events": 80,
+      "one_time_checkouts": 19
+    },
+    {
+      "country": "FR",
+      "paid_events": 96,
+      "invoice_events": 89,
+      "one_time_checkouts": 7
+    },
+    {
+      "country": "ES",
+      "paid_events": 65,
+      "invoice_events": 62,
+      "one_time_checkouts": 3
+    },
+    {
+      "country": "IN",
+      "paid_events": 63,
+      "invoice_events": 55,
+      "one_time_checkouts": 8
+    },
+    {
+      "country": "KR",
+      "paid_events": 52,
+      "invoice_events": 50,
+      "one_time_checkouts": 2
+    },
+    {
+      "country": "CH",
+      "paid_events": 49,
+      "invoice_events": 46,
+      "one_time_checkouts": 3
+    },
+    {
+      "country": "MX",
+      "paid_events": 49,
+      "invoice_events": 47,
+      "one_time_checkouts": 2
+    },
+    {
+      "country": "NL",
+      "paid_events": 49,
+      "invoice_events": 47,
+      "one_time_checkouts": 2
+    },
+    {
+      "country": "BR",
+      "paid_events": 45,
+      "invoice_events": 34,
+      "one_time_checkouts": 11
+    },
+    {
+      "country": "AE",
+      "paid_events": 37,
+      "invoice_events": 35,
+      "one_time_checkouts": 2
+    },
+    {
+      "country": "BE",
+      "paid_events": 37,
+      "invoice_events": 37,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "SG",
+      "paid_events": 37,
+      "invoice_events": 36,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "PH",
+      "paid_events": 35,
+      "invoice_events": 30,
+      "one_time_checkouts": 5
+    },
+    {
+      "country": "JP",
+      "paid_events": 33,
+      "invoice_events": 28,
+      "one_time_checkouts": 5
+    },
+    {
+      "country": "PL",
+      "paid_events": 33,
+      "invoice_events": 29,
+      "one_time_checkouts": 4
+    },
+    {
+      "country": "AR",
+      "paid_events": 32,
+      "invoice_events": 31,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "CN",
+      "paid_events": 32,
+      "invoice_events": 29,
+      "one_time_checkouts": 3
+    },
+    {
+      "country": "HK",
+      "paid_events": 31,
+      "invoice_events": 27,
+      "one_time_checkouts": 4
+    },
+    {
+      "country": "IT",
+      "paid_events": 29,
+      "invoice_events": 27,
+      "one_time_checkouts": 2
+    },
+    {
+      "country": "TH",
+      "paid_events": 24,
+      "invoice_events": 22,
+      "one_time_checkouts": 2
+    },
+    {
+      "country": "ZA",
+      "paid_events": 24,
+      "invoice_events": 23,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "IE",
+      "paid_events": 23,
+      "invoice_events": 22,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "MY",
+      "paid_events": 22,
+      "invoice_events": 19,
+      "one_time_checkouts": 3
+    },
+    {
+      "country": "VN",
+      "paid_events": 21,
+      "invoice_events": 18,
+      "one_time_checkouts": 3
+    },
+    {
+      "country": "CZ",
+      "paid_events": 20,
+      "invoice_events": 19,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "NO",
+      "paid_events": 20,
+      "invoice_events": 20,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "RO",
+      "paid_events": 20,
+      "invoice_events": 19,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "CO",
+      "paid_events": 18,
+      "invoice_events": 17,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "TR",
+      "paid_events": 18,
+      "invoice_events": 15,
+      "one_time_checkouts": 3
+    },
+    {
+      "country": "FI",
+      "paid_events": 17,
+      "invoice_events": 17,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "NZ",
+      "paid_events": 17,
+      "invoice_events": 15,
+      "one_time_checkouts": 2
+    },
+    {
+      "country": "TW",
+      "paid_events": 17,
+      "invoice_events": 15,
+      "one_time_checkouts": 2
+    },
+    {
+      "country": "ID",
+      "paid_events": 16,
+      "invoice_events": 15,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "IL",
+      "paid_events": 16,
+      "invoice_events": 16,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "CL",
+      "paid_events": 14,
+      "invoice_events": 14,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "GR",
+      "paid_events": 14,
+      "invoice_events": 10,
+      "one_time_checkouts": 4
+    },
+    {
+      "country": "PT",
+      "paid_events": 14,
+      "invoice_events": 14,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "RS",
+      "paid_events": 14,
+      "invoice_events": 13,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "KZ",
+      "paid_events": 13,
+      "invoice_events": 12,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "PE",
+      "paid_events": 13,
+      "invoice_events": 13,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "SE",
+      "paid_events": 13,
+      "invoice_events": 13,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "BG",
+      "paid_events": 12,
+      "invoice_events": 12,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "SA",
+      "paid_events": 12,
+      "invoice_events": 11,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "UA",
+      "paid_events": 12,
+      "invoice_events": 11,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "FJ",
+      "paid_events": 10,
+      "invoice_events": 10,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "PK",
+      "paid_events": 10,
+      "invoice_events": 10,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "CR",
+      "paid_events": 8,
+      "invoice_events": 8,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "MA",
+      "paid_events": 8,
+      "invoice_events": 8,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "MO",
+      "paid_events": 8,
+      "invoice_events": 8,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "DK",
+      "paid_events": 7,
+      "invoice_events": 5,
+      "one_time_checkouts": 2
+    },
+    {
+      "country": "KW",
+      "paid_events": 7,
+      "invoice_events": 7,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "SI",
+      "paid_events": 7,
+      "invoice_events": 7,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "SK",
+      "paid_events": 7,
+      "invoice_events": 6,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "GT",
+      "paid_events": 6,
+      "invoice_events": 5,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "HR",
+      "paid_events": 6,
+      "invoice_events": 6,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "HU",
+      "paid_events": 6,
+      "invoice_events": 5,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "LB",
+      "paid_events": 6,
+      "invoice_events": 6,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "NG",
+      "paid_events": 6,
+      "invoice_events": 5,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "AT",
+      "paid_events": 5,
+      "invoice_events": 5,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "CY",
+      "paid_events": 5,
+      "invoice_events": 5,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "BA",
+      "paid_events": 4,
+      "invoice_events": 4,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "EC",
+      "paid_events": 4,
+      "invoice_events": 4,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "EG",
+      "paid_events": 4,
+      "invoice_events": 3,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "PR",
+      "paid_events": 4,
+      "invoice_events": 4,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "PY",
+      "paid_events": 4,
+      "invoice_events": 3,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "QA",
+      "paid_events": 4,
+      "invoice_events": 4,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "EE",
+      "paid_events": 3,
+      "invoice_events": 3,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "IS",
+      "paid_events": 3,
+      "invoice_events": 3,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "JM",
+      "paid_events": 3,
+      "invoice_events": 3,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "MT",
+      "paid_events": 3,
+      "invoice_events": 3,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "PA",
+      "paid_events": 3,
+      "invoice_events": 3,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "SV",
+      "paid_events": 3,
+      "invoice_events": 3,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "VE",
+      "paid_events": 3,
+      "invoice_events": 3,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "AW",
+      "paid_events": 2,
+      "invoice_events": 2,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "BD",
+      "paid_events": 2,
+      "invoice_events": 2,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "BJ",
+      "paid_events": 2,
+      "invoice_events": 2,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "CD",
+      "paid_events": 2,
+      "invoice_events": 2,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "DO",
+      "paid_events": 2,
+      "invoice_events": 2,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "DZ",
+      "paid_events": 2,
+      "invoice_events": 2,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "GE",
+      "paid_events": 2,
+      "invoice_events": 2,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "KY",
+      "paid_events": 2,
+      "invoice_events": 2,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "LT",
+      "paid_events": 2,
+      "invoice_events": 2,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "MN",
+      "paid_events": 2,
+      "invoice_events": 2,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "UY",
+      "paid_events": 2,
+      "invoice_events": 1,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "AD",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "BF",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "BN",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "ET",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "GA",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "GP",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "KE",
+      "paid_events": 1,
+      "invoice_events": 0,
+      "one_time_checkouts": 1
+    },
+    {
+      "country": "KG",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "LU",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "LV",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "ME",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "MK",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "MM",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "MU",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "RE",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "SL",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "TT",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "TZ",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "UZ",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    },
+    {
+      "country": "VU",
+      "paid_events": 1,
+      "invoice_events": 1,
+      "one_time_checkouts": 0
+    }
+  ]
+}

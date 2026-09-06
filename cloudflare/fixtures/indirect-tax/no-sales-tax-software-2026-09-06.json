@@ -1,0 +1,27 @@
+{
+  "format": "serp-no-sales-tax-software-review/v1",
+  "activation_allowed": false,
+  "markets": [
+    {
+      "country": "HK",
+      "authority": "Hong Kong Financial Services and the Treasury Bureau",
+      "url": "https://www.fstb.gov.hk/en/treasury/general/prevailing-tax-policy.htm",
+      "observed_on": "2026-09-05",
+      "review": "Hong Kong states that it has no value-added or sales tax. This is an explicit software checkout exemption candidate, not a missing-rate fallback and not evidence of merchant registration."
+    },
+    {
+      "country": "QA",
+      "authority": "Qatar General Tax Authority",
+      "url": "https://www.gta.gov.qa/en/investors-guide",
+      "observed_on": "2026-09-06",
+      "review": "Qatar's tax authority states that Qatar has not applied VAT. This is an explicit software checkout exemption candidate, not a missing-rate fallback, and must be reviewed again before activation because the GCC framework could later be implemented."
+    },
+    {
+      "country": "VN",
+      "authority": "Vietnam Government and National Assembly",
+      "url": "https://vanban.chinhphu.vn/?docid=212476&pageid=27160",
+      "observed_on": "2026-09-06",
+      "review": "Article 5(23) of Law 48/2024/QH15, effective 1 July 2025, places software products and software services under the applicable information-technology and digital-industry law outside VAT. This is an explicit software VAT exemption candidate, not a missing-rate fallback, and it does not determine separate corporate-income tax or foreign-supplier filing obligations."
+    }
+  ]
+}

@@ -44,6 +44,8 @@ Lago uses these EPD bindings:
 - `EASY_PAY_DIRECT_LIVEMODE_ALLOWED`
 - `EASY_PAY_DIRECT_ACCOUNT_CODE`
 - `EASY_PAY_DIRECT_ORGANIZATION_ID`
+- `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED`
+- `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE`
 - `EASY_PAY_DIRECT_COMMERCE_API_KEY`
 - `EASY_PAY_DIRECT_SECURITY_KEY`
 - `EASY_PAY_DIRECT_TOKENIZATION_KEY`
@@ -56,36 +58,96 @@ Lago uses these EPD bindings:
 - `EASY_PAY_DIRECT_TAX_CODE`
 - `EASY_PAY_DIRECT_ONE_TIME_TAX_CODE`
 - `EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS` when the local D1 provider is selected
+- `INDIRECT_TAX_ADDRESS_ENCRYPTION_SECRET` for address-resolved jurisdictions; use a dedicated
+  random secret of at least 32 characters, never the checkout-signing secret
+- `INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID` identifying the active address-encryption key
 - `STRIPE_RESTRICTED_API_KEY` for staging Stripe Tax calculations and transaction commits
 
 The Store uses `LAGO_CHECKOUT_ENABLED`, `LAGO_EASY_PAY_DIRECT_PROVIDER_CODE`, and
 `LAGO_EASY_PAY_DIRECT_CHECKOUT_MODE`. Secret values belong only in the approved secret manager and
 Cloudflare Worker secret storage.
 
-The tax path resolves its product code from the Lago plan interval. Weekly, monthly, quarterly, and
-yearly plans use `EASY_PAY_DIRECT_TAX_CODE` (`txcd_10103100`, SaaS electronic download for personal
-use). A `one_time` plan uses `EASY_PAY_DIRECT_ONE_TIME_TAX_CODE` (`txcd_10202000`, downloadable
-software for personal use). A missing or unsupported interval fails closed; the checkout does not
-guess a classification from customer-facing copy or the routed product slug.
+The current local patch resolves the tax product code from explicit, tenant-scoped
+`plans.metadata_json.tax_code`. It does not infer delivery from the billing interval or product
+slug. Missing or mixed classifications fail closed. Monthly downloaded software may use the same
+classification as a one-time download. The old interval-based environment defaults are not a
+substitute for the [reviewed generic-plan metadata](../evidence/generic-plan-tax-classification-2026-09-06.md).
+That metadata must be backfilled before deploying this patch; it has not been applied remotely.
 
 ## Current staging posture
 
 - `EASY_PAY_DIRECT_NETWORK_MODE=gateway_test`
 - `EASY_PAY_DIRECT_LIVEMODE_ALLOWED=0`
 - `EASY_PAY_DIRECT_TAX_MODE=enforced`
-- `EASY_PAY_DIRECT_TAX_PROVIDER=stripe_test`
+- `EASY_PAY_DIRECT_TAX_PROVIDER=local_d1`
 - Hosted card fields use EPD Collect.js; card number, expiry, and CVV do not pass through the Worker.
-- Billing destination is collected before payment. Lago obtains a Stripe Tax test calculation,
-  persists the quote, atomically replaces the invoice/payment-request total, and binds the payment
-  to the replacement signed checkout and address hash.
-- The staging Stripe restricted key needs write permission only for Tax calculations and
-  transactions. A live Stripe key is rejected in the staging tax path.
-- After EPD succeeds, Lago commits the calculation as an off-Stripe Stripe Tax test transaction;
-  transient commit failures remain visible for reconciliation retry.
-- The adult standard-plan staging cohort routes to Lago/EPD. Safe products and adult Plus/Premium
-  controls remain on direct Stripe.
+- Billing destination is collected before payment. Lago calculates from the reviewed, versioned D1
+  rule set, atomically replaces the invoice/payment-request total, and binds the payment to the
+  replacement signed checkout and address hash. No Stripe request is made.
+- Staging routes the 123Movies monthly canary and the existing Pornhub one-time canary to
+  Lago/EPD. Products without an explicit route remain on direct Stripe.
 - The synthetic outcome selector remains available only at `/easy_pay_direct/sandbox_tool`; it is
   not the customer checkout.
+- Staging keeps `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED=1` with scoped rollout after the
+  reviewed recurring proof. Only subscriptions with an enabled scope row can create a new
+  automatic execution. Production remains disabled until its separate rollout approval.
+- `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE=scoped` is the rollout default. In this mode,
+  only subscriptions with an enabled row in `easy_pay_direct_automatic_collection_scopes` may
+  create a new automatic payment execution. Moving to `all` is a separate rollout decision.
+
+## Automatic subscription collection
+
+The first successful recurring checkout stores only provider-safe references: the EPD customer
+vault ID and the original processor transaction ID. Lago then binds that provider profile to the
+recurring subscription. It never stores or reuses a card number, CVV, Collect.js token, or signed
+checkout link.
+
+Historical profiles are not upgraded by inference. Checkouts created before the explicit
+credential-on-file fields and original-transaction capture must complete one fresh
+customer-initiated checkout through the current implementation before the subscription is eligible
+for automatic collection. Obvious fixture vault references are quarantined by migration and
+rejected again at runtime.
+
+When the independent automatic-collection gate is enabled, a finalized renewal invoice creates one
+deterministic payment request and one deterministic execution. Before charging, Lago recalculates
+tax using that subscription's committed checkout destination and software classification with the
+current active D1 rule set. The current local patch explicitly rejects a quote belonging to another
+subscription of the same customer; rollout status is tracked in the active tax plan.
+Missing, stale, ambiguous, or unregistered tax coverage fails closed without contacting EPD.
+
+The local Washington patch uses the Washington Department of Revenue's fixed HTTPS address-rate
+endpoint. It sends street, city, ZIP and ZIP+4 (when present) to that public authority and sends no
+email, product name, card data, Lago ID or EPD ID. If the authority standardizes the address, the
+checkout fills the normalized address and requires the customer to review it and press **Update
+total** again. The exact authority location code, jurisdiction, rate period and state/local rate
+components are stored with the immutable quote. Street and city are stored only as AES-GCM
+ciphertext under the dedicated key above so recurring invoices can resolve the then-current local
+rate. A renewal refuses to proceed if the key ID, ciphertext, address hash, current authority
+response or reviewed 6.5% Washington state-rate baseline does not match.
+
+Rotate address encryption by retaining the prior secret until every recurring subscription whose
+latest committed quote uses the prior key ID has either been re-encrypted through a reviewed
+migration or completed a new customer checkout. Changing the key ID without that process makes
+those renewals fail closed, by design.
+
+The rollout scope is checked when Lago creates the automatic payment execution, including dunning
+executions. Removing or disabling a scope stops new executions for that subscription; executions
+already created remain preserved for idempotent completion or provider-read reconciliation.
+
+The EPD Gateway request uses the Customer Vault and credential-on-file fields required for a
+merchant-initiated recurring charge: `billing_method=recurring`, `initiated_by=merchant`,
+`stored_credential_indicator=used`, and `initial_transaction_id` from the customer-initiated first
+charge. The payment-request ID is the stable gateway order reference.
+
+An approval settles the Lago payment request and invoice. A definitive decline records failure and
+leaves the invoice available to the existing dunning schedule. A timeout or ambiguous provider
+response is never blindly submitted again: the execution becomes `unknown`, and reconciliation
+queries the EPD Gateway by the stable order reference until it finds a definitive result. Dunning
+requests use the same saved profile and execution safeguards.
+
+To stop new renewals immediately, set `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED=0`. Preserve
+all pending and unknown executions for provider-read reconciliation; do not delete or recreate
+them.
 
 ## Production credential checklist
 
@@ -96,18 +158,20 @@ Keep the production Worker disabled while provisioning. Before promotion, verify
 - `EASY_PAY_DIRECT_TOKENIZATION_KEY`
 - `EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY`
 - `EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET`
+- `INDIRECT_TAX_ADDRESS_ENCRYPTION_SECRET` when any address-resolved rule is enabled
 
 Never paste their values into tickets, docs, terminal output, screenshots, or browser snapshots.
 
-Keep `EASY_PAY_DIRECT_TAX_MODE=disabled` in production until the product tax classification,
-recurring-invoice destination reuse/recalculation, refund/reversal handling, and production tax
-registrations have each completed their own acceptance checks.
+Keep `EASY_PAY_DIRECT_TAX_MODE=disabled` and
+`EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED=0` in production until the product tax
+classification, actual production registrations, refund/reversal handling, and the automatic
+renewal acceptance check have each been approved.
 
 The alternative `EASY_PAY_DIRECT_TAX_PROVIDER=local_d1` path uses versioned D1 rule sets and
 explicit organization registration scopes. It performs no Stripe request and commits its quote
 locally after EPD success. Missing scopes/rules, stale data, and conflicting rules fail closed. This
-provider is implemented and covered by synthetic tests but is not enabled in staging or production;
-it needs an approved source dataset and importer first.
+provider is enabled in staging and covered by tests. Production remains disabled until the actual
+registration scopes and reviewed production rule set are approved.
 
 The full staged acceptance record is
 [`adult-standard-plan-epd-staging-canary-2026-08-26.md`](../evidence/adult-standard-plan-epd-staging-canary-2026-08-26.md).

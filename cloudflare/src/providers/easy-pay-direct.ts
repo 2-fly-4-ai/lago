@@ -4,6 +4,7 @@ import { ApiError } from "../http";
 const COMMERCE_API_URL = "https://api.epd.com/v1";
 const COMMERCE_API_VERSION = "2026-02-11";
 const PAYMENT_API_URL = "https://secure.easypaydirectgateway.com/api/transact.php";
+const QUERY_API_URL = "https://secure.easypaydirectgateway.com/api/query.php";
 const COLLECT_JS_URL = "https://secure.easypaydirectgateway.com/token/Collect.js";
 const MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024;
 const CHECKOUT_TTL_SECONDS = 20 * 60;
@@ -90,6 +91,11 @@ export type GatewayTransactionResult = {
   orderId: string | null;
   customerVaultId: string | null;
   rawStatus: string | null;
+};
+
+export type GatewayTransactionQueryResult = GatewayTransactionResult & {
+  amountMinor: number | null;
+  currency: string | null;
 };
 
 export async function createEasyPayDirectCheckoutUrl(
@@ -417,7 +423,7 @@ function renderEasyPayDirectPaymentForm(
     ? `<section class="form-section"><h2>Contact</h2><label class="field-label" for="email">Email</label><input id="email" class="input" type="email"${presentation.customerEmail ? ` value="${escapeHtml(presentation.customerEmail)}" readonly aria-readonly="true"` : ' placeholder="you@example.com" autocomplete="email" required maxlength="254"'}><p class="field-help">${presentation.customerEmail ? "This email is locked to the signed checkout." : "Your receipt and product access will be linked to this email."}</p></section>`
     : "";
   const billingAddress = taxEnabled
-    ? `<section class="form-section"><h2>Billing address</h2><div class="address-grid"><label class="field-label address-wide" for="country">Country or region<select id="country" class="input" autocomplete="country" required><option value="">Select a country</option></select></label><label class="field-label" for="state">State / province<input id="state" class="input" autocomplete="address-level1" maxlength="100" placeholder="If applicable"></label><label class="field-label" for="postal-code">ZIP / postal code<input id="postal-code" class="input" autocomplete="postal-code" maxlength="20" placeholder="If applicable"></label></div><button id="update-total" class="secondary-button" type="button">Update total</button><p class="field-help">Tax is calculated from your billing location before payment.</p></section>`
+    ? `<section class="form-section"><h2>Billing address</h2><div class="address-grid"><label class="field-label address-wide" for="country">Country or region<select id="country" class="input" autocomplete="country" required><option value="">Select a country</option></select></label><div id="address-details" class="address-grid address-wide" hidden><label class="field-label address-wide" for="address-line">Street address<input id="address-line" class="input" autocomplete="address-line1" maxlength="255"></label><label class="field-label" for="city">City<input id="city" class="input" autocomplete="address-level2" maxlength="100"></label></div><label class="field-label" for="state">State / province<input id="state" class="input" autocomplete="address-level1" maxlength="100" placeholder="If applicable"></label><label class="field-label" for="postal-code">ZIP / postal code<input id="postal-code" class="input" autocomplete="postal-code" maxlength="20" placeholder="If applicable"></label></div><button id="update-total" class="secondary-button" type="button">Update total</button><p class="field-help">Tax is calculated from your billing location before payment.</p></section><script nonce="epd-address-script">window.addEventListener('DOMContentLoaded',()=>{const addressLine=document.getElementById('address-line');const city=document.getElementById('city');const addressDetails=document.getElementById('address-details');let addressConfirmed=false;function syncAddressDetails(){const isUS=country?.value==='US';if(addressDetails)addressDetails.hidden=!isUS;for(const field of[addressLine,city]){if(!field)continue;field.required=isUS;if(!isUS)field.value=''}}billingAddress=()=>({country:country?.value||'',state:state?.value.trim()||null,postal_code:postal?.value.trim()||null,address_line:addressLine?.value.trim()||null,city:city?.value.trim()||null,confirmed:addressConfirmed});function addressChanged(){addressConfirmed=false;invalidateTax()}country?.addEventListener('input',()=>{syncAddressDetails();addressChanged()});for(const field of[addressLine,city,state,postal])field?.addEventListener('input',addressChanged);const nativeFetch=window.fetch.bind(window);window.fetch=async(input,init)=>{const response=await nativeFetch(input,init);const url=typeof input==='string'?input:input instanceof URL?input.href:input.url;if(url.endsWith('/easy_pay_direct/tax_quote')&&!response.ok){try{const payload=await response.clone().json();const normalized=payload?.code==='checkout_tax_address_correction_required'?payload?.error_details?.normalized_address:null;if(normalized&&typeof normalized.address_line==='string'&&typeof normalized.city==='string'&&normalized.state==='WA'&&typeof normalized.postal_code==='string'){addressLine.value=normalized.address_line;city.value=normalized.city;state.value=normalized.state;postal.value=normalized.postal_code;addressConfirmed=true}}catch{addressConfirmed=false}}return response};quoteButton?.addEventListener('click',(event)=>{const address=billingAddress();if(address.country==='US'&&(!address.address_line||!address.city)){event.preventDefault();event.stopImmediatePropagation();error.textContent='Enter your street address and city';(address.address_line?city:addressLine)?.focus()}},true);syncAddressDetails()});</script>`
     : "";
   const terms = presentation
     ? `<label class="terms"><input id="terms" type="checkbox" required><span>I agree to SERP's <a href="https://apps.serp.co/legal/terms" target="_blank" rel="noreferrer">Terms of Service</a> and <a href="https://apps.serp.co/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>.</span></label>`
@@ -429,7 +435,7 @@ function renderEasyPayDirectPaymentForm(
     `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Secure payment</title>` +
       `<style nonce="epd-style">:root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1d2433;background:#fff}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#fff}[hidden]{display:none!important}.checkout{display:grid;grid-template-columns:minmax(0,1fr) minmax(500px,1fr);min-height:100vh}.summary-panel{background:#f8f9fb;border-right:1px solid #e5e7eb}.summary-inner{width:min(100%,560px);margin-left:auto;padding:58px 72px 64px}.back-link{display:inline-flex;align-items:center;gap:12px;margin-bottom:64px;color:#667085;text-decoration:none}.brand,.brand-mark{color:#111827}.brand{font-size:15px;font-weight:900;letter-spacing:.14em}.brand-mark{display:block;width:24px;height:24px;object-fit:contain}.summary-kicker{margin:0 0 5px;color:#697386;font-size:18px}.price{display:flex;align-items:center;gap:12px;margin-bottom:68px;color:#161b26}.price>span{font-size:44px;font-weight:650;letter-spacing:-.04em}.price small{color:#697386;font-size:14px;font-weight:650;line-height:1.2}.product-line{display:flex;justify-content:space-between;gap:32px;padding-bottom:25px;border-bottom:1px solid #dfe3e8}.product-line>div{display:grid;gap:5px}.product-line strong{font-size:14px}.product-description,.billing-note{margin:0;color:#697386;font-size:13px;line-height:1.45}.totals{display:grid;gap:20px;padding-top:24px}.total-row{display:flex;justify-content:space-between;gap:24px;color:#2d3441;font-size:14px}.discount{color:#475467}.due{margin-top:4px;padding-top:22px;border-top:1px solid #dfe3e8;font-size:16px}.route-note{display:grid;gap:7px;margin-top:54px;padding:18px;border:1px solid #dfe3e8;border-radius:10px;background:#fff;color:#667085;font-size:12px;line-height:1.5}.route-note strong{color:#344054}.payment-panel{background:#fff}.payment-inner{width:min(100%,610px);padding:76px 72px 48px}.test-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:28px;padding:11px 13px;border:1px solid #f4c66e;border-radius:8px;background:#fff9ed;color:#7a4605;font-size:12px}.test-banner strong{letter-spacing:.06em}.form-section{margin-bottom:34px}.form-section h2,.payment-fields legend{margin:0 0 15px;padding:0;color:#1d2433;font-size:15px;font-weight:750}.field-label,.label-row{display:block;color:#344054;font-size:13px;font-weight:700}.label-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}.field-group>.field-label{margin-bottom:7px}.field-help{margin:7px 0 0;color:#7a8495;font-size:11px}.address-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 12px}.address-wide{grid-column:1/-1}.test-chip{color:#8a4b08;font-size:10px;letter-spacing:.08em}.payment-fields{min-width:0;margin:0 0 22px;padding:0;border:0}.method-card{overflow:hidden;border:1px solid #d7dde5;border-radius:10px}.method-name{display:flex;align-items:center;gap:10px;padding:17px;border-bottom:1px solid #e5e7eb}.method-radio{width:15px;height:15px;border:4px solid #1473e6;border-radius:50%}.provider-note{margin-left:auto;color:#7a8495;font-size:11px}.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px 12px;padding:18px}.field-wide{grid-column:1/-1}.hosted-field,.input{width:100%;height:50px;border:1px solid #cfd7e3;border-radius:7px;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.04);transition:border-color .16s,box-shadow .16s}.hosted-field{overflow:hidden}.hosted-field iframe{display:block!important;width:100%!important;height:50px!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important}.hosted-field:focus-within,.input:focus{border-color:#1473e6;box-shadow:0 0 0 3px rgba(20,115,230,.12);outline:0}.hosted-field.is-invalid{border-color:#d92d20}.input{margin-top:7px;padding:0 14px;color:#172033;font:500 15px inherit}.input[readonly]{background:#f9fafb;color:#475467}.phone-label{display:block;margin-bottom:18px;color:#344054;font-size:13px;font-weight:700}.secondary-button{width:100%;height:44px;margin-top:14px;border:1px solid #cfd7e3;border-radius:7px;background:#fff;color:#344054;font-size:13px;font-weight:750;cursor:pointer}.secondary-button[disabled]{opacity:.55;cursor:wait}.terms{display:flex;align-items:flex-start;gap:10px;margin:10px 0 18px;color:#667085;font-size:12px;line-height:1.5}.terms input{width:18px;height:18px;margin:0;accent-color:#1473e6}.terms a{color:#475467}.error{min-height:21px;margin:8px 0;color:#b42318;font-size:13px}.pay-button{display:flex;align-items:center;justify-content:center;width:100%;height:54px;border:0;border-radius:7px;background:#1473e6;color:#fff;font-size:15px;font-weight:750;cursor:pointer}.pay-button:hover{background:#0e66cf}.pay-button[disabled]{opacity:.5;cursor:wait}.trust-row{margin:16px 0 0;color:#667085;font-size:11px;text-align:center}.footer{display:flex;justify-content:center;gap:18px;margin-top:30px;color:#7a8495;font-size:11px}.footer a{color:inherit;text-decoration:none}.status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:900px){.checkout{grid-template-columns:1fr}.summary-panel{border-right:0;border-bottom:1px solid #e5e7eb}.summary-inner,.payment-inner{width:100%;margin:0;padding:34px 24px}.back-link{margin-bottom:38px}.price{margin-bottom:42px}.payment-inner{max-width:640px;margin:auto}}@media(max-width:520px){.field-grid,.address-grid{grid-template-columns:1fr}.field-wide,.address-wide{grid-column:auto}.provider-note{display:none}.price>span{font-size:36px}}</style>${collectScript}</head>` +
       `<body><main class="checkout">${summary}<section class="payment-panel"><div class="payment-inner">${modeBanner}${contact}${billingAddress}${paymentFields}<label class="phone-label">Phone number<input id="phone" class="input" inputmode="tel" autocomplete="tel" placeholder="+1 415 555 1234" required></label>${terms}<p id="error" class="error" role="alert"></p><span id="payment-status" class="status" role="status">${synthetic ? "Synthetic payment ready" : "Loading secure fields"}</span><button id="pay" class="pay-button" type="button"${synthetic ? "" : " disabled"}>${synthetic ? "Run synthetic QA payment" : isTest ? "Pay with EPD test mode" : livePaymentLabel}</button><p class="trust-row">Card details are securely tokenized by Easy Pay Direct</p><footer class="footer"><a href="https://apps.serp.co/legal/terms" target="_blank" rel="noreferrer">Legal</a><a href="https://apps.serp.co/privacy" target="_blank" rel="noreferrer">Privacy</a><span>Powered by Easy Pay Direct</span></footer></div></section></main>` +
-      `<script nonce="epd-script">let checkout=${JSON.stringify(token)};const returnTo=${JSON.stringify(returnTo)};const taxEnabled=${JSON.stringify(taxEnabled)};const currency=${JSON.stringify(presentation?.currency ?? "USD")};let taxQuoteId=null;let cardReady=${JSON.stringify(synthetic)};let taxReady=!taxEnabled;const button=document.getElementById('pay');const error=document.getElementById('error');const country=document.getElementById('country');const state=document.getElementById('state');const postal=document.getElementById('postal-code');const quoteButton=document.getElementById('update-total');function money(cents){return new Intl.NumberFormat('en-US',{style:'currency',currency}).format(cents/100)}function billingAddress(){return{country:country?.value||'',state:state?.value.trim()||null,postal_code:postal?.value.trim()||null}}function refreshPayState(){button.disabled=!(cardReady&&taxReady)}function invalidateTax(){if(!taxEnabled)return;taxReady=false;taxQuoteId=null;refreshPayState()}if(country){const codes='AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'.split(' ');const names=new Intl.DisplayNames([navigator.language||'en'],{type:'region'});for(const code of codes){const option=document.createElement('option');option.value=code;option.textContent=names.of(code)||code;country.appendChild(option)}for(const field of[country,state,postal])field.addEventListener('input',invalidateTax);quoteButton.addEventListener('click',async()=>{const address=billingAddress();if(!address.country){error.textContent='Select a billing country';country.focus();return}quoteButton.disabled=true;quoteButton.textContent='Updating total…';error.textContent='';try{const response=await fetch('/easy_pay_direct/tax_quote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checkout,billing_address:address})});const payload=await response.json();if(!response.ok)throw new Error(payload?.error?.message||payload?.error||'Tax could not be calculated');const quote=payload.tax_quote;checkout=quote.checkout;taxQuoteId=quote.id;document.getElementById('tax-row').hidden=false;document.getElementById('tax-amount').textContent=money(quote.tax_cents);document.getElementById('total-due').textContent=money(quote.charged_total_cents);document.getElementById('headline-total').textContent=money(quote.charged_total_cents);taxReady=true;refreshPayState();quoteButton.textContent='Total updated'}catch(cause){taxReady=false;refreshPayState();error.textContent=cause instanceof Error?cause.message:'Tax could not be calculated';quoteButton.textContent='Update total'}finally{quoteButton.disabled=false}})}async function submit(paymentToken){const phone=document.getElementById('phone').value.trim();const emailInput=document.getElementById('email');const email=emailInput?emailInput.value.trim():'';const terms=document.getElementById('terms');if(emailInput&&!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)){error.textContent='Enter a valid email address';emailInput.focus();return}if(taxEnabled&&!taxReady){error.textContent='Update the total for your billing address before paying';quoteButton.focus();return}if(!/^\\+[1-9]\\d{7,14}$/.test(phone)){error.textContent='Enter a phone number in international format, for example +14155551234';return}if(terms&&!terms.checked){error.textContent='Accept the Terms of Service and Privacy Policy to continue';terms.focus();return}button.disabled=true;error.textContent='';try{const result=await fetch(${JSON.stringify(submissionPath)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checkout,payment_token:paymentToken,phone,...(emailInput?{email}:{}),...(taxEnabled?{tax_quote_id:taxQuoteId,billing_address:billingAddress()}:{}),terms_accepted:terms?terms.checked:true,...(returnTo?{return_to:returnTo}:{})})});const body=await result.json();if(!result.ok)throw new Error(body?.error?.message||body?.error||'Payment could not be processed');if(body.redirect_url){location.assign(body.redirect_url);return}button.textContent=body.status==='processing'?'Payment submitted':'Payment received'}catch(cause){error.textContent=cause instanceof Error?cause.message:'Payment could not be processed';refreshPayState()}}${submitScript}</script></body></html>`,
+      `<script nonce="epd-script">let checkout=${JSON.stringify(token)};const returnTo=${JSON.stringify(returnTo)};const taxEnabled=${JSON.stringify(taxEnabled)};const currency=${JSON.stringify(presentation?.currency ?? "USD")};let taxQuoteId=null;let cardReady=${JSON.stringify(synthetic)};let taxReady=!taxEnabled;const button=document.getElementById('pay');const error=document.getElementById('error');const country=document.getElementById('country');const state=document.getElementById('state');const postal=document.getElementById('postal-code');const quoteButton=document.getElementById('update-total');function checkoutErrorMessage(payload,fallback){for(const message of[payload?.message,payload?.error?.message,payload?.error]){if(typeof message==='string'&&message.trim())return message}return fallback}function money(cents){return new Intl.NumberFormat('en-US',{style:'currency',currency}).format(cents/100)}function billingAddress(){return{country:country?.value||'',state:state?.value.trim()||null,postal_code:postal?.value.trim()||null}}function refreshPayState(){button.disabled=!(cardReady&&taxReady)}function invalidateTax(){if(!taxEnabled)return;taxReady=false;taxQuoteId=null;document.getElementById('tax-amount').textContent='—';document.getElementById('total-due').textContent='—';document.getElementById('headline-total').textContent='—';refreshPayState()}if(country){const codes='AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'.split(' ');const names=new Intl.DisplayNames([navigator.language||'en'],{type:'region'});for(const code of codes){const option=document.createElement('option');option.value=code;option.textContent=names.of(code)||code;country.appendChild(option)}for(const field of[country,state,postal])field.addEventListener('input',invalidateTax);quoteButton.addEventListener('click',async()=>{const address=billingAddress();if(!address.country){error.textContent='Select a billing country';country.focus();return}quoteButton.disabled=true;quoteButton.textContent='Updating total…';error.textContent='';try{const response=await fetch('/easy_pay_direct/tax_quote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checkout,billing_address:address})});const payload=await response.json();if(!response.ok)throw new Error(checkoutErrorMessage(payload,'Tax could not be calculated'));const quote=payload.tax_quote;checkout=quote.checkout;taxQuoteId=quote.id;document.getElementById('tax-row').hidden=false;document.getElementById('tax-amount').textContent=money(quote.tax_cents);document.getElementById('total-due').textContent=money(quote.charged_total_cents);document.getElementById('headline-total').textContent=money(quote.charged_total_cents);taxReady=true;refreshPayState();quoteButton.textContent='Total updated'}catch(cause){taxReady=false;refreshPayState();error.textContent=cause instanceof Error?cause.message:'Tax could not be calculated';quoteButton.textContent='Update total'}finally{quoteButton.disabled=false}})}async function submit(paymentToken){const phone=document.getElementById('phone').value.trim();const emailInput=document.getElementById('email');const email=emailInput?emailInput.value.trim():'';const terms=document.getElementById('terms');if(emailInput&&!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)){error.textContent='Enter a valid email address';emailInput.focus();return}if(taxEnabled&&!taxReady){error.textContent='Update the total for your billing address before paying';quoteButton.focus();return}if(!/^\\+[1-9]\\d{7,14}$/.test(phone)){error.textContent='Enter a phone number in international format, for example +14155551234';return}if(terms&&!terms.checked){error.textContent='Accept the Terms of Service and Privacy Policy to continue';terms.focus();return}button.disabled=true;error.textContent='';try{const result=await fetch(${JSON.stringify(submissionPath)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checkout,payment_token:paymentToken,phone,...(emailInput?{email}:{}),...(taxEnabled?{tax_quote_id:taxQuoteId,billing_address:billingAddress()}:{}),terms_accepted:terms?terms.checked:true,...(returnTo?{return_to:returnTo}:{})})});const body=await result.json();if(!result.ok)throw new Error(checkoutErrorMessage(body,'Payment could not be processed'));if(body.redirect_url){location.assign(body.redirect_url);return}button.textContent=body.status==='processing'?'Payment submitted':'Payment received'}catch(cause){error.textContent=cause instanceof Error?cause.message:'Payment could not be processed';refreshPayState()}}${submitScript}</script></body></html>`,
     { headers: checkoutHeaders(!synthetic) },
   );
 }
@@ -502,9 +508,131 @@ export async function chargeEasyPayDirectGatewayTestToken(
     customer_vault: "add_customer",
     initiated_by: "customer",
     stored_credential_indicator: "stored",
+    billing_method: "recurring",
     merchant_defined_field_1: `lago_idempotency_key=${input.idempotencyKey}`,
   });
   return gatewayTransactionRequest(body, fetcher);
+}
+
+export async function chargeEasyPayDirectStoredMethod(
+  env: EasyPayDirectEnv,
+  input: {
+    amountMinor: number;
+    currency: string;
+    customerVaultId: string;
+    initialTransactionId: string;
+    orderId: string;
+    orderDescription: string;
+    idempotencyKey: string;
+  },
+  fetcher: typeof fetch = fetch,
+): Promise<GatewayTransactionResult> {
+  if (
+    env.EASY_PAY_DIRECT_NETWORK_MODE !== "gateway_test" &&
+    env.EASY_PAY_DIRECT_NETWORK_MODE !== "production"
+  ) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_automatic_collection_network_forbidden",
+      "Easy Pay Direct automatic collection requires Gateway test or production mode",
+    );
+  }
+  const network = assertEasyPayDirectNetwork(env);
+  validateMoney(input.amountMinor, input.currency);
+  validateIdentifier(input.customerVaultId, "customerVaultId");
+  validateIdentifier(input.initialTransactionId, "initialTransactionId");
+  if (/^(?:vault-test-|synthetic-)/iu.test(input.customerVaultId)) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_unverified_customer_vault",
+      "Easy Pay Direct automatic collection requires a provider-issued customer vault ID",
+    );
+  }
+  validateIdentifier(input.orderId, "orderId");
+  validateIdentifier(input.idempotencyKey, "idempotencyKey");
+  const body = new URLSearchParams({
+    type: "sale",
+    security_key: network.gatewaySecurityKey,
+    customer_vault_id: input.customerVaultId,
+    initial_transaction_id: input.initialTransactionId,
+    amount: (input.amountMinor / 100).toFixed(2),
+    currency: input.currency,
+    orderid: input.orderId.slice(0, 255),
+    order_description: input.orderDescription.slice(0, 255),
+    billing_method: "recurring",
+    initiated_by: "merchant",
+    stored_credential_indicator: "used",
+    dup_seconds: "1200",
+    merchant_defined_field_1: `lago_idempotency_key=${input.idempotencyKey}`,
+    ...(env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test" ? { test_mode: "enabled" } : {}),
+  });
+  return gatewayTransactionRequest(body, fetcher);
+}
+
+export async function findEasyPayDirectGatewayTransactionByOrderId(
+  env: EasyPayDirectEnv,
+  orderId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<GatewayTransactionQueryResult | null> {
+  if (
+    env.EASY_PAY_DIRECT_NETWORK_MODE !== "gateway_test" &&
+    env.EASY_PAY_DIRECT_NETWORK_MODE !== "production"
+  ) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_provider_read_network_forbidden",
+      "Easy Pay Direct provider reads require Gateway test or production mode",
+    );
+  }
+  validateIdentifier(orderId, "orderId");
+  const network = assertEasyPayDirectNetwork(env);
+  let response: Response;
+  try {
+    response = await fetcher(QUERY_API_URL, {
+      method: "POST",
+      headers: {
+        Accept: "application/xml",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        security_key: network.gatewaySecurityKey,
+        order_id: orderId.slice(0, 255),
+        result_limit: "10",
+      }),
+    });
+  } catch {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_provider_read_unavailable",
+      "Easy Pay Direct provider read did not return an outcome",
+    );
+  }
+  const raw = await readBoundedResponse(response, MAX_PROVIDER_RESPONSE_BYTES);
+  if (!response.ok) {
+    throw new ApiError(
+      response.status === 429 ? 429 : 503,
+      response.status === 429
+        ? "easy_pay_direct_rate_limited"
+        : "easy_pay_direct_provider_read_failed",
+      "Easy Pay Direct provider read failed",
+    );
+  }
+  const transactions = Array.from(
+    raw.matchAll(/<transaction(?:\s[^>]*)?>([\s\S]*?)<\/transaction>/giu),
+  )
+    .map((match) => parseGatewayQueryTransaction(match[1] ?? ""))
+    .filter((transaction): transaction is GatewayTransactionQueryResult => transaction !== null)
+    .filter((transaction) => transaction.orderId === orderId);
+  if (transactions.length === 0) return null;
+  const uniqueIds = new Set(transactions.map((transaction) => transaction.id));
+  if (uniqueIds.size !== 1) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_provider_read_ambiguous",
+      "Easy Pay Direct returned multiple transactions for one automatic payment",
+    );
+  }
+  return transactions[0]!;
 }
 
 export async function findEasyPayDirectCustomerByEmail(
@@ -880,6 +1008,63 @@ async function gatewayTransactionRequest(
   };
 }
 
+function parseGatewayQueryTransaction(xml: string): GatewayTransactionQueryResult | null {
+  const id = xmlTag(xml, "transaction_id");
+  const orderId = xmlTag(xml, "order_id");
+  if (!id || !orderId) return null;
+  const condition = xmlTag(xml, "condition")?.toLowerCase() ?? null;
+  const responseCode = lastXmlTag(xml, "response_code");
+  const responseText =
+    lastXmlTag(xml, "response_text") ??
+    lastXmlTag(xml, "processor_response_text") ??
+    condition ??
+    "Unknown provider response";
+  const actionSuccess = lastXmlTag(xml, "success");
+  const status =
+    actionSuccess === "1" || condition === "complete" || condition === "pendingsettlement"
+      ? "succeeded"
+      : actionSuccess === "0" || condition === "failed" || condition === "canceled"
+        ? "failed"
+        : "unknown";
+  const amountText = lastXmlTag(xml, "requested_amount") ?? lastXmlTag(xml, "amount");
+  const amount = amountText ? Number(amountText) : Number.NaN;
+  const amountMinor = Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) : null;
+  return {
+    id,
+    status,
+    responseCode,
+    responseText: responseText.slice(0, 500),
+    authCode: xmlTag(xml, "authorization_code"),
+    orderId,
+    customerVaultId: xmlTag(xml, "customer_vault_id"),
+    rawStatus: condition,
+    amountMinor,
+    currency: xmlTag(xml, "currency")?.toUpperCase() ?? null,
+  };
+}
+
+function xmlTag(xml: string, name: string): string | null {
+  const match = new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${name}>`, "iu").exec(xml);
+  return match?.[1] ? decodeXmlText(match[1]).trim() || null : null;
+}
+
+function lastXmlTag(xml: string, name: string): string | null {
+  const matches = Array.from(
+    xml.matchAll(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${name}>`, "giu")),
+  );
+  const value = matches.at(-1)?.[1];
+  return value ? decodeXmlText(value).trim() || null : null;
+}
+
+function decodeXmlText(value: string): string {
+  return value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
+}
+
 function assertEasyPayDirectNetwork(env: EasyPayDirectEnv): {
   commerceApiKey: string;
   gatewaySecurityKey: string;
@@ -948,8 +1133,8 @@ function checkoutHeaders(usesGateway: boolean): HeadersInit {
   return {
     "Cache-Control": "no-store",
     "Content-Security-Policy": usesGateway
-      ? `default-src 'none'; script-src 'nonce-epd-script' ${gateway} ${applePaySdk}; style-src 'nonce-epd-style' ${applePayInlineStyle} ${gateway}; font-src ${applePaySdk}; frame-src ${gateway}; connect-src 'self' ${gateway}; img-src data: ${gateway} https://apps.serp.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
-      : "default-src 'none'; script-src 'nonce-epd-script'; style-src 'nonce-epd-style'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      ? `default-src 'none'; script-src 'nonce-epd-script' 'nonce-epd-address-script' ${gateway} ${applePaySdk}; style-src 'nonce-epd-style' ${applePayInlineStyle} ${gateway}; font-src ${applePaySdk}; frame-src ${gateway}; connect-src 'self' ${gateway}; img-src data: ${gateway} https://apps.serp.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+      : "default-src 'none'; script-src 'nonce-epd-script' 'nonce-epd-address-script'; style-src 'nonce-epd-style'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     "Content-Type": "text/html; charset=utf-8",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",

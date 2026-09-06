@@ -1,0 +1,135 @@
+{
+  "source_commit": "d01233ffdc9718ee7e89fe6250c6e163d4e41172",
+  "plans": [
+    {
+      "code": "serp-1-app-plan-monthly",
+      "name": "SERP App Plan Monthly",
+      "interval": "monthly",
+      "amount_minor": 900,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-1-app-plan-yearly",
+      "name": "SERP App Plan Yearly",
+      "interval": "yearly",
+      "amount_minor": 7900,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-1-app-plan-one-time",
+      "name": "SERP App Plan One Time",
+      "interval": "one_time",
+      "amount_minor": 900,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-app-plus-plan-monthly",
+      "name": "SERP App Plus Monthly",
+      "interval": "monthly",
+      "amount_minor": 1700,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-app-plus-plan-yearly",
+      "name": "SERP App Plus Yearly",
+      "interval": "yearly",
+      "amount_minor": 14900,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-app-plus-plan-one-time",
+      "name": "SERP App Plus One Time",
+      "interval": "one_time",
+      "amount_minor": 1700,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-1-app-plus-plan-monthly",
+      "name": "SERP App Pro Monthly",
+      "interval": "monthly",
+      "amount_minor": 2700,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-1-app-plus-plan-yearly",
+      "name": "SERP App Pro Yearly",
+      "interval": "yearly",
+      "amount_minor": 23900,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-1-app-plus-plan-one-time",
+      "name": "SERP App Pro One Time",
+      "interval": "one_time",
+      "amount_minor": 2700,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-1-app-premium-plan-monthly",
+      "name": "SERP App Premium Monthly",
+      "interval": "monthly",
+      "amount_minor": 3700,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-1-app-premium-plan-yearly",
+      "name": "SERP App Premium Yearly",
+      "interval": "yearly",
+      "amount_minor": 32900,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-1-app-premium-plan-one-time",
+      "name": "SERP App Premium One Time",
+      "interval": "one_time",
+      "amount_minor": 3700,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-1-app-lifetime-plan-one-time",
+      "name": "SERP App Lifetime One Time",
+      "interval": "one_time",
+      "amount_minor": 9900,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-downloaders-bundle-monthly",
+      "name": "SERP Downloaders Bundle Monthly",
+      "interval": "monthly",
+      "amount_minor": 7900,
+      "currency": "USD",
+      "pay_in_advance": 1
+    },
+    {
+      "code": "serp-downloaders-bundle-yearly",
+      "name": "SERP Downloaders Bundle Yearly",
+      "interval": "yearly",
+      "amount_minor": 87900,
+      "currency": "USD",
+      "pay_in_advance": 1
+    }
+  ],
+  "groups": {
+    "serp-1-app-plan-monthly": 16,
+    "serp-1-app-plan-one-time": 988,
+    "serp-app-plus-plan-monthly": 8,
+    "serp-1-app-plus-plan-monthly": 3,
+    "serp-1-app-premium-plan-monthly": 6,
+    "serp-1-app-lifetime-plan-one-time": 1,
+    "serp-downloaders-bundle-monthly": 1,
+    "serp-app-plus-plan-one-time": 1
+  }
+}

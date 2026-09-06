@@ -215,6 +215,18 @@ describe("store-new Lago checkout compatibility", () => {
 
     const invoiceId = invoiceBody.invoices[0]?.lago_id;
     expect(invoiceId).toBeTruthy();
+    // Store's signed-sale receiver verifies the single invoice, not the list response.
+    const shownInvoice = await SELF.fetch(`https://lago.test/api/v1/invoices/${invoiceId}`, {
+      headers: authorization,
+    });
+    expect(shownInvoice.status).toBe(200);
+    await expect(shownInvoice.json()).resolves.toMatchObject({
+      invoice: {
+        lago_id: invoiceId,
+        lago_subscription_id: firstSubscriptionBody.subscription.lago_id,
+        external_subscription_id: firstSubscriptionBody.subscription.external_id,
+      },
+    });
     const hostedToken = "synthetic-hosted-token";
     const providerFetch = vi.fn<typeof fetch>(async (input, init) => {
       expect(String(input)).toBe("https://apitest.authorize.net/xml/v1/request.api");

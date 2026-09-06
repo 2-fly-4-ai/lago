@@ -2509,6 +2509,11 @@ export async function findInvoice(
                 AS billing_entity_code,
               i.customer_id, c.external_id AS customer_external_id,
               c.email AS customer_email, c.payment_provider, c.payment_provider_code,
+              i.subscription_id,
+              (SELECT external_id FROM subscriptions invoice_subscription
+               WHERE invoice_subscription.id = i.subscription_id
+                 AND invoice_subscription.organization_id = i.organization_id LIMIT 1)
+                AS external_subscription_id,
               i.number, i.status, i.payment_status, i.invoice_type, i.currency, i.subtotal_minor,
               i.tax_minor, i.credits_minor, i.coupons_minor, i.credit_notes_minor, i.prepaid_credit_minor,
               i.total_due_minor,
