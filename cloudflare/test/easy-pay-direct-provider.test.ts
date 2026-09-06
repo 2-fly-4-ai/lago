@@ -47,13 +47,16 @@ describe("Easy Pay Direct provider", () => {
     },
   );
 
-  it("does not turn a malformed customer lookup into permission to create another customer", async () => {
-    await expect(
-      findEasyPayDirectCustomerByEmail(providerEnv, "fixture@example.test", async () =>
-        Response.json({}),
-      ),
-    ).rejects.toMatchObject({ code: "easy_pay_direct_invalid_response" });
-  });
+  it.each([{}, { data: [null] }, { data: [{}] }, { data: [{ id: " " }] }])(
+    "does not turn malformed lookup %j into permission to create another customer",
+    async (body) => {
+      await expect(
+        findEasyPayDirectCustomerByEmail(providerEnv, "fixture@example.test", async () =>
+          Response.json(body),
+        ),
+      ).rejects.toMatchObject({ code: "easy_pay_direct_invalid_response" });
+    },
+  );
 
   it("rejects a customer read that returns a different identity", async () => {
     await expect(

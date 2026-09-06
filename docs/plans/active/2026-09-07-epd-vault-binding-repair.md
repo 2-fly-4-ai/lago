@@ -57,3 +57,25 @@ response contract. A narrowly scoped read-only EPD binding inspection was reques
 details, customer edits, provider payments, replays, secrets, D1 writes, or deployments were made.
 Production remains at the pre-repair version. Do not widen the canary or ask for another real
 purchase based on these local results.
+
+## Follow-up recovery repair
+
+The second review identified safe preflight outages being stranded as unknown and permanent
+setup-review holds occupying the reconciliation batch. Both code paths are repaired:
+
+- A transient read-only lookup failure resets only a fresh execution with no provider checkpoints.
+  It allows a new hosted token while retaining all non-card identity/terms/tax checks and the
+  immutable initial fingerprint. Concurrent retry claims remain exclusive.
+- A lookup failure during recovery preserves the vault and defers without aborting the batch.
+- Setup-review holds without an order are filtered before the oldest-100 limit. A held execution
+  with an existing provider order stays eligible for outcome reconciliation.
+- Malformed customer lookup entries cannot be mistaken for a missing customer.
+
+Thirteen more regressions cover lookup/read 503, 429 and network failures; fresh-token and
+concurrent retry; gateway timeout safety; recovery read outage; 101 held records plus actionable
+records; and malformed provider entries. Focused tests pass 54/54. The final full gate passes
+551/551 Worker tests, formatting, lint, typecheck, generated bindings, Access/UI/tax checks, and
+all seven dev/production dry-run builds. Root harness and diff whitespace checks pass.
+No migration, deployment, provider/customer mutation,
+payment retry, or production configuration change is part of this follow-up. The actual EPD
+vault-link contract remains unverified; read-only account verification has been requested.

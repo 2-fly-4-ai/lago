@@ -663,7 +663,12 @@ export async function findEasyPayDirectCustomerByEmail(
       "Payment setup needs review. Please contact support before trying again.",
     );
   }
-  return result.data[0] ?? null;
+  if (result.data.length === 0) return null;
+  const customer = result.data[0];
+  if (!customer || typeof customer.id !== "string" || !customer.id.trim()) {
+    throw new ApiError(503, "easy_pay_direct_invalid_response", "Customer lookup is unavailable");
+  }
+  return customer;
 }
 
 export async function retrieveEasyPayDirectCustomer(

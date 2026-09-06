@@ -165,6 +165,15 @@ review-required executions from being re-claimed by a browser replay or backgrou
 It preserves the existing evidence and does not change a customer's linked vault. It is not
 deployed and does not establish live checkout readiness.
 
+Read-only customer lookup timeouts, 429s, and service failures now return a fresh, unvaulted
+execution to `pending`. The customer may submit a fresh hosted token on that same checkout;
+email, phone, terms, and tax identity checks remain enforced, and the atomic claim prevents
+overlapping retries. The original token fingerprint remains immutable audit evidence. Only the
+specific read-only failure code permits this exception. Vault timeouts never get this reset.
+Already-vaulted executions retain their checkpoints and defer on a lookup outage without aborting
+the rest of reconciliation. Pre-order setup-review holds are excluded **before** the 100-row
+selection limit; executions with a provider order still undergo outcome reconciliation.
+
 Current public [EPD customer docs](https://docs.api.epd.com/api-reference/customers) and the
 [card-vaulting guide](https://docs.api.epd.com/api-reference/card-vaulting) describe an Elements
 `card_token` flow. They do not promise the legacy `epd_gateway_customer_vault_id` response field.

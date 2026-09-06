@@ -3,6 +3,7 @@ import { reconcileAuthorizeNetReceipt } from "../reconciliation/authorize-net";
 import {
   reconcileEasyPayDirectExecution,
   reconcileEasyPayDirectReceipt,
+  pendingEasyPayDirectExecutions,
 } from "../reconciliation/easy-pay-direct";
 import type { DomainEvent } from "../domain-events";
 import { closeBillingPeriod, dueBillingPeriodsForClosing } from "../billing/close-period";
@@ -303,14 +304,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           ) {
             return [];
           }
-          const result = await this.env.BILLING_DB.prepare(
-            `SELECT id FROM easy_pay_direct_payment_executions
-             WHERE status IN ('processing', 'unknown')
-               AND (provider_transaction_id IS NOT NULL
-                    OR (customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL))
-             ORDER BY created_at ASC LIMIT 100`,
-          ).all<{ id: string }>();
-          return result.results.map((row) => row.id);
+          return pendingEasyPayDirectExecutions(this.env.BILLING_DB);
         },
       );
       let reconciledEasyPayDirectExecutions = 0;

@@ -6,6 +6,7 @@ import { getEasyPayDirectOrder, type CommerceOrder } from "../providers/easy-pay
 import {
   resumeEasyPayDirectExecution,
   bindEasyPayDirectRenewalProfile,
+  EASY_PAY_DIRECT_SETUP_REVIEW_CODES,
 } from "../api/easy-pay-direct-checkout";
 import { commitAppliedCheckoutTaxQuote } from "../api/easy-pay-direct-tax";
 
@@ -34,6 +35,24 @@ type EasyPayDirectExecution = {
   provider_account_code: string;
   provider_transaction_id: string | null;
 };
+
+export async function pendingEasyPayDirectExecutions(database: D1Database): Promise<string[]> {
+  // Review-held, pre-order executions must not occupy the oldest 100 slots
+  // forever. An existing order still needs read-only outcome reconciliation,
+  // even if an older failure code remains on that execution.
+  const result = await database
+    .prepare(
+      `SELECT id FROM easy_pay_direct_payment_executions
+     WHERE status IN ('processing', 'unknown')
+       AND (provider_transaction_id IS NOT NULL
+            OR (customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL
+                AND COALESCE(failure_code, '') NOT IN (${EASY_PAY_DIRECT_SETUP_REVIEW_CODES.map(() => "?").join(", ")})))
+     ORDER BY created_at ASC, id ASC LIMIT 100`,
+    )
+    .bind(...EASY_PAY_DIRECT_SETUP_REVIEW_CODES)
+    .all<{ id: string }>();
+  return result.results.map((row) => row.id);
+}
 
 export async function reconcileEasyPayDirectExecution(
   env: Env,

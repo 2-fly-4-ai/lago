@@ -243,8 +243,19 @@ export async function handleEasyPayDirectCheckoutSubmission(
   const execution = await loadExecution(env.BILLING_DB, checkout.checkout_intent_id);
   if (!execution || execution.id !== executionId)
     throw new ApiError(409, "easy_pay_direct_checkout_conflict", "Checkout was already submitted");
+  const retryableReadOnlyPreflight =
+    execution.status === "pending" &&
+    execution.failure_code === "easy_pay_direct_customer_lookup_retryable" &&
+    !execution.customer_vault_id &&
+    !execution.gateway_billing_id &&
+    !execution.provider_customer_id &&
+    !execution.provider_payment_method_id &&
+    !execution.provider_product_id &&
+    !execution.provider_transaction_id;
   if (
-    (execution.payment_token_sha256 !== paymentTokenHash && !execution.customer_vault_id) ||
+    (execution.payment_token_sha256 !== paymentTokenHash &&
+      !execution.customer_vault_id &&
+      !retryableReadOnlyPreflight) ||
     execution.phone_sha256 !== phoneHash ||
     execution.email_sha256 !== emailHash ||
     execution.tax_quote_id !== (appliedTaxQuote?.quoteId ?? null) ||
@@ -438,6 +449,31 @@ export async function handleEasyPayDirectCheckoutSubmission(
   } catch (error) {
     const current = await loadExecution(env.BILLING_DB, checkout.checkout_intent_id);
     if (current?.status === "processing" && !current.provider_transaction_id) {
+      if (
+        error instanceof ApiError &&
+        error.code === "easy_pay_direct_customer_lookup_retryable" &&
+        execution.status === "pending" &&
+        !current.customer_vault_id &&
+        !current.gateway_billing_id &&
+        !current.provider_customer_id &&
+        !current.provider_payment_method_id &&
+        !current.provider_product_id
+      ) {
+        // Only the read-only preflight failed. No token was consumed on this
+        // attempt. Never reset an uncertain vault/attachment/order operation.
+        await env.BILLING_DB.prepare(
+          `UPDATE easy_pay_direct_payment_executions
+           SET status = 'pending', failure_code = ?, failure_message = ?,
+               completed_at = NULL, updated_at = ?
+           WHERE id = ? AND status = 'processing'
+             AND customer_vault_id IS NULL AND gateway_billing_id IS NULL
+             AND provider_customer_id IS NULL AND provider_payment_method_id IS NULL
+             AND provider_product_id IS NULL AND provider_transaction_id IS NULL`,
+        )
+          .bind(error.code, error.message, new Date().toISOString(), executionId)
+          .run();
+        throw error;
+      }
       const gatewayFailure = gatewayVaultFailureDetails(error);
       if (gatewayFailure?.definitive) {
         await markExecution(
@@ -449,7 +485,11 @@ export async function handleEasyPayDirectCheckoutSubmission(
           error instanceof ApiError ? error.code : "easy_pay_direct_gateway_vault_failed",
           gatewayFailure.providerResponseCode,
         );
-      } else if (error instanceof ApiError && isPaymentSetupReviewCode(error.code)) {
+      } else if (
+        error instanceof ApiError &&
+        (isPaymentSetupReviewCode(error.code) ||
+          error.code === "easy_pay_direct_customer_lookup_retryable")
+      ) {
         await markExecution(
           env.BILLING_DB,
           executionId,
@@ -478,13 +518,15 @@ type EasyPayDirectAdvanceInput = {
   surface: CheckoutSurface;
 };
 
+export const EASY_PAY_DIRECT_SETUP_REVIEW_CODES: readonly string[] = [
+  "easy_pay_direct_customer_vault_mismatch",
+  "easy_pay_direct_customer_vault_unverified",
+  "easy_pay_direct_customer_ambiguous",
+  "easy_pay_direct_payment_method_rejected",
+];
+
 function isPaymentSetupReviewCode(code: string | null): boolean {
-  return (
-    code === "easy_pay_direct_customer_vault_mismatch" ||
-    code === "easy_pay_direct_customer_vault_unverified" ||
-    code === "easy_pay_direct_customer_ambiguous" ||
-    code === "easy_pay_direct_payment_method_rejected"
-  );
+  return code !== null && EASY_PAY_DIRECT_SETUP_REVIEW_CODES.includes(code);
 }
 
 function verifiedCustomerVault(customer: CommerceCustomer, email: string): string {
@@ -524,21 +566,32 @@ async function advanceEasyPayDirectOrder(
   // Collect.js token. An interrupted prior checkout may have created the
   // customer without ever reaching the local reusable-profile checkpoint.
   if (production) {
-    const candidate = providerCustomerId
-      ? { id: providerCustomerId }
-      : await findEasyPayDirectCustomerByEmail(env, customerEmail, fetcher);
-    if (candidate) {
-      const customer = await retrieveEasyPayDirectCustomer(env, candidate.id, fetcher);
-      const linkedVaultId = verifiedCustomerVault(customer, customerEmail);
-      if (customerVaultId && customerVaultId !== linkedVaultId) {
+    try {
+      const candidate = providerCustomerId
+        ? { id: providerCustomerId }
+        : await findEasyPayDirectCustomerByEmail(env, customerEmail, fetcher);
+      if (candidate) {
+        const customer = await retrieveEasyPayDirectCustomer(env, candidate.id, fetcher);
+        const linkedVaultId = verifiedCustomerVault(customer, customerEmail);
+        if (customerVaultId && customerVaultId !== linkedVaultId) {
+          throw new ApiError(
+            409,
+            "easy_pay_direct_customer_vault_mismatch",
+            "Payment setup needs review. Please contact support before trying again.",
+          );
+        }
+        providerCustomerId = customer.id;
+        customerVaultId = linkedVaultId;
+      }
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status === 429 || error.status >= 500) {
         throw new ApiError(
-          409,
-          "easy_pay_direct_customer_vault_mismatch",
-          "Payment setup needs review. Please contact support before trying again.",
+          503,
+          "easy_pay_direct_customer_lookup_retryable",
+          "Payment setup is temporarily unavailable. Please try again shortly.",
         );
       }
-      providerCustomerId = customer.id;
-      customerVaultId = linkedVaultId;
+      throw error;
     }
   }
   // A saved customer profile is not authorization to ignore the card submitted
@@ -744,7 +797,11 @@ export async function resumeEasyPayDirectExecution(
     );
     return "advanced";
   } catch (error) {
-    if (error instanceof ApiError && isPaymentSetupReviewCode(error.code)) {
+    if (
+      error instanceof ApiError &&
+      (isPaymentSetupReviewCode(error.code) ||
+        error.code === "easy_pay_direct_customer_lookup_retryable")
+    ) {
       await markExecution(env.BILLING_DB, executionId, "unknown", null, error.message, error.code);
       return "deferred";
     }

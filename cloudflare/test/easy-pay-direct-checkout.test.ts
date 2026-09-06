@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   handleEasyPayDirectCheckoutSubmission,
   resumeEasyPayDirectExecution,
+  EASY_PAY_DIRECT_SETUP_REVIEW_CODES,
 } from "../src/api/easy-pay-direct-checkout";
 import { sha256Hex } from "../src/auth/api-key";
 import { holdCustomerForClosure } from "../src/api/customer-closure";
@@ -14,6 +15,7 @@ import {
 import {
   reconcileEasyPayDirectExecution,
   reconcileEasyPayDirectReceipt,
+  pendingEasyPayDirectExecutions,
 } from "../src/reconciliation/easy-pay-direct";
 import { runCheckoutWorkflow } from "../src/workflows/checkout";
 import {
@@ -27,7 +29,9 @@ let customerId: string;
 let invoiceId: string;
 let paymentRequestId: string;
 
-beforeEach(async () => {
+beforeEach(seedCheckoutFixture);
+
+async function seedCheckoutFixture() {
   const fixtureId = crypto.randomUUID();
   customerId = `customer-easy-pay-direct-checkout-${fixtureId}`;
   invoiceId = `invoice-easy-pay-direct-checkout-${fixtureId}`;
@@ -72,9 +76,222 @@ beforeEach(async () => {
       now,
     ),
   ]);
-});
+}
 
 describe("Easy Pay Direct Commerce checkout execution", () => {
+  it.each(
+    ["lookup", "read_customer"].flatMap((operation) =>
+      [503, 429, "network"].map((failure) => ({ operation, failure })),
+    ),
+  )(
+    "allows a fresh submission after $operation $failure, without consuming the first token",
+    async ({ operation, failure }) => {
+      const { runtimeEnv, request } = await productionSubmission();
+      const provider = commerceVaultFixture({ expectedToken: "fresh-fictional-hosted-token" });
+      let unavailable = true;
+      const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+        const isRead =
+          operation === "lookup"
+            ? String(input).includes("/customers?")
+            : String(input).endsWith("/customers/fixture-customer");
+        if (unavailable && isRead) {
+          if (failure === "network") throw new TypeError("Network unavailable");
+          return new Response("Temporary outage", { status: Number(failure) });
+        }
+        return provider.fetcher(input, init);
+      });
+      await expect(
+        handleEasyPayDirectCheckoutSubmission(request(), runtimeEnv, "read-outage", fetcher),
+      ).rejects.toMatchObject({ code: "easy_pay_direct_customer_lookup_retryable" });
+      expect(provider.savedVaults).toEqual([]);
+      const execution = await executionForTest();
+      expect(execution).toMatchObject({
+        status: "pending",
+        customer_vault_id: null,
+        gateway_billing_id: null,
+      });
+      await expect(resumeEasyPayDirectExecution(runtimeEnv, execution!.id, fetcher)).resolves.toBe(
+        "deferred",
+      );
+      unavailable = false;
+      const response = await handleEasyPayDirectCheckoutSubmission(
+        request("fresh-fictional-hosted-token"),
+        runtimeEnv,
+        "read-recovered",
+        fetcher,
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ status: "processing" });
+      expect(provider.operations.filter((item) => item === "add_billing")).toHaveLength(1);
+      expect(provider.operations.filter((item) => item === "order")).toHaveLength(1);
+    },
+  );
+
+  it("keeps a gateway timeout unknown and never makes its consumed token retryable", async () => {
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture();
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes("/api/transact.php")) throw new Error("gateway timeout");
+      return provider.fetcher(input, init);
+    });
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(request(), runtimeEnv, "vault-timeout", fetcher),
+    ).rejects.toThrow();
+    expect(await executionForTest()).toMatchObject({ status: "unknown" });
+    const count = fetcher.mock.calls.length;
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(request(), runtimeEnv, "vault-timeout-retry", fetcher),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(fetcher).toHaveBeenCalledTimes(count);
+  });
+
+  it("allows only one concurrent retry to claim a read-only failure", async () => {
+    const { runtimeEnv, request } = await productionSubmission();
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "seed-read-failure",
+        async () => new Response("Unavailable", { status: 503 }),
+      ),
+    ).rejects.toThrow();
+    const provider = commerceVaultFixture({ expectedToken: "fresh-fictional-hosted-token" });
+    let releaseRead: () => void = () => {};
+    let markEntered: () => void = () => {};
+    const blockedRead = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const enteredRead = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes("/customers?")) {
+        markEntered();
+        await blockedRead;
+      }
+      return provider.fetcher(input, init);
+    });
+    const first = handleEasyPayDirectCheckoutSubmission(
+      request("fresh-fictional-hosted-token"),
+      runtimeEnv,
+      "retry-first",
+      fetcher,
+    );
+    await enteredRead;
+    try {
+      await expect(
+        handleEasyPayDirectCheckoutSubmission(
+          request("fresh-fictional-hosted-token"),
+          runtimeEnv,
+          "retry-overlap",
+          fetcher,
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+    } finally {
+      releaseRead();
+      await first;
+    }
+    expect(provider.operations.filter((item) => item === "add_billing")).toHaveLength(1);
+    expect(provider.operations.filter((item) => item === "order")).toHaveLength(1);
+  });
+
+  it("defers a recovery lookup outage without resetting a vaulted execution or aborting the batch", async () => {
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture();
+    let stage = "attachment-outage";
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      if (
+        (stage === "attachment-outage" && String(input).endsWith("/payment_methods")) ||
+        (stage === "read-outage" && String(input).endsWith("/customers/fixture-customer"))
+      ) {
+        return new Response("Temporary outage", { status: 503 });
+      }
+      return provider.fetcher(input, init);
+    });
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(request(), runtimeEnv, "checkpoint-outage", fetcher),
+    ).rejects.toThrow();
+    const execution = await executionForTest();
+    expect(execution).toMatchObject({
+      status: "unknown",
+      customer_vault_id: "fixture-existing-vault",
+    });
+    stage = "read-outage";
+    await expect(resumeEasyPayDirectExecution(runtimeEnv, execution!.id, fetcher)).resolves.toBe(
+      "deferred",
+    );
+    expect(await executionForTest()).toMatchObject({
+      status: "unknown",
+      failure_code: "easy_pay_direct_customer_lookup_retryable",
+    });
+    stage = "recovered";
+    await expect(resumeEasyPayDirectExecution(runtimeEnv, execution!.id, fetcher)).resolves.toBe(
+      "advanced",
+    );
+    expect(provider.operations.filter((item) => item === "add_billing")).toHaveLength(1);
+    expect(provider.operations.filter((item) => item === "order")).toHaveLength(1);
+  });
+
+  it("selects actionable records beyond 100 held executions and retains existing orders", async () => {
+    let orderedHeldId = "";
+    const fixtureIds: string[] = [];
+    for (let i = 0; i < 101; i += 1) {
+      if (i > 0) await seedCheckoutFixture();
+      const { runtimeEnv, request } = await productionSubmission();
+      const provider = commerceVaultFixture({ exposeBinding: false });
+      await expect(
+        handleEasyPayDirectCheckoutSubmission(
+          request(),
+          runtimeEnv,
+          "hold-fixture",
+          provider.fetcher,
+        ),
+      ).rejects.toThrow();
+      const execution = await executionForTest();
+      fixtureIds.push(execution!.id);
+      await env.BILLING_DB.prepare(
+        `UPDATE easy_pay_direct_payment_executions SET customer_vault_id = 'fixture-vault', gateway_billing_id = '123', failure_code = ? WHERE id = ?`,
+      )
+        .bind(
+          EASY_PAY_DIRECT_SETUP_REVIEW_CODES[i % EASY_PAY_DIRECT_SETUP_REVIEW_CODES.length],
+          execution!.id,
+        )
+        .run();
+      orderedHeldId = execution!.id;
+    }
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_payment_executions SET provider_transaction_id = 'fixture-held-order' WHERE id = ?",
+    )
+      .bind(orderedHeldId)
+      .run();
+    await seedCheckoutFixture();
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture({ rejectAttach: true });
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "actionable-fixture",
+        provider.fetcher,
+      ),
+    ).rejects.toThrow();
+    const actionable = await executionForTest();
+    fixtureIds.push(actionable!.id);
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_payment_executions SET failure_code = NULL WHERE id = ?",
+    )
+      .bind(actionable!.id)
+      .run();
+    expect(await pendingEasyPayDirectExecutions(env.BILLING_DB)).toEqual(
+      expect.arrayContaining([orderedHeldId, actionable!.id]),
+    );
+    expect(
+      (await pendingEasyPayDirectExecutions(env.BILLING_DB)).filter((id) =>
+        fixtureIds.includes(id),
+      ),
+    ).toHaveLength(2);
+  });
+
   it("looks up the existing Commerce vault before saving a card when no local profile exists", async () => {
     const { runtimeEnv, request } = await productionSubmission();
     const provider = commerceVaultFixture();
@@ -1509,13 +1726,13 @@ async function productionSubmission() {
     .first<{ payment_url: string }>();
   return {
     runtimeEnv,
-    request: () =>
+    request: (paymentToken = "fictional-hosted-token") =>
       new Request("https://lago.test/easy_pay_direct/payment_form", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           checkout: new URL(checkout!.payment_url).searchParams.get("checkout"),
-          payment_token: "fictional-hosted-token",
+          payment_token: paymentToken,
           phone: "+15555550123",
           terms_accepted: true,
         }),
@@ -1538,6 +1755,7 @@ function commerceVaultFixture(
     exposeBinding?: boolean;
     rejectAttach?: boolean;
     ignoreRequestedBinding?: boolean;
+    expectedToken?: string;
   } = {},
 ) {
   let exists = options.existing ?? true;
@@ -1567,7 +1785,7 @@ function commerceVaultFixture(
       operations.push(body.get("customer_vault")!);
       const vault = body.get("customer_vault_id") ?? "fixture-new-vault";
       const billing = body.get("billing_id")!;
-      expect(body.get("payment_token")).toBe("fictional-hosted-token");
+      expect(body.get("payment_token")).toBe(options.expectedToken ?? "fictional-hosted-token");
       expect(body.has("type")).toBe(false); // Vault only, never charge.
       billings.set(vault, new Set([billing]));
       savedVaults.push(vault);
