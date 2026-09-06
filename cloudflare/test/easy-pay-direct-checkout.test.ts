@@ -408,7 +408,7 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       const url = String(input);
       if (url.includes("/api/transact.php")) {
         return new Response(
-          "response=1&responsetext=Approved&response_code=100&customer_vault_id=vault-live-recovery&billing_id=billing-live-recovery",
+          "response=1&responsetext=Approved&response_code=100&customer_vault_id=vault-live-recovery&billing_id=12345678901234567890123456789012",
         );
       }
       if (!commerceAvailable) {
@@ -470,7 +470,7 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       status: "unknown",
       last_checkpoint: "gateway_vaulted",
       customer_vault_id: "vault-live-recovery",
-      gateway_billing_id: "billing-live-recovery",
+      gateway_billing_id: "12345678901234567890123456789012",
       provider_transaction_id: null,
       has_recovery_phone: 1,
     });
@@ -504,6 +504,144 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
       provider_payment_method_id: "epd-pm-recovered",
       provider_product_id: "epd-product-recovered",
       provider_transaction_id: "epd-order-recovered",
+      resume_count: 1,
+    });
+  });
+
+  it("replaces a legacy alphanumeric billing checkpoint only after a fresh customer submission", async () => {
+    const runtimeEnv = enabledEnv("production");
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const checkout = await env.BILLING_DB.prepare(
+      `SELECT payment_url FROM payment_request_checkout_intents
+       WHERE payment_request_id = ? AND provider = 'easy_pay_direct'`,
+    )
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const checkoutToken = new URL(checkout!.payment_url).searchParams.get("checkout")!;
+    let gatewayCalls = 0;
+    let paymentMethodCalls = 0;
+    const providerFetch = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/transact.php")) {
+        gatewayCalls += 1;
+        const body = new URLSearchParams(String(init?.body));
+        if (gatewayCalls === 1) {
+          expect(body.get("customer_vault")).toBe("add_customer");
+          expect(body.get("payment_token")).toBe("token-before-commerce-rejection");
+          return new Response(
+            `response=1&responsetext=Approved&response_code=100&customer_vault_id=vault-legacy&billing_id=${body.get("billing_id")}`,
+          );
+        }
+        expect(body.get("customer_vault")).toBe("add_billing");
+        expect(body.get("customer_vault_id")).toBe("vault-legacy");
+        expect(body.get("payment_token")).toBe("fresh-token-for-recovery");
+        expect(body.get("billing_id")).toMatch(/^\d{32}$/u);
+        return new Response(
+          `response=1&responsetext=Approved&response_code=100&customer_vault_id=vault-legacy&billing_id=${body.get("billing_id")}`,
+        );
+      }
+      if (url.includes("/customers?")) {
+        if (gatewayCalls === 1) {
+          return Response.json(
+            { error: { code: "commerce_unavailable", message: "Try again" } },
+            { status: 503 },
+          );
+        }
+        return Response.json({ data: [] });
+      }
+      if (url.endsWith("/customers")) {
+        return Response.json({ id: "epd-customer-legacy-recovery" }, { status: 201 });
+      }
+      if (url.includes("/payment_methods")) {
+        paymentMethodCalls += 1;
+        const body = JSON.parse(String(init?.body)) as { billing_id?: string };
+        expect(body.billing_id).toMatch(/^\d{32}$/u);
+        return Response.json({ id: "epd-pm-legacy-recovery" }, { status: 201 });
+      }
+      if (url.endsWith("/products")) {
+        return Response.json(
+          { id: "epd-product-legacy-recovery", pricing: { amount: 1999, currency: "usd" } },
+          { status: 201 },
+        );
+      }
+      if (url.endsWith("/orders")) {
+        return Response.json(
+          { id: "epd-order-legacy-recovery", status: "pending", total: 1999, currency: "usd" },
+          { status: 201 },
+        );
+      }
+      throw new Error(`Unexpected EPD request: ${url}`);
+    });
+    const submission = (paymentToken: string) =>
+      new Request("https://lago.test/easy_pay_direct/payment_form", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          checkout: checkoutToken,
+          payment_token: paymentToken,
+          phone: "+15555550127",
+          terms_accepted: true,
+        }),
+      });
+
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        submission("token-before-commerce-rejection"),
+        runtimeEnv,
+        "request-epd-legacy-billing-1",
+        providerFetch,
+      ),
+    ).rejects.toMatchObject({ status: 503, code: "commerce_unavailable" });
+    await env.BILLING_DB.prepare(
+      `UPDATE easy_pay_direct_payment_executions
+       SET gateway_billing_id = 'legacy-alphanumeric-id'
+       WHERE payment_request_id = ?`,
+    )
+      .bind(paymentRequestId)
+      .run();
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT status, last_checkpoint, customer_vault_id, gateway_billing_id,
+                provider_customer_id, provider_payment_method_id
+         FROM easy_pay_direct_payment_executions WHERE payment_request_id = ?`,
+      )
+        .bind(paymentRequestId)
+        .first(),
+    ).resolves.toEqual({
+      status: "unknown",
+      last_checkpoint: "gateway_vaulted",
+      customer_vault_id: "vault-legacy",
+      gateway_billing_id: "legacy-alphanumeric-id",
+      provider_customer_id: null,
+      provider_payment_method_id: null,
+    });
+
+    const recovered = await handleEasyPayDirectCheckoutSubmission(
+      submission("fresh-token-for-recovery"),
+      runtimeEnv,
+      "request-epd-legacy-billing-2",
+      providerFetch,
+    );
+    await expect(recovered.json()).resolves.toMatchObject({
+      status: "processing",
+      provider_order_id: "epd-order-legacy-recovery",
+    });
+    expect(gatewayCalls).toBe(2);
+    expect(paymentMethodCalls).toBe(1);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT status, last_checkpoint, gateway_billing_id, provider_payment_method_id,
+                provider_transaction_id, resume_count
+         FROM easy_pay_direct_payment_executions WHERE payment_request_id = ?`,
+      )
+        .bind(paymentRequestId)
+        .first(),
+    ).resolves.toEqual({
+      status: "processing",
+      last_checkpoint: "provider_order",
+      gateway_billing_id: expect.stringMatching(/^\d{32}$/u),
+      provider_payment_method_id: "epd-pm-legacy-recovery",
+      provider_transaction_id: "epd-order-legacy-recovery",
       resume_count: 1,
     });
   });

@@ -475,8 +475,11 @@ async function advanceEasyPayDirectOrder(
   const profile = await loadProfile(env.BILLING_DB, checkout);
   let customerVaultId = execution.customer_vault_id ?? profile?.gateway_customer_vault_id ?? null;
   let gatewayBillingId = execution.gateway_billing_id ?? profile?.gateway_billing_id ?? null;
+  const hasCommerceCompatibleBillingId =
+    env.EASY_PAY_DIRECT_NETWORK_MODE !== "production" ||
+    (gatewayBillingId !== null && /^\d{1,32}$/u.test(gatewayBillingId));
 
-  if (!customerVaultId || !gatewayBillingId) {
+  if (!customerVaultId || !gatewayBillingId || !hasCommerceCompatibleBillingId) {
     if (!input.paymentToken) throw new Error("easy_pay_direct_vault_checkpoint_missing");
     const vault =
       input.surface === "synthetic_qa" || env.EASY_PAY_DIRECT_NETWORK_MODE === "test"
@@ -486,7 +489,7 @@ async function advanceEasyPayDirectOrder(
             {
               paymentToken: input.paymentToken,
               billingId: execution.payment_method_idempotency_key,
-              existingCustomerVaultId: profile?.gateway_customer_vault_id,
+              existingCustomerVaultId: customerVaultId,
             },
             fetcher,
           );

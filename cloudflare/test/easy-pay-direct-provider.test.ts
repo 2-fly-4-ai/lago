@@ -450,7 +450,7 @@ describe("Easy Pay Direct provider", () => {
       expect(body.get("customer_vault")).toBe("add_customer");
       expect(body.get("customer_vault_id")).toBeNull();
       submittedBillingId = body.get("billing_id") ?? "";
-      expect(submittedBillingId).toMatch(/^[a-f0-9]{32}$/u);
+      expect(submittedBillingId).toMatch(/^\d{32}$/u);
       expect(body.get("payment_token")).toBe("token-1");
       return new Response("response=1&responsetext=Approved&customer_vault_id=vault-1");
     });
@@ -476,7 +476,7 @@ describe("Easy Pay Direct provider", () => {
       expect(body.get("customer_vault")).toBe("add_billing");
       expect(body.get("customer_vault_id")).toBe("vault-1");
       submittedBillingId = body.get("billing_id") ?? "";
-      expect(submittedBillingId).toMatch(/^[a-f0-9]{32}$/u);
+      expect(submittedBillingId).toMatch(/^\d{32}$/u);
       expect(body.get("payment_token")).toBe("token-2");
       return new Response(
         `response=1&responsetext=Approved&customer_vault_id=vault-1&billing_id=${submittedBillingId}`,
@@ -493,6 +493,65 @@ describe("Easy Pay Direct provider", () => {
     );
     expect(result).toEqual({ customerVaultId: "vault-1", billingId: submittedBillingId });
     expect(providerFetch).toHaveBeenCalledOnce();
+  });
+
+  it("derives the same numeric live billing id for an idempotent retry", async () => {
+    const liveEnv = {
+      ...providerEnv,
+      EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
+      EASY_PAY_DIRECT_NETWORK_MODE: "production",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+    } satisfies EasyPayDirectEnv;
+    const submittedBillingIds: string[] = [];
+    const providerFetch = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = new URLSearchParams(String(init?.body));
+      submittedBillingIds.push(body.get("billing_id") ?? "");
+      return new Response(
+        `response=1&responsetext=Approved&customer_vault_id=vault-idempotent&billing_id=${body.get("billing_id")}`,
+      );
+    });
+
+    await vaultEasyPayDirectCard(
+      liveEnv,
+      { paymentToken: "token-first", billingId: "stable-payment-method-key" },
+      providerFetch,
+    );
+    await vaultEasyPayDirectCard(
+      liveEnv,
+      { paymentToken: "token-retry", billingId: "stable-payment-method-key" },
+      providerFetch,
+    );
+
+    expect(submittedBillingIds).toHaveLength(2);
+    expect(submittedBillingIds[0]).toMatch(/^\d{32}$/u);
+    expect(submittedBillingIds[1]).toBe(submittedBillingIds[0]);
+  });
+
+  it("rejects a nonnumeric live gateway billing id before calling Commerce", async () => {
+    const liveEnv = {
+      ...providerEnv,
+      EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
+      EASY_PAY_DIRECT_NETWORK_MODE: "production",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+    } satisfies EasyPayDirectEnv;
+    const providerFetch = vi.fn<typeof fetch>();
+
+    await expect(
+      addEasyPayDirectPaymentMethod(
+        liveEnv,
+        {
+          customerId: "customer-live",
+          billingId: "legacy-alphanumeric-id",
+          idempotencyKey: "550e8400-e29b-41d4-a716-446655440004",
+        },
+        providerFetch,
+      ),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "easy_pay_direct_gateway_billing_id_invalid",
+      message: "Payment details need to be entered again. No charge was made.",
+    });
+    expect(providerFetch).not.toHaveBeenCalled();
   });
 
   it("preserves a definitive gateway vault rejection without exposing provider text", async () => {
