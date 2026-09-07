@@ -104,3 +104,33 @@ The root harness and diff whitespace checks also pass. These remain fictional lo
 not provider-backed proof. The final pre-order check is not a distributed lock against a separate
 payment occurring afterward. The live EPD vault-link contract is still an explicit deployment
 blocker. No provider request, payment retry, remote database mutation, or deployment was performed.
+
+## Post-payment and adjacent recovery sweep
+
+The review reproduced premature terminal success before renewal binding, interrupted profile
+writes becoming unrecoverable, and provider reads settling missing or mismatched money evidence.
+The fixes keep the original order recoverable until post-payment work is durable and require the
+same exact money/identity evidence on inline, provider-read, and webhook paths.
+
+The adjacent sweep also covers early webhooks before order checkpoint persistence, local tax
+commit interruptions (including legacy terminal-success tax-only recovery), one-time purchases,
+101 pending orders rotating through the reconciliation limit, and Gateway test profile recovery.
+Gateway test recovery now uses the read-only Gateway query endpoint, verifies transaction and
+money, and never falls through to a Commerce read or a second charge. A missing recurring vault
+keeps finalization pending. Delayed initial checkout recovery preserves a newer saved card.
+
+Fifteen new permanent regressions use fictional local fixtures and injected fetch/DB failures.
+No live customer data or provider calls are involved. The sweep does not prove the live Commerce
+vault-link contract or repair historical production rows. Those remain explicit rollout checks:
+
+- Verify the pinned live customer/vault attachment contract before deployment.
+- Inspect historical successful monthly executions for missing renewal bindings with separately
+  approved read-only access; do not broadly reopen successes or overwrite newer card selections.
+- Verify deployed behavior in the matching provider environment before expanding the canary.
+
+Final verification: 117/117 focused EPD tests and 573/573 full Worker tests pass. The complete
+gate passes formatting, lint (zero warnings/errors), typecheck, generated binding checks,
+inventory, 5 Access tests, 4 checkout UI tests, 49 tax-tooling tests, and all seven development/
+production dry-run builds. The repository harness and diff whitespace checks pass. No schema
+migration, remote database write, provider request, charge, deployment, push, or routing change
+was performed. The retained worktree remains the local repair branch, not deployed production.

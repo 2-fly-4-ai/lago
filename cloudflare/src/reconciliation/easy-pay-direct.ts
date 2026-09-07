@@ -5,11 +5,17 @@ import { stableJson } from "../json";
 import { getEasyPayDirectOrder, type CommerceOrder } from "../providers/easy-pay-direct";
 import {
   resumeEasyPayDirectExecution,
-  bindEasyPayDirectRenewalProfile,
+  finalizeEasyPayDirectPaidExecution,
+  reconcileEasyPayDirectGatewayTestExecution,
   EASY_PAY_DIRECT_SETUP_REVIEW_CODES,
 } from "../api/easy-pay-direct-checkout";
+import { requireEasyPayDirectOrderEvidence } from "../billing/easy-pay-direct-order-evidence";
+import {
+  EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL,
+  EASY_PAY_DIRECT_TAX_COMMIT_PENDING_SQL,
+} from "../billing/easy-pay-direct-recovery-policy";
 import { commitAppliedCheckoutTaxQuote } from "../api/easy-pay-direct-tax";
-import { EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL } from "../billing/easy-pay-direct-recovery-policy";
+import { ApiError } from "../http";
 
 type EasyPayDirectEvent = {
   id?: string;
@@ -31,6 +37,7 @@ type EasyPayDirectEvent = {
 
 type EasyPayDirectExecution = {
   id: string;
+  status: string;
   organization_id: string;
   payment_request_id: string;
   provider_account_code: string;
@@ -47,7 +54,7 @@ export async function pendingEasyPayDirectExecutions(
   const result = await database
     .prepare(
       `SELECT id FROM easy_pay_direct_payment_executions
-     WHERE status IN ('processing', 'unknown')
+     WHERE (status IN ('processing', 'unknown')
        AND (provider_transaction_id IS NOT NULL
             OR (customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL
                 AND length(phone_ciphertext) > 0 AND length(phone_iv) > 0
@@ -55,8 +62,9 @@ export async function pendingEasyPayDirectExecutions(
                 AND (? <> 'production' OR (length(gateway_billing_id) BETWEEN 1 AND 32
                      AND gateway_billing_id NOT GLOB '*[^0-9]*'))
                 AND ${EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL}
-                AND COALESCE(failure_code, '') NOT IN (${EASY_PAY_DIRECT_SETUP_REVIEW_CODES.map(() => "?").join(", ")})))
-     ORDER BY created_at ASC, id ASC LIMIT 100`,
+                AND COALESCE(failure_code, '') NOT IN (${EASY_PAY_DIRECT_SETUP_REVIEW_CODES.map(() => "?").join(", ")}))))
+       OR (status = 'succeeded' AND ${EASY_PAY_DIRECT_TAX_COMMIT_PENDING_SQL})
+     ORDER BY updated_at ASC, id ASC LIMIT 100`,
     )
     .bind(networkMode ?? "production", ...EASY_PAY_DIRECT_SETUP_REVIEW_CODES)
     .all<{ id: string }>();
@@ -68,23 +76,77 @@ export async function reconcileEasyPayDirectExecution(
   executionId: string,
   fetcher: typeof fetch = fetch,
 ): Promise<"processed" | "deferred"> {
+  try {
+    return await reconcileExecution(env, executionId, fetcher);
+  } catch (error) {
+    if (!(error instanceof ApiError)) throw error;
+    // An unavailable or inconsistent provider read is not a new payment and
+    // must not stop unrelated orders from being reconciled.
+    await env.BILLING_DB.prepare(
+      `UPDATE easy_pay_direct_payment_executions
+       SET status = 'unknown', failure_code = ?, failure_message = ?, updated_at = ?
+       WHERE id = ? AND provider_transaction_id IS NOT NULL
+         AND status IN ('processing', 'unknown')`,
+    )
+      .bind(
+        error.code === "easy_pay_direct_order_evidence_mismatch"
+          ? error.code
+          : "easy_pay_direct_order_read_pending",
+        "Payment outcome needs a verified provider read; do not submit another payment",
+        new Date().toISOString(),
+        executionId,
+      )
+      .run();
+    return "deferred";
+  }
+}
+
+async function reconcileExecution(
+  env: Env,
+  executionId: string,
+  fetcher: typeof fetch,
+): Promise<"processed" | "deferred"> {
   let execution = await env.BILLING_DB.prepare(
-    `SELECT id, organization_id, payment_request_id, provider_account_code,
+    `SELECT id, status, organization_id, payment_request_id, provider_account_code,
             provider_transaction_id
      FROM easy_pay_direct_payment_executions
-     WHERE id = ? AND status IN ('processing', 'unknown')
+     WHERE id = ? AND (status IN ('processing', 'unknown')
+       OR (status = 'succeeded' AND ${EASY_PAY_DIRECT_TAX_COMMIT_PENDING_SQL}))
      LIMIT 1`,
   )
     .bind(executionId)
     .first<EasyPayDirectExecution>();
   if (!execution) return "processed";
   if (String(env.PROVIDER_READS_ENABLED) !== "1") return "deferred";
+  if (execution.status === "succeeded" && execution.provider_transaction_id) {
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_payment_executions SET updated_at = ? WHERE id = ?",
+    )
+      .bind(new Date().toISOString(), executionId)
+      .run();
+    return (await commitAppliedCheckoutTaxQuote(
+      env,
+      executionId,
+      execution.provider_transaction_id,
+      fetcher,
+    )) === "retry"
+      ? "deferred"
+      : "processed";
+  }
+  if (execution.provider_transaction_id) {
+    // Fair oldest-attempt ordering, without extending a pre-order claim lease.
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_payment_executions SET updated_at = ? WHERE id = ? AND provider_transaction_id IS NOT NULL AND status IN ('processing', 'unknown')",
+    )
+      .bind(new Date().toISOString(), executionId)
+      .run();
+  }
 
   if (!execution.provider_transaction_id) {
     const resumed = await resumeEasyPayDirectExecution(env, executionId, fetcher);
     if (resumed === "deferred") return "deferred";
     execution = await env.BILLING_DB.prepare(
-      `SELECT id, organization_id, payment_request_id, provider_account_code,
+      `SELECT id, status, organization_id, payment_request_id, provider_account_code,
               provider_transaction_id
        FROM easy_pay_direct_payment_executions
        WHERE id = ? AND status IN ('processing', 'unknown') LIMIT 1`,
@@ -94,12 +156,26 @@ export async function reconcileEasyPayDirectExecution(
     if (!execution?.provider_transaction_id) return "deferred";
   }
 
+  if (env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test") {
+    return reconcileEasyPayDirectGatewayTestExecution(env, execution.id, fetcher);
+  }
   const order = await getEasyPayDirectOrder(env, execution.provider_transaction_id, fetcher);
-  if (order.id !== execution.provider_transaction_id) {
-    throw new Error("easy_pay_direct_order_identity_mismatch");
+  if (!order || order.id !== execution.provider_transaction_id) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_order_evidence_mismatch",
+      "Payment confirmation needs review",
+    );
   }
   const normalizedStatus = normalizeOrderStatus(order.status);
   if (normalizedStatus === "pending" || normalizedStatus === "unknown") return "deferred";
+  await requireEasyPayDirectOrderEvidence(
+    env.BILLING_DB,
+    execution.organization_id,
+    execution.payment_request_id,
+    order,
+    execution.provider_transaction_id,
+  );
 
   const payload = stableJson(order);
   const payloadHash = await sha256Hex(payload);
@@ -149,7 +225,9 @@ export async function reconcileEasyPayDirectExecution(
     "easy_pay_direct",
   );
   if (normalizedStatus === "succeeded") {
-    await bindEasyPayDirectRenewalProfile(env.BILLING_DB, execution.id, order);
+    return (await finalizeEasyPayDirectPaidExecution(env, execution.id, order, fetcher))
+      ? "processed"
+      : "deferred";
   }
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
@@ -166,9 +244,6 @@ export async function reconcileEasyPayDirectExecution(
       execution.id,
     )
     .run();
-  if (normalizedStatus === "succeeded") {
-    await commitAppliedCheckoutTaxQuote(env, execution.id, order.id, fetcher);
-  }
   return "processed";
 }
 
@@ -227,6 +302,39 @@ export async function reconcileEasyPayDirectReceipt(
       receipt.provider_transaction_id,
     ));
   if (!paymentRequestId) throw new Error("payment_request_not_found");
+  await requireEasyPayDirectOrderEvidence(
+    env.BILLING_DB,
+    receipt.organization_id,
+    paymentRequestId,
+    event.data?.object ?? {},
+    receipt.provider_transaction_id,
+  );
+  // A signed success can arrive before the POST response/checkpoint. Attach it
+  // only to the exact local intent, never to a request ID alone. Otherwise the
+  // paid-request guard would correctly stop replay but also strand finalization.
+  const execution = await env.BILLING_DB.prepare(
+    `SELECT id FROM easy_pay_direct_payment_executions
+     WHERE organization_id = ? AND provider_account_code = ? AND payment_request_id = ?
+       AND (provider_transaction_id = ? OR
+         (provider_transaction_id IS NULL AND checkout_intent_id = ? AND status IN ('processing', 'unknown')))
+     LIMIT 1`,
+  )
+    .bind(
+      receipt.organization_id,
+      receipt.provider_account_code,
+      paymentRequestId,
+      receipt.provider_transaction_id,
+      event.data?.object?.metadata?.lago_checkout_intent_id ?? null,
+    )
+    .first<{ id: string }>();
+  if (!execution) throw new Error("easy_pay_direct_webhook_execution_mismatch");
+  await env.BILLING_DB.prepare(
+    `UPDATE easy_pay_direct_payment_executions
+     SET provider_transaction_id = ?, last_checkpoint = 'provider_order', updated_at = ?
+     WHERE id = ? AND provider_transaction_id IS NULL AND status IN ('processing', 'unknown')`,
+  )
+    .bind(receipt.provider_transaction_id, new Date().toISOString(), execution.id)
+    .run();
   const status = eventType === "order.succeeded" ? "succeeded" : "failed";
   const amountMinor = Number.isSafeInteger(event.data?.object?.total)
     ? Number(event.data?.object?.total)

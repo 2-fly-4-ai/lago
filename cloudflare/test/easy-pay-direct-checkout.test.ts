@@ -7,6 +7,7 @@ import {
   EASY_PAY_DIRECT_SETUP_REVIEW_CODES,
 } from "../src/api/easy-pay-direct-checkout";
 import { sha256Hex } from "../src/auth/api-key";
+import { stableJson } from "../src/json";
 import { holdCustomerForClosure } from "../src/api/customer-closure";
 import {
   easyPayDirectPaymentForm,
@@ -77,6 +78,575 @@ async function seedCheckoutFixture() {
     ),
   ]);
 }
+
+describe("EPD post-payment recovery and evidence", () => {
+  it("does not replace a newer saved subscription card during delayed checkout recovery", async () => {
+    const subscriptionId = await monthlyFixture();
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture();
+    await handleEasyPayDirectCheckoutSubmission(
+      request(),
+      runtimeEnv,
+      "older-checkout",
+      provider.fetcher,
+    );
+    const newerProfileId = `newer-card-${paymentRequestId}`;
+    await env.BILLING_DB.prepare(
+      `INSERT INTO provider_customer_profiles
+       (id, organization_id, customer_id, provider, provider_account_code, provider_customer_id,
+        provider_payment_method_id, gateway_customer_vault_id, gateway_billing_id,
+        initial_transaction_id, status, created_at, updated_at)
+       SELECT ?, organization_id, customer_id, provider, provider_account_code, provider_customer_id,
+              'newer-card', gateway_customer_vault_id, '987654321', 'newer-transaction',
+              'active', '2099-01-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z'
+       FROM provider_customer_profiles WHERE customer_id = ? LIMIT 1`,
+    )
+      .bind(newerProfileId, customerId)
+      .run();
+    await env.BILLING_DB.prepare(
+      "UPDATE subscriptions SET payment_method_type = 'provider', payment_method_id = ? WHERE id = ?",
+    )
+      .bind(newerProfileId, subscriptionId)
+      .run();
+    const execution = await executionForTest();
+    expect(
+      await reconcileEasyPayDirectExecution(
+        runtimeEnv,
+        execution!.id,
+        vi.fn<typeof fetch>(async () => Response.json(approvedOrder(true))),
+      ),
+    ).toBe("processed");
+    expect(
+      await env.BILLING_DB.prepare("SELECT payment_method_id FROM subscriptions WHERE id = ?")
+        .bind(subscriptionId)
+        .first(),
+    ).toEqual({ payment_method_id: newerProfileId });
+    expect(provider.operations.filter((operation) => operation === "order")).toHaveLength(1);
+  });
+
+  it.each(["profile-write", "missing-vault"])(
+    "recovers Gateway test %s without a second charge or Commerce read",
+    async (fault) => {
+      const subscriptionId = await monthlyFixture();
+      const runtimeEnv = enabledEnv("gateway_test");
+      await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+      const intent = await env.BILLING_DB.prepare(
+        "SELECT payment_url FROM payment_request_checkout_intents WHERE payment_request_id = ?",
+      )
+        .bind(paymentRequestId)
+        .first<{ payment_url: string }>();
+      const failingDb = new Proxy(env.BILLING_DB, {
+        get(target, property) {
+          if (property === "prepare")
+            return (sql: string) => {
+              if (sql.includes("INSERT INTO provider_customer_profiles"))
+                throw new Error("fixture profile write unavailable");
+              return target.prepare(sql);
+            };
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const failingEnv = new Proxy(runtimeEnv, {
+        get(target, property) {
+          return property === "BILLING_DB" && fault === "profile-write"
+            ? failingDb
+            : Reflect.get(target, property);
+        },
+      });
+      const charge = vi.fn<typeof fetch>(
+        async () =>
+          new Response(
+            `response=1&responsetext=Approved&response_code=100&transactionid=gateway-review-${paymentRequestId}` +
+              (fault === "missing-vault" ? "" : "&customer_vault_id=gateway-review-vault"),
+          ),
+      );
+      await expect(
+        handleEasyPayDirectCheckoutSubmission(
+          new Request("https://lago.test/easy_pay_direct/payment_form", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              checkout: new URL(intent!.payment_url).searchParams.get("checkout"),
+              payment_token: "hosted-fixture-token",
+              phone: "+15555550123",
+              terms_accepted: true,
+            }),
+          }),
+          failingEnv,
+          "gateway-recovery-fixture",
+          charge,
+        ),
+      ).rejects.toThrow();
+      const execution = await executionForTest();
+      expect(execution!.status).not.toBe("succeeded");
+      expect(
+        await env.BILLING_DB.prepare("SELECT payment_status FROM payment_requests WHERE id = ?")
+          .bind(paymentRequestId)
+          .first(),
+      ).toEqual({ payment_status: "succeeded" });
+      const read = vi.fn<typeof fetch>(async (input, init) => {
+        expect(String(input)).toContain("/api/query.php");
+        expect(new URLSearchParams(String(init?.body)).get("order_id")).toBe(paymentRequestId);
+        return new Response(
+          `<nm_response><transaction><transaction_id>gateway-review-${paymentRequestId}</transaction_id><order_id>${paymentRequestId}</order_id><condition>complete</condition><amount>19.99</amount><currency>USD</currency><customer_vault_id>gateway-review-vault</customer_vault_id></transaction></nm_response>`,
+        );
+      });
+      expect(await reconcileEasyPayDirectExecution(runtimeEnv, execution!.id, read)).toBe(
+        "processed",
+      );
+      expect(await reconcileEasyPayDirectExecution(runtimeEnv, execution!.id, read)).toBe(
+        "processed",
+      );
+      expect(charge).toHaveBeenCalledOnce();
+      expect(read).toHaveBeenCalledOnce();
+      expect(await executionForTest()).toMatchObject({ status: "succeeded" });
+      const subscription = await env.BILLING_DB.prepare(
+        "SELECT payment_method_type, payment_method_id FROM subscriptions WHERE id = ?",
+      )
+        .bind(subscriptionId)
+        .first<{ payment_method_id: string; payment_method_type: string }>();
+      expect(subscription?.payment_method_type).toBe("provider");
+      expect(subscription?.payment_method_id).toBeTruthy();
+    },
+  );
+
+  it("does not wait for or enable renewals on a one-time purchase", async () => {
+    const subscriptionId = await monthlyFixture("one_time");
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture();
+    await handleEasyPayDirectCheckoutSubmission(
+      request(),
+      runtimeEnv,
+      "one-time-review",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const response = await provider.fetcher(input, init);
+        return String(input).endsWith("/orders") ? Response.json(approvedOrder(false)) : response;
+      }),
+    );
+    expect(await executionForTest()).toMatchObject({ status: "succeeded" });
+    expect(
+      await env.BILLING_DB.prepare("SELECT payment_method_id FROM subscriptions WHERE id = ?")
+        .bind(subscriptionId)
+        .first(),
+    ).toEqual({ payment_method_id: null });
+  });
+
+  it("recovers the order ID from an early webhook without submitting another order", async () => {
+    await monthlyFixture();
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture();
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const response = await provider.fetcher(input, init);
+      if (String(input).endsWith("/orders")) throw new TypeError("fixture lost response");
+      return response;
+    });
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(request(), runtimeEnv, "early-hook", fetcher),
+    ).rejects.toThrow();
+    const execution = await executionForTest();
+    const intent = await env.BILLING_DB.prepare(
+      "SELECT checkout_intent_id FROM easy_pay_direct_payment_executions WHERE id = ?",
+    )
+      .bind(execution!.id)
+      .first<{ checkout_intent_id: string }>();
+    const order = approvedOrder(false);
+    const receipt = "early-hook-" + paymentRequestId;
+    await insertArchivedEvent(
+      receipt,
+      receipt,
+      "order.succeeded",
+      order.id,
+      JSON.stringify({
+        type: "order.succeeded",
+        data: {
+          object: {
+            ...order,
+            metadata: {
+              lago_payment_request_id: paymentRequestId,
+              lago_checkout_intent_id: intent!.checkout_intent_id,
+            },
+          },
+        },
+      }),
+    );
+    await reconcileEasyPayDirectReceipt(runtimeEnv, receipt);
+    expect(await pendingEasyPayDirectExecutions(env.BILLING_DB, "production")).toContain(
+      execution!.id,
+    );
+    const reader = vi.fn<typeof fetch>(async (_input, init) => {
+      expect(init?.method).toBe("GET");
+      return Response.json(approvedOrder(true));
+    });
+    await expect(reconcileEasyPayDirectExecution(runtimeEnv, execution!.id, reader)).resolves.toBe(
+      "processed",
+    );
+    expect(provider.operations.filter((op) => op === "order")).toHaveLength(1);
+    expect(reader).toHaveBeenCalledTimes(1);
+    expect(await executionForTest()).toMatchObject({ status: "succeeded" });
+  });
+
+  it.each(["wrong-currency", "missing-total"])(
+    "rejects %s webhook evidence before settling",
+    async (fault) => {
+      const { runtimeEnv, request } = await productionSubmission();
+      const provider = commerceVaultFixture();
+      await handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "webhook-evidence",
+        provider.fetcher,
+      );
+      const order: Record<string, unknown> = approvedOrder(false);
+      if (fault === "wrong-currency") order.currency = "eur";
+      else delete order.total;
+      const receipt = "bad-hook-" + paymentRequestId;
+      await insertArchivedEvent(
+        receipt,
+        receipt,
+        "order.succeeded",
+        String(order.id),
+        JSON.stringify({
+          type: "order.succeeded",
+          data: { object: { ...order, metadata: { lago_payment_request_id: paymentRequestId } } },
+        }),
+      );
+      await expect(reconcileEasyPayDirectReceipt(runtimeEnv, receipt)).rejects.toMatchObject({
+        code: "easy_pay_direct_order_evidence_mismatch",
+      });
+      expect(
+        await env.BILLING_DB.prepare("SELECT payment_status FROM payment_requests WHERE id = ?")
+          .bind(paymentRequestId)
+          .first(),
+      ).toEqual({ payment_status: "pending" });
+    },
+  );
+
+  it.each([false, true])(
+    "retries a local tax commit without charging again (legacy success: %s)",
+    async (legacySuccess) => {
+      await env.BILLING_DB.prepare(
+        "UPDATE payment_requests SET collection_mode = 'checkout' WHERE id = ?",
+      )
+        .bind(paymentRequestId)
+        .run();
+      const { runtimeEnv, request } = await productionSubmission();
+      const intent = await env.BILLING_DB.prepare(
+        "SELECT id FROM payment_request_checkout_intents WHERE payment_request_id = ?",
+      )
+        .bind(paymentRequestId)
+        .first<{ id: string }>();
+      const quoteId = "review-tax-" + paymentRequestId;
+      const now = new Date().toISOString();
+      const addressHash = await sha256Hex(
+        stableJson({ country: "US", state: "CA", postalCode: "90001" }),
+      );
+      await env.BILLING_DB.prepare(`INSERT INTO easy_pay_direct_checkout_tax_quotes
+      (id, organization_id, payment_request_id, invoice_id, source_checkout_intent_id, active_checkout_intent_id,
+       provider_code, provider_calculation_id, request_sha256, billing_address_sha256, billing_country, billing_state, billing_postal_code,
+       currency, subtotal_minor, tax_minor, total_minor, tax_code, status, expires_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'local_d1', ?, 'fixture-hash', ?, 'US', 'CA', '90001', 'USD', 1999, 0, 1999,
+        'fixture-software', 'applied', ?, ?, ?)`)
+        .bind(
+          quoteId,
+          organizationId,
+          paymentRequestId,
+          invoiceId,
+          intent!.id,
+          intent!.id,
+          quoteId,
+          addressHash,
+          new Date(Date.now() + 3600000).toISOString(),
+          now,
+          now,
+        )
+        .run();
+      let failCommit = true;
+      const database = new Proxy(env.BILLING_DB, {
+        get(target, key) {
+          if (key === "prepare")
+            return (sql: string) => {
+              if (failCommit && sql.includes("SET status = 'committed'"))
+                throw new Error("fixture tax write failure");
+              return target.prepare(sql);
+            };
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const taxEnv = new Proxy(runtimeEnv, {
+        get(target, key) {
+          if (key === "BILLING_DB") return database;
+          if (key === "EASY_PAY_DIRECT_TAX_MODE") return "enforced";
+          return Reflect.get(target, key);
+        },
+      });
+      const body = await request().json<Record<string, unknown>>();
+      const pay = new Request(request().url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...body,
+          tax_quote_id: quoteId,
+          billing_address: { country: "US", state: "CA", postal_code: "90001" },
+        }),
+      });
+      const provider = commerceVaultFixture();
+      await handleEasyPayDirectCheckoutSubmission(
+        pay,
+        taxEnv,
+        "tax-write-review",
+        vi.fn<typeof fetch>(async (input, init) => {
+          const response = await provider.fetcher(input, init);
+          return String(input).endsWith("/orders") ? Response.json(approvedOrder(false)) : response;
+        }),
+      );
+      const execution = await executionForTest();
+      expect(execution!.status).not.toBe("succeeded");
+      if (legacySuccess)
+        await env.BILLING_DB.prepare(
+          "UPDATE easy_pay_direct_payment_executions SET status = 'succeeded' WHERE id = ?",
+        )
+          .bind(execution!.id)
+          .run();
+      expect(await pendingEasyPayDirectExecutions(env.BILLING_DB, "production")).toContain(
+        execution!.id,
+      );
+      failCommit = false;
+      await expect(
+        reconcileEasyPayDirectExecution(
+          taxEnv,
+          execution!.id,
+          vi.fn<typeof fetch>(async (_input, init) => {
+            expect(init?.method).toBe("GET");
+            return Response.json(approvedOrder(false));
+          }),
+        ),
+      ).resolves.toBe("processed");
+      expect(
+        await env.BILLING_DB.prepare(
+          "SELECT status FROM easy_pay_direct_checkout_tax_quotes WHERE id = ?",
+        )
+          .bind(quoteId)
+          .first(),
+      ).toEqual({ status: "committed" });
+      expect(provider.operations.filter((op) => op === "order")).toHaveLength(1);
+    },
+  );
+
+  it("rotates pending provider orders beyond the oldest 100", async () => {
+    const executions: string[] = [];
+    let runtimeEnv = enabledEnv("production");
+    for (let index = 0; index < 101; index++) {
+      if (index) await seedCheckoutFixture();
+      const fixture = await productionSubmission();
+      runtimeEnv = fixture.runtimeEnv;
+      await handleEasyPayDirectCheckoutSubmission(
+        fixture.request(),
+        runtimeEnv,
+        "fair-batch",
+        commerceVaultFixture().fetcher,
+      );
+      const execution = await executionForTest();
+      executions.push(execution!.id);
+      await env.BILLING_DB.prepare(
+        "UPDATE easy_pay_direct_payment_executions SET updated_at = ? WHERE id = ?",
+      )
+        .bind(new Date(Date.UTC(2020, 0, 1, 0, 0, index)).toISOString(), execution!.id)
+        .run();
+    }
+    const firstBatch = await pendingEasyPayDirectExecutions(env.BILLING_DB, "production");
+    expect(firstBatch).toHaveLength(100);
+    expect(firstBatch).not.toContain(executions[100]);
+    for (const id of firstBatch) {
+      await reconcileEasyPayDirectExecution(
+        runtimeEnv,
+        id,
+        vi.fn<typeof fetch>(async (input) =>
+          Response.json({ id: String(input).split("/").pop(), status: "pending" }),
+        ),
+      );
+    }
+    expect(await pendingEasyPayDirectExecutions(env.BILLING_DB, "production")).toContain(
+      executions[100],
+    );
+    await env.BILLING_DB.batch(
+      executions.map((id) =>
+        env.BILLING_DB.prepare(
+          "UPDATE easy_pay_direct_payment_executions SET status = 'failed' WHERE id = ?",
+        ).bind(id),
+      ),
+    );
+  });
+
+  async function monthlyFixture(interval = "monthly") {
+    const now = new Date().toISOString();
+    const planId = "review-plan-" + paymentRequestId;
+    const subscriptionId = "review-sub-" + paymentRequestId;
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO plans (id, organization_id, code, name, interval, amount_minor, currency, version, active, created_at, updated_at) VALUES (?, ?, ?, 'Review monthly', ?, 1999, 'USD', 1, 1, ?, ?)`,
+      ).bind(planId, organizationId, planId, interval, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO subscriptions (id, organization_id, customer_id, plan_id, external_id, status, started_at, current_period_start, current_period_end, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, '2026-10-01T00:00:00.000Z', 1, ?, ?)`,
+      ).bind(
+        subscriptionId,
+        organizationId,
+        customerId,
+        planId,
+        subscriptionId,
+        now,
+        now,
+        now,
+        now,
+      ),
+      env.BILLING_DB.prepare("UPDATE invoices SET subscription_id = ? WHERE id = ?").bind(
+        subscriptionId,
+        invoiceId,
+      ),
+    ]);
+    return subscriptionId;
+  }
+  const approvedOrder = (withTransactions: boolean) => ({
+    id: "fixture-order-" + paymentRequestId,
+    status: "succeeded",
+    total: 1999,
+    currency: "usd",
+    ...(withTransactions
+      ? {
+          transactions: [
+            {
+              id: "review-tx",
+              processor_transaction_id: "review-processor",
+              status: "succeeded",
+              type: "sale",
+            },
+          ],
+        }
+      : {}),
+  });
+
+  it.each(["inline", "provider-read"])(
+    "recovers late renewal details after %s success",
+    async (path) => {
+      const subscriptionId = await monthlyFixture();
+      const { runtimeEnv, request } = await productionSubmission();
+      const provider = commerceVaultFixture();
+      const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+        const response = await provider.fetcher(input, init);
+        return path === "inline" && String(input).endsWith("/orders")
+          ? Response.json(approvedOrder(false))
+          : response;
+      });
+      await handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "review-late-renewal",
+        fetcher,
+      );
+      const execution = await executionForTest();
+      if (path === "provider-read") {
+        await reconcileEasyPayDirectExecution(
+          runtimeEnv,
+          execution!.id,
+          vi.fn<typeof fetch>(async () => Response.json(approvedOrder(false))),
+        );
+      }
+      const laterRead = vi.fn<typeof fetch>(async () => Response.json(approvedOrder(true)));
+      await reconcileEasyPayDirectExecution(runtimeEnv, execution!.id, laterRead);
+      const profile = await env.BILLING_DB.prepare(
+        "SELECT initial_transaction_id FROM provider_customer_profiles WHERE customer_id = ?",
+      )
+        .bind(customerId)
+        .first();
+      const subscription = await env.BILLING_DB.prepare(
+        "SELECT payment_method_type FROM subscriptions WHERE id = ?",
+      )
+        .bind(subscriptionId)
+        .first();
+      expect({ profile, subscription }).toEqual({
+        profile: { initial_transaction_id: "review-processor" },
+        subscription: { payment_method_type: "provider" },
+      });
+    },
+  );
+
+  it("recovers an interrupted renewal-profile write after inline success", async () => {
+    await monthlyFixture();
+    const { runtimeEnv, request } = await productionSubmission();
+    let failProfileWrite = true;
+    const database = new Proxy(env.BILLING_DB, {
+      get(target, key) {
+        if (key === "prepare")
+          return (sql: string) => {
+            if (failProfileWrite && sql.includes("SET initial_transaction_id = COALESCE")) {
+              throw new Error("review-injected-profile-write-failure");
+            }
+            return target.prepare(sql);
+          };
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const faultEnv = new Proxy(runtimeEnv, {
+      get(target, key) {
+        return key === "BILLING_DB" ? database : Reflect.get(target, key);
+      },
+    });
+    const provider = commerceVaultFixture();
+    await handleEasyPayDirectCheckoutSubmission(
+      request(),
+      faultEnv,
+      "review-profile-write",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const response = await provider.fetcher(input, init);
+        return String(input).endsWith("/orders") ? Response.json(approvedOrder(true)) : response;
+      }),
+    );
+    failProfileWrite = false;
+    const execution = await executionForTest();
+    await reconcileEasyPayDirectExecution(
+      runtimeEnv,
+      execution!.id,
+      vi.fn<typeof fetch>(async () => Response.json(approvedOrder(true))),
+    );
+    expect(
+      await env.BILLING_DB.prepare(
+        "SELECT initial_transaction_id FROM provider_customer_profiles WHERE customer_id = ?",
+      )
+        .bind(customerId)
+        .first(),
+    ).toEqual({ initial_transaction_id: "review-processor" });
+  });
+
+  it.each(["wrong-currency", "missing-total"])(
+    "rejects %s provider-read evidence before settling",
+    async (fault) => {
+      const { runtimeEnv, request } = await productionSubmission();
+      const provider = commerceVaultFixture();
+      await handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "review-evidence",
+        provider.fetcher,
+      );
+      const execution = await executionForTest();
+      const order: Record<string, unknown> = approvedOrder(false);
+      if (fault === "wrong-currency") order.currency = "eur";
+      else delete order.total;
+      await reconcileEasyPayDirectExecution(
+        runtimeEnv,
+        execution!.id,
+        vi.fn<typeof fetch>(async () => Response.json(order)),
+      ).catch(() => undefined);
+      expect(
+        await env.BILLING_DB.prepare("SELECT payment_status FROM payment_requests WHERE id = ?")
+          .bind(paymentRequestId)
+          .first(),
+      ).toEqual({ payment_status: "pending" });
+    },
+  );
+});
 
 describe("Easy Pay Direct Commerce checkout execution", () => {
   it.each(["paid", "disabled"])(

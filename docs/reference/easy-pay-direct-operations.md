@@ -188,6 +188,26 @@ phone data is deferred and marked on its first recovery attempt. Existing provid
 these pre-order filters so their outcomes can still be checked without creating another order.
 Do not delete held executions or clear their evidence to force them back into the batch.
 
+Payment success and post-payment setup are separate recovery milestones. Commerce executions
+remain eligible for read-only reconciliation until recurring-card binding and tax commitment are
+durable. A late processor transaction or interrupted D1 write must not cause a second charge.
+One-time plans do not wait for renewal setup. A delayed initial checkout must not replace a newer
+saved subscription card. Existing successful executions with an unfinished tax quote are eligible
+for tax-only replay only when an exact successful payment ledger entry proves the request,
+provider account, transaction, amount, and currency.
+
+Inline responses, provider reads, and success/failure webhooks must all carry the exact request
+amount, currency, and order identity before settlement. Missing totals are not inferred. An early
+webhook may attach an order to an interrupted execution only through the exact local checkout
+intent and organization/account/request identity. Pending and temporarily inconsistent provider
+reads rotate by last-attempt time, so the oldest 100 pending orders cannot indefinitely starve
+newer orders. Gateway test executions recover through the Gateway query API, not Commerce, and
+verify the original transaction and money before finishing local profile setup.
+
+These changes do not automatically reopen every historical successful execution with incomplete
+renewal setup. Before rollout, separately inspect affected historical records with approved
+read-only access; preserve newer card selections and never replay payment creation as a repair.
+
 Current public [EPD customer docs](https://docs.api.epd.com/api-reference/customers) and the
 [card-vaulting guide](https://docs.api.epd.com/api-reference/card-vaulting) describe an Elements
 `card_token` flow. They do not promise the legacy `epd_gateway_customer_vault_id` response field.
