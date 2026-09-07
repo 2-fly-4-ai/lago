@@ -79,3 +79,28 @@ all seven dev/production dry-run builds. Root harness and diff whitespace checks
 No migration, deployment, provider/customer mutation,
 payment retry, or production configuration change is part of this follow-up. The actual EPD
 vault-link contract remains unverified; read-only account verification has been requested.
+
+## Payable-state and batch-starvation repair
+
+A deeper review reproduced four failures in additional diagnostic tests: recovery could create
+an order for a request already paid or disabled, and 101 legacy-billing or missing-phone records
+could prevent newer actionable records from reaching the recovery batch. Those diagnostic cases
+are now permanent regressions and pass.
+
+- Browser claims, recovery claims, batch selection, and the final pre-order check share a single
+  authoritative payable-state predicate, including organization/request identity, intent state,
+  payment status, processing readiness, and closure holds.
+- Payment state is checked again after provider setup. A paid/disabled request at that boundary
+  becomes a review-held execution without submitting an order. Provider checkpoints are retained.
+- Pre-order legacy production billing IDs and missing/unrecoverable phone checkpoints are excluded
+  before the selection limit. Existing orders remain eligible for read-only outcome checks even
+  when new payment eligibility or recovery checkpoints are absent.
+
+Seven new tests cover the four reproduced failures, paid/disabled changes during provider setup,
+and read-only reconciliation of an existing order with disabled payment and missing checkpoints.
+Focused tests pass 61/61; the full gate passes 558/558 Worker tests, formatting, lint, typecheck,
+generated bindings, Access/UI/tax checks, inventory, and all seven dev/production dry-run builds.
+The root harness and diff whitespace checks also pass. These remain fictional local tests,
+not provider-backed proof. The final pre-order check is not a distributed lock against a separate
+payment occurring afterward. The live EPD vault-link contract is still an explicit deployment
+blocker. No provider request, payment retry, remote database mutation, or deployment was performed.

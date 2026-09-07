@@ -174,6 +174,20 @@ Already-vaulted executions retain their checkpoints and defer on a lookup outage
 the rest of reconciliation. Pre-order setup-review holds are excluded **before** the 100-row
 selection limit; executions with a provider order still undergo outcome reconciliation.
 
+Recovery now shares the same payable-state predicate as browser claims and the final pre-order
+check: the checkout intent must remain successful and belong to the same organization/request,
+the request must remain unpaid and enabled for processing, and customer closure holds must be
+absent. Provider setup involves network waits, so the check is repeated immediately before order
+creation. A state change at that boundary preserves checkpoints in a setup-review hold; it does
+not submit an order or automatically clear the hold. This is not a distributed lock against an
+independent payment occurring after that final check.
+
+Pre-order batch selection also excludes legacy nonnumeric production billing IDs, absent phone
+checkpoints, and recorded unrecoverable-phone failures before the 100-row limit. Invalid encrypted
+phone data is deferred and marked on its first recovery attempt. Existing provider orders bypass
+these pre-order filters so their outcomes can still be checked without creating another order.
+Do not delete held executions or clear their evidence to force them back into the batch.
+
 Current public [EPD customer docs](https://docs.api.epd.com/api-reference/customers) and the
 [card-vaulting guide](https://docs.api.epd.com/api-reference/card-vaulting) describe an Elements
 `card_token` flow. They do not promise the legacy `epd_gateway_customer_vault_id` response field.

@@ -79,6 +79,146 @@ async function seedCheckoutFixture() {
 }
 
 describe("Easy Pay Direct Commerce checkout execution", () => {
+  it.each(["paid", "disabled"])(
+    "rechecks %s state after provider setup and before ordering",
+    async (state) => {
+      const { runtimeEnv, request } = await productionSubmission();
+      const provider = commerceVaultFixture();
+      const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+        const result = await provider.fetcher(input, init);
+        if (String(input).endsWith("/products")) {
+          await env.BILLING_DB.prepare(
+            "UPDATE payment_requests SET payment_status = ?, ready_for_payment_processing = 0 WHERE id = ?",
+          )
+            .bind(state === "paid" ? "succeeded" : "pending", paymentRequestId)
+            .run();
+        }
+        return result;
+      });
+      await expect(
+        handleEasyPayDirectCheckoutSubmission(request(), runtimeEnv, "late-state-change", fetcher),
+      ).rejects.toMatchObject({ code: "easy_pay_direct_checkout_state_changed" });
+      expect(provider.operations).toContain("product");
+      expect(provider.operations).not.toContain("order");
+      const execution = await executionForTest();
+      expect(execution).toMatchObject({
+        status: "unknown",
+        failure_code: "easy_pay_direct_checkout_state_changed",
+        provider_transaction_id: null,
+      });
+      const calls = fetcher.mock.calls.length;
+      await expect(resumeEasyPayDirectExecution(runtimeEnv, execution!.id, fetcher)).resolves.toBe(
+        "deferred",
+      );
+      expect(fetcher).toHaveBeenCalledTimes(calls);
+    },
+  );
+
+  it("still reads an existing order when charging is disabled and recovery checkpoints are missing", async () => {
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture();
+    await handleEasyPayDirectCheckoutSubmission(
+      request(),
+      runtimeEnv,
+      "existing-order",
+      provider.fetcher,
+    );
+    const execution = await executionForTest();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        "UPDATE payment_requests SET payment_status = 'succeeded', ready_for_payment_processing = 0 WHERE id = ?",
+      ).bind(paymentRequestId),
+      env.BILLING_DB.prepare(
+        "UPDATE easy_pay_direct_payment_executions SET status = 'unknown', failure_code = 'easy_pay_direct_recovery_checkpoint_missing', phone_ciphertext = NULL, phone_iv = NULL, gateway_billing_id = 'legacy-id' WHERE id = ?",
+      ).bind(execution!.id),
+    ]);
+    expect(await pendingEasyPayDirectExecutions(env.BILLING_DB, "production")).toContain(
+      execution!.id,
+    );
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe(`https://api.epd.com/v1/orders/fixture-order-${paymentRequestId}`);
+      expect(init?.method).toBe("GET");
+      return Response.json({ id: `fixture-order-${paymentRequestId}`, status: "pending" });
+    });
+    await expect(reconcileEasyPayDirectExecution(runtimeEnv, execution!.id, fetcher)).resolves.toBe(
+      "deferred",
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["paid", "disabled"])("recovery must not order when request is %s", async (state) => {
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture();
+    let attachmentUnavailable = true;
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      if (attachmentUnavailable && String(input).endsWith("/payment_methods"))
+        return new Response("Unavailable", { status: 503 });
+      return provider.fetcher(input, init);
+    });
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(request(), runtimeEnv, "review-seed", fetcher),
+    ).rejects.toThrow();
+    const execution = await executionForTest();
+    await env.BILLING_DB.prepare(
+      "UPDATE payment_requests SET payment_status = ?, ready_for_payment_processing = 0 WHERE id = ?",
+    )
+      .bind(state === "paid" ? "succeeded" : "pending", paymentRequestId)
+      .run();
+    attachmentUnavailable = false;
+    await resumeEasyPayDirectExecution(runtimeEnv, execution!.id, fetcher);
+    expect(provider.operations.filter((operation) => operation === "order")).toHaveLength(0);
+  });
+
+  it.each(["legacy-billing", "missing-phone"])(
+    "%s records must not starve recovery",
+    async (kind) => {
+      for (let i = 0; i < 101; i += 1) {
+        if (i > 0) await seedCheckoutFixture();
+        const { runtimeEnv, request } = await productionSubmission();
+        const provider = commerceVaultFixture({ exposeBinding: false });
+        await expect(
+          handleEasyPayDirectCheckoutSubmission(
+            request(),
+            runtimeEnv,
+            "review-held",
+            provider.fetcher,
+          ),
+        ).rejects.toThrow();
+        const execution = await executionForTest();
+        await env.BILLING_DB.prepare(
+          "UPDATE easy_pay_direct_payment_executions SET customer_vault_id = 'fixture-vault', gateway_billing_id = ?, failure_code = ?, phone_ciphertext = CASE WHEN ? = 'missing-phone' THEN NULL ELSE phone_ciphertext END, phone_iv = CASE WHEN ? = 'missing-phone' THEN NULL ELSE phone_iv END WHERE id = ?",
+        )
+          .bind(
+            kind === "legacy-billing" ? "legacy-id" : "123",
+            kind === "missing-phone" ? "easy_pay_direct_recovery_checkpoint_missing" : null,
+            kind,
+            kind,
+            execution!.id,
+          )
+          .run();
+      }
+      await seedCheckoutFixture();
+      const { runtimeEnv, request } = await productionSubmission();
+      const provider = commerceVaultFixture({ rejectAttach: true });
+      await expect(
+        handleEasyPayDirectCheckoutSubmission(
+          request(),
+          runtimeEnv,
+          "review-actionable",
+          provider.fetcher,
+        ),
+      ).rejects.toThrow();
+      const actionable = await executionForTest();
+      await env.BILLING_DB.prepare(
+        "UPDATE easy_pay_direct_payment_executions SET failure_code = NULL WHERE id = ?",
+      )
+        .bind(actionable!.id)
+        .run();
+      expect(await pendingEasyPayDirectExecutions(env.BILLING_DB, "production")).toContain(
+        actionable!.id,
+      );
+    },
+  );
   it.each(
     ["lookup", "read_customer"].flatMap((operation) =>
       [503, 429, "network"].map((failure) => ({ operation, failure })),
@@ -282,11 +422,11 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
     )
       .bind(actionable!.id)
       .run();
-    expect(await pendingEasyPayDirectExecutions(env.BILLING_DB)).toEqual(
+    expect(await pendingEasyPayDirectExecutions(env.BILLING_DB, "production")).toEqual(
       expect.arrayContaining([orderedHeldId, actionable!.id]),
     );
     expect(
-      (await pendingEasyPayDirectExecutions(env.BILLING_DB)).filter((id) =>
+      (await pendingEasyPayDirectExecutions(env.BILLING_DB, "production")).filter((id) =>
         fixtureIds.includes(id),
       ),
     ).toHaveLength(2);

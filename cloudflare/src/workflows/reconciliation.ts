@@ -304,7 +304,10 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           ) {
             return [];
           }
-          return pendingEasyPayDirectExecutions(this.env.BILLING_DB);
+          return pendingEasyPayDirectExecutions(
+            this.env.BILLING_DB,
+            this.env.EASY_PAY_DIRECT_NETWORK_MODE,
+          );
         },
       );
       let reconciledEasyPayDirectExecutions = 0;

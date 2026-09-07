@@ -1,6 +1,7 @@
 import { sha256Hex } from "../auth/api-key";
 import { ApiError, json, parseJsonObject, requiredString } from "../http";
 import { deterministicUuid } from "../identifiers";
+import { EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL } from "../billing/easy-pay-direct-recovery-policy";
 import {
   addEasyPayDirectPaymentMethod,
   chargeEasyPayDirectGatewayTestToken,
@@ -347,12 +348,11 @@ export async function handleEasyPayDirectCheckoutSubmission(
          resume_count = resume_count + CASE WHEN status = 'unknown' THEN 1 ELSE 0 END,
          updated_at = ?
      WHERE id = ? AND status IN ('pending', 'unknown')
-       AND COALESCE(failure_code, '') NOT IN ('easy_pay_direct_customer_vault_mismatch', 'easy_pay_direct_customer_vault_unverified', 'easy_pay_direct_customer_ambiguous', 'easy_pay_direct_payment_method_rejected')
-       AND NOT EXISTS (SELECT 1 FROM customer_closure_email_holds h JOIN customers c ON c.organization_id = h.organization_id AND lower(c.email) = h.email JOIN payment_request_checkout_intents i ON i.customer_id = c.id WHERE i.id = easy_pay_direct_payment_executions.checkout_intent_id)
-       AND NOT EXISTS (SELECT 1 FROM customer_closure_holds h JOIN payment_request_checkout_intents c ON c.customer_id = h.customer_id WHERE c.id = easy_pay_direct_payment_executions.checkout_intent_id)
+       AND COALESCE(failure_code, '') NOT IN (${EASY_PAY_DIRECT_SETUP_REVIEW_CODES.map(() => "?").join(", ")})
+       AND ${EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL}
        AND (status = 'pending' OR (customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL))`,
   )
-    .bind(new Date().toISOString(), executionId)
+    .bind(new Date().toISOString(), executionId, ...EASY_PAY_DIRECT_SETUP_REVIEW_CODES)
     .run();
   if (claimed.meta.changes !== 1)
     throw new ApiError(409, "easy_pay_direct_processing", "Checkout is already processing");
@@ -523,6 +523,7 @@ export const EASY_PAY_DIRECT_SETUP_REVIEW_CODES: readonly string[] = [
   "easy_pay_direct_customer_vault_unverified",
   "easy_pay_direct_customer_ambiguous",
   "easy_pay_direct_payment_method_rejected",
+  "easy_pay_direct_checkout_state_changed",
 ];
 
 function isPaymentSetupReviewCode(code: string | null): boolean {
@@ -713,6 +714,21 @@ async function advanceEasyPayDirectOrder(
     providerProductId: productId,
   });
 
+  // Provider setup involves network waits. Recheck authoritative payment/closure
+  // state immediately before an order, not just the earlier claim snapshot.
+  const payable = await env.BILLING_DB.prepare(
+    `SELECT id FROM easy_pay_direct_payment_executions
+     WHERE id = ? AND status = 'processing' AND ${EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL}`,
+  )
+    .bind(execution.id)
+    .first<{ id: string }>();
+  if (!payable) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_checkout_state_changed",
+      "Checkout is no longer available for payment. Please contact support before trying again.",
+    );
+  }
   const order = await createEasyPayDirectOrder(
     env,
     {
@@ -741,6 +757,11 @@ export async function resumeEasyPayDirectExecution(
   const loaded = await loadExecutionAndCheckoutById(env.BILLING_DB, executionId);
   if (!loaded || !["processing", "unknown"].includes(loaded.execution.status)) return "deferred";
   if (loaded.execution.provider_transaction_id) return "advanced";
+  if (
+    loaded.checkout.payment_status === "succeeded" ||
+    loaded.checkout.ready_for_payment_processing !== 1
+  )
+    return "deferred";
   if (isPaymentSetupReviewCode(loaded.execution.failure_code)) return "deferred";
   if (!loaded.execution.customer_vault_id || !loaded.execution.gateway_billing_id)
     return "deferred";
@@ -759,12 +780,16 @@ export async function resumeEasyPayDirectExecution(
      SET status = 'processing', completed_at = NULL, failure_code = NULL, failure_message = NULL,
          resume_count = resume_count + 1, updated_at = ?
      WHERE id = ? AND customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL
-       AND COALESCE(failure_code, '') NOT IN ('easy_pay_direct_customer_vault_mismatch', 'easy_pay_direct_customer_vault_unverified', 'easy_pay_direct_customer_ambiguous', 'easy_pay_direct_payment_method_rejected')
-       AND NOT EXISTS (SELECT 1 FROM customer_closure_email_holds h JOIN customers c ON c.organization_id = h.organization_id AND lower(c.email) = h.email JOIN payment_request_checkout_intents i ON i.customer_id = c.id WHERE i.id = easy_pay_direct_payment_executions.checkout_intent_id)
-       AND NOT EXISTS (SELECT 1 FROM customer_closure_holds h JOIN payment_request_checkout_intents c ON c.customer_id = h.customer_id WHERE c.id = easy_pay_direct_payment_executions.checkout_intent_id)
+       AND COALESCE(failure_code, '') NOT IN (${EASY_PAY_DIRECT_SETUP_REVIEW_CODES.map(() => "?").join(", ")})
+       AND ${EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL}
        AND (status = 'unknown' OR (status = 'processing' AND updated_at <= ?))`,
   )
-    .bind(new Date().toISOString(), executionId, new Date(Date.now() - 120_000).toISOString())
+    .bind(
+      new Date().toISOString(),
+      executionId,
+      ...EASY_PAY_DIRECT_SETUP_REVIEW_CODES,
+      new Date(Date.now() - 120_000).toISOString(),
+    )
     .run();
   if (claimed.meta.changes !== 1) return "deferred";
 
