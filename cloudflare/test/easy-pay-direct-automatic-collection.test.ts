@@ -90,6 +90,152 @@ beforeEach(async () => {
 });
 
 describe("Easy Pay Direct automatic subscription collection", () => {
+  it.each(["account", "empty-vault", "empty-initial"])(
+    "excludes an unusable %s profile before the renewal candidate limit",
+    async (fault) => {
+      const sql =
+        fault === "account"
+          ? "UPDATE customers SET payment_provider_code = 'different-account' WHERE organization_id = ?"
+          : fault === "empty-vault"
+            ? "UPDATE provider_customer_profiles SET gateway_customer_vault_id = '' WHERE organization_id = ?"
+            : "UPDATE provider_customer_profiles SET initial_transaction_id = '' WHERE organization_id = ?";
+      await env.BILLING_DB.prepare(sql).bind(organizationId).run();
+      expect(
+        await pendingEasyPayDirectAutomaticCollectionInvoices(env.BILLING_DB, "all"),
+      ).not.toContain(invoiceId);
+      expect(
+        await prepareEasyPayDirectAutomaticCollection(
+          enabledEnv(),
+          invoiceId,
+          "invalid-profile-review",
+        ),
+      ).toBe("not_applicable");
+      expect(await automaticPaymentRequestId(invoiceId)).toBeNull();
+    },
+  );
+
+  it("preserves a paid renewal and its profile when a stale failure follows interrupted finalization", async () => {
+    const runtimeEnv = enabledEnv();
+    await prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "stale-renewal-failure");
+    const requestId = (await automaticPaymentRequestId(invoiceId))!;
+    const transactionId = `paid-${requestId}`;
+    const charge = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          `response=1&responsetext=Approved&response_code=100&transactionid=${transactionId}&orderid=${requestId}`,
+        ),
+    );
+    await processEasyPayDirectAutomaticCollection(runtimeEnv, requestId, charge);
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_automatic_payment_executions SET status = 'unknown', completed_at = NULL WHERE payment_request_id = ?",
+    )
+      .bind(requestId)
+      .run();
+    const execution = await env.BILLING_DB.prepare(
+      "SELECT id FROM easy_pay_direct_automatic_payment_executions WHERE payment_request_id = ?",
+    )
+      .bind(requestId)
+      .first<{ id: string }>();
+    const reader = (failed: boolean) =>
+      vi.fn<typeof fetch>(
+        async () =>
+          new Response(
+            `<nm_response><transaction><transaction_id>${transactionId}</transaction_id><order_id>${requestId}</order_id><condition>${failed ? "failed" : "complete"}</condition><requested_amount>9.00</requested_amount><currency>USD</currency>${failed ? "<response_code>300</response_code><response_text>Invalid Customer Vault ID</response_text>" : ""}</transaction></nm_response>`,
+          ),
+      );
+    await reconcileEasyPayDirectAutomaticCollection(runtimeEnv, execution!.id, reader(true));
+    expect(await providerProfileState()).toEqual({ status: "active" });
+    expect(await collectionState(invoiceId)).toMatchObject({
+      execution_status: "unknown",
+      request_status: "succeeded",
+    });
+    await reconcileEasyPayDirectAutomaticCollection(runtimeEnv, execution!.id, reader(false));
+    expect(await collectionState(invoiceId)).toMatchObject({
+      execution_status: "succeeded",
+      request_status: "succeeded",
+    });
+    expect(charge).toHaveBeenCalledOnce();
+  });
+
+  it.each(["missing-amount", "missing-currency", "wrong-amount", "wrong-currency"])(
+    "keeps an uncertain renewal unpaid when the provider read has %s",
+    async (fault) => {
+      const runtimeEnv = enabledEnv();
+      await prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "read-evidence-review");
+      const requestId = (await automaticPaymentRequestId(invoiceId))!;
+      const charge = vi.fn<typeof fetch>(async () => {
+        throw new TypeError("fixture timeout");
+      });
+      await processEasyPayDirectAutomaticCollection(runtimeEnv, requestId, charge);
+      const execution = await env.BILLING_DB.prepare(
+        "SELECT id FROM easy_pay_direct_automatic_payment_executions WHERE payment_request_id = ?",
+      )
+        .bind(requestId)
+        .first<{ id: string }>();
+      const amount =
+        fault === "missing-amount"
+          ? ""
+          : `<requested_amount>${fault === "wrong-amount" ? "10.00" : "9.00"}</requested_amount>`;
+      const currency =
+        fault === "missing-currency"
+          ? ""
+          : `<currency>${fault === "wrong-currency" ? "EUR" : "USD"}</currency>`;
+      const read = vi.fn<typeof fetch>(
+        async () =>
+          new Response(
+            `<nm_response><transaction><transaction_id>fixture-${requestId}</transaction_id><order_id>${requestId}</order_id><condition>complete</condition>${amount}${currency}</transaction></nm_response>`,
+          ),
+      );
+      await expect(
+        reconcileEasyPayDirectAutomaticCollection(runtimeEnv, execution!.id, read),
+      ).resolves.toBe("deferred");
+      expect(
+        await env.BILLING_DB.prepare("SELECT payment_status FROM payment_requests WHERE id = ?")
+          .bind(requestId)
+          .first(),
+      ).toEqual({ payment_status: "pending" });
+      expect(charge).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("records and defers a failed renewal provider read so it cannot monopolize the oldest slot", async () => {
+    const runtimeEnv = enabledEnv();
+    await prepareEasyPayDirectAutomaticCollection(runtimeEnv, invoiceId, "read-outage-review");
+    const requestId = (await automaticPaymentRequestId(invoiceId))!;
+    await processEasyPayDirectAutomaticCollection(
+      runtimeEnv,
+      requestId,
+      vi.fn<typeof fetch>(async () => {
+        throw new TypeError("fixture timeout");
+      }),
+    );
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_automatic_payment_executions SET updated_at = '2000-01-01T00:00:00.000Z' WHERE payment_request_id = ?",
+    )
+      .bind(requestId)
+      .run();
+    const execution = await env.BILLING_DB.prepare(
+      "SELECT id FROM easy_pay_direct_automatic_payment_executions WHERE payment_request_id = ?",
+    )
+      .bind(requestId)
+      .first<{ id: string }>();
+    await expect(
+      reconcileEasyPayDirectAutomaticCollection(
+        runtimeEnv,
+        execution!.id,
+        vi.fn<typeof fetch>(async () => new Response("unavailable", { status: 503 })),
+      ),
+    ).resolves.toBe("deferred");
+    const state = await env.BILLING_DB.prepare(
+      "SELECT updated_at, last_provider_read_at, status FROM easy_pay_direct_automatic_payment_executions WHERE id = ?",
+    )
+      .bind(execution!.id)
+      .first<{ updated_at: string; last_provider_read_at: string; status: string }>();
+    expect(state?.updated_at).not.toBe("2000-01-01T00:00:00.000Z");
+    expect(state?.last_provider_read_at).toBeTruthy();
+    expect(state?.status).toBe("unknown");
+  });
+
   it("does not let a historical manual scope authorize a product-scoped renewal", async () => {
     await enableAutomaticCollectionScope();
     expect(

@@ -9,7 +9,10 @@ import {
   reconcileEasyPayDirectGatewayTestExecution,
   EASY_PAY_DIRECT_SETUP_REVIEW_CODES,
 } from "../api/easy-pay-direct-checkout";
-import { requireEasyPayDirectOrderEvidence } from "../billing/easy-pay-direct-order-evidence";
+import {
+  requireEasyPayDirectOrderEvidence,
+  hasSuccessfulEasyPayDirectPayment,
+} from "../billing/easy-pay-direct-order-evidence";
 import {
   EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL,
   EASY_PAY_DIRECT_TAX_COMMIT_PENDING_SQL,
@@ -229,11 +232,30 @@ async function reconcileExecution(
       ? "processed"
       : "deferred";
   }
+  // The ledger never regresses a verified success. A stale failure must not
+  // discard the execution's still-unfinished tax/card recovery either.
+  if (
+    await hasSuccessfulEasyPayDirectPayment(
+      env.BILLING_DB,
+      execution.organization_id,
+      execution.payment_request_id,
+      execution.provider_account_code,
+      order.id,
+    )
+  )
+    return "deferred";
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
      SET status = ?, failure_code = ?, failure_message = ?, updated_at = ?, completed_at = ?,
          phone_ciphertext = NULL, phone_iv = NULL
-     WHERE id = ? AND status IN ('processing', 'unknown')`,
+     WHERE id = ? AND status IN ('processing', 'unknown')
+       AND NOT EXISTS (SELECT 1 FROM payment_request_payments paid
+         WHERE paid.organization_id = easy_pay_direct_payment_executions.organization_id
+           AND paid.payment_request_id = easy_pay_direct_payment_executions.payment_request_id
+           AND paid.provider = 'easy_pay_direct'
+           AND paid.provider_account_code = easy_pay_direct_payment_executions.provider_account_code
+           AND paid.provider_transaction_id = easy_pay_direct_payment_executions.provider_transaction_id
+           AND paid.status = 'succeeded')`,
   )
     .bind(
       normalizedStatus,
@@ -358,12 +380,29 @@ export async function reconcileEasyPayDirectReceipt(
   // until provider reconciliation captures the processor transaction/card binding.
   // Never issue another charge while waiting for that provider read.
   if (status === "succeeded") return "processed";
+  if (
+    await hasSuccessfulEasyPayDirectPayment(
+      env.BILLING_DB,
+      receipt.organization_id,
+      paymentRequestId,
+      receipt.provider_account_code,
+      receipt.provider_transaction_id,
+    )
+  )
+    return "processed";
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
      SET status = ?, failure_code = ?, failure_message = ?, updated_at = ?, completed_at = ?,
          phone_ciphertext = NULL, phone_iv = NULL
      WHERE provider_account_code = ? AND provider_transaction_id = ?
-       AND status IN ('processing', 'unknown')`,
+       AND status IN ('processing', 'unknown')
+       AND NOT EXISTS (SELECT 1 FROM payment_request_payments paid
+         WHERE paid.organization_id = easy_pay_direct_payment_executions.organization_id
+           AND paid.payment_request_id = easy_pay_direct_payment_executions.payment_request_id
+           AND paid.provider = 'easy_pay_direct'
+           AND paid.provider_account_code = easy_pay_direct_payment_executions.provider_account_code
+           AND paid.provider_transaction_id = easy_pay_direct_payment_executions.provider_transaction_id
+           AND paid.status = 'succeeded')`,
   )
     .bind(
       status,

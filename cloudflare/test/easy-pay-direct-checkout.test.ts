@@ -80,6 +80,78 @@ async function seedCheckoutFixture() {
 }
 
 describe("EPD post-payment recovery and evidence", () => {
+  it.each(["webhook", "provider-read"])(
+    "does not discard paid-checkout recovery after a stale %s failure",
+    async (path) => {
+      await monthlyFixture();
+      const { runtimeEnv, request } = await productionSubmission();
+      const provider = commerceVaultFixture();
+      await handleEasyPayDirectCheckoutSubmission(
+        request(),
+        runtimeEnv,
+        "paid-before-failure",
+        vi.fn<typeof fetch>(async (input, init) => {
+          const response = await provider.fetcher(input, init);
+          return String(input).endsWith("/orders") ? Response.json(approvedOrder(false)) : response;
+        }),
+      );
+      const execution = await executionForTest();
+      const failed = { ...approvedOrder(false), status: "failed" };
+      if (path === "webhook") {
+        const receiptId = "stale-failed-" + paymentRequestId;
+        await insertArchivedEvent(
+          receiptId,
+          receiptId,
+          "order.failed",
+          failed.id,
+          JSON.stringify({
+            type: "order.failed",
+            data: {
+              object: { ...failed, metadata: { lago_payment_request_id: paymentRequestId } },
+            },
+          }),
+        );
+        await reconcileEasyPayDirectReceipt(runtimeEnv, receiptId);
+      } else {
+        await reconcileEasyPayDirectExecution(
+          runtimeEnv,
+          execution!.id,
+          vi.fn<typeof fetch>(async () => Response.json(failed)),
+        );
+      }
+      expect(await pendingEasyPayDirectExecutions(env.BILLING_DB, "production")).toContain(
+        execution!.id,
+      );
+      expect(await executionForTest()).toMatchObject({ status: "unknown" });
+      await reconcileEasyPayDirectExecution(
+        runtimeEnv,
+        execution!.id,
+        vi.fn<typeof fetch>(async () => Response.json(approvedOrder(true))),
+      );
+      expect(await executionForTest()).toMatchObject({ status: "succeeded" });
+      expect(provider.operations.filter((operation) => operation === "order")).toHaveLength(1);
+    },
+  );
+
+  it("keeps a past-due monthly subscription recoverable while processor evidence is missing", async () => {
+    const subscriptionId = await monthlyFixture();
+    await env.BILLING_DB.prepare("UPDATE subscriptions SET status = 'past_due' WHERE id = ?")
+      .bind(subscriptionId)
+      .run();
+    const { runtimeEnv, request } = await productionSubmission();
+    const provider = commerceVaultFixture();
+    await handleEasyPayDirectCheckoutSubmission(
+      request(),
+      runtimeEnv,
+      "past-due-review",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const response = await provider.fetcher(input, init);
+        return String(input).endsWith("/orders") ? Response.json(approvedOrder(false)) : response;
+      }),
+    );
+    expect(await executionForTest()).toMatchObject({ status: "unknown" });
+  });
+
   it("does not replace a newer saved subscription card during delayed checkout recovery", async () => {
     const subscriptionId = await monthlyFixture();
     const { runtimeEnv, request } = await productionSubmission();

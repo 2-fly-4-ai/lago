@@ -1004,7 +1004,7 @@ async function finalizeGatewayTestOutcome(
        JOIN subscriptions s ON s.id = i.subscription_id AND s.organization_id = i.organization_id
        JOIN plans p ON p.id = s.plan_id AND p.organization_id = s.organization_id
        WHERE link.payment_request_id = ? AND link.organization_id = ?
-         AND s.status = 'active' AND p.interval IN ('weekly', 'monthly', 'quarterly', 'yearly') LIMIT 1`,
+         AND s.status IN ('active', 'past_due') AND p.interval IN ('weekly', 'monthly', 'quarterly', 'yearly') LIMIT 1`,
     )
       .bind(checkout.payment_request_id, checkout.organization_id)
       .first();
@@ -1378,7 +1378,7 @@ export async function bindEasyPayDirectRenewalProfile(
      JOIN subscriptions s ON s.id = i.subscription_id AND s.organization_id = i.organization_id
      JOIN plans p ON p.id = s.plan_id AND p.organization_id = s.organization_id
      WHERE link.payment_request_id = ? AND link.organization_id = ?
-       AND s.status = 'active' AND p.interval IN ('weekly', 'monthly', 'quarterly', 'yearly') LIMIT 1`,
+       AND s.status IN ('active', 'past_due') AND p.interval IN ('weekly', 'monthly', 'quarterly', 'yearly') LIMIT 1`,
     )
     .bind(checkout.payment_request_id, checkout.organization_id)
     .first();

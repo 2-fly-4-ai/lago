@@ -204,6 +204,13 @@ reads rotate by last-attempt time, so the oldest 100 pending orders cannot indef
 newer orders. Gateway test executions recover through the Gateway query API, not Commerce, and
 verify the original transaction and money before finishing local profile setup.
 
+The same money-evidence requirement applies to automatic-renewal Gateway reads. Unavailable or
+inconsistent reads defer and advance last-attempt ordering without resubmitting the charge.
+Wrong-account or empty-reference profiles are rejected before renewal candidate selection limits.
+Past-due monthly/other recurring subscriptions still require completed processor/vault binding.
+An exact successful payment ledger entry prevents a later failure from discarding unfinished
+recovery or disabling the paid renewal's profile; conditional SQL rechecks this at the write.
+
 These changes do not automatically reopen every historical successful execution with incomplete
 renewal setup. Before rollout, separately inspect affected historical records with approved
 read-only access; preserve newer card selections and never replay payment creation as a repair.

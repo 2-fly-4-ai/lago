@@ -1,5 +1,28 @@
 import { ApiError } from "../http";
 
+export async function hasSuccessfulEasyPayDirectPayment(
+  database: D1Database,
+  organizationId: string,
+  paymentRequestId: string,
+  providerAccountCode: string,
+  transactionId: string,
+): Promise<boolean> {
+  return Boolean(
+    await database
+      .prepare(
+        `SELECT 1 FROM payment_request_payments payment
+     JOIN payment_requests request ON request.id = payment.payment_request_id
+      AND request.organization_id = payment.organization_id
+     WHERE payment.organization_id = ? AND payment.payment_request_id = ?
+       AND payment.provider = 'easy_pay_direct' AND payment.provider_account_code = ?
+       AND payment.provider_transaction_id = ? AND payment.status = 'succeeded'
+       AND payment.amount_minor = request.amount_minor AND payment.currency = request.currency LIMIT 1`,
+      )
+      .bind(organizationId, paymentRequestId, providerAccountCode, transactionId)
+      .first(),
+  );
+}
+
 // Both provider reads and webhooks must prove the same money identity as the
 // inline checkout. A missing amount is not permission to assume the invoice total.
 export async function requireEasyPayDirectOrderEvidence(

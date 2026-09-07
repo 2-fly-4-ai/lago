@@ -134,3 +134,33 @@ inventory, 5 Access tests, 4 checkout UI tests, 49 tax-tooling tests, and all se
 production dry-run builds. The repository harness and diff whitespace checks pass. No schema
 migration, remote database write, provider request, charge, deployment, push, or routing change
 was performed. The retained worktree remains the local repair branch, not deployed production.
+
+## Renewal and event-order review
+
+A subsequent full-file review of automatic collection, its eligibility queries, and checkout
+reconciliation added twelve regressions. The review follows the Cloudflare Workers guidance on
+durable recovery and checks database predicates as well as application-level status checks.
+
+- Automatic renewal reads now require exact amount/currency and the recorded transaction identity
+  when available. Missing money fields cannot silently substitute invoice values.
+- Provider read failures advance last-attempt ordering and defer with a safe diagnostic instead
+  of aborting the reconciliation batch. Database/programming errors are not silently swallowed.
+- Stale failure events/reads cannot terminate unfinished recovery for the exact already-paid
+  checkout or renewal, or disable its saved profile. Conditional SQL repeats the paid-ledger
+  guard at the write boundary, not only in an earlier application read.
+- Past-due recurring subscriptions retain processor/vault recovery requirements.
+- Renewal selection rejects wrong-account and empty vault/initial-transaction profiles before
+  its 100-row limit; preparation and dunning apply the same nonempty-reference rules.
+
+Coverage includes one-time exclusions, canceled/held/disabled/unscoped renewals, mixed dunning
+requests, unknown-charge no-resubmission, tax destination isolation, newer card preservation,
+post-payment write interruption, and out-of-order failure followed by verified success. The
+new tests use fictional local data only. No provider-backed checkout, historical production
+record audit, or deployment is implied. The existing live-contract rollout hold remains.
+
+Final gate: 585/585 Worker tests pass across 81 files, plus all Access/UI/tax-tooling tests,
+formatting, lint, typecheck, generated bindings, inventory and seven dev/production dry-run
+builds. Harness and diff whitespace checks pass. The final review also checked that the new
+failure guards operate at the SQL write boundary and do not broaden charge eligibility.
+This is a local source/test/documentation repair only: no production deployment, push, provider
+call, customer-data read, remote D1 mutation, payment retry, or change to Store was made.
