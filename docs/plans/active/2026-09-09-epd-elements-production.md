@@ -152,3 +152,28 @@ product checkpoint for the held execution. It must never be replayed; a fresh ch
   Worker from this candidate, verify version/health/schema/gates, then require a fresh Sprout
   checkout with a real card. Do not replay the closed intent and do not use a sandbox test card on
   the live Gateway.
+
+## Approved production deployment — 2026-09-09
+
+The user explicitly approved the production Lago-only migration and deployment after reviewing the
+root cause and staging evidence. The Store production Worker and product routing were not deployed
+or widened, and no payment or renewal was manually triggered.
+
+- Recovery bookmark before mutation:
+  `000001e2-00000a87-000050e1-285f6294eeb3ad4f88b13c0a0e10790e`.
+- Migrations `0122_easy_pay_direct_live_refunds.sql` and
+  `0123_backfill_customer_invoice_currency.sql` both applied successfully. Wrangler reports no
+  pending migrations. All 49 unambiguous legacy EPD customer currencies were backfilled; zero
+  remain null. The refund table remains empty, both refund guard triggers exist, and
+  `PRAGMA foreign_key_check` remains empty.
+- Production Lago version `a7056828-44eb-4d27-8e6b-5a5df6f62dcc` was deployed at 100% with
+  message `Deploy c8188ea EPD direct Gateway repair`. Both `/health` and `/ready` returned success.
+- Version inspection confirms `gateway_direct`, production network mode, explicit live-mode
+  permission, product-scoped automatic collection, disabled tax collection, disabled refunds and
+  disabled Stripe networking. No secrets were copied or changed.
+- Post-deploy state has zero unresolved automatic-payment executions and zero foreign-key
+  violations. The Sprout collection policy is enabled. A successful new paid Sprout subscription
+  will enroll its own renewal scope from proven checkout consent; no unrelated product is enrolled.
+- The failed pre-deploy checkout remains terminal and must not be replayed. The remaining live
+  verification is a fresh human Sprout checkout with a real card, followed by read-only validation
+  of Gateway, Lago, Store, Auth and Slack evidence.
