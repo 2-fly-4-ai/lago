@@ -128,3 +128,27 @@ product checkpoint for the held execution. It must never be replayed; a fresh ch
 - A provider-backed isolated-staging journey passes on the exact release revision.
 - The held production execution is never retried.
 - Production remains unchanged until explicit approval.
+
+## Final production preflight — 2026-09-09
+
+- Production remains on version `908c019f-f2fa-478a-80ff-09fb90a189ef` from `eb727bd`; the
+  direct-Gateway candidate has not been deployed there.
+- The current production D1 Time Travel bookmark is
+  `000001e2-00000a87-000050e1-285f6294eeb3ad4f88b13c0a0e10790e`. It is recovery evidence,
+  not authority to restore or discard later financial writes.
+- Only migrations `0122_easy_pay_direct_live_refunds.sql` and
+  `0123_backfill_customer_invoice_currency.sql` are pending. Production has zero refund rows, so
+  0122 copies no financial records while adding the live-mode enum value; runtime refunds remain
+  disabled. All 49 EPD customers with null currency satisfy 0123's unambiguous-evidence predicate;
+  no conflicting customer is modified. Production reports zero foreign-key violations.
+- A fresh production API dry-run succeeded and selects `gateway_direct`, live Gateway network mode,
+  explicit live permission, product-scoped automatic collection, disabled tax collection, disabled
+  refunds and disabled Stripe network access. The deployed Worker already has the required Gateway
+  security and tokenization secrets; no secret change is part of promotion.
+- Isolated Lago version `d4d21026-1679-4346-bd5a-58fc13035018` remains healthy and ready. The
+  post-payment Store UX correction is separately deployed only to isolated Store version
+  `020a7820-411f-439a-a795-6705a187e676`; production Store remains unchanged.
+- The smallest production repair is therefore: apply 0122–0123, deploy only the native Lago API
+  Worker from this candidate, verify version/health/schema/gates, then require a fresh Sprout
+  checkout with a real card. Do not replay the closed intent and do not use a sandbox test card on
+  the live Gateway.
