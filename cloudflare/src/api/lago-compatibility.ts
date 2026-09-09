@@ -644,6 +644,58 @@ async function updateCustomer(
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
+  if (customer.currency !== normalized.currency) {
+    const currencyEvidence = await env.BILLING_DB.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM invoices WHERE customer_id = ? AND organization_id = ?) +
+         (SELECT COUNT(*) FROM payment_requests WHERE customer_id = ? AND organization_id = ?) +
+         (SELECT COUNT(*) FROM subscriptions WHERE customer_id = ? AND organization_id = ?) +
+         (SELECT COUNT(*) FROM wallets WHERE customer_id = ? AND organization_id = ?) AS evidence_count,
+         (SELECT COUNT(*) FROM invoices WHERE customer_id = ? AND organization_id = ?
+            AND currency <> ?) +
+         (SELECT COUNT(*) FROM payment_requests WHERE customer_id = ? AND organization_id = ?
+            AND currency <> ?) +
+         (SELECT COUNT(*) FROM subscriptions subscription
+            JOIN plans plan ON plan.id = subscription.plan_id
+              AND plan.organization_id = subscription.organization_id
+          WHERE subscription.customer_id = ? AND subscription.organization_id = ?
+            AND plan.currency <> ?) +
+         (SELECT COUNT(*) FROM wallets WHERE customer_id = ? AND organization_id = ?
+            AND currency <> ?) AS conflicting_count`,
+    )
+      .bind(
+        customer.id,
+        auth.organizationId,
+        customer.id,
+        auth.organizationId,
+        customer.id,
+        auth.organizationId,
+        customer.id,
+        auth.organizationId,
+        customer.id,
+        auth.organizationId,
+        normalized.currency,
+        customer.id,
+        auth.organizationId,
+        normalized.currency,
+        customer.id,
+        auth.organizationId,
+        normalized.currency,
+        customer.id,
+        auth.organizationId,
+        normalized.currency,
+      )
+      .first<{ evidence_count: number; conflicting_count: number }>();
+    const hasEvidence = Number(currencyEvidence?.evidence_count ?? 0) > 0;
+    const hasConflict = Number(currencyEvidence?.conflicting_count ?? 0) > 0;
+    if ((customer.currency !== null && hasEvidence) || hasConflict) {
+      throw new ApiError(
+        422,
+        "customer_currency_immutable",
+        "Customer currency cannot change after billing activity exists",
+      );
+    }
+  }
   const now = new Date().toISOString();
   const nextVersion = customer.version + 1;
   const dunningAssignmentChanged =
@@ -667,7 +719,41 @@ async function updateCustomer(
            skip_invoice_custom_sections = ?, applied_dunning_campaign_id = ?,
            exclude_from_dunning_campaign = ?, last_dunning_campaign_attempt = ?,
            last_dunning_campaign_attempt_at = ?, version = version + 1, updated_at = ?
-       WHERE id = ? AND organization_id = ? AND version = ?`,
+       WHERE id = ? AND organization_id = ? AND version = ?
+         AND (
+           (currency = ? OR (currency IS NULL AND ? IS NULL))
+           OR NOT EXISTS (
+             SELECT 1 FROM invoices WHERE customer_id = customers.id
+               AND organization_id = customers.organization_id
+             UNION ALL
+             SELECT 1 FROM payment_requests WHERE customer_id = customers.id
+               AND organization_id = customers.organization_id
+             UNION ALL
+             SELECT 1 FROM subscriptions WHERE customer_id = customers.id
+               AND organization_id = customers.organization_id
+             UNION ALL
+             SELECT 1 FROM wallets WHERE customer_id = customers.id
+               AND organization_id = customers.organization_id
+           )
+           OR (
+             currency IS NULL AND ? IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM invoices
+               WHERE customer_id = customers.id AND organization_id = customers.organization_id
+                 AND currency <> ?)
+             AND NOT EXISTS (SELECT 1 FROM payment_requests
+               WHERE customer_id = customers.id AND organization_id = customers.organization_id
+                 AND currency <> ?)
+             AND NOT EXISTS (SELECT 1 FROM subscriptions subscription
+               JOIN plans plan ON plan.id = subscription.plan_id
+                 AND plan.organization_id = subscription.organization_id
+               WHERE subscription.customer_id = customers.id
+                 AND subscription.organization_id = customers.organization_id
+                 AND plan.currency <> ?)
+             AND NOT EXISTS (SELECT 1 FROM wallets
+               WHERE customer_id = customers.id AND organization_id = customers.organization_id
+                 AND currency <> ?)
+           )
+         )`,
     ).bind(
       normalized.billingEntityId,
       normalized.email,
@@ -688,6 +774,13 @@ async function updateCustomer(
       customer.id,
       auth.organizationId,
       customer.version,
+      normalized.currency,
+      normalized.currency,
+      normalized.currency,
+      normalized.currency,
+      normalized.currency,
+      normalized.currency,
+      normalized.currency,
     ),
   ];
   if (normalized.replaceCustomSections) {

@@ -1,7 +1,10 @@
 // EPD's public SDK owns every card input. This script handles only field state
 // and the opaque cct_ token, never PAN/CVC. Keep the Gateway renderer separate.
-// Contract: https://docs.api.epd.com/guides/elements/
-export function easyPayDirectElementsScript(publishableKey: string): string {
+// Contract: https://docs.epd.com/guides/card-vaulting/
+export function easyPayDirectElementsScript(
+  publishableKey: string,
+  expectedSandbox: boolean,
+): string {
   return `(async()=>{
     let busy=false;let stopped=false;let epd;let fields;
     const status=document.getElementById('payment-status');
@@ -11,7 +14,7 @@ export function easyPayDirectElementsScript(publishableKey: string): string {
     try {
       if(typeof EPD!=='function')throw new Error('SDK unavailable');
       epd=await EPD(${JSON.stringify(publishableKey)},{disableTelemetry:true});
-      if(epd.sandbox!==true)throw new Error('Sandbox required');
+      if(epd.sandbox!==${JSON.stringify(expectedSandbox)})throw new Error('Payment environment mismatch');
       const style={base:{fontFamily:'system-ui,sans-serif',fontSize:'16px',color:'#172033',padding:'13px 14px'},invalid:{color:'#b42318'}};
       fields={number:epd.create('cardNumber',{style,ariaLabel:'Card number',placeholder:'1234 1234 1234 1234'}),expiration:epd.create('cardExpiration',{style,ariaLabel:'Expiration date',placeholder:'MM / YY'}),cvc:epd.create('cardCvc',{style,ariaLabel:'Security code',placeholder:'CVV'})};
       await Promise.all([fields.number.mount('#ccnumber'),fields.expiration.mount('#ccexp'),fields.cvc.mount('#cvv')]);
@@ -35,6 +38,7 @@ export function easyPayDirectElementsScript(publishableKey: string): string {
           if(checkout!==quotedCheckout||taxQuoteId!==quoteId||!taxReady)throw new Error('Total changed');
           const submitted=await submit(capture.token);
           if(submitted===true){stopped=true;status.textContent='Payment submitted'}
+          else {stopped=true;cardReady=false;status.textContent='Payment status requires confirmation'}
         } catch {error.textContent='Card capture was not completed. Check your details and the current total before trying again.'}
         finally {clearTimeout(tokenTimer);busy=false;sync()}
       });

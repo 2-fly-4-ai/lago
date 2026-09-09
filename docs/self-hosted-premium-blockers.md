@@ -15,16 +15,26 @@ This file records the remaining premium-adjacent features that still depend on c
 
 ### Easy Pay Direct adapter
 
-The Cloudflare-native adapter uses EPD Commerce for customers, payment methods, products, orders,
-refunds, and authoritative webhooks. Sandbox needs a Demo Company Commerce key carrying EPD's
-`_test_` environment marker,
-a checkout-signing secret, and the endpoint's one-time `whsec_...` signing secret. Live card entry
-additionally needs the EPD Gateway Payment API security key and Collect.js tokenization key because
-Gateway still owns card vaulting. Enable `EASY_PAY_DIRECT_NETWORK_MODE=test` first and keep
-`EASY_PAY_DIRECT_LIVEMODE_ALLOWED=0` independent. The Worker rejects a live key in sandbox mode and
-a test key in production mode. Only a verified `order.*` webhook marks the local payment paid.
+The Cloudflare-native adapter uses the EPD Gateway contract for Collect.js card capture, initial
+sales, Customer Vault profiles, direct recurring charges, query reconciliation and refunds. Browser
+card entry requires the Gateway Tokenization key; server operations require the matching Gateway
+private API/security key. A separate checkout-signing secret is also required.
+
+The supported live checkout backend is `EASY_PAY_DIRECT_CHECKOUT_BACKEND=gateway_direct`. Sandbox
+uses the same direct contract with `EASY_PAY_DIRECT_NETWORK_MODE=gateway_test`, a full-test Gateway
+credential set and `EASY_PAY_DIRECT_LIVEMODE_ALLOWED=0`; the request includes
+`test_mode=enabled`. Live uses `APP_ENV=production`, `EASY_PAY_DIRECT_NETWORK_MODE=production` and
+`EASY_PAY_DIRECT_LIVEMODE_ALLOWED=1`; the live request omits `test_mode`. Every mixed tuple is
+rejected before provider mutation. Only a verified successful transaction with matching money and
+account evidence may mark a local payment paid.
+
+The former Gateway-token-to-Commerce-order bridge is not a supported new-checkout path. It depended
+on an undocumented Commerce customer/vault field and failed before the production Sprout charge.
+It remains available only to historical tests and reconciliation under the explicit test-only
+`EASY_PAY_DIRECT_LEGACY_BRIDGE_ALLOWED=1` override. Production does not set that override.
 
 ### Nango-backed integrations
+
 These integrations still require local Nango configuration:
 
 - Anrok
@@ -41,6 +51,7 @@ Required configuration:
 Without those values, Lago now fails clearly instead of routing users to Lago-hosted upgrade/contact flows.
 
 ### GoCardless OAuth proxy
+
 GoCardless still requires an OAuth callback/proxy URL that your self-hosted deployment controls.
 
 Required configuration:

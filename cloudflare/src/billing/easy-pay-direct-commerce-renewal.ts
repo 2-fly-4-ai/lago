@@ -6,6 +6,7 @@ import {
   validateEasyPayDirectElementsOrder,
 } from "../providers/easy-pay-direct-elements";
 import type { GatewayTransactionResult } from "../providers/easy-pay-direct";
+import { requireEasyPayDirectElementsMode } from "../providers/easy-pay-direct-elements-mode";
 
 export type CommerceRenewalExecution = {
   id: string;
@@ -23,12 +24,13 @@ export type CommerceRenewalExecution = {
   currency: string;
 };
 
-export function commerceRenewalSandboxAllowed(env: Env): boolean {
-  return (
-    ["development", "staging", "test"].includes(env.APP_ENV) &&
-    ["test", "gateway_test"].includes(env.EASY_PAY_DIRECT_NETWORK_MODE ?? "") &&
-    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED === "0"
-  );
+export function commerceRenewalEnvironmentAllowed(env: Env): boolean {
+  try {
+    requireEasyPayDirectElementsMode(env);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Called only after authenticated receipt verification. A signed response may
@@ -134,7 +136,7 @@ export async function chargeCommerceRenewal(
   fetcher: typeof fetch,
 ): Promise<GatewayTransactionResult> {
   if (
-    !commerceRenewalSandboxAllowed(env) ||
+    !commerceRenewalEnvironmentAllowed(env) ||
     !execution.commerce_customer_id ||
     !execution.commerce_payment_method_id ||
     !execution.product_idempotency_key ||
@@ -149,6 +151,7 @@ export async function chargeCommerceRenewal(
       env,
       {
         name: "SERP subscription renewal",
+        description: "SERP digital software subscription renewal",
         amountMinor: execution.amount_minor,
         currency: execution.currency,
         metadata: {
@@ -223,7 +226,7 @@ export async function readCommerceRenewal(
   execution: CommerceRenewalExecution,
   fetcher: typeof fetch,
 ): Promise<GatewayTransactionResult | null> {
-  if (!commerceRenewalSandboxAllowed(env) || !execution.commerce_order_id) return null;
+  if (!commerceRenewalEnvironmentAllowed(env) || !execution.commerce_order_id) return null;
   const checkpoint = await getEasyPayDirectElementsOrder(env, execution.commerce_order_id, fetcher);
   return outcome(execution, checkpoint.id, checkpoint.evidence);
 }

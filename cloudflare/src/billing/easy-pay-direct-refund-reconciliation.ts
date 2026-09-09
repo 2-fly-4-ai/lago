@@ -27,6 +27,10 @@ type RecoveryEnv = {
   PROVIDER_FINANCIALS?: ProviderFinancialServiceBinding;
 };
 
+function easyPayDirectRefundMode(mode: string | undefined): boolean {
+  return mode === "easy_pay_direct_test" || mode === "easy_pay_direct_live";
+}
+
 export async function checkpointEasyPayDirectRefund(
   database: D1Database,
   input: RefundCheckpointIdentity,
@@ -68,7 +72,7 @@ export async function reconcileEasyPayDirectRefundOperation(
   operationId: string,
   fetcher: typeof fetch = fetch,
 ): Promise<"processed" | "deferred"> {
-  if (env.CREDIT_NOTE_REFUND_MODE !== "easy_pay_direct_test") return "deferred";
+  if (!easyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE)) return "deferred";
   const operation = await env.BILLING_DB.prepare(`SELECT id, organization_id, credit_note_id,
     provider_account_code, provider_payment_id, provider_refund_transaction_id,
     provider_idempotency_key, amount_minor, currency, status
@@ -99,8 +103,6 @@ export async function reconcileEasyPayDirectRefundOperation(
   if (
     !env.PROVIDER_FINANCIALS &&
     (env.PROVIDER_READS_ENABLED !== "1" ||
-      !["test", "gateway_test"].includes(env.EASY_PAY_DIRECT_NETWORK_MODE ?? "") ||
-      env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0" ||
       operation.organization_id !== env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
       operation.provider_account_code !== env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim())
   )
@@ -182,10 +184,10 @@ export async function reconcileEasyPayDirectRefundOperation(
 
 export async function pendingEasyPayDirectRefundOperations(env: Env): Promise<string[]> {
   if (
-    env.CREDIT_NOTE_REFUND_MODE !== "easy_pay_direct_test" ||
+    !easyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE) ||
     env.PROVIDER_READS_ENABLED !== "1" ||
-    !["test", "gateway_test"].includes(env.EASY_PAY_DIRECT_NETWORK_MODE ?? "") ||
-    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0"
+    !env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
+    !env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim()
   )
     return [];
   const rows = await env.BILLING_DB.prepare(`SELECT id FROM provider_refund_operations

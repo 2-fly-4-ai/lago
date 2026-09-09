@@ -1,5 +1,6 @@
 import { closeBillingPeriod } from "../billing/close-period";
 import { prepareEasyPayDirectAutomaticCollection } from "../billing/easy-pay-direct-automatic-collection";
+import { easyPayDirectCustomerCurrencyEligibilitySql } from "../billing/easy-pay-direct-recovery-policy";
 import type { DomainEvent } from "../domain-events";
 
 export type SandboxRenewalProof = {
@@ -77,6 +78,8 @@ export async function runSandboxRenewalProof(
       AND NOT EXISTS (SELECT 1 FROM subscriptions successor
         WHERE successor.previous_subscription_id=s.id AND successor.status='pending')
       AND p.active=1 AND p.interval IN ('weekly','monthly','quarterly','yearly')
+      AND p.currency=c.currency
+      AND ${easyPayDirectCustomerCurrencyEligibilitySql("c", "p.currency")}
       AND c.payment_provider='easy_pay_direct' AND c.payment_provider_code=?
       AND profile.provider='easy_pay_direct' AND profile.provider_account_code=c.payment_provider_code
       AND profile.status='active' AND profile.payment_backend='gateway_vault'

@@ -79,11 +79,12 @@ async function setup(options = {}) {
       return options.submitted ?? true;
     },
     EPD: async (key, config) => {
-      assert.equal(key, "epd_test_pk_fixture");
+      const expectedSandbox = options.expectedSandbox ?? true;
+      assert.equal(key, expectedSandbox ? "epd_test_pk_fixture" : "epd_live_pk_fixture");
       assert.equal(config.disableTelemetry, true);
       if (options.initError) throw new Error("private provider detail");
       return {
-        sandbox: options.sandbox ?? true,
+        sandbox: options.sandbox ?? expectedSandbox,
         create(type, config) {
           assert.ok(config.ariaLabel);
           const state = { complete: options.complete ?? true, valid: true, empty: false };
@@ -101,7 +102,13 @@ async function setup(options = {}) {
       };
     },
   };
-  await runInNewContext(module.exports.easyPayDirectElementsScript("epd_test_pk_fixture"), context);
+  await runInNewContext(
+    module.exports.easyPayDirectElementsScript(
+      options.expectedSandbox === false ? "epd_live_pk_fixture" : "epd_test_pk_fixture",
+      options.expectedSandbox ?? true,
+    ),
+    context,
+  );
   return {
     context,
     nodes,
@@ -148,7 +155,7 @@ test("concurrent clicks create one token and one payment; success remains locked
   assert.equal(ui.count(), 1);
   assert.equal(ui.submissions.length, 1);
 });
-test("SDK failure or live SDK config never submits and never echoes provider detail", async () => {
+test("SDK failure or an unexpected SDK mode never submits and never echoes provider detail", async () => {
   for (const options of [{ initError: true }, { sandbox: false }]) {
     const ui = await setup(options);
     await ui.click();
@@ -156,6 +163,13 @@ test("SDK failure or live SDK config never submits and never echoes provider det
     assert.equal(ui.nodes.get("pay").disabled, true);
     assert.doesNotMatch(ui.nodes.get("error").textContent, /private/);
   }
+});
+test("a coherent live SDK mode can tokenize and submit", async () => {
+  const ui = await setup({ expectedSandbox: false, sandbox: false });
+  assert.equal(ui.nodes.get("pay").disabled, false);
+  await ui.click();
+  assert.equal(ui.count(), 1);
+  assert.deepEqual(ui.submissions, ["cct_fixtureOpaqueToken"]);
 });
 test("a quote changed during capture cannot charge the obsolete total", async () => {
   let resolve;
@@ -182,10 +196,10 @@ test("malformed Gateway token and tokenization timeout never reach payment endpo
   assert.equal(ui.submissions.length, 0);
   assert.equal(ui.nodes.get("pay").disabled, false);
 });
-test("failed server submission is retryable and incomplete fields remain disabled", async () => {
+test("a non-success server result retires the card token and blocks another submission", async () => {
   const ui = await setup({ submitted: false });
   await ui.click();
-  assert.equal(ui.nodes.get("pay").disabled, false);
+  assert.equal(ui.nodes.get("pay").disabled, true);
   const state = ui.states.get("cardCvc");
   state.valid = false;
   ui.handlers.get("cardCvc:change")(state);

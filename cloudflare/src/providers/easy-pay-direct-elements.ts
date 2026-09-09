@@ -1,10 +1,11 @@
 import { ApiError } from "../http";
 import type { CommerceOrder, EasyPayDirectEnv } from "./easy-pay-direct";
+import { requireEasyPayDirectElementsSecretKey } from "./easy-pay-direct-elements-mode";
 
 // Current documented Commerce contract. This deliberately does not import the
-// legacy Gateway billing_id/vault bridge, or enable any production traffic.
-// https://docs.api.epd.com/api-reference/customers/
-// https://docs.api.epd.com/api-reference/payment-methods/
+// legacy Gateway billing_id/vault bridge.
+// https://docs.epd.com/api-reference/customers/
+// https://docs.epd.com/api-reference/payment-methods/
 type ElementsEnv = Pick<
   EasyPayDirectEnv,
   | "EASY_PAY_DIRECT_COMMERCE_API_KEY"
@@ -90,26 +91,7 @@ async function request(
   options: { method: "GET" | "POST"; body?: unknown; idempotencyKey?: string },
   fetcher: typeof fetch,
 ): Promise<unknown> {
-  if (
-    !["development", "staging", "test"].includes(env.APP_ENV ?? "") ||
-    !["test", "gateway_test"].includes(env.EASY_PAY_DIRECT_NETWORK_MODE ?? "") ||
-    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0"
-  )
-    throw new ApiError(
-      503,
-      "easy_pay_direct_elements_staging_only",
-      "Elements is not enabled for this environment.",
-    );
-  const key = env.EASY_PAY_DIRECT_COMMERCE_API_KEY?.trim() ?? "";
-  if (
-    !/^epd_test_sk_[A-Za-z0-9]+$/u.test(key) &&
-    !/^epd_[A-Za-z0-9]+_[A-Za-z0-9]+_test_[A-Za-z0-9]+$/u.test(key)
-  )
-    throw new ApiError(
-      503,
-      "easy_pay_direct_key_environment_mismatch",
-      "Elements requires a sandbox Commerce key.",
-    );
+  const key = requireEasyPayDirectElementsSecretKey(env, env.EASY_PAY_DIRECT_COMMERCE_API_KEY);
   if (
     options.method === "POST" &&
     (!options.idempotencyKey || !uuidV4.test(options.idempotencyKey))
@@ -389,6 +371,7 @@ export async function createEasyPayDirectElementsProduct(
   env: ElementsEnv,
   input: {
     name: string;
+    description: string;
     amountMinor: number;
     currency: string;
     metadata: Record<string, string>;
@@ -397,7 +380,13 @@ export async function createEasyPayDirectElementsProduct(
   fetcher: typeof fetch = fetch,
 ): Promise<ElementsProduct> {
   money(input.amountMinor, input.currency);
-  if (!input.name.trim() || input.name.length > 250)
+  if (
+    !input.name.trim() ||
+    input.name.length > 250 ||
+    !input.description.trim() ||
+    input.description.length > 1000 ||
+    /[<>\p{Cc}]/u.test(input.name + input.description)
+  )
     throw new ApiError(
       422,
       "easy_pay_direct_elements_product_invalid",
@@ -412,6 +401,7 @@ export async function createEasyPayDirectElementsProduct(
         idempotencyKey: input.idempotencyKey,
         body: {
           name: input.name,
+          description: input.description,
           sku: `serp-${input.idempotencyKey}`,
           pricing: { amount: input.amountMinor, currency: input.currency.toLowerCase() },
           requires_shipping: false,

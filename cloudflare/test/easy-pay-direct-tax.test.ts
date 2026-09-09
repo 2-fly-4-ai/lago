@@ -627,7 +627,7 @@ describe("Easy Pay Direct destination tax checkout", () => {
         );
       }
       expect(form.get("amount")).toBe("21.99");
-      expect(form.get("billing_method")).toBe("recurring");
+      expect(form.get("billing_method")).toBe("initial_recurring");
       return new Response(
         "response=1&responsetext=Approved&response_code=100&transactionid=epd-tax-test-1&authcode=TEST&customer_vault_id=vault-tax-1",
       );

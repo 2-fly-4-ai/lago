@@ -1,0 +1,105 @@
+# EPD Direct Gateway Production Repair
+
+Status: active
+
+Last verified: 2026-09-09
+
+## Incident and root cause
+
+The Sprout production canary stopped before creating an EPD transaction. The deployed checkout
+tokenized the card with Gateway Collect.js, then attempted to create an order through EPD Commerce.
+That mixed transport required the undocumented `epd_gateway_customer_vault_id` field on a Commerce
+customer. The field was absent, so Lago correctly held the execution as unknown before charging.
+
+Production read-only evidence shows no provider transaction, response, customer, payment method or
+product checkpoint for the held execution. It must never be replayed; a fresh checkout is required.
+
+## Contract owners
+
+- EPD Gateway owns Collect.js tokenization, initial sales, Customer Vault records, processor
+  transaction evidence, direct recurring charges, query reconciliation and refunds.
+- Lago owns checkout signing, customer identity, idempotency, tax and discount amounts, provider
+  evidence, subscription state, renewal scheduling, reconciliation, entitlements and notifications.
+- Store owns product routing and the Sprout-only canary selection.
+- EPD Commerce is not in the new-checkout or renewal payment path. It remains a separate product and
+  historical integration surface only.
+
+## Repair
+
+1. Configure production as `EASY_PAY_DIRECT_CHECKOUT_BACKEND=gateway_direct`.
+2. Keep browser card capture in EPD Gateway Collect.js. Send the resulting opaque token directly to
+   the same Gateway's `transact.php` API; never attach it to a Commerce customer or order.
+3. For recurring purchases, create a Gateway Customer Vault record during the customer-initiated
+   first charge and save only the returned vault ID and original processor transaction ID.
+4. For one-time purchases, omit Customer Vault, stored-credential and recurring fields and never
+   bind a reusable payment profile, even if a provider response contains an unexpected vault field.
+5. Send subsequent Lago-scheduled renewals to the same Gateway with `initiated_by=merchant`,
+   `stored_credential_indicator=used`, `billing_method=recurring` and the saved original transaction.
+6. Include `test_mode=enabled` only for `gateway_test`; omit it for live Gateway traffic.
+7. Preserve the legacy Gateway-to-Commerce bridge only for historical test/reconciliation coverage.
+   Production rejects it unless the test-only `EASY_PAY_DIRECT_LEGACY_BRIDGE_ALLOWED=1` override is
+   explicitly present; the production config does not set that override.
+8. Recover ambiguous transport failures only with the Gateway Query API and stable order reference.
+   Never replay a sale to discover whether it succeeded.
+
+## Verification and rollout
+
+1. Focused direct-Gateway integration tests cover live/test mode, monthly and one-time purchase
+   separation, duplicate submission, decline, interrupted response, query recovery, profile binding,
+   renewal and legacy-bridge fail-closed behavior.
+2. The complete quality gate passes: 100 Worker test files / 1,149 tests, 19 browser checkout tests,
+   14 Gateway contract tests, 49 tax tests, formatting, lint, generated inventories and bindings,
+   TypeScript, migration rehearsal, and every development/production dry-run build.
+3. The provider-backed EPD full-test Gateway has already proven a real sandbox monthly purchase,
+   Customer Vault creation, renewal, decline and query behavior. These are actual provider sandbox
+   transactions, distinct from mocked Worker tests.
+4. Deploy this revision to isolated staging and repeat the signed Store-to-Lago checkout journey.
+   Do not count a rendered form or mocked response as payment proof.
+5. Obtain explicit approval before deploying the production Worker. Store remains limited to the
+   Sprout canary.
+6. A human submits the fresh live canary payment. Verify the exact Gateway transaction, Lago payment,
+   invoice/subscription, renewable profile, entitlement, receipt and Slack delivery before widening.
+
+## Evidence and remaining verification
+
+- The failed production checkout was a pre-charge integration failure, not a decline. Its generic
+  status page is permanently closed by design and no provider transaction was created.
+- EPD's authenticated Gateway developer documentation and full-test account establish the direct
+  `Collect.js -> transact.php -> Customer Vault -> query.php` contract used by this repair.
+- The focused repair suite passes 215/215 tests. The full gate passes 1,149/1,149 Worker tests and all
+  separate UI, Gateway, tax and build gates.
+- Production configuration dry-run selects `gateway_direct`, live network mode, explicit live-mode
+  permission, product-scoped renewals, disabled tax collection and disabled app-initiated refunds.
+- The corrected release was deployed to the isolated `serp-dev-lago-epd-serptest` Worker as version
+  `8c85cf5a-3daf-4512-ac8e-834b72414a3a`; both `/health` and `/ready` pass. The isolated Worker is
+  quiesced with payment mutations and automatic collection disabled. Its D1 state has zero enabled
+  automatic-collection scopes, zero active dunning campaigns, zero pending/processing/unknown
+  automatic executions and zero pending dunning payment requests.
+- A real full-test Gateway purchase charged USD 4.50 for a USD 9 monthly plan after the 50% regional
+  discount and created a reusable Gateway vault profile. A real stored-profile recovery charge also
+  succeeded for USD 4.50. Replaying reconciliation produced zero new candidates, requests or provider
+  transactions. These are provider sandbox transactions, not mocks.
+- The successful recovery projects through Store and Auth: the billing source is revision 3, the
+  unchanged entitlement payload is acknowledged at delivery revision 2, Auth holds one active
+  entitlement through the paid-through date, and the corresponding Slack delivery is `sent` with no
+  uncertain deliveries. The lower delivery revision is expected because the desired entitlement did
+  not change on the payment-only billing revision.
+- The isolated Store worker was restored to a fully disabled state as version
+  `07c7bc62-24eb-4a5a-8e28-1f60e80ab6ef`. Its source-retry endpoint now accepts an externally empty
+  streamed POST body; the regression is covered by 9/9 focused Store tests.
+- Currency is now a financial invariant. A null customer currency can be adopted only when all
+  invoice, payment-request, subscription-plan and wallet evidence is unambiguous. Conflicts fail
+  before provider contact, the execution claim repeats the check atomically, customer currency
+  updates are guarded by the same evidence predicate, and migration 0123 refuses ambiguous rows.
+- A real live charge is intentionally unverified until the repaired Worker is explicitly approved
+  for production and the human performs a new Sprout canary checkout.
+
+## Exit criteria
+
+- No new checkout or renewal depends on Commerce or an undocumented Gateway-to-Commerce field.
+- Monthly purchases save a renewable Gateway profile; one-time purchases never do.
+- Ambiguous responses reconcile by query without resubmission.
+- Full regression and dry-run build gates pass.
+- A provider-backed isolated-staging journey passes on the exact release revision.
+- The held production execution is never retried.
+- Production remains unchanged until explicit approval.

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { EasyPayDirectEnv } from "../src/providers/easy-pay-direct";
 import {
   addEasyPayDirectPaymentMethod,
-  chargeEasyPayDirectGatewayTestToken,
+  chargeEasyPayDirectGatewayToken,
   chargeEasyPayDirectStoredMethod,
   createEasyPayDirectCheckoutUrl,
   createEasyPayDirectCustomer,
@@ -22,6 +22,7 @@ import {
 } from "../src/providers/easy-pay-direct";
 
 const providerEnv = {
+  APP_ENV: "development",
   EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_test_secret",
   EASY_PAY_DIRECT_SECURITY_KEY: "synthetic-security-key",
   EASY_PAY_DIRECT_TOKENIZATION_KEY: "test-tokenization-key",
@@ -47,7 +48,7 @@ describe("Easy Pay Direct provider", () => {
           ),
       );
       await expect(
-        chargeEasyPayDirectGatewayTestToken(
+        chargeEasyPayDirectGatewayToken(
           gatewayTestEnv,
           {
             purchaseKind: "recurring",
@@ -137,6 +138,7 @@ describe("Easy Pay Direct provider", () => {
     async (mode) => {
       const env: EasyPayDirectEnv = {
         ...gatewayTestEnv,
+        APP_ENV: mode === "production" ? "production" : "development",
         EASY_PAY_DIRECT_COMMERCE_API_KEY: undefined,
         EASY_PAY_DIRECT_NETWORK_MODE: mode,
         EASY_PAY_DIRECT_LIVEMODE_ALLOWED: mode === "production" ? "1" : "0",
@@ -174,19 +176,86 @@ describe("Easy Pay Direct provider", () => {
     },
   );
 
+  it.each([301, 302, 303, 307, 308])(
+    "rejects Gateway transaction redirect %s without forwarding the signed POST",
+    async (status) => {
+      const providerFetch = vi.fn<typeof fetch>(async (_url, init) => {
+        expect(init?.redirect).toBe("manual");
+        return new Response("response=1&transactionid=redirect-approval", {
+          status,
+          headers: { Location: "https://redirect.example.test/capture" },
+        });
+      });
+      await expect(
+        chargeEasyPayDirectStoredMethod(gatewayTestEnv, storedCharge, providerFetch),
+      ).rejects.toMatchObject({ code: "easy_pay_direct_gateway_outcome_unknown" });
+      expect(providerFetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([301, 302, 303, 307, 308])(
+    "rejects Gateway vault redirect %s without forwarding the signed POST",
+    async (status) => {
+      const providerFetch = vi.fn<typeof fetch>(async (_url, init) => {
+        expect(init?.redirect).toBe("manual");
+        return new Response("", {
+          status,
+          headers: { Location: "https://redirect.example.test/capture" },
+        });
+      });
+      await expect(
+        vaultEasyPayDirectCard(
+          {
+            ...gatewayTestEnv,
+            APP_ENV: "production",
+            EASY_PAY_DIRECT_NETWORK_MODE: "production",
+            EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+          },
+          { paymentToken: "fixture-token", billingId: "fixture-billing" },
+          providerFetch,
+        ),
+      ).rejects.toMatchObject({ code: "easy_pay_direct_gateway_vault_failed" });
+      expect(providerFetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([301, 302, 303, 307, 308])(
+    "rejects Gateway Query redirect %s without forwarding the signed POST",
+    async (status) => {
+      const providerFetch = vi.fn<typeof fetch>(async (_url, init) => {
+        expect(init?.redirect).toBe("manual");
+        return new Response("", {
+          status,
+          headers: { Location: "https://redirect.example.test/capture" },
+        });
+      });
+      await expect(
+        findEasyPayDirectGatewayTransactionByOrderId(
+          gatewayTestEnv,
+          "fixture-order",
+          providerFetch,
+        ),
+      ).rejects.toMatchObject({ code: "easy_pay_direct_provider_read_failed" });
+      expect(providerFetch).toHaveBeenCalledOnce();
+    },
+  );
+
   it.each([
-    { mode: "production", live: "0" },
-    { mode: "production", live: undefined },
-    { mode: "gateway_test", live: "1" },
-    { mode: "gateway_test", live: undefined },
-    { mode: "test", live: "0" },
-    { mode: "disabled", live: "0" },
+    { mode: "production", live: "0", appEnv: undefined },
+    { mode: "production", live: undefined, appEnv: undefined },
+    { mode: "production", live: "1", appEnv: "development" },
+    { mode: "gateway_test", live: "1", appEnv: undefined },
+    { mode: "gateway_test", live: undefined, appEnv: undefined },
+    { mode: "gateway_test", live: "0", appEnv: "production" },
+    { mode: "test", live: "0", appEnv: undefined },
+    { mode: "disabled", live: "0", appEnv: undefined },
   ] as const)(
     "direct Gateway rejects unsafe network posture %j before fetch",
-    async ({ mode, live }) => {
+    async ({ mode, live, appEnv }) => {
       const providerFetch = vi.fn<typeof fetch>();
       const env = {
         ...gatewayTestEnv,
+        ...(appEnv ? { APP_ENV: appEnv } : {}),
         EASY_PAY_DIRECT_COMMERCE_API_KEY: undefined,
         EASY_PAY_DIRECT_NETWORK_MODE: mode,
         EASY_PAY_DIRECT_LIVEMODE_ALLOWED: live,
@@ -299,6 +368,7 @@ describe("Easy Pay Direct provider", () => {
       vaultEasyPayDirectCard(
         {
           ...providerEnv,
+          APP_ENV: "production",
           EASY_PAY_DIRECT_NETWORK_MODE: "production",
           EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
           EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
@@ -601,9 +671,20 @@ describe("Easy Pay Direct provider", () => {
     ).rejects.toMatchObject({ code: "easy_pay_direct_gateway_test_not_configured" });
   });
 
-  it.each(["one_time", "recurring"] as const)(
-    "submits %s hosted tokens only as forced Gateway test transactions",
-    async (purchaseKind) => {
+  it.each([
+    ["gateway_test", "one_time"],
+    ["gateway_test", "recurring"],
+    ["production", "one_time"],
+    ["production", "recurring"],
+  ] as const)(
+    "submits %s %s hosted tokens through the direct Gateway contract",
+    async (mode, purchaseKind) => {
+      const directEnv: EasyPayDirectEnv = {
+        ...gatewayTestEnv,
+        APP_ENV: mode === "production" ? "production" : "development",
+        EASY_PAY_DIRECT_NETWORK_MODE: mode,
+        EASY_PAY_DIRECT_LIVEMODE_ALLOWED: mode === "production" ? "1" : "0",
+      };
       const providerFetch = vi.fn<typeof fetch>(async (input, init) => {
         expect(String(input)).toBe("https://secure.easypaydirectgateway.com/api/transact.php");
         const body = new URLSearchParams(String(init?.body));
@@ -611,7 +692,7 @@ describe("Easy Pay Direct provider", () => {
         expect(body.get("payment_token")).toBe("hosted-token-1");
         expect(body.get("amount")).toBe("19.99");
         expect(body.get("currency")).toBe("USD");
-        expect(body.get("test_mode")).toBe("enabled");
+        expect(body.get("test_mode")).toBe(mode === "gateway_test" ? "enabled" : null);
         expect(body.get("security_key")).toBe("synthetic-security-key");
         expect(body.has("ccnumber")).toBe(false);
         expect(body.has("dup_seconds")).toBe(false);
@@ -621,7 +702,7 @@ describe("Easy Pay Direct provider", () => {
           customer_vault: "add_customer",
           initiated_by: "customer",
           stored_credential_indicator: "stored",
-          billing_method: "recurring",
+          billing_method: "initial_recurring",
         })) {
           expect(body.get(key)).toBe(purchaseKind === "recurring" ? value : null);
         }
@@ -630,8 +711,8 @@ describe("Easy Pay Direct provider", () => {
         );
       });
       await expect(
-        chargeEasyPayDirectGatewayTestToken(
-          gatewayTestEnv,
+        chargeEasyPayDirectGatewayToken(
+          directEnv,
           {
             purchaseKind,
             paymentToken: "hosted-token-1",
@@ -662,7 +743,7 @@ describe("Easy Pay Direct provider", () => {
     async (purchaseKind) => {
       const providerFetch = vi.fn<typeof fetch>();
       await expect(
-        chargeEasyPayDirectGatewayTestToken(
+        chargeEasyPayDirectGatewayToken(
           gatewayTestEnv,
           {
             // @ts-expect-error Exercise untrusted runtime input, not the TypeScript contract.
@@ -682,6 +763,38 @@ describe("Easy Pay Direct provider", () => {
         ),
       ).rejects.toMatchObject({ code: "easy_pay_direct_purchase_kind_invalid" });
       expect(providerFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([301, 302, 303, 307, 308])(
+    "rejects Commerce API redirect %s without forwarding its authenticated POST",
+    async (status) => {
+      const providerFetch = vi.fn<typeof fetch>(async (_url, init) => {
+        expect(init?.redirect).toBe("manual");
+        return Response.json(
+          { id: "redirect-customer", default_payment_method: "redirect-method" },
+          {
+            status,
+            headers: { Location: "https://redirect.example.test/capture" },
+          },
+        );
+      });
+      await expect(
+        createEasyPayDirectCustomer(
+          providerEnv,
+          {
+            email: "redirect@example.test",
+            firstName: "Redirect",
+            lastName: "Fixture",
+            phone: "+15555550123",
+            gatewayVaultId: "card_visa",
+            idempotencyKey: "550e8400-e29b-41d4-a716-446655440099",
+            metadata: { lago_customer_id: "redirect-fixture" },
+          },
+          providerFetch,
+        ),
+      ).rejects.toThrow();
+      expect(providerFetch).toHaveBeenCalledOnce();
     },
   );
 
@@ -808,6 +921,7 @@ describe("Easy Pay Direct provider", () => {
   it("uses a Collect.js token exactly once to create a live vault and billing id", async () => {
     const liveEnv = {
       ...providerEnv,
+      APP_ENV: "production",
       EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
       EASY_PAY_DIRECT_NETWORK_MODE: "production",
       EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
@@ -834,6 +948,7 @@ describe("Easy Pay Direct provider", () => {
   it("uses a Collect.js token exactly once when adding billing to an existing vault", async () => {
     const liveEnv = {
       ...providerEnv,
+      APP_ENV: "production",
       EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
       EASY_PAY_DIRECT_NETWORK_MODE: "production",
       EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
@@ -866,6 +981,7 @@ describe("Easy Pay Direct provider", () => {
   it("derives the same numeric live billing id for an idempotent retry", async () => {
     const liveEnv = {
       ...providerEnv,
+      APP_ENV: "production",
       EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
       EASY_PAY_DIRECT_NETWORK_MODE: "production",
       EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
@@ -898,6 +1014,7 @@ describe("Easy Pay Direct provider", () => {
   it("rejects a nonnumeric live gateway billing id before calling Commerce", async () => {
     const liveEnv = {
       ...providerEnv,
+      APP_ENV: "production",
       EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
       EASY_PAY_DIRECT_NETWORK_MODE: "production",
       EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
@@ -925,6 +1042,7 @@ describe("Easy Pay Direct provider", () => {
   it("preserves a definitive gateway vault rejection without exposing provider text", async () => {
     const liveEnv = {
       ...providerEnv,
+      APP_ENV: "production",
       EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_synthetic_sk_live_secret",
       EASY_PAY_DIRECT_NETWORK_MODE: "production",
       EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",

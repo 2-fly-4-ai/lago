@@ -235,6 +235,48 @@ describe("immutable Elements refund routing", () => {
       `POST https://api.epd.com/v1/orders/${origin.orderId}/refund`,
     ]);
   });
+  it("allows the same documented Elements refund contract in a coherent live environment", async () => {
+    const origin = await fixture();
+    const transactionId = crypto.randomUUID();
+    const runtime = {
+      ...env,
+      APP_ENV: "production",
+      PROVIDER_READS_ENABLED: "1",
+      EASY_PAY_DIRECT_NETWORK_MODE: "production",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+      EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_live_sk_fixtureonly",
+      EASY_PAY_DIRECT_ORGANIZATION_ID: origin.organizationId,
+      EASY_PAY_DIRECT_ACCOUNT_CODE: "fixture",
+    } as unknown as Env;
+    const fetcher = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).includes("/transactions/"))
+        return Response.json({
+          id: transactionId,
+          type: "refund",
+          status: "succeeded",
+          order_id: origin.orderId,
+          amount: 100,
+          currency: "usd",
+        });
+      expect(init?.headers).toMatchObject({ Authorization: "Bearer epd_live_sk_fixtureonly" });
+      return Response.json({
+        id: origin.orderId,
+        total: 900,
+        status: init?.method === "POST" ? "partially_refunded" : "succeeded",
+        currency: "usd",
+        transactions: init?.method === "POST" ? [{ id: transactionId, type: "refund" }] : [],
+      });
+    });
+    await expect(
+      refundEasyPayDirectByOrigin(
+        runtime,
+        { ...origin, amountMinor: 100, currency: "USD", idempotencyKey: crypto.randomUUID() },
+        fetcher,
+        async () => {},
+      ),
+    ).resolves.toMatchObject({ status: "succeeded" });
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
   it.each([
     { APP_ENV: "production" },
     { EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1" },

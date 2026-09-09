@@ -19,7 +19,12 @@ export type OperatorEnv = {
   TEST_MIGRATIONS?: Env["TEST_MIGRATIONS"];
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
-  CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test" | "easy_pay_direct_test";
+  CREDIT_NOTE_REFUND_MODE?:
+    | "disabled"
+    | "sandbox"
+    | "stripe_test"
+    | "easy_pay_direct_test"
+    | "easy_pay_direct_live";
   PROVIDER_FINANCIALS?: import("../provider-financial-service").ProviderFinancialServiceBinding;
 };
 

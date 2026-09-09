@@ -3,7 +3,7 @@ import type { WorkflowStep } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   handleEasyPayDirectCheckoutSubmission,
-  reconcileEasyPayDirectGatewayTestExecution,
+  reconcileEasyPayDirectGatewayExecution,
 } from "../src/api/easy-pay-direct-checkout";
 import {
   pendingEasyPayDirectExecutions,
@@ -176,7 +176,7 @@ describe("Gateway lost-response recovery without charge replay", () => {
     expect(await pendingEasyPayDirectExecutions(env.BILLING_DB, "gateway_test")).toContain(
       executionId,
     );
-    expect(await pendingEasyPayDirectExecutions(env.BILLING_DB, "production")).not.toContain(
+    expect(await pendingEasyPayDirectExecutions(env.BILLING_DB, "production")).toContain(
       executionId,
     );
     const query = read();
@@ -255,7 +255,7 @@ describe("Gateway lost-response recovery without charge replay", () => {
       ).rejects.toThrow();
     expect(charge).toHaveBeenCalledTimes(1);
   });
-  it("gates direct reads, rejects a live-network invocation and respects an active claim lease", async () => {
+  it("gates direct reads, rejects an unsafe live invocation and respects an active claim lease", async () => {
     const query = read();
     const disabled = new Proxy(runtime, {
       get(target, key, receiver) {
@@ -283,16 +283,16 @@ describe("Gateway lost-response recovery without charge replay", () => {
           : Reflect.get(target, key, receiver);
       },
     });
-    expect(await reconcileEasyPayDirectGatewayTestExecution(disabled, executionId, query)).toBe(
+    expect(await reconcileEasyPayDirectGatewayExecution(disabled, executionId, query)).toBe(
       "deferred",
     );
-    expect(await reconcileEasyPayDirectGatewayTestExecution(production, executionId, query)).toBe(
+    expect(await reconcileEasyPayDirectGatewayExecution(production, executionId, query)).toBe(
       "deferred",
     );
     expect(
-      await reconcileEasyPayDirectGatewayTestExecution(wrongOrganization, executionId, query),
+      await reconcileEasyPayDirectGatewayExecution(wrongOrganization, executionId, query),
     ).toBe("deferred");
-    expect(await reconcileEasyPayDirectGatewayTestExecution(wrongAccount, executionId, query)).toBe(
+    expect(await reconcileEasyPayDirectGatewayExecution(wrongAccount, executionId, query)).toBe(
       "deferred",
     );
     await env.BILLING_DB.prepare(
@@ -319,6 +319,26 @@ describe("Gateway lost-response recovery without charge replay", () => {
     ).toContain("processed");
     expect(query).toHaveBeenCalledTimes(1);
     expect(charge).toHaveBeenCalledTimes(1);
+  });
+  it("recovers a lost production Gateway response by Query without replaying the sale", async () => {
+    const production = new Proxy(runtime, {
+      get(target, key, receiver) {
+        if (key === "EASY_PAY_DIRECT_NETWORK_MODE") return "production";
+        if (key === "EASY_PAY_DIRECT_LIVEMODE_ALLOWED") return "1";
+        if (key === "APP_ENV") return "production";
+        return Reflect.get(target, key, receiver);
+      },
+    }) as Env;
+    const query = read();
+    expect(await reconcileEasyPayDirectGatewayExecution(production, executionId, query)).toBe(
+      "processed",
+    );
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(charge).toHaveBeenCalledTimes(1);
+    expect(await row()).toMatchObject({
+      status: "succeeded",
+      provider_transaction_id: expect.any(String),
+    });
   });
   it("rotates empty reads fairly and permits later read-only recovery", async () => {
     await env.BILLING_DB.prepare(

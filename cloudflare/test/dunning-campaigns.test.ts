@@ -71,7 +71,8 @@ beforeEach(async () => {
       `UPDATE customers
        SET applied_dunning_campaign_id = NULL, exclude_from_dunning_campaign = 0,
            last_dunning_campaign_attempt = 0, last_dunning_campaign_attempt_at = NULL,
-           version = 1, currency = 'USD'
+           version = 1, currency = 'USD', payment_provider = NULL,
+           payment_provider_code = NULL
        WHERE id = ?`,
     ).bind(customerId),
     env.BILLING_DB.prepare(
@@ -89,6 +90,40 @@ beforeEach(async () => {
 });
 
 describe("dunning campaigns", () => {
+  it("does not create or consume a dunning attempt for conflicted customer currency history", async () => {
+    expect((await createCampaign({ applied_to_organization: true })).status).toBe(200);
+    const now = "2026-08-15T00:30:00.000Z";
+    await env.BILLING_DB.prepare(
+      "UPDATE customers SET payment_provider = 'easy_pay_direct', payment_provider_code = 'test' WHERE id = ?",
+    )
+      .bind(customerId)
+      .run();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO payment_requests
+       (id, organization_id, customer_id, amount_minor, currency, payment_status,
+        ready_for_payment_processing, version, source, collection_mode, created_at, updated_at)
+       VALUES ('foreign-currency-history', ?, ?, 100, 'EUR', 'failed', 0, 1,
+               'manual', 'overdue', ?, ?)`,
+    )
+      .bind(organizationId, customerId, now, now)
+      .run();
+    await expect(
+      processDunningCampaigns(env, "2026-08-15T01:45:00.000Z", "currency-conflict"),
+    ).resolves.toEqual({ candidates: 0, requestsCreated: 0, campaignsFinished: 0 });
+    await expect(
+      env.BILLING_DB.prepare("SELECT last_dunning_campaign_attempt FROM customers WHERE id = ?")
+        .bind(customerId)
+        .first(),
+    ).resolves.toEqual({ last_dunning_campaign_attempt: 0 });
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT COUNT(*) AS count FROM payment_requests WHERE organization_id = ? AND source = 'dunning'",
+      )
+        .bind(organizationId)
+        .first(),
+    ).resolves.toEqual({ count: 0 });
+  });
+
   it("counts a partial request payment only once when mirrored in the invoice ledger", async () => {
     expect((await createCampaign({ applied_to_organization: true })).status).toBe(200);
     const now = "2026-08-15T00:00:00.000Z";

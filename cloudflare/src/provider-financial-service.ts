@@ -50,8 +50,6 @@ export class ProviderFinancialService extends WorkerEntrypoint<Env> {
   ): Promise<EasyPayDirectRefundRpcResult> {
     assertRefundInput(input);
     if (
-      !["test", "gateway_test"].includes(this.env.EASY_PAY_DIRECT_NETWORK_MODE ?? "") ||
-      this.env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0" ||
       input.organizationId !== this.env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
       input.providerAccountCode !== this.env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim()
     ) {
@@ -79,8 +77,6 @@ export class ProviderFinancialService extends WorkerEntrypoint<Env> {
     assertRefundInput(input);
     if (
       this.env.PROVIDER_READS_ENABLED !== "1" ||
-      !["test", "gateway_test"].includes(this.env.EASY_PAY_DIRECT_NETWORK_MODE ?? "") ||
-      this.env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0" ||
       input.organizationId !== this.env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
       input.providerAccountCode !== this.env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim()
     )

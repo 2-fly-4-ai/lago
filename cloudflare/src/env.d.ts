@@ -9,7 +9,12 @@ declare namespace Cloudflare {
     EASY_PAY_DIRECT_SECURITY_KEY?: string;
     EASY_PAY_DIRECT_TOKENIZATION_KEY?: string;
     EASY_PAY_DIRECT_PUBLISHABLE_KEY?: string;
-    EASY_PAY_DIRECT_CHECKOUT_BACKEND?: "gateway_vault" | "commerce_elements";
+    EASY_PAY_DIRECT_CHECKOUT_BACKEND?:
+      | "gateway_vault"
+      | "gateway_direct"
+      | "commerce_elements"
+      | "legacy_commerce_bridge";
+    EASY_PAY_DIRECT_LEGACY_BRIDGE_ALLOWED?: "0" | "1";
     EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET?: string;
     EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY?: string;
     EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY_PREVIOUS?: string;
@@ -21,7 +26,12 @@ declare namespace Cloudflare {
     EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED?: "0" | "1";
     EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE?: "scoped" | "product_scoped" | "all";
     PUBLIC_BASE_URL?: string;
-    CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test" | "easy_pay_direct_test";
+    CREDIT_NOTE_REFUND_MODE?:
+      | "disabled"
+      | "sandbox"
+      | "stripe_test"
+      | "easy_pay_direct_test"
+      | "easy_pay_direct_live";
     WALLET_FUNDING_MODE?: "disabled" | "stripe_test";
     EXTERNAL_TAX_MODE?: "disabled" | "service_binding";
     EXTERNAL_TAX_ADAPTER?: Fetcher;
@@ -54,7 +64,12 @@ interface Env {
   EASY_PAY_DIRECT_SECURITY_KEY?: string;
   EASY_PAY_DIRECT_TOKENIZATION_KEY?: string;
   EASY_PAY_DIRECT_PUBLISHABLE_KEY?: string;
-  EASY_PAY_DIRECT_CHECKOUT_BACKEND?: "gateway_vault" | "commerce_elements";
+  EASY_PAY_DIRECT_CHECKOUT_BACKEND?:
+    | "gateway_vault"
+    | "gateway_direct"
+    | "commerce_elements"
+    | "legacy_commerce_bridge";
+  EASY_PAY_DIRECT_LEGACY_BRIDGE_ALLOWED?: "0" | "1";
   EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET?: string;
   EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY?: string;
   EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY_PREVIOUS?: string;
@@ -66,7 +81,12 @@ interface Env {
   EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED?: "0" | "1";
   EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE?: "scoped" | "product_scoped" | "all";
   PUBLIC_BASE_URL?: string;
-  CREDIT_NOTE_REFUND_MODE?: "disabled" | "sandbox" | "stripe_test" | "easy_pay_direct_test";
+  CREDIT_NOTE_REFUND_MODE?:
+    | "disabled"
+    | "sandbox"
+    | "stripe_test"
+    | "easy_pay_direct_test"
+    | "easy_pay_direct_live";
   WALLET_FUNDING_MODE?: "disabled" | "stripe_test";
   EXTERNAL_TAX_MODE?: "disabled" | "service_binding";
   EXTERNAL_TAX_ADAPTER?: Fetcher;

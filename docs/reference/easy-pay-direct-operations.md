@@ -30,9 +30,8 @@ connection status.
   Customer Vault and processor transaction evidence. Collect.js, `transact.php` and `query.php`
   belong to this surface.
 - **Commerce** is the separate dashboard on `commerce.epd.com`, backed by `api.epd.com/v1`.
-  The current production adapter crosses both systems: it vaults through Gateway, then calls
-  Commerce customer/payment-method/order endpoints. The customer-to-vault bridge must be verified;
-  neither dashboard alone proves the complete integration.
+  It is not part of the current direct-Gateway checkout or renewal path. Historical execution rows
+  and test fixtures may still refer to Commerce; do not use those references to route a new charge.
 - A **Commerce dashboard role** is not evidence of **Gateway portal permission** or of the
   permissions/validity of the **deployed API credentials**. A browser session expiring also does
   not prove a provider API key expired. Check each boundary independently.
@@ -70,6 +69,7 @@ the Store resolves the route and either retains direct Stripe or starts Lago wit
 
 Lago uses these EPD bindings:
 
+- `EASY_PAY_DIRECT_CHECKOUT_BACKEND` (`gateway_direct` for new live checkouts)
 - `EASY_PAY_DIRECT_NETWORK_MODE`
 - `EASY_PAY_DIRECT_LIVEMODE_ALLOWED`
 - `EASY_PAY_DIRECT_ACCOUNT_CODE`
@@ -92,6 +92,10 @@ Lago uses these EPD bindings:
   random secret of at least 32 characters, never the checkout-signing secret
 - `INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID` identifying the active address-encryption key
 - `STRIPE_RESTRICTED_API_KEY` for staging Stripe Tax calculations and transaction commits
+
+`EASY_PAY_DIRECT_COMMERCE_API_KEY` is retained only for historical Commerce execution reads and
+tests. New direct-Gateway checkout does not require it. The test-only
+`EASY_PAY_DIRECT_LEGACY_BRIDGE_ALLOWED` override must never be set in production.
 
 The Store uses `LAGO_CHECKOUT_ENABLED`, `LAGO_EASY_PAY_DIRECT_PROVIDER_CODE`, and
 `LAGO_EASY_PAY_DIRECT_CHECKOUT_MODE`. Secret values belong only in the approved secret manager and
@@ -120,8 +124,9 @@ That metadata must be backfilled before deploying this patch; it has not been ap
   not the customer checkout.
 - Staging keeps `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED=1` with scoped rollout after the
   reviewed recurring proof. Only subscriptions with an enabled scope row can create a new
-  automatic execution. Production remains disabled until its separate rollout approval.
-- `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE=scoped` is the rollout default. In this mode,
+  automatic execution. Production uses its independently approved product-scoped gate.
+- `EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE=product_scoped` is the current production
+  rollout posture. In subscription-scoped mode,
   only subscriptions with an enabled row in `easy_pay_direct_automatic_collection_scopes` may
   create a new automatic payment execution. Moving to `all` is a separate rollout decision.
 
@@ -180,6 +185,14 @@ all pending and unknown executions for provider-read reconciliation; do not dele
 them.
 
 ## Gateway and Commerce billing-ID contract
+
+### Current resolution
+
+New production checkouts no longer cross this boundary. `gateway_direct` sends the opaque Collect.js
+token to the same Gateway, requests a Customer Vault record only for a recurring purchase, and saves
+the returned Gateway references for later direct-Gateway renewals. One-time purchases omit those
+fields and never create a renewable profile. The historical incident and recovery rules below are
+kept for audit and old execution reconciliation only.
 
 ### 2026-09-07 incident: deployment hold
 
@@ -259,11 +272,10 @@ does not validate the live Gateway-to-Commerce bridge. Keep both test results ex
 The incident's owner, outstanding provider verification, and rollout gates are tracked in
 [the repair plan](../plans/active/2026-09-07-epd-vault-binding-repair.md).
 
-The live checkout crosses two EPD surfaces: Collect.js produces a single-use browser token, the
-Gateway stores that token in its Customer Vault, and EPD Commerce attaches the resulting billing
-record to its customer. The shared `billing_id` must be numeric and at most 32 digits. Lago derives
-that value deterministically from the payment-method idempotency key; do not substitute a UUID or
-hexadecimal digest.
+The current live checkout stays on one EPD surface: Gateway Collect.js produces a single-use browser
+token and Gateway `transact.php` processes the sale. A recurring customer-initiated sale also asks
+Gateway to create the Customer Vault record. Lago does not invent that vault ID; it stores only the
+provider-returned ID and original transaction reference after verified success.
 
 A numeric checkpoint can resume without vaulting again only after the customer/vault relationship
 is verified and no review-required failure is present. A legacy alphanumeric checkpoint
@@ -274,9 +286,8 @@ token must remain deferred and must not make a second vault request.
 
 ## Production credential checklist
 
-Keep the production Worker disabled while provisioning. Before promotion, verify names only:
+Before promotion, verify names only:
 
-- `EASY_PAY_DIRECT_COMMERCE_API_KEY`
 - `EASY_PAY_DIRECT_SECURITY_KEY`
 - `EASY_PAY_DIRECT_TOKENIZATION_KEY`
 - `EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY`
@@ -285,10 +296,13 @@ Keep the production Worker disabled while provisioning. Before promotion, verify
 
 Never paste their values into tickets, docs, terminal output, screenshots, or browser snapshots.
 
-Keep `EASY_PAY_DIRECT_TAX_MODE=disabled` and
-`EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED=0` in production until the product tax
-classification, actual production registrations, refund/reversal handling, and the automatic
-renewal acceptance check have each been approved.
+The Commerce key is not required for `gateway_direct`. If retained for historical reads, verify it
+separately and never treat its presence as proof that the live Gateway credentials are valid.
+
+The current canary keeps `EASY_PAY_DIRECT_TAX_MODE=disabled`. Automatic collection is enabled only
+under `product_scoped`; it must not widen to `all` without separate approval. App-initiated refunds
+remain disabled until a live refund rollout is separately approved; provider-side operator refunds
+remain available.
 
 The alternative `EASY_PAY_DIRECT_TAX_PROVIDER=local_d1` path uses versioned D1 rule sets and
 explicit organization registration scopes. It performs no Stripe request and commits its quote
@@ -304,9 +318,9 @@ The full staged acceptance record is
 1. Push and review the merged Store and Lago `main` revisions.
 2. Complete the approved read-only production shadow comparison and reconcile counts, amounts,
    identities, and billing cadence before any write authority moves.
-3. Provision or verify production Cloudflare resources and EPD live credentials while
-   `LAGO_CHECKOUT_ENABLED=0`, `LAGO_EASY_PAY_DIRECT_CHECKOUT_MODE=off`,
-   `EASY_PAY_DIRECT_NETWORK_MODE=disabled`, and `EASY_PAY_DIRECT_LIVEMODE_ALLOWED=0`.
+3. Provision or verify production Cloudflare resources and EPD live Gateway credentials while
+   Store keeps every product on its prior route. Verify `gateway_direct`, production network mode
+   and the explicit live gate in a dry run before enabling a canary.
 4. Deploy Store compatibility code with every production product still resolving to
    `direct-stripe`.
 5. Assign one reviewed product to `lago-epd`, move only the EPD Store mode to `explicit`, and enable

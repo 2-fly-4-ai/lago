@@ -6,7 +6,7 @@ const db = (env as typeof env & { MIGRATION_REHEARSAL_DB: D1Database }).MIGRATIO
 const now = "2026-09-08T00:00:00.000Z";
 
 describe("EPD additive migration upgrade rehearsal (local only)", () => {
-  it("preserves legacy financial evidence and enforces the new protections across 0114–0121", async () => {
+  it("preserves legacy financial evidence and enforces the new protections across 0114–0123", async () => {
     const migrations = env.TEST_MIGRATIONS!;
     const pending = migrations.filter((migration) => Number(migration.name.slice(0, 4)) >= 114);
     expect(pending.map((migration) => migration.name)).toEqual([
@@ -18,20 +18,17 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
       "0119_epd_commerce_renewal_backends.sql",
       "0120_epd_charge_transport.sql",
       "0121_gateway_refund_attempts.sql",
+      "0122_easy_pay_direct_live_refunds.sql",
+      "0123_backfill_customer_invoice_currency.sql",
     ]);
     await applyD1Migrations(
       db,
       migrations.filter((migration) => !pending.includes(migration)),
     );
     await seedLegacyEvidence();
-    const tables = [
-      "organizations",
-      "customers",
-      "invoices",
-      "payment_attempts",
-      "webhook_receipts",
-    ];
+    const tables = ["organizations", "invoices", "payment_attempts", "webhook_receipts"];
     const before = await Promise.all(tables.map((table) => rows(table)));
+    const customersBefore = await rows("customers");
     const refundsBefore = await rows("provider_refund_operations");
     const disputesBefore = await rows("payment_disputes");
     const profilesBefore = await rows("provider_customer_profiles");
@@ -42,6 +39,20 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
 
     await applyD1Migrations(db, pending);
     expect(await Promise.all(tables.map((table) => rows(table)))).toEqual(before);
+    expect(await rows("customers")).toEqual(
+      customersBefore.map((row) =>
+        row.id === "customer" ? { ...row, currency: "USD", version: Number(row.version) + 1 } : row,
+      ),
+    );
+    for (const id of [
+      "customer-request-conflict",
+      "customer-plan-conflict",
+      "customer-wallet-conflict",
+    ]) {
+      await expect(
+        db.prepare("SELECT currency, version FROM customers WHERE id = ?").bind(id).first(),
+      ).resolves.toEqual({ currency: null, version: 1 });
+    }
     expect(await rows("provider_refund_operations")).toEqual(
       refundsBefore.map((row) => ({ ...row, provider_refund_transaction_id: null })),
     );
@@ -73,6 +84,8 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
     const replacedTriggers = new Set([
       "easy_pay_direct_automatic_execution_scope_guard",
       "easy_pay_direct_automatic_execution_identity_immutable",
+      "credit_note_refund_scope_guard",
+      "credit_note_refund_identity_immutable",
     ]);
     expect(
       triggersAfter.results.filter(
@@ -81,11 +94,20 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
           triggersBefore.results.some((old) => old.name === row.name),
       ),
     ).toEqual(triggersBefore.results.filter((row) => !replacedTriggers.has(String(row.name))));
-    for (const name of replacedTriggers) {
+    for (const name of [
+      "easy_pay_direct_automatic_execution_scope_guard",
+      "easy_pay_direct_automatic_execution_identity_immutable",
+    ])
       expect(triggersAfter.results.find((row) => row.name === name)?.sql).toContain(
         "payment_backend",
       );
-    }
+    expect(
+      triggersAfter.results.find((row) => row.name === "credit_note_refund_scope_guard")?.sql,
+    ).toContain("credit_note_refund_scope_conflict");
+    expect(
+      triggersAfter.results.find((row) => row.name === "credit_note_refund_identity_immutable")
+        ?.sql,
+    ).toContain("immutable_credit_note_refund_identity");
     expect(
       triggersAfter.results
         .filter((row) => !triggersBefore.results.some((old) => old.name === row.name))
@@ -275,6 +297,39 @@ async function seedLegacyEvidence() {
       .bind(now, now),
     db
       .prepare(
+        "INSERT INTO customers (id, organization_id, external_id, email, payment_provider, payment_provider_code, created_at, updated_at) VALUES ('customer-no-invoice', 'org', 'customer-no-invoice', 'no-invoice@example.test', 'easy_pay_direct', 'fictional-account', ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        "INSERT INTO customers (id, organization_id, external_id, email, payment_provider, payment_provider_code, created_at, updated_at) VALUES ('customer-mixed', 'org', 'customer-mixed', 'mixed@example.test', 'easy_pay_direct', 'fictional-account', ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        "INSERT INTO customers (id, organization_id, external_id, email, currency, payment_provider, payment_provider_code, created_at, updated_at) VALUES ('customer-existing', 'org', 'customer-existing', 'existing@example.test', 'GBP', 'easy_pay_direct', 'fictional-account', ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        "INSERT INTO customers (id, organization_id, external_id, email, payment_provider, payment_provider_code, created_at, updated_at) VALUES ('customer-other-provider', 'org', 'customer-other-provider', 'other@example.test', 'stripe', 'stripe', ?, ?)",
+      )
+      .bind(now, now),
+    ...["request", "plan", "wallet"].map((kind) =>
+      db
+        .prepare(
+          "INSERT INTO customers (id, organization_id, external_id, email, payment_provider, payment_provider_code, created_at, updated_at) VALUES (?, 'org', ?, ?, 'easy_pay_direct', 'fictional-account', ?, ?)",
+        )
+        .bind(
+          `customer-${kind}-conflict`,
+          `customer-${kind}-conflict`,
+          `${kind}-conflict@example.test`,
+          now,
+          now,
+        ),
+    ),
+    db
+      .prepare(
         "INSERT INTO provider_customer_profiles (id, organization_id, customer_id, provider, provider_account_code, provider_customer_id, gateway_customer_vault_id, initial_transaction_id, status, created_at, updated_at) VALUES ('profile', 'org', 'customer', 'easy_pay_direct', 'fictional-account', 'legacy-customer', '1234', '5678', 'active', ?, ?)",
       )
       .bind(now, now),
@@ -291,6 +346,53 @@ async function seedLegacyEvidence() {
     db
       .prepare(
         "INSERT INTO invoices (id, organization_id, customer_id, status, payment_status, currency, subtotal_minor, total_due_minor, created_at, updated_at) VALUES ('invoice', 'org', 'customer', 'finalized', 'succeeded', 'USD', 900, 900, ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        "INSERT INTO invoices (id, organization_id, customer_id, status, payment_status, currency, subtotal_minor, total_due_minor, created_at, updated_at) VALUES ('invoice-mixed-usd', 'org', 'customer-mixed', 'finalized', 'succeeded', 'USD', 100, 100, ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        "INSERT INTO invoices (id, organization_id, customer_id, status, payment_status, currency, subtotal_minor, total_due_minor, created_at, updated_at) VALUES ('invoice-mixed-eur', 'org', 'customer-mixed', 'finalized', 'succeeded', 'EUR', 100, 100, ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        "INSERT INTO invoices (id, organization_id, customer_id, status, payment_status, currency, subtotal_minor, total_due_minor, created_at, updated_at) VALUES ('invoice-other-provider', 'org', 'customer-other-provider', 'finalized', 'succeeded', 'USD', 100, 100, ?, ?)",
+      )
+      .bind(now, now),
+    ...["request", "plan", "wallet"].map((kind) =>
+      db
+        .prepare(
+          "INSERT INTO invoices (id, organization_id, customer_id, status, payment_status, currency, subtotal_minor, total_due_minor, created_at, updated_at) VALUES (?, 'org', ?, 'finalized', 'succeeded', 'USD', 100, 100, ?, ?)",
+        )
+        .bind(`invoice-${kind}-conflict`, `customer-${kind}-conflict`, now, now),
+    ),
+    db
+      .prepare(
+        "INSERT INTO payment_requests (id, organization_id, customer_id, amount_minor, currency, payment_status, ready_for_payment_processing, created_at, updated_at) VALUES ('currency-conflict-request', 'org', 'customer-request-conflict', 100, 'EUR', 'pending', 1, ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        "INSERT INTO plans (id, organization_id, code, name, interval, amount_minor, currency, created_at, updated_at) VALUES ('currency-conflict-plan', 'org', 'currency-conflict-plan', 'Currency conflict', 'monthly', 100, 'EUR', ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        "INSERT INTO subscriptions (id, organization_id, customer_id, plan_id, external_id, status, created_at, updated_at) VALUES ('currency-conflict-subscription', 'org', 'customer-plan-conflict', 'currency-conflict-plan', 'currency-conflict-subscription', 'active', ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        `INSERT INTO wallets
+         (id, organization_id, customer_id, code, currency, currency_exponent, rate_amount,
+          priority, balance_minor, consumed_minor, status, request_sha256, created_at, updated_at)
+         VALUES ('currency-conflict-wallet', 'org', 'customer-wallet-conflict',
+                 'currency-conflict-wallet', 'EUR', 2, '1', 1, 0, 0, 'active',
+                 'currency-conflict-wallet-hash', ?, ?)`,
       )
       .bind(now, now),
     db

@@ -20,7 +20,7 @@ beforeEach(async () => {
   await env.BILLING_DB.batch(
     [
       `INSERT INTO organizations(id,external_id,name,created_at,updated_at) VALUES('${id("org")}','${id("org")}','Fixture',${times})`,
-      `INSERT INTO customers(id,organization_id,external_id,email,payment_provider,payment_provider_code,created_at,updated_at) VALUES('${id("customer")}','${id("org")}','${id("customer")}','fictional@example.test','easy_pay_direct','fixture-account',${times})`,
+      `INSERT INTO customers(id,organization_id,external_id,email,currency,payment_provider,payment_provider_code,created_at,updated_at) VALUES('${id("customer")}','${id("org")}','${id("customer")}','fictional@example.test','USD','easy_pay_direct','fixture-account',${times})`,
       `INSERT INTO plans(id,organization_id,code,name,interval,amount_minor,currency,pay_in_advance,version,active,created_at,updated_at) VALUES('${id("plan")}','${id("org")}','fixture','Fixture','monthly',900,'USD',1,1,1,${times})`,
       `INSERT INTO subscriptions(id,organization_id,customer_id,plan_id,external_id,status,current_period_start,current_period_end,created_at,updated_at) VALUES('${id("sub")}','${id("org")}','${id("customer")}','${id("plan")}','${id("sub")}','active','2026-09-01T00:00:00.000Z','${end}',${times})`,
       `INSERT INTO invoices(id,organization_id,customer_id,subscription_id,status,payment_status,currency,subtotal_minor,total_due_minor,version,payment_overdue,ready_for_payment_processing,created_at,updated_at) VALUES('${id("invoice")}','${id("org")}','${id("customer")}','${id("sub")}','finalized','pending','USD',900,900,1,1,1,${times})`,

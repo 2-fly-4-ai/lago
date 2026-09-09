@@ -141,6 +141,104 @@ describe("Easy Pay Direct automatic subscription collection", () => {
     expect((await env.BILLING_DB.prepare("PRAGMA foreign_key_check").all()).results).toEqual([]);
   });
 
+  it("excludes renewal candidates whose customer currency conflicts with the invoice", async () => {
+    await env.BILLING_DB.prepare("UPDATE customers SET currency = 'EUR' WHERE organization_id = ?")
+      .bind(organizationId)
+      .run();
+    await expect(
+      pendingEasyPayDirectAutomaticCollectionInvoices(env.BILLING_DB, "all", {
+        organizationId,
+        accountCode: "epd-renewal-test",
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      prepareEasyPayDirectAutomaticCollection(enabledEnv(), invoiceId, "currency-mismatch"),
+    ).resolves.toBe("not_applicable");
+    expect(await automaticPaymentRequestId(invoiceId)).toBeNull();
+  });
+
+  it("atomically rejects a renewal when customer currency changes after preparation", async () => {
+    await expect(
+      prepareEasyPayDirectAutomaticCollection(enabledEnv(), invoiceId, "currency-race"),
+    ).resolves.toBe("processed");
+    const requestId = await automaticPaymentRequestId(invoiceId);
+    expect(requestId).toBeTruthy();
+    await env.BILLING_DB.prepare("UPDATE customers SET currency = 'EUR' WHERE organization_id = ?")
+      .bind(organizationId)
+      .run();
+    const provider = vi.fn<typeof fetch>();
+    await expect(
+      processEasyPayDirectAutomaticCollection(enabledEnv(), requestId!, provider),
+    ).resolves.toBe("deferred");
+    expect(provider).not.toHaveBeenCalled();
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT status, attempt_count FROM easy_pay_direct_automatic_payment_executions WHERE payment_request_id = ?",
+      )
+        .bind(requestId)
+        .first(),
+    ).resolves.toEqual({ status: "pending", attempt_count: 0 });
+  });
+
+  it("atomically rejects a renewal when plan currency changes after preparation", async () => {
+    await prepareEasyPayDirectAutomaticCollection(enabledEnv(), invoiceId, "plan-currency-race");
+    const requestId = await automaticPaymentRequestId(invoiceId);
+    expect(requestId).toBeTruthy();
+    await env.BILLING_DB.prepare("UPDATE plans SET currency = 'EUR' WHERE organization_id = ?")
+      .bind(organizationId)
+      .run();
+    const provider = vi.fn<typeof fetch>();
+    await expect(
+      processEasyPayDirectAutomaticCollection(enabledEnv(), requestId!, provider),
+    ).resolves.toBe("deferred");
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it("holds automatic collection when another financial record has a conflicting currency", async () => {
+    const customer = await env.BILLING_DB.prepare("SELECT customer_id FROM invoices WHERE id = ?")
+      .bind(invoiceId)
+      .first<{ customer_id: string }>();
+    const now = new Date().toISOString();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO payment_requests
+       (id, organization_id, customer_id, amount_minor, currency, payment_status,
+        ready_for_payment_processing, version, source, collection_mode, created_at, updated_at)
+       VALUES (?, ?, ?, 100, 'EUR', 'failed', 0, 1, 'manual', 'overdue', ?, ?)`,
+    )
+      .bind(crypto.randomUUID(), organizationId, customer!.customer_id, now, now)
+      .run();
+    await expect(
+      pendingEasyPayDirectAutomaticCollectionInvoices(env.BILLING_DB, "all", {
+        organizationId,
+        accountCode: "epd-renewal-test",
+      }),
+    ).resolves.toEqual([]);
+    const provider = vi.fn<typeof fetch>();
+    await expect(
+      prepareEasyPayDirectAutomaticCollection(enabledEnv(), invoiceId, "historical-currency"),
+    ).resolves.toBe("not_applicable");
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it("does not prepare or submit dunning after customer currency changes", async () => {
+    await seedDunningCreatorFixture();
+    await processDunningCampaigns(scopedEnv(), new Date().toISOString(), "dunning-currency-race");
+    const request = await env.BILLING_DB.prepare(
+      "SELECT id FROM payment_requests WHERE organization_id = ? AND source = 'dunning'",
+    )
+      .bind(organizationId)
+      .first<{ id: string }>();
+    expect(request?.id).toBeTruthy();
+    await env.BILLING_DB.prepare("UPDATE customers SET currency = 'EUR' WHERE organization_id = ?")
+      .bind(organizationId)
+      .run();
+    const provider = vi.fn<typeof fetch>();
+    await expect(
+      processEasyPayDirectAutomaticCollection(scopedEnv(), request!.id, provider),
+    ).resolves.toBe("not_applicable");
+    expect(provider).not.toHaveBeenCalled();
+  });
+
   it.each(["one-time", "unscoped", "invalid-profile"])(
     "dunning collects eligible monthly debt without mixing %s debt",
     async (variant) => {
@@ -1751,6 +1849,34 @@ describe("Easy Pay Direct automatic subscription collection", () => {
 });
 
 describe("Commerce Elements Lago-controlled renewals", () => {
+  it("submits and settles a renewal in a coherent live environment", async () => {
+    const fixture = await commerceFixture();
+    const live = new Proxy(fixture.runtime, {
+      get(target, property, receiver) {
+        if (property === "APP_ENV") return "production";
+        if (property === "EASY_PAY_DIRECT_NETWORK_MODE") return "production";
+        if (property === "EASY_PAY_DIRECT_LIVEMODE_ALLOWED") return "1";
+        if (property === "EASY_PAY_DIRECT_COMMERCE_API_KEY") return "epd_live_sk_fixture123";
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    }) as Env;
+    await prepareEasyPayDirectAutomaticCollection(live, invoiceId, "commerce-live-renewal");
+    const execution = (await commerceExecution())!;
+    const fetcher = commerceFetcher(fixture);
+    await expect(
+      processEasyPayDirectAutomaticCollection(live, execution.payment_request_id, fetcher),
+    ).resolves.toBe("processed");
+    expect(
+      fetcher.mock.calls.filter(
+        ([url, init]) => String(url).endsWith("/orders") && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+    expect(await commerceExecution()).toMatchObject({
+      status: "succeeded",
+      commerce_order_id: fixture.order,
+    });
+  });
+
   it("reopens only GET recovery for later exact same-order success after a failed renewal", async () => {
     const fixture = await commerceFixture();
     await prepareEasyPayDirectAutomaticCollection(fixture.runtime, invoiceId, "commerce-renewal");

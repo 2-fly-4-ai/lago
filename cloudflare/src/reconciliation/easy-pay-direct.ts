@@ -6,7 +6,7 @@ import { getEasyPayDirectOrder, type CommerceOrder } from "../providers/easy-pay
 import {
   resumeEasyPayDirectExecution,
   finalizeEasyPayDirectPaidExecution,
-  reconcileEasyPayDirectGatewayTestExecution,
+  reconcileEasyPayDirectGatewayExecution,
   EASY_PAY_DIRECT_SETUP_REVIEW_CODES,
 } from "../api/easy-pay-direct-checkout";
 import {
@@ -115,7 +115,9 @@ export async function pendingEasyPayDirectExecutions(
       `SELECT id FROM easy_pay_direct_payment_executions
      WHERE (charge_transport IN ('gateway', 'commerce') AND status IN ('processing', 'unknown')
        AND (provider_transaction_id IS NOT NULL
-            OR (payment_backend = 'gateway_vault' AND ? = 'gateway_test' AND (status = 'unknown' OR julianday(updated_at) <= julianday('now', '-2 minutes')))
+            OR (charge_transport = 'gateway' AND payment_backend = 'gateway_vault'
+                AND ? IN ('gateway_test', 'production')
+                AND (status = 'unknown' OR julianday(updated_at) <= julianday('now', '-2 minutes')))
             OR (customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL
                 AND length(phone_ciphertext) > 0 AND length(phone_iv) > 0
                 AND COALESCE(failure_code, '') <> 'easy_pay_direct_recovery_checkpoint_missing'
@@ -208,7 +210,7 @@ async function reconcileExecution(
   if (execution.charge_transport === "gateway") {
     // A lost Gateway sale response has no Commerce vault/order checkpoint.
     // Recover only through its stable request order ID, never resume a charge.
-    return reconcileEasyPayDirectGatewayTestExecution(env, execution.id, fetcher);
+    return reconcileEasyPayDirectGatewayExecution(env, execution.id, fetcher);
   }
   if (execution.charge_transport !== "commerce") return "deferred";
   if (execution.provider_transaction_id) {

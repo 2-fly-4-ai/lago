@@ -9,6 +9,8 @@ describe("production EPD canary configuration", () => {
       '"EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL": "https://serp.store/checkout/success"',
     );
     expect(productionConfig).toContain('"PAYMENT_MUTATIONS_ENABLED": "1"');
+    expect(productionConfig).toContain('"EASY_PAY_DIRECT_CHECKOUT_BACKEND": "gateway_direct"');
+    expect(productionConfig).not.toContain("EASY_PAY_DIRECT_LEGACY_BRIDGE_ALLOWED");
     expect(productionConfig).toContain('"EASY_PAY_DIRECT_NETWORK_MODE": "production"');
     expect(productionConfig).toContain('"EASY_PAY_DIRECT_LIVEMODE_ALLOWED": "1"');
     expect(productionConfig).toContain('"EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED": "1"');

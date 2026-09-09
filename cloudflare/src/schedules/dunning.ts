@@ -2,6 +2,7 @@ import type { DomainEvent } from "../domain-events";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import { NO_IN_FLIGHT_EPD_PAYMENT_FOR_INVOICE_SQL } from "../billing/easy-pay-direct-in-flight";
+import { easyPayDirectCustomerCurrencyEligibilitySql } from "../billing/easy-pay-direct-recovery-policy";
 import {
   automaticCollectionScopeMode,
   configuredAutomaticCollectionScope,
@@ -98,6 +99,8 @@ async function dueDunningCandidates(
         AND threshold.deleted_at IS NULL
        WHERE customer.id > ? AND customer.exclude_from_dunning_campaign = 0
          AND campaign.active = 1
+         AND (COALESCE(customer.payment_provider, '') <> 'easy_pay_direct'
+           OR (${easyPayDirectCustomerCurrencyEligibilitySql("customer", "customer.currency")}))
          AND customer.last_dunning_campaign_attempt < campaign.max_attempts
          AND (
            customer.last_dunning_campaign_attempt_at IS NULL OR
@@ -424,6 +427,8 @@ function eligibleEpdDunningInvoicesSql(
          AND profile.provider_account_code = COALESCE(customer.payment_provider_code, 'default')
        WHERE invoice.organization_id = ? AND invoice.customer_id = ?
          AND customer.payment_provider = 'easy_pay_direct'
+         AND plan.currency = invoice.currency
+         AND ${easyPayDirectCustomerCurrencyEligibilitySql("customer", "invoice.currency")}
          AND ${savedProfileEligibilitySql()}
          AND NOT EXISTS (SELECT 1 FROM customer_closure_holds h WHERE h.customer_id = customer.id)
          AND NOT EXISTS (SELECT 1 FROM customer_closure_email_holds h

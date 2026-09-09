@@ -511,11 +511,13 @@ Multi-billing-entity routing and provider-created system sections remain explici
 ### Retained payment-provider scope
 
 The Cloudflare rewrite retains Authorize.Net and adds Easy Pay Direct as active provider adapters
-used by the pinned Lago compatibility contract. Easy Pay Direct uses Commerce customers, payment
-methods, products, orders, refunds, and signed webhook-first reconciliation. EPD Gateway provides
-Collect.js Customer Vault setup and deterministic merchant-initiated recurring collection. Unknown
-renewal outcomes are never resubmitted; provider-read reconciliation queries the stable gateway
-order reference. Store checkout and automatic collection have independent rollout switches.
+used by the pinned Lago compatibility contract. New Easy Pay Direct checkouts use one coherent
+Gateway transport for Collect.js tokenization, initial sales, Customer Vault setup, deterministic
+merchant-initiated renewals, query reconciliation and refunds. Commerce is retained only for
+historical execution compatibility and tests; new payment flows never bridge Gateway tokens into
+Commerce orders. Unknown outcomes are never resubmitted; provider-read reconciliation queries the
+stable Gateway order reference. Store checkout and automatic collection have independent rollout
+switches.
 Only profiles created by the current customer-initiated credential-on-file flow are eligible;
 historical or obvious fixture vault references are not inferred into renewable credentials.
 Lago-managed Stripe checkout, Adyen,
@@ -568,11 +570,12 @@ unsupported.
   redirects; it is not a provider endpoint, credential, custom domain, or production route.
 - `PAYMENT_MUTATIONS_ENABLED=0` prevents hosted-payment token creation.
 - `EASY_PAY_DIRECT_NETWORK_MODE=disabled` and `EASY_PAY_DIRECT_LIVEMODE_ALLOWED=0` independently
-  reject EPD Commerce/Gateway calls and live-mode activation. Sandbox requires a Commerce key
-  carrying EPD's `_test_` environment marker; production requires a key carrying the
-  `_live_` marker, the separate live gate, and Gateway vault credentials. A live key can never run
-  under the sandbox flag. The account and organization mapping must match before a signed webhook
-  or test refund is accepted.
+  reject EPD Gateway calls and live-mode activation. Direct Gateway sandbox requires the isolated
+  full-test Gateway key set and adds `test_mode=enabled`; production requires the live Gateway key
+  set, `gateway_direct`, and the separate live gate, and omits `test_mode`. The historical
+  Gateway-to-Commerce bridge is test-only and fails closed in production unless its dedicated
+  override is explicitly set. The account and organization mapping must match before a signed
+  webhook or test refund is accepted.
 - `PROVIDER_READS_ENABLED=0` defers provider reconciliation.
 - `STRIPE_NETWORK_MODE=enabled` permits only the retained, restricted-key Stripe TEST wallet
   funding seam for the fixed synthetic tenant/account mapping. It does not enable general payment

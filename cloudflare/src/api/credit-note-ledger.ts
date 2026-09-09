@@ -94,6 +94,10 @@ const REASONS = new Set([
   "fraudulent_charge",
   "other",
 ]);
+const EASY_PAY_DIRECT_REFUND_MODES = new Set(["easy_pay_direct_test", "easy_pay_direct_live"]);
+function isEasyPayDirectRefundMode(mode: string | undefined): boolean {
+  return mode !== undefined && EASY_PAY_DIRECT_REFUND_MODES.has(mode);
+}
 
 export async function handleCreditNoteLedgerRequest(
   request: Request,
@@ -350,12 +354,12 @@ export async function createCreditNote(
     if (
       env.CREDIT_NOTE_REFUND_MODE !== "sandbox" &&
       env.CREDIT_NOTE_REFUND_MODE !== "stripe_test" &&
-      env.CREDIT_NOTE_REFUND_MODE !== "easy_pay_direct_test"
+      !isEasyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE)
     )
       throw new ApiError(
         503,
         "credit_note_refunds_disabled",
-        "Credit note refunds are disabled unless an isolated test adapter is enabled",
+        "Credit note refunds are disabled for this environment",
       );
     const refundable = await refundableAmount(env.BILLING_DB, auth.organizationId, invoice.id);
     if (requestedRefund > refundable)
@@ -410,12 +414,12 @@ export async function createCreditNote(
       );
     }
   }
-  if (requestedRefund > 0 && env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test") {
+  if (requestedRefund > 0 && isEasyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE)) {
     if (refundPayment?.provider !== "easy_pay_direct") {
       throw new ApiError(
         422,
         "easy_pay_direct_refund_payment_required",
-        "Easy Pay Direct test refunds require a successful Easy Pay Direct payment",
+        "Easy Pay Direct refunds require a successful Easy Pay Direct payment",
       );
     }
     if (
@@ -426,7 +430,7 @@ export async function createCreditNote(
       throw new ApiError(
         503,
         "easy_pay_direct_account_mapping_invalid",
-        "The payment does not match the configured Easy Pay Direct test account",
+        "The payment does not match the configured Easy Pay Direct account",
       );
     }
     if (
@@ -481,7 +485,7 @@ export async function createCreditNote(
   const refundStatus =
     requestedRefund > 0
       ? env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ||
-        env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test"
+        isEasyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE)
         ? "pending"
         : "succeeded"
       : null;
@@ -646,11 +650,11 @@ export async function createCreditNote(
             invoice.id,
             env.CREDIT_NOTE_REFUND_MODE === "stripe_test"
               ? "stripe_test"
-              : env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test"
-                ? "easy_pay_direct_test"
+              : isEasyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE)
+                ? env.CREDIT_NOTE_REFUND_MODE
                 : "sandbox",
             env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ||
-              env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test"
+              isEasyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE)
               ? null
               : `sandbox-refund:${id}`,
             requestedRefund,
@@ -687,12 +691,12 @@ export async function createCreditNote(
             refundPayment!.provider_account_code,
             refundPayment!.provider_transaction_id,
             env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ||
-              env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test"
+              isEasyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE)
               ? null
               : `sandbox-refund:${id}`,
             env.CREDIT_NOTE_REFUND_MODE === "stripe_test"
               ? `stripe-refund:${id}`
-              : env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test"
+              : isEasyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE)
                 ? `easy-pay-direct-refund:${id}`
                 : `sandbox:${idempotencyKey}`,
             requestHash,
@@ -738,7 +742,7 @@ export async function createCreditNote(
   if (
     requestedRefund > 0 &&
     (env.CREDIT_NOTE_REFUND_MODE === "stripe_test" ||
-      env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test")
+      isEasyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE))
   ) {
     await resumeProviderRefundIfNeeded(env, auth.organizationId, id, reason, providerFetcher);
   }
@@ -1292,7 +1296,7 @@ async function resumeProviderRefundIfNeeded(
   reason: string,
   providerFetcher: typeof fetch,
 ): Promise<void> {
-  if (env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test") {
+  if (isEasyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE)) {
     await resumeEasyPayDirectRefundIfNeeded(env, organizationId, creditNoteId, providerFetcher);
     return;
   }

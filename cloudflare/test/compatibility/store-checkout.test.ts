@@ -422,6 +422,52 @@ describe("store-new Lago checkout compatibility", () => {
     });
   });
 
+  it("adopts a matching customer currency once and rejects later currency changes", async () => {
+    const externalId = "currency-invariant-customer";
+    const upsert = (currency?: string) =>
+      SELF.fetch("https://lago.test/api/v1/customers", {
+        method: "POST",
+        headers: authorization,
+        body: JSON.stringify({
+          customer: {
+            external_id: externalId,
+            email: "currency-invariant@example.invalid",
+            ...(currency ? { currency } : {}),
+            billing_configuration: {
+              payment_provider: "easy_pay_direct",
+              payment_provider_code: "easy-pay-direct",
+            },
+          },
+        }),
+      });
+    const created = await upsert();
+    expect(created.status).toBe(200);
+    const createdBody = await created.json<{
+      customer: { lago_id: string; currency: string | null };
+    }>();
+    expect(createdBody.customer.currency).toBeNull();
+    const now = nowIso();
+    await env.BILLING_DB.prepare(
+      `INSERT INTO invoices
+       (id, organization_id, customer_id, number, status, payment_status, currency,
+        subtotal_minor, tax_minor, credits_minor, total_due_minor, version,
+        ready_for_payment_processing, created_at, updated_at)
+       VALUES ('currency-invariant-invoice', 'org-test', ?, 'CURRENCY-1', 'finalized',
+               'pending', 'USD', 900, 0, 0, 900, 1, 1, ?, ?)`,
+    )
+      .bind(createdBody.customer.lago_id, now, now)
+      .run();
+
+    const adopted = await upsert("USD");
+    expect(adopted.status).toBe(200);
+    await expect(adopted.json()).resolves.toMatchObject({ customer: { currency: "USD" } });
+    expect((await upsert("USD")).status).toBe(200);
+
+    const changed = await upsert("EUR");
+    expect(changed.status).toBe(422);
+    await expect(changed.json()).resolves.toMatchObject({ code: "customer_currency_immutable" });
+  });
+
   it("creates a replay-safe Easy Pay Direct payment URL for a finalized invoice", async () => {
     const now = new Date().toISOString();
     const customerId = "easy-pay-direct-payment-url-customer";

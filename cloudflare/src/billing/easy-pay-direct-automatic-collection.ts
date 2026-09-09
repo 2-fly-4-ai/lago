@@ -22,11 +22,14 @@ import { decryptBillingAddress } from "../tax/billing-address-vault";
 import { calculateLocalD1Tax } from "../tax/local-d1";
 import { checkoutTaxSnapshotStatements } from "../tax/checkout-tax-snapshots";
 import { NO_IN_FLIGHT_EPD_PAYMENT_FOR_INVOICE_SQL } from "./easy-pay-direct-in-flight";
-import { easyPayDirectOutstandingInvoiceBalanceSql } from "./easy-pay-direct-recovery-policy";
+import {
+  easyPayDirectCustomerCurrencyEligibilitySql,
+  easyPayDirectOutstandingInvoiceBalanceSql,
+} from "./easy-pay-direct-recovery-policy";
 import {
   chargeCommerceRenewal,
   readCommerceRenewal,
-  commerceRenewalSandboxAllowed,
+  commerceRenewalEnvironmentAllowed,
 } from "./easy-pay-direct-commerce-renewal";
 
 type RenewalCandidate = {
@@ -133,6 +136,8 @@ export async function enrollProductScopedAutomaticCollections(
     WHERE subscription.status IN ('active', 'past_due') AND subscription.payment_method_type = 'provider'
       AND subscription.organization_id = ? AND profile.provider_account_code = ?
       AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
+      AND plan.currency = customer.currency
+      AND ${easyPayDirectCustomerCurrencyEligibilitySql("customer", "plan.currency")}
       AND ${savedProfileEligibilitySql()}
       AND customer.payment_provider = 'easy_pay_direct'
       AND profile.provider_account_code = COALESCE(customer.payment_provider_code, 'default')
@@ -420,7 +425,7 @@ export async function processEasyPayDirectAutomaticCollection(
   // Both states are reconciled by provider reads, never by another submission.
   if (execution.status === "unknown" || execution.status === "processing") return "deferred";
   if (String(env.PAYMENT_MUTATIONS_ENABLED) !== "1") return "deferred";
-  if (execution.payment_backend === "commerce_elements" && !commerceRenewalSandboxAllowed(env))
+  if (execution.payment_backend === "commerce_elements" && !commerceRenewalEnvironmentAllowed(env))
     return "deferred";
 
   const now = new Date();
@@ -454,6 +459,12 @@ export async function processEasyPayDirectAutomaticCollection(
         AND ${savedProfileEligibilitySql()}
        WHERE request.id = easy_pay_direct_automatic_payment_executions.payment_request_id
          AND request.payment_status = 'pending' AND request.ready_for_payment_processing = 1
+         AND EXISTS (
+           SELECT 1 FROM customers currency_customer
+           WHERE currency_customer.id = request.customer_id
+             AND currency_customer.organization_id = request.organization_id
+             AND ${easyPayDirectCustomerCurrencyEligibilitySql("currency_customer", "request.currency")}
+         )
          AND ${recurringInvoiceEligibilitySql(automaticCollectionScopeMode(env))}
      )
      RETURNING id`,
@@ -572,6 +583,7 @@ async function prepareEasyPayDirectDunningCollection(
          AND request.organization_id = ? AND profile.provider_account_code = ?
          AND request.payment_status = 'pending' AND request.ready_for_payment_processing = 1
          AND customer.payment_provider = 'easy_pay_direct'
+         AND ${easyPayDirectCustomerCurrencyEligibilitySql("customer", "request.currency")}
          AND ${savedProfileEligibilitySql()}
          AND ${recurringInvoiceEligibilitySql(automaticCollectionScopeMode(env))}
        LIMIT 1`,
@@ -664,6 +676,7 @@ function recurringInvoiceEligibilitySql(mode: CollectionScopeMode): string {
       OR invoice.status IS NOT 'finalized' OR invoice.payment_status = 'succeeded'
       OR invoice.ready_for_payment_processing IS NOT 1
       OR invoice.version IS NOT link.invoice_version OR invoice.currency IS NOT request.currency
+      OR plan.currency IS NOT request.currency
       OR NOT (${NO_IN_FLIGHT_EPD_PAYMENT_FOR_INVOICE_SQL})
       OR NOT COALESCE((${recurringSubscriptionEligibilitySql(mode)}), 0)
     )
@@ -936,6 +949,8 @@ export async function pendingEasyPayDirectAutomaticCollectionInvoices(
          AND subscription.status IN ('active', 'past_due')
          AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
          AND customer.payment_provider = 'easy_pay_direct'
+         AND plan.currency = invoice.currency
+         AND ${easyPayDirectCustomerCurrencyEligibilitySql("customer", "invoice.currency")}
          AND ${productPolicyEligibilitySql(scopeMode)}
          AND (? = 'all' OR EXISTS (
            SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope
@@ -1003,6 +1018,8 @@ async function loadRenewalCandidate(
          AND subscription.status IN ('active', 'past_due')
          AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
          AND customer.payment_provider = 'easy_pay_direct'
+         AND plan.currency = invoice.currency
+         AND ${easyPayDirectCustomerCurrencyEligibilitySql("customer", "invoice.currency")}
          AND ${productPolicyEligibilitySql(scopeMode)}
          AND (? = 'all' OR EXISTS (
            SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope

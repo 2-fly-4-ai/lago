@@ -57,6 +57,9 @@ describe("Elements payment surface", () => {
       "tax_quote_id",
       "billing_address",
       "payment_token:paymentToken",
+      'id="payment-recovery"',
+      "/easy_pay_direct/payment_status",
+      "submissionRetired=true",
       "Test cards only. No real money will move.",
     ])
       expect(html).toContain(text);
@@ -76,6 +79,20 @@ describe("Elements payment surface", () => {
     expect(csp).not.toMatch(/unsafe-inline|unsafe-eval|easypaydirectgateway|\*/u);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
   });
+
+  it("renders live Elements only for a coherent production tuple", async () => {
+    const response = await render({
+      APP_ENV: "production",
+      EASY_PAY_DIRECT_NETWORK_MODE: "production",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+      EASY_PAY_DIRECT_PUBLISHABLE_KEY: "epd_live_pk_fictionalPublic",
+    });
+    const html = await response.text();
+    expect(html).toContain('EPD("epd_live_pk_fictionalPublic",{disableTelemetry:true})');
+    expect(html).toContain("epd.sandbox!==false");
+    expect(html).not.toContain("Test cards only. No real money will move.");
+    expect(html).not.toContain('<span class="test-chip">TEST</span>');
+  });
   it.each([
     { APP_ENV: "production" },
     { APP_ENV: undefined },
@@ -85,7 +102,7 @@ describe("Elements payment surface", () => {
     { EASY_PAY_DIRECT_LIVEMODE_ALLOWED: undefined },
   ])("rejects unsafe Elements environment %j", async (overrides) => {
     await expect(render(overrides)).rejects.toMatchObject({
-      code: "easy_pay_direct_elements_staging_only",
+      code: "easy_pay_direct_elements_environment_mismatch",
     });
   });
   it.each([

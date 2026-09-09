@@ -69,6 +69,7 @@ describe("documented Elements Commerce adapter (mocked provider only)", () => {
   it("creates and re-reads the exact final-price digital product", async () => {
     const input = {
       name: "SERP App Plan",
+      description: "SERP digital software purchase",
       amountMinor: 450,
       currency: "USD",
       metadata: { fixture: "true" },
@@ -83,6 +84,7 @@ describe("documented Elements Commerce adapter (mocked provider only)", () => {
       expect(String(url)).toBe("https://api.epd.com/v1/products");
       expect(JSON.parse(String(options?.body))).toEqual({
         name: input.name,
+        description: input.description,
         sku: `serp-${idempotencyKey}`,
         pricing: { amount: 450, currency: "usd" },
         requires_shipping: false,
@@ -326,6 +328,51 @@ describe("documented Elements Commerce adapter (mocked provider only)", () => {
       addEasyPayDirectElementsPaymentMethod({ ...env, ...override }, attach, provider),
     ).rejects.toMatchObject({ status: 503 });
     expect(provider).not.toHaveBeenCalled();
+  });
+
+  it("accepts a coherent live environment with a live Commerce key", async () => {
+    const provider = vi.fn<typeof fetch>(async () =>
+      Response.json({ id: customerId, email: contact.email }),
+    );
+    await expect(
+      retrieveEasyPayDirectElementsCustomer(
+        {
+          APP_ENV: "production",
+          EASY_PAY_DIRECT_COMMERCE_API_KEY: "epd_live_sk_fixture",
+          EASY_PAY_DIRECT_NETWORK_MODE: "production",
+          EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+        },
+        { customerId, email: contact.email },
+        provider,
+      ),
+    ).resolves.toEqual({ id: customerId, email: contact.email });
+    expect(provider).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["sandbox", "epd_restricted_sk_test_fixture"],
+    ["live", "epd_restricted_sk_live_fixture"],
+  ] as const)("accepts a documented %s restricted Commerce key", async (mode, key) => {
+    const provider = vi.fn<typeof fetch>(async () =>
+      Response.json({ id: customerId, email: contact.email }),
+    );
+    const runtime =
+      mode === "sandbox"
+        ? { ...env, EASY_PAY_DIRECT_COMMERCE_API_KEY: key }
+        : {
+            APP_ENV: "production",
+            EASY_PAY_DIRECT_COMMERCE_API_KEY: key,
+            EASY_PAY_DIRECT_NETWORK_MODE: "production" as const,
+            EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1" as const,
+          };
+    await expect(
+      retrieveEasyPayDirectElementsCustomer(
+        runtime,
+        { customerId, email: contact.email },
+        provider,
+      ),
+    ).resolves.toMatchObject({ id: customerId });
+    expect(provider).toHaveBeenCalledTimes(1);
   });
 
   it("rejects legacy tokens, invalid addresses and non-v4 request keys before network", async () => {

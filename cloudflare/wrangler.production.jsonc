@@ -26,6 +26,7 @@
     "APP_ENV": "production",
     "PUBLIC_BASE_URL": "https://serp-prod-lago-native.serpcompany.workers.dev",
     "PAYMENT_MUTATIONS_ENABLED": "1",
+    "EASY_PAY_DIRECT_CHECKOUT_BACKEND": "gateway_direct",
     "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED": "1",
     "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE": "product_scoped",
     "EASY_PAY_DIRECT_NETWORK_MODE": "production",

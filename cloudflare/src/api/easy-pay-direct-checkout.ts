@@ -9,13 +9,14 @@ import { requireEasyPayDirectOrderEvidence } from "../billing/easy-pay-direct-or
 import { easyPayDirectPurchaseKind } from "../billing/easy-pay-direct-purchase-kind";
 import {
   addEasyPayDirectPaymentMethod,
-  chargeEasyPayDirectGatewayTestToken,
+  chargeEasyPayDirectGatewayToken,
   createEasyPayDirectCustomer,
   createEasyPayDirectOrder,
   createEasyPayDirectProduct,
   easyPayDirectPaymentTokenHash,
   findEasyPayDirectCustomerByEmail,
   findEasyPayDirectGatewayTransactionByOrderId,
+  isEasyPayDirectDirectGatewayCheckout,
   retrieveEasyPayDirectCustomer,
   resolveEasyPayDirectSuccessRedirect,
   vaultEasyPayDirectCard,
@@ -25,6 +26,7 @@ import {
   type GatewayTransactionResult,
   type GatewayTransactionQueryResult,
 } from "../providers/easy-pay-direct";
+import { requireEasyPayDirectElementsMode } from "../providers/easy-pay-direct-elements-mode";
 import {
   publishPaymentRequestOutboxEvents,
   reconcilePaymentRequest,
@@ -47,6 +49,7 @@ type CheckoutRow = {
   expires_at: string | null;
   amount_minor: number;
   currency: string;
+  customer_currency: string | null;
   customer_email: string | null;
   customer_name: string | null;
   external_customer_id: string;
@@ -114,22 +117,40 @@ export async function handleEasyPayDirectCheckoutSubmission(
   surface: CheckoutSurface = "product_checkout",
 ): Promise<Response> {
   const body = await parseJsonObject(request);
+  const configuredBackend = env.EASY_PAY_DIRECT_CHECKOUT_BACKEND;
+  const supportedBackend =
+    configuredBackend === undefined ||
+    configuredBackend === "gateway_vault" ||
+    configuredBackend === "gateway_direct" ||
+    configuredBackend === "legacy_commerce_bridge" ||
+    configuredBackend === "commerce_elements";
+  if (surface === "product_checkout" && !supportedBackend) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_checkout_backend_unsafe",
+      "Payments are temporarily unavailable.",
+    );
+  }
+  if (
+    surface === "product_checkout" &&
+    env.EASY_PAY_DIRECT_NETWORK_MODE === "production" &&
+    (configuredBackend === undefined ||
+      configuredBackend === "gateway_vault" ||
+      configuredBackend === "legacy_commerce_bridge") &&
+    env.EASY_PAY_DIRECT_LEGACY_BRIDGE_ALLOWED !== "1"
+  ) {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_checkout_backend_unsafe",
+      "Payments are temporarily unavailable.",
+    );
+  }
+  const directGateway = surface === "product_checkout" && isEasyPayDirectDirectGatewayCheckout(env);
   const paymentBackend =
     surface === "product_checkout" && env.EASY_PAY_DIRECT_CHECKOUT_BACKEND === "commerce_elements"
       ? "commerce_elements"
       : "gateway_vault";
-  if (
-    paymentBackend === "commerce_elements" &&
-    (!["development", "staging", "test"].includes(String(env.APP_ENV)) ||
-      !["test", "gateway_test"].includes(env.EASY_PAY_DIRECT_NETWORK_MODE ?? "") ||
-      env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0")
-  ) {
-    throw new ApiError(
-      503,
-      "easy_pay_direct_elements_staging_only",
-      "Elements is not enabled for this environment.",
-    );
-  }
+  if (paymentBackend === "commerce_elements") requireEasyPayDirectElementsMode(env);
   const checkoutToken = requiredString(body, "checkout");
   const paymentToken = requiredString(body, "payment_token");
   if (paymentBackend === "commerce_elements" && !/^cct_[A-Za-z0-9_-]+$/u.test(paymentToken)) {
@@ -192,14 +213,14 @@ export async function handleEasyPayDirectCheckoutSubmission(
   if (!checkout)
     throw new ApiError(401, "easy_pay_direct_checkout_invalid", "Checkout link is invalid");
   if (
-    paymentBackend === "commerce_elements" &&
+    surface === "product_checkout" &&
     (env.PAYMENT_MUTATIONS_ENABLED !== "1" ||
       checkout.organization_id !== env.EASY_PAY_DIRECT_ORGANIZATION_ID ||
       checkout.provider_account_code !== env.EASY_PAY_DIRECT_ACCOUNT_CODE)
   ) {
     throw new ApiError(
       503,
-      "easy_pay_direct_elements_disabled",
+      "easy_pay_direct_payments_disabled",
       "Payments are not enabled for this checkout.",
     );
   }
@@ -246,6 +267,53 @@ export async function handleEasyPayDirectCheckoutSubmission(
       "The checkout email does not match the signed customer",
     );
   }
+  if (checkout.customer_currency && checkout.customer_currency !== checkout.currency) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_checkout_currency_mismatch",
+      "The checkout currency does not match the customer billing currency",
+    );
+  }
+  const customerCurrencyUpdated = await env.BILLING_DB.prepare(
+    `UPDATE customers SET currency = COALESCE(currency, ?),
+       version = version + CASE WHEN currency IS NULL THEN 1 ELSE 0 END,
+       updated_at = CASE WHEN currency IS NULL THEN ? ELSE updated_at END
+     WHERE id = ? AND organization_id = ? AND (currency IS NULL OR currency = ?)
+       AND NOT EXISTS (SELECT 1 FROM invoices invoice
+         WHERE invoice.customer_id = customers.id AND invoice.organization_id = customers.organization_id
+           AND invoice.currency <> ?)
+       AND NOT EXISTS (SELECT 1 FROM payment_requests request
+         WHERE request.customer_id = customers.id AND request.organization_id = customers.organization_id
+           AND request.currency <> ?)
+       AND NOT EXISTS (SELECT 1 FROM subscriptions subscription
+         JOIN plans plan ON plan.id = subscription.plan_id
+           AND plan.organization_id = subscription.organization_id
+         WHERE subscription.customer_id = customers.id
+           AND subscription.organization_id = customers.organization_id AND plan.currency <> ?)
+       AND NOT EXISTS (SELECT 1 FROM wallets wallet
+         WHERE wallet.customer_id = customers.id AND wallet.organization_id = customers.organization_id
+           AND wallet.currency <> ?)`,
+  )
+    .bind(
+      checkout.currency,
+      new Date().toISOString(),
+      checkout.customer_id,
+      checkout.organization_id,
+      checkout.currency,
+      checkout.currency,
+      checkout.currency,
+      checkout.currency,
+      checkout.currency,
+    )
+    .run();
+  if (customerCurrencyUpdated.meta.changes !== 1) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_checkout_currency_mismatch",
+      "The checkout currency does not match the customer billing currency",
+    );
+  }
+  checkout.customer_currency = checkout.currency;
   if (
     paymentBackend === "gateway_vault" &&
     surface === "product_checkout" &&
@@ -274,11 +342,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
   );
   const now = new Date().toISOString();
   const chargeTransport =
-    paymentBackend === "gateway_vault" &&
-    surface === "product_checkout" &&
-    env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test"
-      ? "gateway"
-      : "commerce";
+    paymentBackend === "gateway_vault" && directGateway ? "gateway" : "commerce";
   const termsAcceptedAt = surface === "product_checkout" ? now : null;
   const termsVersion = surface === "product_checkout" ? CHECKOUT_TERMS_VERSION : null;
   const encryptedPhone = await encryptExecutionPhone(phone, signingSecret, executionId);
@@ -451,6 +515,13 @@ export async function handleEasyPayDirectCheckoutSubmission(
           checkout.payment_request_id,
         )
       : null;
+  if (directGateway && !gatewayPurchaseKind) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_purchase_kind_unverified",
+      "The purchase billing terms need review before payment.",
+    );
+  }
   if (gatewayPurchaseKind && env.PROVIDER_READS_ENABLED !== "1") {
     throw new ApiError(
       503,
@@ -475,13 +546,9 @@ export async function handleEasyPayDirectCheckoutSubmission(
 
   try {
     await requireEasyPayDirectReplayWindow(env.BILLING_DB, executionId);
-    if (
-      paymentBackend === "gateway_vault" &&
-      surface === "product_checkout" &&
-      env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test"
-    ) {
+    if (paymentBackend === "gateway_vault" && directGateway) {
       const names = splitCustomerName(checkout.customer_name, checkout.customer_email);
-      const transaction = await chargeEasyPayDirectGatewayTestToken(
+      const transaction = await chargeEasyPayDirectGatewayToken(
         env,
         {
           paymentToken,
@@ -498,7 +565,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
         },
         fetcher,
       );
-      return await finalizeGatewayTestOutcome(
+      return await finalizeGatewayOutcome(
         env,
         checkout,
         executionId,
@@ -506,6 +573,7 @@ export async function handleEasyPayDirectCheckoutSubmission(
         requestId,
         returnTo,
         fetcher,
+        gatewayPurchaseKind!,
       );
     }
 
@@ -652,6 +720,74 @@ export async function handleEasyPayDirectCheckoutSubmission(
   }
 }
 
+/**
+ * Read-only browser recovery for an interrupted checkout submission. The signed
+ * checkout token identifies the intent; this endpoint never accepts card data,
+ * calls EPD, or changes the execution. Provider reconciliation remains the
+ * only process allowed to advance an ambiguous provider outcome.
+ */
+export async function handleEasyPayDirectCheckoutStatus(
+  request: Request,
+  env: Env,
+  requestId: string,
+): Promise<Response> {
+  const body = await parseJsonObject(request);
+  const checkoutToken = requiredString(body, "checkout");
+  if (checkoutToken.length > 2_048)
+    throw new ApiError(422, "invalid_easy_pay_direct_submission", "Checkout status is invalid");
+  const signingSecret = env.EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET?.trim();
+  if (!signingSecret)
+    throw new ApiError(503, "provider_not_configured", "Payment status is unavailable");
+  const { verifyEasyPayDirectCheckoutToken } = await import("../providers/easy-pay-direct");
+  const tokenPayload = await verifyEasyPayDirectCheckoutToken(checkoutToken, signingSecret);
+  const checkout = await loadCheckout(
+    env.BILLING_DB,
+    tokenPayload.intent,
+    await sha256Hex(checkoutToken),
+  );
+  if (!checkout)
+    throw new ApiError(401, "easy_pay_direct_checkout_invalid", "Checkout link is invalid");
+  const execution = await loadExecution(env.BILLING_DB, checkout.checkout_intent_id);
+  if (!execution) return json({ status: "not_submitted" }, { requestId });
+  if (execution.status === "succeeded" || checkout.payment_status === "succeeded") {
+    return successResponse(execution.provider_transaction_id, requestId, true, null);
+  }
+  if (execution.status === "failed") {
+    return json(
+      {
+        status: "failed",
+        message: "This payment was not completed. Start a new checkout before trying another card.",
+      },
+      { requestId },
+    );
+  }
+  if (execution.provider_transaction_id) {
+    return processingResponse(execution.provider_transaction_id, requestId, true, null);
+  }
+  if (
+    execution.status === "pending" &&
+    execution.failure_code === "easy_pay_direct_customer_lookup_retryable" &&
+    !execution.provider_customer_id &&
+    !execution.provider_payment_method_id &&
+    !execution.provider_product_id
+  ) {
+    return json(
+      {
+        status: "retryable",
+        message: "The payment was not submitted. Reload the secure card fields to try again.",
+      },
+      { requestId },
+    );
+  }
+  return json(
+    {
+      status: "review",
+      message: "Payment confirmation is still pending. Do not submit another payment.",
+    },
+    { requestId },
+  );
+}
+
 type EasyPayDirectAdvanceInput = {
   paymentToken: string | null;
   phone: string;
@@ -681,7 +817,22 @@ async function advanceElementsOrder(
   // silently substitute a previously saved default payment method.
   let customerId = execution.provider_customer_id;
   if (!customerId) {
-    const existing = await epd.findEasyPayDirectElementsCustomerByEmail(env, email, fetcher);
+    let existing: import("../providers/easy-pay-direct-elements").ElementsCustomer | null;
+    try {
+      existing = await epd.findEasyPayDirectElementsCustomerByEmail(env, email, fetcher);
+    } catch (error) {
+      // This GET is the only Elements step that is provably pre-mutation. A
+      // transient transport/provider failure here cannot have consumed the cct
+      // or created a remote resource, so the execution may safely be retried.
+      if (error instanceof ApiError && (error.status === 429 || error.status >= 500)) {
+        throw new ApiError(
+          503,
+          "easy_pay_direct_customer_lookup_retryable",
+          "Payment setup is temporarily unavailable. Please try again shortly.",
+        );
+      }
+      throw error;
+    }
     await requireEasyPayDirectReplayWindow(env.BILLING_DB, execution.id);
     customerId =
       existing?.id ??
@@ -758,6 +909,7 @@ async function advanceElementsOrder(
         env,
         {
           name: "SERP checkout",
+          description: "SERP digital software purchase",
           metadata: { lago_payment_request_id: checkout.payment_request_id },
           amountMinor: checkout.amount_minor,
           currency: checkout.currency,
@@ -1208,13 +1360,18 @@ export async function resumeEasyPayDirectExecution(
   }
 }
 
-export async function reconcileEasyPayDirectGatewayTestExecution(
+export async function reconcileEasyPayDirectGatewayExecution(
   env: Env,
   executionId: string,
   fetcher: typeof fetch,
 ): Promise<"processed" | "deferred"> {
   if (
-    env.EASY_PAY_DIRECT_NETWORK_MODE !== "gateway_test" ||
+    (env.EASY_PAY_DIRECT_NETWORK_MODE !== "gateway_test" &&
+      env.EASY_PAY_DIRECT_NETWORK_MODE !== "production") ||
+    (env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test" &&
+      env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0") ||
+    (env.EASY_PAY_DIRECT_NETWORK_MODE === "production" &&
+      env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "1") ||
     String(env.PROVIDER_READS_ENABLED) !== "1"
   )
     return "deferred";
@@ -1261,14 +1418,20 @@ export async function reconcileEasyPayDirectGatewayTestExecution(
       .bind(transaction.id, executionId, lease, transaction.id, transaction.id)
       .first<{ id: string }>();
     if (!checkpoint) return "deferred";
-    await finalizeGatewayTestOutcome(
+    const purchaseKind = await easyPayDirectPurchaseKind(
+      env.BILLING_DB,
+      state.checkout.organization_id,
+      state.checkout.payment_request_id,
+    );
+    await finalizeGatewayOutcome(
       env,
       state.checkout,
       executionId,
       transaction,
-      "gateway-test-reconciliation",
+      "gateway-reconciliation",
       null,
       fetcher,
+      purchaseKind,
       transaction,
     );
     return "processed";
@@ -1282,7 +1445,7 @@ export async function reconcileEasyPayDirectGatewayTestExecution(
   }
 }
 
-async function finalizeGatewayTestOutcome(
+async function finalizeGatewayOutcome(
   env: Env,
   checkout: CheckoutRow,
   executionId: string,
@@ -1290,6 +1453,7 @@ async function finalizeGatewayTestOutcome(
   requestId: string,
   returnTo: string | null,
   fetcher: typeof fetch,
+  purchaseKind: "one_time" | "recurring",
   readEvidence?: GatewayTransactionQueryResult,
 ): Promise<Response> {
   const timestamp = new Date().toISOString();
@@ -1374,9 +1538,14 @@ async function finalizeGatewayTestOutcome(
       : null;
   const failureMessage =
     normalizedStatus === "failed" ? transaction.responseText.slice(0, 500) : null;
+  const providerCustomerVaultId =
+    normalizedStatus === "succeeded" && purchaseKind === "recurring"
+      ? transaction.customerVaultId
+      : null;
   const savedCheckpoint = await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
-     SET provider_transaction_id = ?, provider_response_code = ?, customer_vault_id = COALESCE(?, customer_vault_id),
+     SET provider_transaction_id = ?, provider_response_code = ?,
+         customer_vault_id = CASE WHEN ? = 1 THEN COALESCE(?, customer_vault_id) ELSE NULL END,
          failure_code = ?, failure_message = ?, updated_at = ?
      WHERE id = ? AND charge_transport = 'gateway' AND status IN ('processing', 'unknown')
        AND (provider_transaction_id IS NULL OR provider_transaction_id = ?)
@@ -1386,14 +1555,15 @@ async function finalizeGatewayTestOutcome(
     .bind(
       providerTransactionId,
       transaction.responseCode,
-      transaction.customerVaultId,
+      purchaseKind === "recurring" ? 1 : 0,
+      providerCustomerVaultId,
       failureCode,
       failureMessage,
       timestamp,
       executionId,
       providerTransactionId,
-      transaction.customerVaultId,
-      transaction.customerVaultId,
+      providerCustomerVaultId,
+      providerCustomerVaultId,
     )
     .first<{ customer_vault_id: string | null }>();
   if (!savedCheckpoint) {
@@ -1427,7 +1597,9 @@ async function finalizeGatewayTestOutcome(
       evidence.status !== "succeeded" ||
       evidence.amountMinor !== checkout.amount_minor ||
       evidence.currency !== checkout.currency ||
-      (evidence.customerVaultId !== null && evidence.customerVaultId !== customerVaultId)
+      (purchaseKind === "recurring" &&
+        evidence.customerVaultId !== null &&
+        evidence.customerVaultId !== customerVaultId)
     ) {
       throw new ApiError(
         409,
@@ -1437,11 +1609,12 @@ async function finalizeGatewayTestOutcome(
     }
   }
 
+  const gatewayEnvironment = env.EASY_PAY_DIRECT_NETWORK_MODE === "production" ? "live" : "test";
   const receiptId = await deterministicUuid(
-    "easy-pay-direct-gateway-test-receipt",
+    "easy-pay-direct-gateway-receipt",
     `${checkout.provider_account_code}:${providerTransactionId}:${normalizedStatus}`,
   );
-  const providerEventId = `gateway-test:${providerTransactionId}:${normalizedStatus}`;
+  const providerEventId = `gateway-${gatewayEnvironment}:${providerTransactionId}:${normalizedStatus}`;
   const payloadHash = await sha256Hex(
     JSON.stringify({
       id: providerTransactionId,
@@ -1457,23 +1630,35 @@ async function finalizeGatewayTestOutcome(
       `INSERT INTO webhook_receipts
        (id, provider, provider_account_code, provider_event_id, signature_valid,
         payload_sha256, received_at, processed_at, processing_error_code)
-       VALUES (?, 'easy_pay_direct_gateway_test', ?, ?, 0, ?, ?, NULL, NULL)
+       VALUES (?, ?, ?, ?, 0, ?, ?, NULL, NULL)
        ON CONFLICT(provider, provider_account_code, provider_event_id) DO NOTHING`,
-    ).bind(receiptId, checkout.provider_account_code, providerEventId, payloadHash, timestamp),
+    ).bind(
+      receiptId,
+      `easy_pay_direct_gateway_${gatewayEnvironment}`,
+      checkout.provider_account_code,
+      providerEventId,
+      payloadHash,
+      timestamp,
+    ),
     env.BILLING_DB.prepare(
       `INSERT INTO provider_webhook_events
        (receipt_id, organization_id, event_type, provider_transaction_id, invoice_id,
         normalized_status, normalized_at, payment_request_id)
-       VALUES (?, ?, 'transaction.test.reconciled', ?, NULL, NULL, NULL, NULL)
+       VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL)
        ON CONFLICT(receipt_id) DO NOTHING`,
-    ).bind(receiptId, checkout.organization_id, providerTransactionId),
+    ).bind(
+      receiptId,
+      checkout.organization_id,
+      `transaction.gateway.${gatewayEnvironment}.reconciled`,
+      providerTransactionId,
+    ),
   ]);
 
   const receipt: PendingReceipt = {
     receipt_id: receiptId,
     organization_id: checkout.organization_id,
     provider_account_code: checkout.provider_account_code,
-    event_type: "transaction.test.reconciled",
+    event_type: `transaction.gateway.${gatewayEnvironment}.reconciled`,
     provider_transaction_id: providerTransactionId,
     archive_key: null,
     processed_at: null,
@@ -1491,7 +1676,7 @@ async function finalizeGatewayTestOutcome(
     normalizedStatus,
     "easy_pay_direct",
   );
-  if (normalizedStatus === "succeeded" && customerVaultId) {
+  if (normalizedStatus === "succeeded" && purchaseKind === "recurring" && customerVaultId) {
     const existingProfile = await loadProfile(env.BILLING_DB, checkout);
     await upsertProfile(env.BILLING_DB, checkout, {
       providerCustomerId:
@@ -1502,23 +1687,12 @@ async function finalizeGatewayTestOutcome(
       initialTransactionId: providerTransactionId,
     });
     await markCheckoutSubscriptionProvider(env.BILLING_DB, checkout);
-  } else if (normalizedStatus === "succeeded") {
-    const recurring = await env.BILLING_DB.prepare(
-      `SELECT 1 FROM invoices_payment_requests link
-       JOIN invoices i ON i.id = link.invoice_id AND i.organization_id = link.organization_id
-       JOIN subscriptions s ON s.id = i.subscription_id AND s.organization_id = i.organization_id
-       JOIN plans p ON p.id = s.plan_id AND p.organization_id = s.organization_id
-       WHERE link.payment_request_id = ? AND link.organization_id = ?
-         AND s.status IN ('active', 'past_due') AND p.interval IN ('weekly', 'monthly', 'quarterly', 'yearly') LIMIT 1`,
-    )
-      .bind(checkout.payment_request_id, checkout.organization_id)
-      .first();
-    if (recurring)
-      throw new ApiError(
-        503,
-        "easy_pay_direct_post_payment_pending",
-        "Payment confirmed; post-payment setup is pending",
-      );
+  } else if (normalizedStatus === "succeeded" && purchaseKind === "recurring") {
+    throw new ApiError(
+      503,
+      "easy_pay_direct_post_payment_pending",
+      "Payment confirmed; post-payment setup is pending",
+    );
   }
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
@@ -1648,7 +1822,8 @@ async function loadCheckout(
     .prepare(
       `SELECT intent.id AS checkout_intent_id, intent.organization_id, intent.payment_request_id,
             intent.customer_id, intent.provider_account_code, intent.request_sha256, intent.expires_at,
-            intent.amount_minor, intent.currency, customer.email AS customer_email,
+            intent.amount_minor, intent.currency, customer.currency AS customer_currency,
+            customer.email AS customer_email,
             customer.name AS customer_name, customer.external_id AS external_customer_id,
             request.payment_status, request.ready_for_payment_processing
      FROM payment_request_checkout_intents intent
@@ -1710,6 +1885,7 @@ async function loadCheckoutByIntentId(
       `SELECT intent.id AS checkout_intent_id, intent.organization_id, intent.payment_request_id,
               intent.customer_id, intent.provider_account_code, intent.request_sha256,
               intent.expires_at, intent.amount_minor, intent.currency,
+              customer.currency AS customer_currency,
               customer.email AS customer_email, customer.name AS customer_name,
               customer.external_id AS external_customer_id, request.payment_status,
               request.ready_for_payment_processing

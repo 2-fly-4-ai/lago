@@ -54,6 +54,34 @@ export function easyPayDirectOutstandingInvoiceBalanceSql(requestAlias: "r" | "r
     )`;
 }
 
+// A customer has one billing currency once any financial evidence exists. Keep
+// every automatic-charge selector and final claim on the same invariant as the
+// customer and checkout APIs. The aliases/expressions are internal constants.
+export function easyPayDirectCustomerCurrencyEligibilitySql(
+  customerAlias: string,
+  currencyExpression: string,
+): string {
+  return `${customerAlias}.currency = ${currencyExpression}
+    AND NOT EXISTS (SELECT 1 FROM invoices currency_invoice
+      WHERE currency_invoice.customer_id = ${customerAlias}.id
+        AND currency_invoice.organization_id = ${customerAlias}.organization_id
+        AND currency_invoice.currency <> ${currencyExpression})
+    AND NOT EXISTS (SELECT 1 FROM payment_requests currency_request
+      WHERE currency_request.customer_id = ${customerAlias}.id
+        AND currency_request.organization_id = ${customerAlias}.organization_id
+        AND currency_request.currency <> ${currencyExpression})
+    AND NOT EXISTS (SELECT 1 FROM subscriptions currency_subscription
+      JOIN plans currency_plan ON currency_plan.id = currency_subscription.plan_id
+        AND currency_plan.organization_id = currency_subscription.organization_id
+      WHERE currency_subscription.customer_id = ${customerAlias}.id
+        AND currency_subscription.organization_id = ${customerAlias}.organization_id
+        AND currency_plan.currency <> ${currencyExpression})
+    AND NOT EXISTS (SELECT 1 FROM wallets currency_wallet
+      WHERE currency_wallet.customer_id = ${customerAlias}.id
+        AND currency_wallet.organization_id = ${customerAlias}.organization_id
+        AND currency_wallet.currency <> ${currencyExpression})`;
+}
+
 export const EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL = `
   EXISTS (
     SELECT 1 FROM payment_request_checkout_intents i
@@ -63,6 +91,12 @@ export const EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL = `
       AND i.payment_request_id = easy_pay_direct_payment_executions.payment_request_id
       AND i.provider = 'easy_pay_direct' AND i.status = 'succeeded'
       AND r.payment_status <> 'succeeded' AND r.ready_for_payment_processing = 1
+      AND EXISTS (
+        SELECT 1 FROM customers currency_customer
+        WHERE currency_customer.id = i.customer_id
+          AND currency_customer.organization_id = i.organization_id
+          AND currency_customer.currency = i.currency
+      )
       AND ${easyPayDirectOutstandingInvoiceBalanceSql("r")}
       AND NOT EXISTS (
         SELECT 1 FROM invoices_payment_requests own_link

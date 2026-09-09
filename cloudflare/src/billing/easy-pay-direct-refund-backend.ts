@@ -11,6 +11,10 @@ import {
   refundEasyPayDirectElementsOrder,
   readEasyPayDirectElementsRefundTransaction,
 } from "../providers/easy-pay-direct-elements";
+import {
+  requireEasyPayDirectElementsMode,
+  type EasyPayDirectElementsModeEnv,
+} from "../providers/easy-pay-direct-elements-mode";
 
 type Origin = { organizationId: string; providerAccountCode: string; orderId: string };
 type RefundInput = Origin & { amountMinor: number; currency: string; idempotencyKey: string };
@@ -79,15 +83,7 @@ export function assertEasyPayDirectRefundBoundary(
 ): void {
   if (
     input.organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
-    input.providerAccountCode !== env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim() ||
-    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0" ||
-    (backend === "gateway"
-      ? !["development", "staging", "test"].includes(env.APP_ENV ?? "") ||
-        env.EASY_PAY_DIRECT_NETWORK_MODE !== "gateway_test"
-      : backend === "commerce_elements"
-        ? !["development", "staging", "test"].includes(env.APP_ENV ?? "") ||
-          !["test", "gateway_test"].includes(env.EASY_PAY_DIRECT_NETWORK_MODE ?? "")
-        : env.EASY_PAY_DIRECT_NETWORK_MODE !== "test")
+    input.providerAccountCode !== env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim()
   ) {
     throw new ApiError(
       503,
@@ -95,6 +91,22 @@ export function assertEasyPayDirectRefundBoundary(
       "Refund is not enabled for this payment environment.",
     );
   }
+  if (backend === "commerce_elements") {
+    requireEasyPayDirectElementsMode(env as EasyPayDirectElementsModeEnv);
+    return;
+  }
+  if (
+    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0" ||
+    (backend === "gateway"
+      ? !["development", "staging", "test"].includes(env.APP_ENV ?? "") ||
+        env.EASY_PAY_DIRECT_NETWORK_MODE !== "gateway_test"
+      : env.EASY_PAY_DIRECT_NETWORK_MODE !== "test")
+  )
+    throw new ApiError(
+      503,
+      "easy_pay_direct_refund_boundary_mismatch",
+      "Refund is not enabled for this payment environment.",
+    );
 }
 
 export async function refundEasyPayDirectByOrigin(
