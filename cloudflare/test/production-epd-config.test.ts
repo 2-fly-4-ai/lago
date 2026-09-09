@@ -18,7 +18,7 @@ describe("production EPD canary configuration", () => {
       '"EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE": "product_scoped"',
     );
     expect(productionConfig).toContain('"PROVIDER_READS_ENABLED": "1"');
-    expect(productionConfig).toContain('"CREDIT_NOTE_REFUND_MODE": "disabled"');
+    expect(productionConfig).toContain('"CREDIT_NOTE_REFUND_MODE": "easy_pay_direct_live"');
     expect(productionConfig).toContain('"WALLET_FUNDING_MODE": "disabled"');
     expect(productionConfig).toContain('"EXTERNAL_TAX_MODE": "disabled"');
     expect(productionConfig).toContain('"STRIPE_NETWORK_MODE": "disabled"');
