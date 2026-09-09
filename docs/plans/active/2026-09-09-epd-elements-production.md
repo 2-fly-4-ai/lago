@@ -214,3 +214,18 @@ or widened, and no payment or renewal was manually triggered.
   successful Gateway renewal transactions (`12533511387` and `12533616985`), each from a single
   one-attempt execution. A separate controlled declined renewal ended once with provider code 300,
   no provider transaction ID, and no duplicate execution. Its collection scope is disabled now.
+
+## Production source-contract rollout — 2026-09-10
+
+- After explicit approval, exact Lago commit
+  `2c89661dbb38387975ca5f321207f10ac2561d85` was deployed to production Worker version
+  `33a3a486-ef7b-4448-926c-88cb4a7b275a`.
+- Live version inspection confirms direct Gateway checkout, production EPD networking, explicit
+  live-mode permission, product-scoped automatic collection, and `CREDIT_NOTE_REFUND_MODE=disabled`.
+  No refund, cancellation, renewal or additional payment was triggered during deployment.
+- Production `/health` and `/ready` both returned success. `PRAGMA foreign_key_check` returned no
+  rows and the automatic-payment execution ledger has zero unresolved pending, processing or
+  unknown executions.
+- The already-completed live Sprout purchase remains legacy version 0 because it predates the
+  source rollout. A new human purchase is required to verify the production source-owned journey;
+  it must not be inferred from the successful deployment checks.
