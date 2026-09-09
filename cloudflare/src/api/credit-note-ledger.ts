@@ -9,6 +9,7 @@ import {
   refundEasyPayDirectByOrigin,
   easyPayDirectRefundBackend,
   assertEasyPayDirectRefundBoundary,
+  assertEasyPayDirectRefundMode,
 } from "../billing/easy-pay-direct-refund-backend";
 import {
   checkpointEasyPayDirectRefund,
@@ -415,6 +416,7 @@ export async function createCreditNote(
     }
   }
   if (requestedRefund > 0 && isEasyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE)) {
+    assertEasyPayDirectRefundMode(env);
     if (refundPayment?.provider !== "easy_pay_direct") {
       throw new ApiError(
         422,
@@ -441,7 +443,7 @@ export async function createCreditNote(
       throw new ApiError(
         503,
         "easy_pay_direct_organization_mapping_invalid",
-        "The request does not match the configured Easy Pay Direct synthetic organization",
+        "The request does not match the configured Easy Pay Direct organization",
       );
     }
   }
@@ -1434,8 +1436,7 @@ async function resumeEasyPayDirectRefundIfNeeded(
   if (
     !env.PROVIDER_FINANCIALS &&
     (operation.provider_account_code !== env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim() ||
-      organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
-      !["test", "gateway_test"].includes(env.EASY_PAY_DIRECT_NETWORK_MODE ?? ""))
+      organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim())
   ) {
     throw new ApiError(
       503,

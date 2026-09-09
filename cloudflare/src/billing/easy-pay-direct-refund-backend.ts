@@ -73,6 +73,7 @@ export async function easyPayDirectRefundBackend(
 export function assertEasyPayDirectRefundBoundary(
   env: {
     APP_ENV?: string;
+    CREDIT_NOTE_REFUND_MODE?: string;
     EASY_PAY_DIRECT_NETWORK_MODE?: string;
     EASY_PAY_DIRECT_LIVEMODE_ALLOWED?: string;
     EASY_PAY_DIRECT_ORGANIZATION_ID?: string;
@@ -81,6 +82,7 @@ export function assertEasyPayDirectRefundBoundary(
   input: Origin,
   backend: RefundBackend,
 ): void {
+  assertEasyPayDirectRefundMode(env);
   if (
     input.organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
     input.providerAccountCode !== env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim()
@@ -95,13 +97,48 @@ export function assertEasyPayDirectRefundBoundary(
     requireEasyPayDirectElementsMode(env as EasyPayDirectElementsModeEnv);
     return;
   }
-  if (
-    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED !== "0" ||
-    (backend === "gateway"
-      ? !["development", "staging", "test"].includes(env.APP_ENV ?? "") ||
-        env.EASY_PAY_DIRECT_NETWORK_MODE !== "gateway_test"
-      : env.EASY_PAY_DIRECT_NETWORK_MODE !== "test")
-  )
+  const coherentGatewayTest =
+    backend === "gateway" &&
+    env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test" &&
+    ["development", "staging", "test"].includes(env.APP_ENV ?? "") &&
+    env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test" &&
+    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED === "0";
+  const coherentGatewayLive =
+    backend === "gateway" &&
+    env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_live" &&
+    env.APP_ENV === "production" &&
+    env.EASY_PAY_DIRECT_NETWORK_MODE === "production" &&
+    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED === "1";
+  const coherentLegacyTest =
+    backend === "commerce_legacy" &&
+    env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test" &&
+    env.EASY_PAY_DIRECT_NETWORK_MODE === "test" &&
+    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED === "0";
+  if (!coherentGatewayTest && !coherentGatewayLive && !coherentLegacyTest)
+    throw new ApiError(
+      503,
+      "easy_pay_direct_refund_boundary_mismatch",
+      "Refund is not enabled for this payment environment.",
+    );
+}
+
+export function assertEasyPayDirectRefundMode(env: {
+  APP_ENV?: string;
+  CREDIT_NOTE_REFUND_MODE?: string;
+  EASY_PAY_DIRECT_NETWORK_MODE?: string;
+  EASY_PAY_DIRECT_LIVEMODE_ALLOWED?: string;
+}): void {
+  const coherentTest =
+    env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_test" &&
+    ["development", "staging", "test"].includes(env.APP_ENV ?? "") &&
+    ["test", "gateway_test"].includes(env.EASY_PAY_DIRECT_NETWORK_MODE ?? "") &&
+    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED === "0";
+  const coherentLive =
+    env.CREDIT_NOTE_REFUND_MODE === "easy_pay_direct_live" &&
+    env.APP_ENV === "production" &&
+    env.EASY_PAY_DIRECT_NETWORK_MODE === "production" &&
+    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED === "1";
+  if (!coherentTest && !coherentLive)
     throw new ApiError(
       503,
       "easy_pay_direct_refund_boundary_mismatch",

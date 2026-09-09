@@ -177,3 +177,40 @@ or widened, and no payment or renewal was manually triggered.
 - The failed pre-deploy checkout remains terminal and must not be replayed. The remaining live
   verification is a fresh human Sprout checkout with a real card, followed by read-only validation
   of Gateway, Lago, Store, Auth and Slack evidence.
+
+## Live canary and refund-boundary follow-up — 2026-09-10
+
+- The human completed a fresh live Sprout checkout. Read-only production evidence records one
+  successful direct-Gateway payment request for USD 4.50 against the USD 9 monthly plan after a
+  USD 4.50 regional coupon. The subscription is active through 2026-10-09, tax is zero, there is no
+  duplicate payment and no production refund operation.
+- The high-level credit-note boundary previously rejected every live Gateway refund even though the
+  low-level Gateway adapter already required and supported the coherent production/live tuple. The
+  boundary now accepts only the exact production + Gateway-production + live-allowed mapping, keeps
+  Gateway test and legacy Commerce test isolated, and rejects mixed tuples.
+- Dedicated SERP TEST version `fd6b8663-256b-4128-ae46-98db7e2b0d38` enabled refunds only for the
+  isolated test Gateway. A real provider refund of USD 4.50 succeeded as Gateway transaction
+  `12534234120`; credit note `a223ff48-9879-53d9-9563-03e81cde915c` records a 450-cent coupon
+  adjustment and a 450-cent refund. Identical-key replay returned the same note and exactly one
+  provider operation. The short-lived API key was revoked; zero matching active keys remain.
+- Production refund configuration remains disabled. No live refund, cancellation, Auth deployment,
+  Store deployment or source backfill was performed by this follow-up.
+- After the refund-mode/environment coupling was tightened, the exact candidate was deployed to
+  dedicated SERP TEST version `51fbeaf1-c38a-48d7-ade5-11d36dbc25f2` and independently exercised
+  again. Credit note `114060be-b6fd-537e-93a0-de76efaf8a49` produced one successful 450-cent
+  Gateway refund, preserved the 450-cent coupon adjustment, and returned the same credit note on
+  identical-key replay. Its temporary API key was revoked and zero such keys remain active.
+- The dedicated worker was then returned to refunds-disabled version
+  `acf8c76f-350c-48d1-8a38-6b010e21678b`. The complete Lago gate passed 1,183 tests across 100
+  files plus formatting, lint, generated bindings, type checking, access/UI/tax checks, and every
+  development and production dry-run build. Production remained unchanged.
+- The pinned cross-repository release gate passed with Store
+  `9be01e3fcfe5fa95ef63043617397152d385db83` and Auth
+  `4cca108f90767a8739c07f3e5a5d538b99605279`: 1,068 Store tests, 105 Auth tests, nine live-bundle
+  Store-to-Auth source-contract tests, both type checks, and both builds. This proves the candidate
+  contract locally; the corresponding production migrations and deployments remain pending.
+- Existing provider-backed SERP TEST evidence also confirms the recurring path: subscription
+  `46e2352c-a0e6-5129-9c90-d21545af6892` closed two monthly periods and produced two distinct,
+  successful Gateway renewal transactions (`12533511387` and `12533616985`), each from a single
+  one-attempt execution. A separate controlled declined renewal ended once with provider code 300,
+  no provider transaction ID, and no duplicate execution. Its collection scope is disabled now.

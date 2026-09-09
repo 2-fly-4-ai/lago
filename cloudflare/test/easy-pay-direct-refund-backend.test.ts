@@ -106,6 +106,73 @@ describe("immutable Elements refund routing", () => {
     ).rejects.toMatchObject({ code: "easy_pay_direct_refund_boundary_mismatch" });
     expect(fetcher).not.toHaveBeenCalled();
   });
+  it("allows a proven Gateway origin in a coherent production environment", async () => {
+    const origin = await fixture("gateway_vault", true, "gateway");
+    expect(() =>
+      assertEasyPayDirectRefundBoundary(
+        {
+          APP_ENV: "production",
+          CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_live",
+          EASY_PAY_DIRECT_NETWORK_MODE: "production",
+          EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+          EASY_PAY_DIRECT_ORGANIZATION_ID: origin.organizationId,
+          EASY_PAY_DIRECT_ACCOUNT_CODE: origin.providerAccountCode,
+        },
+        origin,
+        "gateway",
+      ),
+    ).not.toThrow();
+  });
+  it.each([
+    {
+      APP_ENV: "staging",
+      CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_live",
+      EASY_PAY_DIRECT_NETWORK_MODE: "production",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+    },
+    {
+      APP_ENV: "production",
+      CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_test",
+      EASY_PAY_DIRECT_NETWORK_MODE: "gateway_test",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
+    },
+    {
+      APP_ENV: "production",
+      CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_test",
+      EASY_PAY_DIRECT_NETWORK_MODE: "production",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
+    },
+    {
+      APP_ENV: "production",
+      CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_live",
+      EASY_PAY_DIRECT_NETWORK_MODE: "production",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+      EASY_PAY_DIRECT_ACCOUNT_CODE: "other",
+    },
+  ])("holds unsafe Gateway refund configuration %j", (overrides) => {
+    const origin = {
+      organizationId: "fixture",
+      providerAccountCode: "fixture",
+      orderId: "fixture",
+    };
+    expect(() =>
+      assertEasyPayDirectRefundBoundary(
+        Object.assign(
+          {
+            APP_ENV: "staging",
+            CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_test",
+            EASY_PAY_DIRECT_NETWORK_MODE: "gateway_test",
+            EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
+            EASY_PAY_DIRECT_ORGANIZATION_ID: "fixture",
+            EASY_PAY_DIRECT_ACCOUNT_CODE: "fixture",
+          },
+          overrides,
+        ),
+        origin,
+        "gateway",
+      ),
+    ).toThrow();
+  });
   it.each(["gateway", "commerce", "legacy_unknown"])(
     "requires successful ledger proof for %s",
     async (transport) => {
@@ -144,6 +211,7 @@ describe("immutable Elements refund routing", () => {
     const runtime = {
       ...env,
       APP_ENV: "staging",
+      CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_test",
       PROVIDER_READS_ENABLED: "1",
       EASY_PAY_DIRECT_NETWORK_MODE: "gateway_test",
       EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
@@ -189,6 +257,7 @@ describe("immutable Elements refund routing", () => {
     const runtime = {
       ...env,
       APP_ENV: "staging",
+      CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_test",
       PROVIDER_READS_ENABLED: "1",
       EASY_PAY_DIRECT_NETWORK_MODE: "gateway_test",
       EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
@@ -241,6 +310,7 @@ describe("immutable Elements refund routing", () => {
     const runtime = {
       ...env,
       APP_ENV: "production",
+      CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_live",
       PROVIDER_READS_ENABLED: "1",
       EASY_PAY_DIRECT_NETWORK_MODE: "production",
       EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
@@ -292,6 +362,7 @@ describe("immutable Elements refund routing", () => {
       assertEasyPayDirectRefundBoundary(
         {
           APP_ENV: "staging",
+          CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_test",
           EASY_PAY_DIRECT_NETWORK_MODE: "test",
           EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
           EASY_PAY_DIRECT_ORGANIZATION_ID: "fixture",

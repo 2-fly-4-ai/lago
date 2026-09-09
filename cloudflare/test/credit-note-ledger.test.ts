@@ -10,6 +10,13 @@ import {
 
 const apiKey = "credit-note-ledger-key";
 
+type RefundRuntimeOverrides = {
+  APP_ENV?: string;
+  CREDIT_NOTE_REFUND_MODE?: string;
+  EASY_PAY_DIRECT_NETWORK_MODE?: string;
+  EASY_PAY_DIRECT_LIVEMODE_ALLOWED?: string;
+};
+
 function refundReadEnv() {
   return {
     ...env,
@@ -122,6 +129,7 @@ async function epdRefundFixture(
       }>,
       keySuffix = "",
       database = env.BILLING_DB,
+      runtimeOverrides: RefundRuntimeOverrides = {},
     ) =>
       createCreditNote(
         new Request("https://lago.test/api/v1/credit_notes", {
@@ -139,6 +147,7 @@ async function epdRefundFixture(
           ...env,
           BILLING_DB: database,
           CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_test",
+          ...runtimeOverrides,
           PROVIDER_FINANCIALS: {
             refundEasyPayDirect: refund,
             readEasyPayDirectRefund: async () => ({
@@ -891,6 +900,37 @@ describe("credit-note ledger", () => {
     await expect((await first).json()).resolves.toMatchObject({
       credit_note: { refund_status: "succeeded" },
     });
+  });
+
+  it.each([
+    {
+      APP_ENV: "production",
+      EASY_PAY_DIRECT_NETWORK_MODE: "production",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
+      CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_test",
+    },
+    {
+      APP_ENV: "staging",
+      EASY_PAY_DIRECT_NETWORK_MODE: "gateway_test",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
+      CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_live",
+    },
+  ] as const)("rejects crossed EPD refund mode before allocation %#", async (runtime) => {
+    const fixture = await epdRefundFixture(`crossed-mode-${runtime.APP_ENV}`);
+    const refund = vi.fn(async (_input: EasyPayDirectRefundRpcInput) => ({
+      id: null,
+      status: "unknown" as const,
+      responseText: "must not run",
+    }));
+    await expect(fixture.submit(refund, "", env.BILLING_DB, runtime)).rejects.toMatchObject({
+      code: "easy_pay_direct_refund_boundary_mismatch",
+    });
+    expect(refund).not.toHaveBeenCalled();
+    await expect(
+      env.BILLING_DB.prepare("SELECT COUNT(*) AS count FROM credit_notes WHERE invoice_id = ?")
+        .bind(fixture.invoiceId)
+        .first<{ count: number }>(),
+    ).resolves.toEqual({ count: 0 });
   });
 
   it.each(["timeout", "unknown"])(
