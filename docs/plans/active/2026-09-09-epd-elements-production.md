@@ -229,3 +229,32 @@ or widened, and no payment or renewal was manually triggered.
 - The already-completed live Sprout purchase remains legacy version 0 because it predates the
   source rollout. A new human purchase is required to verify the production source-owned journey;
   it must not be inferred from the successful deployment checks.
+
+## Approved live refund proof — 2026-09-10
+
+- The user explicitly approved enabling production EPD refunds and refunding the real Sprout
+  canary transaction while leaving its monthly subscription and product-scoped automatic-renewal
+  authorization active.
+- Commit `0bf2a68` changes only the production refund gate and its configuration regression from
+  disabled to `easy_pay_direct_live`. The complete Lago gate passed 1,183 tests across 100 files,
+  formatting, lint, generated bindings, type checking, access/UI/tax checks and every development
+  and production dry-run build before deployment.
+- Production Lago version `ad6efa18-1cdf-4569-b20e-a3132caa899c` is healthy and ready. Version
+  inspection confirms the coherent production Gateway tuple, live refunds enabled, product-scoped
+  automatic collection enabled, tax disabled and Stripe networking disabled.
+- The original USD 4.50 EPD settlement `12534121508` was refunded exactly once. Credit note
+  `729b34cc-78e3-560f-b16b-a1df79287626` is finalized with refund status `succeeded`, a USD 9.00
+  line reversal, USD 4.50 coupon adjustment and USD 4.50 cash refund. Gateway refund attempt
+  `12536774965` is terminal `succeeded`.
+- Replaying the exact request with idempotency key
+  `prod-sprout-live-refund-12534121508-v1` returned the same credit-note ID. Production contains
+  one credit note for the invoice and one provider refund operation for the settlement. The
+  short-lived API credential was revoked immediately; zero matching active credentials remain.
+- The monthly subscription remains active through 2026-10-09, is neither canceled nor terminated,
+  and its automatic-collection scope remains enabled with reason `paid product-scoped checkout`.
+  No cancellation or renewal charge was issued by the refund operation.
+- This purchase remains the documented pre-source-rollout legacy activation. It has no Store
+  `lago_source_projections` row and therefore cannot demonstrate source-owned entitlement
+  retirement on refund. No legacy grant was silently reclassified or revoked. A separate fresh
+  post-rollout source-owned canary is still required to prove automatic entitlement retirement and
+  reactivation across refund and a later successful renewal.
