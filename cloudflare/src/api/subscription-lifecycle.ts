@@ -8,6 +8,7 @@ import {
 } from "../billing/terminate-subscription";
 import { terminatePayInAdvanceWithCredit } from "../billing/pay-in-advance-termination-credit";
 import type { BillingTime } from "../billing/periods";
+import type { ExpiredEpdCancellationGuard } from "../billing/expired-epd-cancellation";
 import { ApiError, json, objectAt, optionalString, parseJsonObject } from "../http";
 import { stableJson } from "../json";
 import { cancelPendingSubscriptionGeneration } from "../billing/cancel-pending-subscription";
@@ -460,9 +461,42 @@ async function terminateSubscription(
   auth: AuthContext,
   requestId: string,
 ): Promise<Response> {
+  let onlyIfExpired: ExpiredEpdCancellationGuard | undefined;
+  if (url.searchParams.has("only_if_expired")) {
+    const subscriptionId = url.searchParams.get("expected_subscription_id")?.trim();
+    const externalCustomerId = url.searchParams.get("expected_customer_id")?.trim();
+    const periodEnd = url.searchParams.get("expected_period_end")?.trim();
+    if (
+      url.searchParams.get("only_if_expired") !== "true" ||
+      !subscriptionId ||
+      !externalCustomerId ||
+      !periodEnd ||
+      !Number.isFinite(Date.parse(periodEnd)) ||
+      url.searchParams.get("on_termination_invoice") !== "skip" ||
+      url.searchParams.get("on_termination_credit_note") !== "skip"
+    ) {
+      throw new ApiError(
+        422,
+        "invalid_expired_cancellation",
+        "Expired cancellation requires exact billing identity and skip actions",
+      );
+    }
+    onlyIfExpired = { subscriptionId, externalCustomerId, periodEnd };
+  }
   let subscription = await findAnySubscription(env.BILLING_DB, auth.organizationId, externalId);
   if (!subscription)
     throw new ApiError(404, "subscription_not_found", "Subscription was not found");
+  if (
+    onlyIfExpired &&
+    (subscription.id !== onlyIfExpired.subscriptionId ||
+      subscription.customer_external_id !== onlyIfExpired.externalCustomerId)
+  ) {
+    throw new ApiError(
+      409,
+      "expired_cancellation_requires_review",
+      "Billing identity changed; cancellation requires review",
+    );
+  }
   if (subscription.status === "terminated" || subscription.status === "canceled") {
     return json(
       { subscription: await serializeSubscription(env.BILLING_DB, subscription) },
@@ -470,6 +504,12 @@ async function terminateSubscription(
     );
   }
   if (subscription.status === "pending") {
+    if (onlyIfExpired)
+      throw new ApiError(
+        409,
+        "expired_cancellation_requires_review",
+        "Pending subscription requires review",
+      );
     return cancelPendingSubscription(subscription, env, auth, requestId);
   }
   const onTerminationInvoice =
@@ -512,7 +552,12 @@ async function terminateSubscription(
     throw new ApiError(422, "subscription_not_terminable", "Subscription is not active");
   }
   const requestHash = await sha256Hex(
-    stableJson({ externalId, onTerminationCreditNote, onTerminationInvoice }),
+    stableJson({
+      externalId,
+      onTerminationCreditNote,
+      onTerminationInvoice,
+      ...(onlyIfExpired ? { onlyIfExpired } : {}),
+    }),
   );
   const reservationKey = `subscription-terminate:${subscription.id}:v${subscription.version}`;
   const account = env.BILLING_ACCOUNTS.getByName(`customer:${subscription.customer_id}`);
@@ -599,11 +644,19 @@ async function terminateSubscription(
       requestId,
       true,
       actions,
+      onlyIfExpired,
     );
     await account.completeCommand(reservationKey, { terminatedAt, eventId: event.id });
   } catch (error) {
     await account.releaseCommand(reservationKey, requestHash);
     if (error instanceof Error) {
+      if (error.message.includes("expired_epd_cancellation_current")) {
+        throw new ApiError(
+          409,
+          "expired_cancellation_requires_review",
+          "Paid coverage or payment activity changed; cancellation requires review",
+        );
+      }
       if (error.message === "subscription_version_conflict") {
         throw new ApiError(409, error.message, "Subscription changed concurrently");
       }
@@ -734,6 +787,7 @@ async function serializeSubscription(
   ]);
   return {
     lago_id: subscription.id,
+    expired_cancellation_guard_version: 1,
     external_id: subscription.external_id,
     lago_customer_id: subscription.customer_id,
     external_customer_id: subscription.customer_external_id,

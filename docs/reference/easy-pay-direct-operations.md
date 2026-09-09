@@ -9,6 +9,8 @@ data, webhook payloads, customer records, or signed checkout links to this repos
 - SERP Lago staging dashboard: <https://serp-dev-lago-operator.serpcompany.workers.dev/>
 - SERP Lago production dashboard: <https://serp-prod-lago-operator.serpcompany.workers.dev/>
 - EPD Gateway merchant login: <https://secure.easypaydirectgateway.com/merchants/login.php>
+- EPD Commerce dashboard: <https://commerce.epd.com/>
+- EPD Commerce team roles: <https://commerce.epd.com/user-management>
 - Production webhook destination:
   <https://serp-prod-lago-native.serpcompany.workers.dev/webhooks/easy_pay_direct/org-serp-billing>
 - EPD Gateway testing reference:
@@ -21,6 +23,34 @@ Cloudflare Access protects the SERP dashboard. The EPD portal is the provider au
 transactions and merchant-side configuration; the Lago dashboard is the SERP authority for Lago
 customers, invoices, payment requests, executions, allocations, reconciliation state, and provider
 connection status.
+
+### Do not conflate the two EPD dashboards or their credentials
+
+- **Gateway** is the merchant portal on `secure.easypaydirectgateway.com`. It owns Gateway
+  Customer Vault and processor transaction evidence. Collect.js, `transact.php` and `query.php`
+  belong to this surface.
+- **Commerce** is the separate dashboard on `commerce.epd.com`, backed by `api.epd.com/v1`.
+  The current production adapter crosses both systems: it vaults through Gateway, then calls
+  Commerce customer/payment-method/order endpoints. The customer-to-vault bridge must be verified;
+  neither dashboard alone proves the complete integration.
+- A **Commerce dashboard role** is not evidence of **Gateway portal permission** or of the
+  permissions/validity of the **deployed API credentials**. A browser session expiring also does
+  not prove a provider API key expired. Check each boundary independently.
+- In Commerce User Management, inspect the teammate's **More actions** menu rather than
+  assuming the displayed permission count is an editor. The inspected Workspace Admin role
+  has 9/51 permissions; Owner has 51/51. These names/counts are observations, not proof that
+  Owner is assignable to another teammate. If the Owner session exposes no role-change or
+  full-access choice, obtain the exact menu/role-selector evidence before requesting a
+  provider-side role change. Do not promise granular permission checkboxes or transfer
+  ownership as a workaround. No role was changed during this local audit.
+- Before requesting a role expansion, check the existing Gateway session and approved read-only
+  API path. On 2026-09-07 the inspected Commerce Workspace Admin role excluded business-data reads,
+  while the Gateway session separately redirected to merchant login. The execution shell had no
+  provider key bindings; this says nothing about the Worker secret values and does not justify
+  extracting, printing, rotating or replacing them.
+- Reauthenticate through the existing Gateway login when needed; never paste credentials into
+  chat or reset passwords just because a session expired. Do not use payment, vault-creation,
+  Gateway sync or reconciliation mutations as an authentication probe.
 
 ## Ownership map
 
@@ -191,6 +221,9 @@ Do not delete held executions or clear their evidence to force them back into th
 Payment success and post-payment setup are separate recovery milestones. Commerce executions
 remain eligible for read-only reconciliation until recurring-card binding and tax commitment are
 durable. A late processor transaction or interrupted D1 write must not cause a second charge.
+If an early success webhook records the order while a resumed POST loses its response, the
+transport-error handler must preserve that order reference. A null response is not evidence that
+the provider order disappeared. Recovery reads the checkpointed order rather than creating another.
 One-time plans do not wait for renewal setup. A delayed initial checkout must not replace a newer
 saved subscription card. Existing successful executions with an unfinished tax quote are eligible
 for tax-only replay only when an exact successful payment ledger entry proves the request,

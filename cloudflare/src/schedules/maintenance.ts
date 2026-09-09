@@ -42,6 +42,13 @@ type BillableMetricCleanupTask = {
 type RetentionEnv = Pick<Env, "BILLING_ARTIFACTS" | "BILLING_DB">;
 
 const RETENTION_DAYS = 90;
+// The accepted dispute receipt is durable provider-clock provenance, not an
+// expendable delivery log. Filter before LIMIT and at each write boundary so it
+// neither blocks cleanup nor loses its R2 evidence when a dispute arrives late.
+const UNREFERENCED_DISPUTE_RECEIPT_SQL = `NOT EXISTS (
+  SELECT 1 FROM payment_disputes dispute
+  WHERE dispute.last_provider_event_receipt_id = webhook_receipts.id
+)`;
 
 export async function expireCoupons(
   env: Env,
@@ -309,6 +316,7 @@ export async function cleanupInboundWebhookReceipts(
   let artifactsDeleted = await drainArtifactCleanupTasks(env);
   const rows = await env.BILLING_DB.prepare(
     `SELECT id, archive_key FROM webhook_receipts WHERE received_at < ?
+       AND ${UNREFERENCED_DISPUTE_RECEIPT_SQL}
      ORDER BY received_at, id LIMIT 100`,
   )
     .bind(cutoff)
@@ -322,15 +330,13 @@ export async function cleanupInboundWebhookReceipts(
           `INSERT OR IGNORE INTO artifact_cleanup_tasks
            (archive_key, resource_type, resource_id, created_at)
            SELECT ?, 'webhook_receipt', id, ? FROM webhook_receipts
-           WHERE id = ? AND received_at < ?`,
+           WHERE id = ? AND received_at < ? AND ${UNREFERENCED_DISPUTE_RECEIPT_SQL}`,
         ).bind(row.archive_key, cutoff, row.id, cutoff),
       );
     }
     statements.push(
-      env.BILLING_DB.prepare("DELETE FROM webhook_receipts WHERE id = ? AND received_at < ?").bind(
-        row.id,
-        cutoff,
-      ),
+      env.BILLING_DB.prepare(`DELETE FROM webhook_receipts WHERE id = ? AND received_at < ?
+        AND ${UNREFERENCED_DISPUTE_RECEIPT_SQL}`).bind(row.id, cutoff),
     );
     const results = await env.BILLING_DB.batch(statements);
     receiptsDeleted += results.at(-1)?.meta.changes ?? 0;

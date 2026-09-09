@@ -3,6 +3,7 @@ import type { EasyPayDirectEnv } from "../src/providers/easy-pay-direct";
 import {
   addEasyPayDirectPaymentMethod,
   chargeEasyPayDirectGatewayTestToken,
+  chargeEasyPayDirectStoredMethod,
   createEasyPayDirectCheckoutUrl,
   createEasyPayDirectCustomer,
   createEasyPayDirectOrder,
@@ -12,7 +13,9 @@ import {
   findEasyPayDirectCustomerByEmail,
   retrieveEasyPayDirectCustomer,
   getEasyPayDirectOrder,
+  findEasyPayDirectGatewayTransactionByOrderId,
   refundEasyPayDirectOrder,
+  readEasyPayDirectRefundTransaction,
   resolveEasyPayDirectSuccessRedirect,
   vaultEasyPayDirectCard,
   verifyEasyPayDirectCheckoutToken,
@@ -34,6 +37,221 @@ const gatewayTestEnv = {
 } satisfies EasyPayDirectEnv;
 
 describe("Easy Pay Direct provider", () => {
+  it.each(["response", "transactionid", "customer_vault_id", "orderid"])(
+    "rejects ambiguous approved-sale binding field %s without retrying",
+    async (field) => {
+      const providerFetch = vi.fn<typeof fetch>(
+        async () =>
+          new Response(
+            `response=1&transactionid=123&customer_vault_id=456&orderid=fixture-order&${field}=duplicate`,
+          ),
+      );
+      await expect(
+        chargeEasyPayDirectGatewayTestToken(
+          gatewayTestEnv,
+          {
+            purchaseKind: "recurring",
+            paymentToken: "fixture-token",
+            amountMinor: 900,
+            currency: "USD",
+            orderId: "fixture-order",
+            orderDescription: "Fixture",
+            customerEmail: "fixture@example.test",
+            firstName: "Fixture",
+            lastName: "Customer",
+            phone: "+15555550123",
+            idempotencyKey: "fixture-key",
+          },
+          providerFetch,
+        ),
+      ).rejects.toMatchObject({ code: "easy_pay_direct_gateway_outcome_unknown" });
+      expect(providerFetch).toHaveBeenCalledOnce();
+    },
+  );
+  const querySale =
+    "<transaction><transaction_id>fixture-txn</transaction_id><order_id>fixture-order</order_id><condition>complete</condition><currency>USD</currency><action><action_type>sale</action_type><success>1</success><amount>9.00</amount></action></transaction>";
+
+  it.each([
+    "",
+    "<html>Unavailable</html>",
+    `<nm_response>${querySale}`,
+    `<nm_response>${querySale}<transaction><transaction_id>missing-order</transaction_id></transaction></nm_response>`,
+    `<nm_response>${querySale}<transaction/></nm_response>`,
+    `<nm_response>${querySale.replace("<condition>", "<transaction_id/><condition>")}</nm_response>`,
+    `<nm_response>${querySale.replace("</transaction>", "<action/></transaction>")}</nm_response>`,
+    `<nm_response>${querySale.replace("</transaction>", "<action><success>1</success></action></transaction>")}</nm_response>`,
+    `<nm_response>${querySale}<transaction></nm_response>`,
+    `<nm_response>${querySale.replace("fixture-order", "wrong-order")}</nm_response>`,
+    `<nm_response>${querySale.replace("<condition>", "<transaction_id>duplicate</transaction_id><condition>")}</nm_response>`,
+    `<nm_response>${querySale.replace("<success>1</success>", "<success>1</success><success>0</success>")}</nm_response>`,
+    `<nm_response>${querySale.replace("<currency>USD</currency>", "<currency><value>USD</value></currency>")}</nm_response>`,
+    `<nm_response>${querySale}<error>provider failure</error></nm_response>`,
+    `<nm_response>${querySale.repeat(10)}</nm_response>`,
+    `<nm_response>${querySale}</nm_response><nm_response/>`,
+    `<!DOCTYPE nm_response><nm_response>${querySale}</nm_response>`,
+  ])("rejects incomplete/malformed Gateway query evidence %#", async (raw) => {
+    await expect(
+      findEasyPayDirectGatewayTransactionByOrderId(
+        gatewayTestEnv,
+        "fixture-order",
+        async () => new Response(raw),
+      ),
+    ).rejects.toMatchObject({ code: "easy_pay_direct_provider_read_invalid" });
+  });
+
+  it("rejects duplicate rows even when their transaction IDs match", async () => {
+    await expect(
+      findEasyPayDirectGatewayTransactionByOrderId(
+        gatewayTestEnv,
+        "fixture-order",
+        async () => new Response(`<nm_response>${querySale}${querySale}</nm_response>`),
+      ),
+    ).rejects.toMatchObject({ code: "easy_pay_direct_provider_read_ambiguous" });
+  });
+
+  it("requests a bounded first page and accepts its single complete transaction", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.get("result_limit")).toBe("10");
+      expect(body.get("page_number")).toBe("0");
+      return new Response(`<?xml version="1.0"?><nm_response>${querySale}</nm_response>`);
+    });
+    await expect(
+      findEasyPayDirectGatewayTransactionByOrderId(gatewayTestEnv, "fixture-order", fetcher),
+    ).resolves.toMatchObject({ id: "fixture-txn", status: "succeeded", amountMinor: 900 });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+  const storedCharge = {
+    amountMinor: 900,
+    currency: "USD",
+    customerVaultId: "fixture-vault",
+    billingId: "fixture-billing",
+    initialTransactionId: "fixture-initial",
+    orderId: "fixture-renewal",
+    orderDescription: "Fixture renewal",
+    idempotencyKey: "fixture-idempotency",
+  };
+
+  it.each(["gateway_test", "production"] as const)(
+    "direct Gateway %s charge and query do not require Commerce credentials",
+    async (mode) => {
+      const env: EasyPayDirectEnv = {
+        ...gatewayTestEnv,
+        EASY_PAY_DIRECT_COMMERCE_API_KEY: undefined,
+        EASY_PAY_DIRECT_NETWORK_MODE: mode,
+        EASY_PAY_DIRECT_LIVEMODE_ALLOWED: mode === "production" ? "1" : "0",
+      };
+      const providerFetch = vi.fn<typeof fetch>(async (_url, init) => {
+        const body = new URLSearchParams(String(init?.body));
+        expect(body.get("security_key")).toBe("synthetic-security-key");
+        expect(body.get("test_mode")).toBe(mode === "gateway_test" ? "enabled" : null);
+        expect(body.has("dup_seconds")).toBe(false);
+        expect(body.get("orderid")).toBe(storedCharge.orderId);
+        expect(body.get("merchant_defined_field_1")).toBe(
+          `lago_idempotency_key=${storedCharge.idempotencyKey}`,
+        );
+        return new Response("response=1&transactionid=fixture-renewal-txn");
+      });
+      await expect(
+        chargeEasyPayDirectStoredMethod(env, storedCharge, providerFetch),
+      ).resolves.toMatchObject({ status: "succeeded" });
+      await expect(
+        findEasyPayDirectGatewayTransactionByOrderId(
+          env,
+          "fixture-renewal",
+          async () => new Response("<nm_response/>"),
+        ),
+      ).resolves.toBeNull();
+      if (mode === "production") {
+        await expect(
+          vaultEasyPayDirectCard(
+            env,
+            { paymentToken: "fixture-token", billingId: "fixture-billing" },
+            async () => new Response("response=1&customer_vault_id=fixture-vault"),
+          ),
+        ).resolves.toMatchObject({ customerVaultId: "fixture-vault" });
+      }
+    },
+  );
+
+  it.each([
+    { mode: "production", live: "0" },
+    { mode: "production", live: undefined },
+    { mode: "gateway_test", live: "1" },
+    { mode: "gateway_test", live: undefined },
+    { mode: "test", live: "0" },
+    { mode: "disabled", live: "0" },
+  ] as const)(
+    "direct Gateway rejects unsafe network posture %j before fetch",
+    async ({ mode, live }) => {
+      const providerFetch = vi.fn<typeof fetch>();
+      const env = {
+        ...gatewayTestEnv,
+        EASY_PAY_DIRECT_COMMERCE_API_KEY: undefined,
+        EASY_PAY_DIRECT_NETWORK_MODE: mode,
+        EASY_PAY_DIRECT_LIVEMODE_ALLOWED: live,
+      };
+      await expect(
+        chargeEasyPayDirectStoredMethod(env, storedCharge, providerFetch),
+      ).rejects.toThrow();
+      await expect(
+        findEasyPayDirectGatewayTransactionByOrderId(env, "fixture-renewal", providerFetch),
+      ).rejects.toThrow();
+      expect(providerFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("direct Gateway still requires its own key and Commerce still requires its key", async () => {
+    const providerFetch = vi.fn<typeof fetch>();
+    await expect(
+      chargeEasyPayDirectStoredMethod(
+        { ...gatewayTestEnv, EASY_PAY_DIRECT_SECURITY_KEY: undefined },
+        storedCharge,
+        providerFetch,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      getEasyPayDirectOrder(
+        { ...gatewayTestEnv, EASY_PAY_DIRECT_COMMERCE_API_KEY: undefined },
+        "fixture-order",
+        providerFetch,
+      ),
+    ).rejects.toThrow();
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+  it.each([
+    { condition: "complete", actions: "sale:1:9.00", status: "succeeded", amount: 900 },
+    { condition: "failed", actions: "sale:0:9.00", status: "failed", amount: 900 },
+    { condition: "complete", actions: "sale:1:4.50", status: "succeeded", amount: 450 },
+    { condition: "canceled", actions: "sale:1:9.00,void:1:9.00", status: "unknown", amount: 900 },
+    { condition: "complete", actions: "sale:1:9.00,refund:1:1.00", status: "unknown", amount: 900 },
+    { condition: "complete", actions: "sale:0:9.00,refund:1:9.00", status: "unknown", amount: 900 },
+    { condition: "complete", actions: "auth:1:9.00", status: "unknown", amount: null },
+    { condition: "complete", actions: "sale:1:9.00,sale:1:9.00", status: "unknown", amount: null },
+    { condition: "complete", actions: "", status: "unknown", amount: null },
+    { condition: "pending", actions: "sale:1:9.00", status: "unknown", amount: 900 },
+  ])(
+    "uses typed sale evidence for Gateway query %j",
+    async ({ condition, actions, status, amount }) => {
+      const actionXml = actions
+        .split(",")
+        .filter(Boolean)
+        .map((entry) => {
+          const [type, success, actual] = entry.split(":");
+          return `<action><action_type>${type}</action_type><success>${success}</success><amount>${actual}</amount><requested_amount>9.00</requested_amount></action>`;
+        })
+        .join("");
+      const result = await findEasyPayDirectGatewayTransactionByOrderId(
+        gatewayTestEnv,
+        "query-order",
+        async () =>
+          new Response(
+            `<nm_response><transaction><transaction_id>query-transaction</transaction_id><order_id>query-order</order_id><condition>${condition}</condition><currency>USD</currency>${actionXml}</transaction></nm_response>`,
+          ),
+      );
+      expect(result).toMatchObject({ status, amountMinor: amount, currency: "USD" });
+    },
+  );
   it.each([{ data: [{ id: "one" }, { id: "two" }] }, { data: [{ id: "one" }], has_more: true }])(
     "rejects ambiguous email lookup rather than selecting the first customer",
     async (body) => {
@@ -142,6 +360,52 @@ describe("Easy Pay Direct provider", () => {
       ),
     ).rejects.toMatchObject({ code: "easy_pay_direct_checkout_invalid" });
   });
+
+  it("creates and renders Gateway test checkout without Commerce credentials", async () => {
+    const env = { ...gatewayTestEnv, EASY_PAY_DIRECT_COMMERCE_API_KEY: undefined };
+    const now = Date.parse("2026-09-08T00:00:00.000Z");
+    const checkout = await createEasyPayDirectCheckoutUrl(
+      env,
+      { checkoutIntentId: "fixture-gateway-only" },
+      now,
+    );
+    const response = await easyPayDirectPaymentForm(new URL(checkout.paymentUrl), env, now, {
+      title: "Fixture plan",
+      description: "Fixture",
+      interval: "monthly",
+      amountMinor: 900,
+      subtotalMinor: 900,
+      taxMinor: 0,
+      creditsMinor: 0,
+      currency: "USD",
+      customerEmail: "fixture@example.test",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Collect.js");
+  });
+
+  it.each([
+    { EASY_PAY_DIRECT_NETWORK_MODE: "gateway_test", EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1" },
+    { EASY_PAY_DIRECT_NETWORK_MODE: "gateway_test", EASY_PAY_DIRECT_LIVEMODE_ALLOWED: undefined },
+    { EASY_PAY_DIRECT_NETWORK_MODE: "gateway_test", EASY_PAY_DIRECT_SECURITY_KEY: undefined },
+    { EASY_PAY_DIRECT_NETWORK_MODE: "production", EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1" },
+    { EASY_PAY_DIRECT_NETWORK_MODE: "disabled" },
+  ] as const)(
+    "Gateway checkout credential split does not relax other boundaries %#",
+    async (override) => {
+      const env = { ...gatewayTestEnv, EASY_PAY_DIRECT_COMMERCE_API_KEY: undefined, ...override };
+      const now = Date.parse("2026-09-08T00:00:00.000Z");
+      await expect(
+        createEasyPayDirectCheckoutUrl(env, { checkoutIntentId: "fixture-boundary" }, now),
+      ).rejects.toThrow();
+      const valid = await createEasyPayDirectCheckoutUrl(
+        gatewayTestEnv,
+        { checkoutIntentId: "fixture-boundary" },
+        now,
+      );
+      await expect(easyPayDirectPaymentForm(new URL(valid.paymentUrl), env, now)).rejects.toThrow();
+    },
+  );
 
   it("keeps synthetic outcomes on a separate no-store internal QA surface", async () => {
     const now = Date.parse("2026-08-22T00:00:00.000Z");
@@ -337,48 +601,89 @@ describe("Easy Pay Direct provider", () => {
     ).rejects.toMatchObject({ code: "easy_pay_direct_gateway_test_not_configured" });
   });
 
-  it("submits hosted tokens only as forced Gateway test transactions", async () => {
-    const providerFetch = vi.fn<typeof fetch>(async (input, init) => {
-      expect(String(input)).toBe("https://secure.easypaydirectgateway.com/api/transact.php");
-      const body = new URLSearchParams(String(init?.body));
-      expect(body.get("type")).toBe("sale");
-      expect(body.get("payment_token")).toBe("hosted-token-1");
-      expect(body.get("amount")).toBe("19.99");
-      expect(body.get("currency")).toBe("USD");
-      expect(body.get("test_mode")).toBe("enabled");
-      expect(body.get("security_key")).toBe("synthetic-security-key");
-      expect(body.has("ccnumber")).toBe(false);
-      expect(body.has("ccexp")).toBe(false);
-      expect(body.has("cvv")).toBe(false);
-      return new Response(
-        "response=1&responsetext=Approved&response_code=100&transactionid=txn-test-1&authcode=TEST&orderid=payment-request-1&customer_vault_id=vault-test-1",
-      );
-    });
-    await expect(
-      chargeEasyPayDirectGatewayTestToken(
-        gatewayTestEnv,
-        {
-          paymentToken: "hosted-token-1",
-          amountMinor: 1999,
-          currency: "USD",
-          orderId: "payment-request-1",
-          orderDescription: "SERP1F test checkout",
-          customerEmail: "synthetic@example.test",
-          firstName: "Synthetic",
-          lastName: "Customer",
-          phone: "+15555550123",
-          idempotencyKey: "550e8400-e29b-41d4-a716-446655440005",
-        },
-        providerFetch,
-      ),
-    ).resolves.toMatchObject({
-      id: "txn-test-1",
-      status: "succeeded",
-      responseCode: "100",
-      customerVaultId: "vault-test-1",
-    });
-    expect(providerFetch).toHaveBeenCalledOnce();
-  });
+  it.each(["one_time", "recurring"] as const)(
+    "submits %s hosted tokens only as forced Gateway test transactions",
+    async (purchaseKind) => {
+      const providerFetch = vi.fn<typeof fetch>(async (input, init) => {
+        expect(String(input)).toBe("https://secure.easypaydirectgateway.com/api/transact.php");
+        const body = new URLSearchParams(String(init?.body));
+        expect(body.get("type")).toBe("sale");
+        expect(body.get("payment_token")).toBe("hosted-token-1");
+        expect(body.get("amount")).toBe("19.99");
+        expect(body.get("currency")).toBe("USD");
+        expect(body.get("test_mode")).toBe("enabled");
+        expect(body.get("security_key")).toBe("synthetic-security-key");
+        expect(body.has("ccnumber")).toBe(false);
+        expect(body.has("dup_seconds")).toBe(false);
+        expect(body.has("ccexp")).toBe(false);
+        expect(body.has("cvv")).toBe(false);
+        for (const [key, value] of Object.entries({
+          customer_vault: "add_customer",
+          initiated_by: "customer",
+          stored_credential_indicator: "stored",
+          billing_method: "recurring",
+        })) {
+          expect(body.get(key)).toBe(purchaseKind === "recurring" ? value : null);
+        }
+        return new Response(
+          "response=1&responsetext=Approved&response_code=100&transactionid=txn-test-1&authcode=TEST&orderid=payment-request-1&customer_vault_id=vault-test-1",
+        );
+      });
+      await expect(
+        chargeEasyPayDirectGatewayTestToken(
+          gatewayTestEnv,
+          {
+            purchaseKind,
+            paymentToken: "hosted-token-1",
+            amountMinor: 1999,
+            currency: "USD",
+            orderId: "payment-request-1",
+            orderDescription: "SERP1F test checkout",
+            customerEmail: "synthetic@example.test",
+            firstName: "Synthetic",
+            lastName: "Customer",
+            phone: "+15555550123",
+            idempotencyKey: "550e8400-e29b-41d4-a716-446655440005",
+          },
+          providerFetch,
+        ),
+      ).resolves.toMatchObject({
+        id: "txn-test-1",
+        status: "succeeded",
+        responseCode: "100",
+        customerVaultId: "vault-test-1",
+      });
+      expect(providerFetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([undefined, "invalid", "monthly"])(
+    "rejects missing or invalid purchase kind %s without contacting Gateway",
+    async (purchaseKind) => {
+      const providerFetch = vi.fn<typeof fetch>();
+      await expect(
+        chargeEasyPayDirectGatewayTestToken(
+          gatewayTestEnv,
+          {
+            // @ts-expect-error Exercise untrusted runtime input, not the TypeScript contract.
+            purchaseKind,
+            paymentToken: "fixture-token",
+            amountMinor: 900,
+            currency: "USD",
+            orderId: "fixture-order",
+            orderDescription: "Fixture",
+            customerEmail: "fixture@example.test",
+            firstName: "Fixture",
+            lastName: "Customer",
+            phone: "+15555550123",
+            idempotencyKey: "fixture-key",
+          },
+          providerFetch,
+        ),
+      ).rejects.toMatchObject({ code: "easy_pay_direct_purchase_kind_invalid" });
+      expect(providerFetch).not.toHaveBeenCalled();
+    },
+  );
 
   it("uses the versioned Commerce API for customer, payment method, product, and order", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
@@ -654,8 +959,89 @@ describe("Easy Pay Direct provider", () => {
     expect(providerFetch).toHaveBeenCalledOnce();
   });
 
+  it.each(["checkpoint-write", "verification-read"])(
+    "retains the refund identity across %s interruption without repeating POST",
+    async (fault) => {
+      let checkpoint: string | null = null;
+      const providerFetch = vi.fn<typeof fetch>(async (url, init) => {
+        if (String(url).endsWith("/orders/order-1"))
+          return Response.json({
+            id: "order-1",
+            status: "succeeded",
+            currency: "usd",
+            transactions: [],
+          });
+        if (init?.method === "POST")
+          return Response.json({
+            id: "order-1",
+            currency: "usd",
+            status: "partially_refunded",
+            transactions: [{ id: "refund-checkpoint", type: "refund" }],
+          });
+        expect(checkpoint).toBe("refund-checkpoint");
+        throw new TypeError("verification read unavailable");
+      });
+      await expect(
+        refundEasyPayDirectOrder(
+          providerEnv,
+          { orderId: "order-1", amountMinor: 500, currency: "USD" },
+          providerFetch,
+          async (id) => {
+            if (fault === "checkpoint-write") throw new Error("checkpoint write unavailable");
+            checkpoint = id;
+          },
+        ),
+      ).rejects.toThrow();
+      expect(providerFetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(
+        1,
+      );
+      expect(providerFetch).toHaveBeenCalledTimes(fault === "checkpoint-write" ? 2 : 3);
+      expect(checkpoint).toBe(fault === "checkpoint-write" ? null : "refund-checkpoint");
+    },
+  );
+
+  it("reads the exact recorded Commerce refund without listing orders or submitting a mutation", async () => {
+    const providerFetch = vi.fn<typeof fetch>(async (url, init) => {
+      expect(String(url)).toBe("https://api.epd.com/v1/transactions/refund-recorded");
+      expect(init?.method).toBe("GET");
+      return Response.json({
+        id: "refund-recorded",
+        order_id: "order-1",
+        type: "refund",
+        status: "succeeded",
+        amount: 500,
+        currency: "usd",
+      });
+    });
+    expect(
+      await readEasyPayDirectRefundTransaction(
+        providerEnv,
+        { transactionId: "refund-recorded", orderId: "order-1", amountMinor: 500, currency: "USD" },
+        providerFetch,
+      ),
+    ).toMatchObject({ id: "refund-recorded", status: "succeeded" });
+    expect(providerFetch).toHaveBeenCalledOnce();
+  });
+
   it("refunds by Commerce order id and returns the provider refund id", async () => {
     const providerFetch = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).endsWith("/orders/order-1"))
+        return Response.json({
+          id: "order-1",
+          status: "succeeded",
+          currency: "usd",
+          transactions: [],
+        });
+      if (String(input).endsWith("/transactions/refund-1"))
+        return Response.json({
+          id: "refund-1",
+          order_id: "order-1",
+          type: "refund",
+          status: "succeeded",
+          amount: 500,
+          currency: "usd",
+          processor_response: { transaction_id: "gateway-refund-1" },
+        });
       expect(String(input).endsWith("/orders/order-1/refund")).toBe(true);
       expect(JSON.parse(String(init?.body))).toEqual({ amount: 500 });
       return Response.json({
@@ -682,7 +1068,53 @@ describe("Easy Pay Direct provider", () => {
     ).resolves.toEqual({
       id: "gateway-refund-1",
       status: "succeeded",
-      responseText: "partially_refunded",
+      responseText: "Refund confirmed",
     });
   });
+
+  it.each(["old-refund", "wrong-order", "wrong-amount", "wrong-currency", "pending", "wrong-type"])(
+    "does not confirm this refund from %s evidence",
+    async (fault) => {
+      const refund = { id: "refund-1", type: "refund" };
+      const providerFetch = vi.fn<typeof fetch>(async (input) => {
+        if (String(input).endsWith("/orders/order-1"))
+          return Response.json({
+            id: "order-1",
+            status: "partially_refunded",
+            currency: "usd",
+            transactions: fault === "old-refund" ? [refund] : [],
+          });
+        if (String(input).endsWith("/refund"))
+          return Response.json({
+            id: "order-1",
+            status: "partially_refunded",
+            currency: "usd",
+            transactions: [refund],
+          });
+        return Response.json({
+          id: "refund-1",
+          order_id: fault === "wrong-order" ? "other" : "order-1",
+          type: fault === "wrong-type" ? "sale" : "refund",
+          status: fault === "pending" ? "pending" : "succeeded",
+          amount: fault === "wrong-amount" ? 499 : 500,
+          currency: fault === "wrong-currency" ? "eur" : "usd",
+        });
+      });
+      await expect(
+        refundEasyPayDirectOrder(
+          providerEnv,
+          {
+            orderId: "order-1",
+            amountMinor: 500,
+            currency: "USD",
+            idempotencyKey: "fixture-refund-key",
+          },
+          providerFetch,
+        ),
+      ).resolves.toMatchObject({ status: "unknown" });
+      expect(
+        providerFetch.mock.calls.filter(([input]) => String(input).endsWith("/refund")),
+      ).toHaveLength(1);
+    },
+  );
 });

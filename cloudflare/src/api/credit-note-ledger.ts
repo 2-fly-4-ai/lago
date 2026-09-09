@@ -5,7 +5,15 @@ import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredStri
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
 import type { ProviderFinancialServiceBinding } from "../provider-financial-service";
-import { refundEasyPayDirectOrder } from "../providers/easy-pay-direct";
+import {
+  refundEasyPayDirectByOrigin,
+  easyPayDirectRefundBackend,
+  assertEasyPayDirectRefundBoundary,
+} from "../billing/easy-pay-direct-refund-backend";
+import {
+  checkpointEasyPayDirectRefund,
+  reconcileEasyPayDirectRefundOperation,
+} from "../billing/easy-pay-direct-refund-reconciliation";
 import { createStripeRefund } from "../providers/stripe";
 import { Decimal } from "../rating/decimal";
 
@@ -45,6 +53,7 @@ type CreditNoteRow = {
 
 export type CreditNoteInputItem = { lineId: string; amountMinor: number };
 type CreditNoteMutationEnv = {
+  APP_ENV?: string;
   BILLING_DB: D1Database;
   DOMAIN_EVENTS: Queue;
   CREDIT_NOTE_REFUND_MODE?: string;
@@ -59,6 +68,7 @@ type CreditNoteMutationEnv = {
   EASY_PAY_DIRECT_ACCOUNT_CODE?: string;
   EASY_PAY_DIRECT_ORGANIZATION_ID?: string;
   PROVIDER_FINANCIALS?: ProviderFinancialServiceBinding;
+  PROVIDER_READS_ENABLED?: string;
 };
 export type CalculatedCreditNoteItem = CreditNoteInputItem & {
   couponAdjustmentMinor: number;
@@ -218,6 +228,91 @@ export async function createCreditNote(
     }>();
   if (!invoice || invoice.status !== "finalized")
     throw new ApiError(404, "invoice_not_found", "Finalized invoice was not found");
+  const hasLocalQuote =
+    await env.BILLING_DB.prepare(`SELECT id FROM easy_pay_direct_checkout_tax_quotes
+    WHERE invoice_id=? AND organization_id=? AND provider_code='local_d1'
+      AND status IN ('applied','committed','commit_failed')
+    UNION ALL SELECT id FROM easy_pay_direct_automatic_tax_quotes WHERE invoice_id=? AND organization_id=? LIMIT 1`)
+      .bind(invoice.id, auth.organizationId, invoice.id, auth.organizationId)
+      .first();
+  const localQuote =
+    await env.BILLING_DB.prepare(`SELECT quote.id FROM easy_pay_direct_checkout_tax_quotes quote
+    JOIN easy_pay_direct_payment_executions execution ON execution.tax_quote_id=quote.id
+      AND execution.organization_id=quote.organization_id AND execution.status='succeeded'
+      AND execution.checkout_intent_id=quote.active_checkout_intent_id
+      AND execution.payment_request_id=quote.payment_request_id
+    JOIN payment_requests request ON request.id=quote.payment_request_id
+      AND request.organization_id=quote.organization_id AND request.payment_status='succeeded'
+      AND request.customer_id=?
+      AND request.amount_minor=quote.total_minor AND request.currency=quote.currency
+    WHERE quote.invoice_id=? AND quote.organization_id=? AND quote.provider_code='local_d1'
+      AND quote.status IN ('applied','committed','commit_failed')
+      AND quote.currency=? AND quote.tax_minor=? AND quote.total_minor=?
+      AND EXISTS (SELECT 1 FROM payment_request_payments paid WHERE paid.organization_id=quote.organization_id
+        AND paid.payment_request_id=quote.payment_request_id AND paid.provider='easy_pay_direct'
+        AND paid.provider_account_code=execution.provider_account_code
+        AND paid.provider_transaction_id=execution.provider_transaction_id AND paid.status='succeeded'
+        AND paid.amount_minor=quote.total_minor AND paid.currency=quote.currency)
+    UNION ALL
+    SELECT quote.id FROM easy_pay_direct_automatic_tax_quotes quote
+    JOIN invoices_payment_requests link ON link.invoice_id=quote.invoice_id AND link.organization_id=quote.organization_id
+    JOIN payment_requests request ON request.id=link.payment_request_id AND request.organization_id=quote.organization_id
+      AND request.customer_id=? AND request.payment_status='succeeded'
+      AND request.amount_minor=quote.total_minor AND request.currency=quote.currency
+    JOIN easy_pay_direct_automatic_payment_executions execution ON execution.payment_request_id=request.id
+      AND execution.organization_id=quote.organization_id AND execution.customer_id=request.customer_id AND execution.status='succeeded'
+    WHERE quote.invoice_id=? AND quote.organization_id=? AND quote.currency=? AND quote.tax_minor=? AND quote.total_minor=?
+      AND (SELECT COUNT(*) FROM invoices_payment_requests counted WHERE counted.payment_request_id=request.id)=1
+      AND EXISTS (SELECT 1 FROM payment_request_payments paid WHERE paid.organization_id=quote.organization_id
+        AND paid.payment_request_id=request.id AND paid.provider='easy_pay_direct'
+        AND paid.provider_account_code=execution.provider_account_code
+        AND paid.provider_transaction_id=execution.provider_transaction_id AND paid.status='succeeded'
+        AND paid.amount_minor=quote.total_minor AND paid.currency=quote.currency) LIMIT 2`)
+      .bind(
+        invoice.customer_id,
+        invoice.id,
+        auth.organizationId,
+        invoice.currency,
+        invoice.tax_minor,
+        invoice.total_due_minor,
+        invoice.customer_id,
+        invoice.id,
+        auth.organizationId,
+        invoice.currency,
+        invoice.tax_minor,
+        invoice.total_due_minor,
+      )
+      .all<{ id: string }>();
+  if (hasLocalQuote) {
+    if (localQuote.results.length !== 1)
+      throw new ApiError(
+        409,
+        "credit_note_tax_snapshot_missing",
+        "Collected checkout tax requires an invoice fee allocation review before refunding",
+      );
+    const snapshot =
+      await env.BILLING_DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(amount_minor),0) AS amount,
+      SUM(CASE WHEN substr(tax_code,1,length(?))=? THEN 0 ELSE 1 END) AS foreign_count
+      FROM invoice_line_taxes WHERE invoice_id=? AND organization_id=?`)
+        .bind(
+          `epd-local:${localQuote.results[0]!.id}:`,
+          `epd-local:${localQuote.results[0]!.id}:`,
+          invoice.id,
+          auth.organizationId,
+        )
+        .first<{ count: number; amount: number; foreign_count: number }>();
+    if (
+      localQuote.results.length !== 1 ||
+      !snapshot?.count ||
+      snapshot.amount !== invoice.tax_minor ||
+      snapshot.foreign_count !== 0
+    )
+      throw new ApiError(
+        409,
+        "credit_note_tax_snapshot_missing",
+        "Collected checkout tax requires an invoice fee allocation review before refunding",
+      );
+  }
   const calculatedItems = await calculateCreditNoteItems(
     items,
     env.BILLING_DB,
@@ -569,13 +664,25 @@ export async function createCreditNote(
              (id, organization_id, credit_note_id, invoice_id, payment_attempt_id, provider,
               provider_account_code, provider_payment_id, provider_refund_id, idempotency_key,
               request_sha256, amount_minor, currency, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, (SELECT payment.id FROM payment_attempts payment
+               WHERE payment.id = ? AND payment.organization_id = ? AND payment.invoice_id = ?
+                 AND payment.provider = ? AND payment.provider_account_code = ?
+                 AND payment.provider_transaction_id = ? AND payment.currency = ?
+                 AND payment.status = 'succeeded' AND ${unreservedPaymentAmountSql()} >= ?),
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).bind(
             await deterministicUuid("provider-refund-operation", id),
             auth.organizationId,
             id,
             invoice.id,
             refundPayment!.id,
+            auth.organizationId,
+            invoice.id,
+            refundPayment!.provider,
+            refundPayment!.provider_account_code,
+            refundPayment!.provider_transaction_id,
+            invoice.currency,
+            requestedRefund,
             refundPayment!.provider,
             refundPayment!.provider_account_code,
             refundPayment!.provider_transaction_id,
@@ -881,7 +988,7 @@ export async function calculateCreditNoteItems(
     const cumulativeTaxableBase = safeAdd(previousTaxableBase, taxableBaseMinor);
     const sourceTaxes = await db
       .prepare(
-        `SELECT id, tax_id, tax_code, tax_name, tax_description, tax_rate
+        `SELECT id, tax_id, tax_code, tax_name, tax_description, tax_rate, taxable_base_minor, amount_minor
          FROM invoice_line_taxes
          WHERE organization_id = ? AND invoice_id = ? AND invoice_line_id = ?
          ORDER BY created_at, id`,
@@ -894,14 +1001,35 @@ export async function calculateCreditNoteItems(
         tax_name: string;
         tax_description: string | null;
         tax_rate: string;
+        taxable_base_minor: number;
+        amount_minor: number;
       }>();
     const taxes = sourceTaxes.results.map((tax): CalculatedCreditNoteTax => {
-      const previousPrecise = Decimal.parse(previousTaxableBase)
-        .multiply(Decimal.parse(tax.tax_rate))
-        .divideByInteger(100n);
-      const cumulativePrecise = Decimal.parse(cumulativeTaxableBase)
-        .multiply(Decimal.parse(tax.tax_rate))
-        .divideByInteger(100n);
+      const collectedSnapshot = tax.tax_code.startsWith("epd-local:");
+      if (
+        collectedSnapshot &&
+        (tax.taxable_base_minor !== line.amount_minor - line.coupon_minor ||
+          cumulativeTaxableBase > tax.taxable_base_minor)
+      )
+        throw new ApiError(
+          409,
+          "credit_note_tax_snapshot_mismatch",
+          "Invoice tax allocation requires review",
+        );
+      const previousPrecise = collectedSnapshot
+        ? Decimal.parse(tax.amount_minor)
+            .multiply(Decimal.parse(previousTaxableBase))
+            .divideByInteger(BigInt(tax.taxable_base_minor || 1))
+        : Decimal.parse(previousTaxableBase)
+            .multiply(Decimal.parse(tax.tax_rate))
+            .divideByInteger(100n);
+      const cumulativePrecise = collectedSnapshot
+        ? Decimal.parse(tax.amount_minor)
+            .multiply(Decimal.parse(cumulativeTaxableBase))
+            .divideByInteger(BigInt(tax.taxable_base_minor || 1))
+        : Decimal.parse(cumulativeTaxableBase)
+            .multiply(Decimal.parse(tax.tax_rate))
+            .divideByInteger(100n);
       const precise = cumulativePrecise.subtract(previousPrecise);
       const amount = cumulativePrecise.round() - previousPrecise.round();
       const amountMinor = Number(amount);
@@ -1128,11 +1256,11 @@ async function refundablePaymentAttempt(
 } | null> {
   return db
     .prepare(
-      `SELECT id, provider, provider_account_code, provider_transaction_id
-       FROM payment_attempts
-       WHERE organization_id = ? AND invoice_id = ? AND status = 'succeeded'
-         AND provider_transaction_id IS NOT NULL AND amount_minor >= ?
-       ORDER BY created_at DESC, id DESC LIMIT 1`,
+      `SELECT payment.id, payment.provider, payment.provider_account_code, payment.provider_transaction_id
+       FROM payment_attempts payment
+       WHERE payment.organization_id = ? AND payment.invoice_id = ? AND payment.status = 'succeeded'
+         AND payment.provider_transaction_id IS NOT NULL AND ${unreservedPaymentAmountSql()} >= ?
+       ORDER BY payment.created_at DESC, payment.id DESC LIMIT 1`,
     )
     .bind(organizationId, invoiceId, amountMinor)
     .first<{
@@ -1141,6 +1269,20 @@ async function refundablePaymentAttempt(
       provider_account_code: string;
       provider_transaction_id: string;
     }>();
+}
+
+// Pending/submitted outcomes reserve capacity too: an uncertain refund must not
+// release its original payment for a different refund. Recheck inside the insert
+// transaction so concurrent credit-note requests cannot spend the same capacity.
+function unreservedPaymentAmountSql(): string {
+  return `payment.amount_minor - COALESCE((
+    SELECT SUM(refund.amount_minor) FROM provider_refund_operations refund
+    WHERE refund.organization_id = payment.organization_id
+      AND refund.provider = payment.provider
+      AND refund.provider_account_code = payment.provider_account_code
+      AND refund.provider_payment_id = payment.provider_transaction_id
+      AND refund.status != 'failed'
+  ), 0)`;
 }
 
 async function resumeProviderRefundIfNeeded(
@@ -1279,12 +1421,17 @@ async function resumeEasyPayDirectRefundIfNeeded(
       currency: string;
       status: string;
     }>();
-  if (!operation || operation.status === "succeeded") return;
+  if (!operation) return;
+  if (operation.status === "submitted") {
+    await reconcileEasyPayDirectRefundOperation(env, operation.id, providerFetcher);
+    return;
+  }
+  if (operation.status !== "pending" || operation.provider_idempotency_key) return;
   if (
     !env.PROVIDER_FINANCIALS &&
     (operation.provider_account_code !== env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim() ||
       organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() ||
-      env.EASY_PAY_DIRECT_NETWORK_MODE !== "test")
+      !["test", "gateway_test"].includes(env.EASY_PAY_DIRECT_NETWORK_MODE ?? ""))
   ) {
     throw new ApiError(
       503,
@@ -1293,18 +1440,36 @@ async function resumeEasyPayDirectRefundIfNeeded(
     );
   }
 
+  // Claim before transport. EPD's idempotency retention is finite, so a previously
+  // submitted refund must be reconciled, not automatically submitted again.
+  // The atomic claim also prevents concurrent replays choosing different keys.
+  if (!env.PROVIDER_FINANCIALS) {
+    const origin = {
+      organizationId,
+      providerAccountCode: operation.provider_account_code,
+      orderId: operation.provider_payment_id,
+    };
+    assertEasyPayDirectRefundBoundary(
+      env,
+      origin,
+      await easyPayDirectRefundBackend(env.BILLING_DB, origin),
+    );
+  }
+  const providerIdempotencyKey = crypto.randomUUID();
+  const claimed = await env.BILLING_DB.prepare(
+    `UPDATE provider_refund_operations
+     SET provider_idempotency_key = ?, status = 'submitted', updated_at = ?
+     WHERE id = ? AND organization_id = ? AND status = 'pending'
+       AND provider_idempotency_key IS NULL
+     RETURNING id`,
+  )
+    .bind(providerIdempotencyKey, new Date().toISOString(), operation.id, organizationId)
+    .first<{ id: string }>();
+  if (!claimed) return;
   try {
-    const providerIdempotencyKey = operation.provider_idempotency_key ?? crypto.randomUUID();
-    if (!operation.provider_idempotency_key) {
-      await env.BILLING_DB.prepare(
-        `UPDATE provider_refund_operations SET provider_idempotency_key = ?, updated_at = ?
-         WHERE id = ? AND provider_idempotency_key IS NULL`,
-      )
-        .bind(providerIdempotencyKey, new Date().toISOString(), operation.id)
-        .run();
-    }
     const result = env.PROVIDER_FINANCIALS
       ? await env.PROVIDER_FINANCIALS.refundEasyPayDirect({
+          operationId: operation.id,
           organizationId,
           providerAccountCode: operation.provider_account_code,
           orderId: operation.provider_payment_id,
@@ -1312,15 +1477,31 @@ async function resumeEasyPayDirectRefundIfNeeded(
           currency: operation.currency,
           idempotencyKey: providerIdempotencyKey,
         })
-      : await refundEasyPayDirectOrder(
+      : await refundEasyPayDirectByOrigin(
           env as Env,
           {
+            organizationId,
+            providerAccountCode: operation.provider_account_code,
             orderId: operation.provider_payment_id,
             amountMinor: operation.amount_minor,
             currency: operation.currency,
             idempotencyKey: providerIdempotencyKey,
           },
           providerFetcher,
+          (transactionId) =>
+            checkpointEasyPayDirectRefund(
+              env.BILLING_DB,
+              {
+                operationId: operation.id,
+                organizationId,
+                providerAccountCode: operation.provider_account_code,
+                orderId: operation.provider_payment_id,
+                amountMinor: operation.amount_minor,
+                currency: operation.currency,
+                idempotencyKey: providerIdempotencyKey,
+              },
+              transactionId,
+            ),
         );
     const now = new Date().toISOString();
     const status = result.status === "unknown" ? "pending" : result.status;
@@ -1333,7 +1514,7 @@ async function resumeEasyPayDirectRefundIfNeeded(
          WHERE id = ? AND organization_id = ? AND status <> 'succeeded'`,
       ).bind(
         result.id,
-        status,
+        result.status === "unknown" ? "submitted" : status,
         result.status === "failed" ? "easy_pay_direct_refund_failed" : null,
         failureMessage,
         now,
@@ -1356,20 +1537,20 @@ async function resumeEasyPayDirectRefundIfNeeded(
     ]);
   } catch (error) {
     const now = new Date().toISOString();
-    const message = boundedProviderFailure(error);
+    const message = "Refund outcome is unknown; reconcile with the provider before retrying";
     await env.BILLING_DB.batch([
       env.BILLING_DB.prepare(
         `UPDATE provider_refund_operations
-         SET status = 'failed', failure_code = 'easy_pay_direct_request_failed',
+         SET status = 'submitted', failure_code = 'easy_pay_direct_refund_outcome_unknown',
              failure_message = ?, updated_at = ?
          WHERE id = ? AND organization_id = ? AND status <> 'succeeded'`,
       ).bind(message, now, operation.id, organizationId),
       env.BILLING_DB.prepare(
-        `UPDATE credit_note_refunds SET status = 'failed', failure_message = ?, updated_at = ?
+        `UPDATE credit_note_refunds SET status = 'pending', failure_message = ?, updated_at = ?
          WHERE organization_id = ? AND credit_note_id = ? AND status <> 'succeeded'`,
       ).bind(message, now, organizationId, creditNoteId),
       env.BILLING_DB.prepare(
-        `UPDATE credit_note_financials SET refund_status = 'failed'
+        `UPDATE credit_note_financials SET refund_status = 'pending'
          WHERE organization_id = ? AND credit_note_id = ? AND refund_status <> 'succeeded'`,
       ).bind(organizationId, creditNoteId),
     ]);

@@ -3,6 +3,10 @@ import type { DomainEvent } from "../domain-events";
 type SubscriptionTerminationEnv = Pick<Env, "BILLING_DB" | "DOMAIN_EVENTS">;
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import {
+  expiredEpdCancellationFence,
+  type ExpiredEpdCancellationGuard,
+} from "./expired-epd-cancellation";
 import { couponCreditStatements } from "./coupon-credits";
 import { creditNoteAllocationStatements } from "./credit-note-credits";
 import { manualTaxStatements } from "./manual-taxes";
@@ -397,6 +401,7 @@ export async function terminateSubscriptionWithoutInvoice(
   correlationId: string,
   publishImmediately = true,
   actions: TerminationActions = { creditNote: null, invoice: "skip" },
+  onlyIfExpired?: ExpiredEpdCancellationGuard,
 ): Promise<DomainEvent> {
   const subscription = await findBillableSubscription(env.BILLING_DB, subscriptionId);
   if (!subscription) throw new Error("subscription_not_found");
@@ -421,7 +426,21 @@ export async function terminateSubscriptionWithoutInvoice(
       onTerminationInvoice: actions.invoice,
     },
   };
+  const guardId = `expired-cancel:${subscription.id}:${correlationId}`;
   const results = await env.BILLING_DB.batch([
+    ...(onlyIfExpired
+      ? [
+          expiredEpdCancellationFence(
+            env.BILLING_DB,
+            subscription.organization_id,
+            subscription.id,
+            expectedVersion,
+            terminatedAt,
+            guardId,
+            onlyIfExpired,
+          ),
+        ]
+      : []),
     env.BILLING_DB.prepare(
       `UPDATE subscriptions
        SET status = 'canceled', canceled_at = ?, version = version + 1, updated_at = ?
@@ -463,8 +482,16 @@ export async function terminateSubscriptionWithoutInvoice(
       expectedVersion + 1,
       terminatedAt,
     ),
+    ...(onlyIfExpired
+      ? [
+          env.BILLING_DB.prepare(
+            "DELETE FROM expired_epd_cancellation_fences WHERE guard_id = ?",
+          ).bind(guardId),
+        ]
+      : []),
   ]);
-  if ((results[1]?.meta.changes ?? 0) < 1 || results[2]?.meta.changes !== 1) {
+  const offset = onlyIfExpired ? 1 : 0;
+  if ((results[1 + offset]?.meta.changes ?? 0) < 1 || results[2 + offset]?.meta.changes !== 1) {
     throw new Error("subscription_version_conflict");
   }
   if (publishImmediately) await env.DOMAIN_EVENTS.send(event);

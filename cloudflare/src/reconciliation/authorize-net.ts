@@ -24,6 +24,65 @@ export type PendingReceipt = {
   processed_at: string | null;
 };
 
+export async function publishPaymentRequestOutboxEvents(
+  database: D1Database,
+  queue: Queue,
+  organizationId: string,
+  paymentRequestId: string,
+): Promise<number> {
+  const rows = await database
+    .prepare(
+      `SELECT event_id, event_type, event_version, aggregate_type, aggregate_id,
+              aggregate_version, occurred_at, causation_id, correlation_id, payload_json
+       FROM outbox_events
+       WHERE organization_id = ? AND published_at IS NULL
+         AND json_extract(payload_json, '$.paymentRequestId') = ?
+       ORDER BY occurred_at, event_id`,
+    )
+    .bind(organizationId, paymentRequestId)
+    .all<{
+      event_id: string;
+      event_type: string;
+      event_version: number;
+      aggregate_type: string;
+      aggregate_id: string;
+      aggregate_version: number;
+      occurred_at: string;
+      causation_id: string | null;
+      correlation_id: string;
+      payload_json: string;
+    }>();
+  if (rows.results.length === 0) return 0;
+  await queue.sendBatch(
+    rows.results.map((row) => ({
+      body: {
+        id: row.event_id,
+        type: row.event_type,
+        version: row.event_version,
+        aggregateType: row.aggregate_type,
+        aggregateId: row.aggregate_id,
+        aggregateVersion: row.aggregate_version,
+        occurredAt: row.occurred_at,
+        causationId: row.causation_id,
+        correlationId: row.correlation_id,
+        payload: parseOutboxPayload(row.payload_json),
+      } satisfies DomainEvent,
+    })),
+  );
+  return rows.results.length;
+}
+
+function parseOutboxPayload(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function reconcileAuthorizeNetReceipt(
   env: Env,
   receiptId: string,
@@ -370,6 +429,17 @@ export async function reconcilePaymentRequest(
                   SELECT payment.amount_minor
                   FROM payment_attempts payment
                   WHERE payment.invoice_id = invoice.id AND payment.status = 'succeeded'
+                    AND NOT EXISTS (
+                      SELECT 1 FROM payment_request_payment_allocations mirrored_allocation
+                      JOIN payment_request_payments mirrored_payment
+                        ON mirrored_payment.id = mirrored_allocation.payment_request_payment_id
+                       AND mirrored_payment.organization_id = mirrored_allocation.organization_id
+                      WHERE mirrored_allocation.invoice_id = payment.invoice_id
+                        AND mirrored_allocation.organization_id = payment.organization_id
+                        AND mirrored_payment.provider = payment.provider
+                        AND mirrored_payment.provider_account_code = payment.provider_account_code
+                        AND mirrored_payment.provider_transaction_id = payment.provider_transaction_id
+                    )
                   UNION ALL
                   SELECT allocation.amount_minor
                   FROM payment_request_payment_allocations allocation

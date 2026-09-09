@@ -8,6 +8,8 @@ export default defineConfig({
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
+        // Test-only, independent of the fully migrated BILLING_DB from setup.ts.
+        d1Databases: ["MIGRATION_REHEARSAL_DB"],
         bindings: {
           TEST_MIGRATIONS: migrations,
           AUTHORIZE_NET_API_LOGIN_ID: "synthetic-login-id",

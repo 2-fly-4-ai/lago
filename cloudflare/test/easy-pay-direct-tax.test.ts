@@ -9,6 +9,9 @@ import {
   resolveCheckoutTaxCode,
 } from "../src/api/easy-pay-direct-tax";
 import { runCheckoutWorkflow } from "../src/workflows/checkout";
+import { handleLagoCompatibilityRequest, showInvoice } from "../src/api/lago-compatibility";
+import { createCreditNote } from "../src/api/credit-note-ledger";
+import { checkoutTaxSnapshotStatements } from "../src/tax/checkout-tax-snapshots";
 
 const organizationId = "org-easy-pay-direct-tax";
 let customerId: string;
@@ -84,9 +87,428 @@ beforeEach(async () => {
        VALUES (?, ?, ?, ?, 1, ?, ?)`,
     ).bind(`link-${fixtureId}`, organizationId, paymentRequestId, invoiceId, now, now),
   ]);
+  await env.BILLING_DB.prepare(`INSERT INTO invoice_lines(id,invoice_id,line_type,description,quantity_decimal,unit_amount_decimal,amount_minor,source_type,source_id,metadata_json,created_at)
+    VALUES(?,?,'subscription','Fixture software','1','1999',1999,'plan',?,'{}',?)`)
+    .bind(`line-${invoiceId}`, invoiceId, planId, now)
+    .run();
 });
 
 describe("Easy Pay Direct destination tax checkout", () => {
+  it.each(["full", "halves", "rounding", "multiline", "discount", "missing", "mismatched"])(
+    "preserves collected local tax refund budgets and provenance: %s",
+    async (scenario) => {
+      await seedLocalTaxRule(62_500, "static", invoiceId);
+      await env.BILLING_DB.batch([
+        env.BILLING_DB.prepare(
+          "UPDATE plans SET interval='one_time',amount_minor=900 WHERE id=?",
+        ).bind(planId),
+        env.BILLING_DB.prepare(
+          "UPDATE invoices SET subtotal_minor=900,total_due_minor=900 WHERE id=?",
+        ).bind(invoiceId),
+        env.BILLING_DB.prepare("UPDATE payment_requests SET amount_minor=900 WHERE id=?").bind(
+          paymentRequestId,
+        ),
+        env.BILLING_DB.prepare(
+          "UPDATE invoice_lines SET amount_minor=900,unit_amount_decimal='900' WHERE invoice_id=?",
+        ).bind(invoiceId),
+      ]);
+      if (scenario === "multiline")
+        await env.BILLING_DB.batch([
+          env.BILLING_DB.prepare(
+            "UPDATE invoice_lines SET amount_minor=450,unit_amount_decimal='450' WHERE invoice_id=?",
+          ).bind(invoiceId),
+          env.BILLING_DB.prepare(`INSERT INTO invoice_lines(id,invoice_id,line_type,description,quantity_decimal,unit_amount_decimal,amount_minor,source_type,source_id,metadata_json,created_at)
+          VALUES(?,?,'subscription','Second fixture fee','1','450',450,'plan',?,'{}',?)`).bind(
+            `second-${invoiceId}`,
+            invoiceId,
+            `second-${planId}`,
+            new Date().toISOString(),
+          ),
+        ]);
+      if (scenario === "discount") {
+        await env.BILLING_DB.batch([
+          env.BILLING_DB.prepare(
+            "UPDATE invoice_lines SET amount_minor=1800,unit_amount_decimal='1800' WHERE invoice_id=?",
+          ).bind(invoiceId),
+          env.BILLING_DB.prepare(
+            "UPDATE invoices SET subtotal_minor=1800,credits_minor=900,coupons_minor=900 WHERE id=?",
+          ).bind(invoiceId),
+        ]);
+        await seedCouponAllocation(900);
+      }
+      const runtime = localTaxEnv();
+      await runCheckoutWorkflow(runtime, checkoutParams(), immediateStep());
+      const intent = await env.BILLING_DB.prepare(
+        "SELECT payment_url FROM payment_request_checkout_intents WHERE payment_request_id=?",
+      )
+        .bind(paymentRequestId)
+        .first<{ payment_url: string }>();
+      const quote = await (
+        await handleEasyPayDirectTaxQuote(
+          taxQuoteRequest(new URL(intent!.payment_url).searchParams.get("checkout")!),
+          runtime,
+          "refund-quote",
+          vi.fn<typeof fetch>(),
+        )
+      ).json<{ tax_quote: { id: string; checkout: string; tax_cents: number } }>();
+      expect(quote.tax_quote.tax_cents).toBe(56);
+      const displayed = await (
+        await showInvoice(
+          invoiceId,
+          env.BILLING_DB,
+          { organizationId, organizationExternalId: "easy-pay-direct-tax", apiKeyId: "fixture" },
+          "invoice-tax-display",
+        )
+      ).json<{
+        invoice: {
+          taxes_amount_cents: number;
+          fees: { taxes_amount_cents: number; applied_taxes: unknown[] }[];
+          applied_taxes: unknown[];
+        };
+      }>();
+      expect(displayed.invoice.taxes_amount_cents).toBe(56);
+      expect(displayed.invoice.fees.reduce((sum, fee) => sum + fee.taxes_amount_cents, 0)).toBe(56);
+      expect(displayed.invoice.fees.every((fee) => fee.applied_taxes.length === 1)).toBe(true);
+      expect(displayed.invoice.applied_taxes).toHaveLength(1);
+      const gateway = vi.fn<typeof fetch>(async (input) =>
+        String(input).endsWith("/api/query.php")
+          ? new Response(
+              `<nm_response><transaction><transaction_id>fixture-tax-paid-${invoiceId}</transaction_id><order_id>${paymentRequestId}</order_id><condition>complete</condition><currency>USD</currency><action><action_type>sale</action_type><success>1</success><amount>9.56</amount></action></transaction></nm_response>`,
+            )
+          : new Response(
+              `response=1&response_code=100&transactionid=fixture-tax-paid-${invoiceId}&authcode=TEST`,
+            ),
+      );
+      expect(
+        await (
+          await handleEasyPayDirectCheckoutSubmission(
+            paymentRequest(quote.tax_quote.checkout, quote.tax_quote.id),
+            runtime,
+            "refund-paid",
+            gateway,
+          )
+        ).json(),
+      ).toMatchObject({ status: "succeeded" });
+      if (scenario === "missing")
+        await env.BILLING_DB.prepare("DELETE FROM invoice_line_taxes WHERE invoice_id=?")
+          .bind(invoiceId)
+          .run();
+      if (scenario === "mismatched")
+        await env.BILLING_DB.prepare(
+          "UPDATE invoices SET tax_minor=57,total_due_minor=957 WHERE id=?",
+        )
+          .bind(invoiceId)
+          .run();
+      const portions =
+        scenario === "halves"
+          ? [
+              { base: 450, tax: 28 },
+              { base: 450, tax: 28 },
+            ]
+          : scenario === "rounding"
+            ? [
+                { base: 1, tax: 0 },
+                { base: 899, tax: 56 },
+              ]
+            : [{ base: 900, tax: 56 }];
+      for (let index = 0; index < portions.length; index++) {
+        const portion = portions[index]!;
+        const refund = portion.base + portion.tax;
+        const responsePromise = createCreditNote(
+          new Request("https://lago.test/api/v1/credit_notes", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Idempotency-Key": `local-tax-refund-${invoiceId}-${index}`,
+            },
+            body: JSON.stringify({
+              credit_note: {
+                invoice_id: invoiceId,
+                refund_amount_cents: refund,
+                items:
+                  scenario === "multiline"
+                    ? [
+                        { fee_id: `line-${invoiceId}`, amount_cents: 450 },
+                        { fee_id: `second-${invoiceId}`, amount_cents: 450 },
+                      ]
+                    : [
+                        {
+                          fee_id: `line-${invoiceId}`,
+                          amount_cents: scenario === "discount" ? 1800 : portion.base,
+                        },
+                      ],
+              },
+            }),
+          }),
+          {
+            ...runtime,
+            BILLING_DB: env.BILLING_DB,
+            DOMAIN_EVENTS: env.DOMAIN_EVENTS,
+            CREDIT_NOTE_REFUND_MODE: "sandbox",
+          },
+          { organizationId, organizationExternalId: "easy-pay-direct-tax", apiKeyId: "fixture" },
+          "refund",
+          vi.fn<typeof fetch>(),
+        );
+        if (scenario === "missing" || scenario === "mismatched") {
+          await expect(responsePromise).rejects.toMatchObject({
+            status: 409,
+            code: "credit_note_tax_snapshot_missing",
+          });
+          expect(
+            await env.BILLING_DB.prepare(
+              "SELECT COUNT(*) AS count FROM credit_notes WHERE invoice_id=?",
+            )
+              .bind(invoiceId)
+              .first(),
+          ).toEqual({ count: 0 });
+          return;
+        }
+        expect(await (await responsePromise).json()).toMatchObject({
+          credit_note: { refund_amount_cents: refund, taxes_amount_cents: portion.tax },
+        });
+      }
+      expect(
+        await env.BILLING_DB.prepare(
+          "SELECT SUM(t.amount_minor) AS total FROM credit_note_taxes t JOIN credit_notes n ON n.id=t.credit_note_id WHERE n.invoice_id=?",
+        )
+          .bind(invoiceId)
+          .first(),
+      ).toEqual({ total: 56 });
+    },
+  );
+  it("rolls back tax snapshot replacement if a fee changes after allocation", async () => {
+    await seedLocalTaxRule(62_500, "static", invoiceId);
+    const input = {
+      organizationId,
+      invoiceId,
+      quoteId: crypto.randomUUID(),
+      ruleId: `local-tax-rule-wa-${invoiceId}`,
+      country: "US",
+      collectionMode: "collect" as const,
+      rateResolution: null,
+      subtotalMinor: 1999,
+      taxMinor: 125,
+      currency: "USD",
+      now: new Date().toISOString(),
+    };
+    await env.BILLING_DB.batch(await checkoutTaxSnapshotStatements(env.BILLING_DB, input));
+    const pending = await checkoutTaxSnapshotStatements(env.BILLING_DB, {
+      ...input,
+      quoteId: crypto.randomUUID(),
+    });
+    await env.BILLING_DB.prepare("UPDATE invoice_lines SET amount_minor=2000 WHERE invoice_id=?")
+      .bind(invoiceId)
+      .run();
+    await expect(env.BILLING_DB.batch(pending)).rejects.toThrow();
+    expect(
+      await env.BILLING_DB.prepare(
+        "SELECT COUNT(*) AS count,SUM(amount_minor) AS tax FROM invoice_line_taxes WHERE invoice_id=?",
+      )
+        .bind(invoiceId)
+        .first(),
+    ).toEqual({ count: 1, tax: 125 });
+  });
+  it("allocates a fully discounted zero base without dividing by zero and rejects nonzero tax", async () => {
+    await seedLocalTaxRule(62_500, "static", invoiceId);
+    await seedCouponAllocation(1999);
+    const input = {
+      organizationId,
+      invoiceId,
+      quoteId: crypto.randomUUID(),
+      ruleId: `local-tax-rule-wa-${invoiceId}`,
+      country: "US",
+      collectionMode: "collect" as const,
+      rateResolution: null,
+      subtotalMinor: 0,
+      taxMinor: 0,
+      currency: "USD",
+      now: new Date().toISOString(),
+    };
+    await env.BILLING_DB.batch(await checkoutTaxSnapshotStatements(env.BILLING_DB, input));
+    expect(
+      await env.BILLING_DB.prepare(
+        "SELECT taxable_base_minor,amount_minor FROM invoice_line_taxes WHERE invoice_id=?",
+      )
+        .bind(invoiceId)
+        .first(),
+    ).toEqual({ taxable_base_minor: 0, amount_minor: 0 });
+    await expect(
+      checkoutTaxSnapshotStatements(env.BILLING_DB, { ...input, taxMinor: 1 }),
+    ).rejects.toMatchObject({ code: "checkout_tax_fee_allocation_unavailable" });
+  });
+  it.each([
+    { code: null, existing: false },
+    { code: "foreign-account", existing: false },
+    { code: null, existing: true },
+    { code: "foreign-account", existing: true },
+  ])(
+    "rejects a mismatched invoice account before URL creation or reuse %j",
+    async ({ code, existing }) => {
+      const runtimeEnv = localTaxEnv();
+      if (existing) await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+      await env.BILLING_DB.prepare("UPDATE customers SET payment_provider_code=? WHERE id=?")
+        .bind(code, customerId)
+        .run();
+      await expect(
+        handleLagoCompatibilityRequest(
+          new Request(`https://lago.test/api/v1/invoices/${invoiceId}/payment_url`, {
+            method: "POST",
+          }),
+          runtimeEnv,
+          { organizationId, organizationExternalId: "easy-pay-direct-tax", apiKeyId: "fixture" },
+          "wrong-account-url",
+        ),
+      ).rejects.toMatchObject({ status: 409, code: "easy_pay_direct_checkout_scope_mismatch" });
+      expect(
+        await env.BILLING_DB.prepare(
+          "SELECT COUNT(*) AS count FROM payment_request_checkout_intents WHERE payment_request_id=?",
+        )
+          .bind(paymentRequestId)
+          .first(),
+      ).toEqual({ count: existing ? 1 : 0 });
+      expect(
+        await env.BILLING_DB.prepare("SELECT payment_provider_code FROM customers WHERE id=?")
+          .bind(customerId)
+          .first(),
+      ).toEqual({ payment_provider_code: code });
+    },
+  );
+  it.each([
+    { organization: "another-organization", account: "epd-tax", status: 409 },
+    { organization: undefined, account: "epd-tax", status: 503 },
+    { organization: organizationId, account: undefined, status: 503 },
+  ])("rejects missing or foreign configured scope before creating an intent %j", async (config) => {
+    const runtimeEnv = new Proxy(localTaxEnv(), {
+      get(target, property, receiver) {
+        if (property === "EASY_PAY_DIRECT_ORGANIZATION_ID") return config.organization;
+        if (property === "EASY_PAY_DIRECT_ACCOUNT_CODE") return config.account;
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    });
+    await expect(
+      handleLagoCompatibilityRequest(
+        new Request(`https://lago.test/api/v1/invoices/${invoiceId}/payment_url`, {
+          method: "POST",
+        }),
+        runtimeEnv,
+        { organizationId, organizationExternalId: "easy-pay-direct-tax", apiKeyId: "fixture" },
+        "wrong-scope-url",
+      ),
+    ).rejects.toMatchObject({ status: config.status });
+    expect(
+      await env.BILLING_DB.prepare(
+        "SELECT COUNT(*) AS count FROM payment_request_checkout_intents WHERE payment_request_id=?",
+      )
+        .bind(paymentRequestId)
+        .first(),
+    ).toEqual({ count: 0 });
+  });
+  it.each([false, true])(
+    "reuses only a current unexpired tax-repriced invoice checkout (expired=%s)",
+    async (expired) => {
+      const runtimeEnv = localTaxEnv();
+      await seedLocalTaxRule(100_000, "static", crypto.randomUUID());
+      await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+      const original = await env.BILLING_DB.prepare(
+        "SELECT payment_url FROM payment_request_checkout_intents WHERE payment_request_id=? AND status='succeeded'",
+      )
+        .bind(paymentRequestId)
+        .first<{ payment_url: string }>();
+      const network = vi.fn<typeof fetch>();
+      await handleEasyPayDirectTaxQuote(
+        taxQuoteRequest(new URL(original!.payment_url).searchParams.get("checkout")!),
+        runtimeEnv,
+        "reuse-tax-quote",
+        network,
+      );
+      const replacement = await env.BILLING_DB.prepare(
+        "SELECT id,payment_url FROM payment_request_checkout_intents WHERE payment_request_id=? AND status='succeeded'",
+      )
+        .bind(paymentRequestId)
+        .first<{ id: string; payment_url: string }>();
+      if (expired)
+        await env.BILLING_DB.prepare(
+          "UPDATE payment_request_checkout_intents SET expires_at='2020-01-01T00:00:00.000Z' WHERE id=?",
+        )
+          .bind(replacement!.id)
+          .run();
+      const generate = () =>
+        handleLagoCompatibilityRequest(
+          new Request(`https://lago.test/api/v1/invoices/${invoiceId}/payment_url`, {
+            method: "POST",
+          }),
+          runtimeEnv,
+          { organizationId, organizationExternalId: "easy-pay-direct-tax", apiKeyId: "fixture" },
+          "reuse-tax-url",
+        );
+      if (expired) {
+        await expect(generate()).rejects.toMatchObject({
+          status: 410,
+          code: "easy_pay_direct_checkout_expired",
+        });
+      } else {
+        for (let index = 0; index < 2; index++) {
+          const response = await generate();
+          expect(response?.status).toBe(200);
+          expect(await response!.json()).toMatchObject({
+            invoice_payment_details: { payment_url: replacement!.payment_url },
+          });
+        }
+      }
+      expect(
+        await env.BILLING_DB.prepare(
+          "SELECT COUNT(*) AS count FROM payment_request_checkout_intents WHERE payment_request_id=?",
+        )
+          .bind(paymentRequestId)
+          .first(),
+      ).toEqual({ count: 2 });
+      expect(network).not.toHaveBeenCalled();
+    },
+  );
+  it("rejects submission after a local collection scope boundary without contacting the gateway", async () => {
+    const runtimeEnv = localTaxEnv();
+    await seedLocalTaxRule(100_000, "static", "expiry-boundary");
+    await runCheckoutWorkflow(runtimeEnv, checkoutParams(), immediateStep());
+    const original = await env.BILLING_DB.prepare(`SELECT payment_url
+      FROM payment_request_checkout_intents WHERE payment_request_id = ? AND status = 'succeeded'`)
+      .bind(paymentRequestId)
+      .first<{ payment_url: string }>();
+    const boundary = new Date(Math.ceil(Date.now() / 1000) * 1000 + 2000);
+    await env.BILLING_DB.prepare(`UPDATE indirect_tax_registration_scopes SET effective_to = ?
+      WHERE id = 'local-tax-scope-wa-expiry-boundary'`)
+      .bind(boundary.toISOString())
+      .run();
+    const network = vi.fn<typeof fetch>();
+    const response = await handleEasyPayDirectTaxQuote(
+      taxQuoteRequest(new URL(original!.payment_url).searchParams.get("checkout")!),
+      runtimeEnv,
+      "expiry-quote",
+      network,
+    );
+    const body = await response.json<{ tax_quote: { id: string; checkout: string } }>();
+    expect(
+      await env.BILLING_DB.prepare(
+        "SELECT expires_at FROM easy_pay_direct_checkout_tax_quotes WHERE id = ?",
+      )
+        .bind(body.tax_quote.id)
+        .first(),
+    ).toEqual({ expires_at: boundary.toISOString() });
+    // Use the actual local D1 clock; JavaScript fake timers do not advance SQL datetime('now').
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.max(boundary.getTime() - Date.now() + 25, 0)),
+    );
+    await expect(
+      handleEasyPayDirectCheckoutSubmission(
+        paymentRequest(body.tax_quote.checkout, body.tax_quote.id),
+        runtimeEnv,
+        "expired-local-quote",
+        network,
+      ),
+    ).rejects.toMatchObject({ code: "checkout_tax_quote_required" });
+    expect(network).not.toHaveBeenCalled();
+  }, 10_000);
+
   it("requires explicit matching product codes, never inferring from billing cadence", () => {
     expect(resolveCheckoutTaxCode('["txcd_10103100"]')).toBe("txcd_10103100");
     expect(resolveCheckoutTaxCode('["txcd_10202000","txcd_10202000"]')).toBe("txcd_10202000");
@@ -198,7 +620,14 @@ describe("Easy Pay Direct destination tax checkout", () => {
         return Response.json({ id: "tax_epd_test_1", livemode: false });
       }
       const form = new URLSearchParams(String(init?.body));
+      if (String(input).endsWith("/api/query.php")) {
+        expect(form.get("order_id")).toBe(paymentRequestId);
+        return new Response(
+          `<nm_response><transaction><transaction_id>epd-tax-test-1</transaction_id><order_id>${paymentRequestId}</order_id><condition>complete</condition><currency>USD</currency><customer_vault_id>vault-tax-1</customer_vault_id><action><action_type>sale</action_type><success>1</success><amount>21.99</amount></action></transaction></nm_response>`,
+        );
+      }
       expect(form.get("amount")).toBe("21.99");
+      expect(form.get("billing_method")).toBe("recurring");
       return new Response(
         "response=1&responsetext=Approved&response_code=100&transactionid=epd-tax-test-1&authcode=TEST&customer_vault_id=vault-tax-1",
       );
@@ -210,7 +639,7 @@ describe("Easy Pay Direct destination tax checkout", () => {
       gatewayFetch,
     );
     await expect(paid.json()).resolves.toMatchObject({ status: "succeeded" });
-    expect(gatewayFetch).toHaveBeenCalledTimes(2);
+    expect(gatewayFetch).toHaveBeenCalledTimes(3);
     await expect(
       env.BILLING_DB.prepare(
         "SELECT status, committed_at IS NOT NULL AS committed FROM easy_pay_direct_checkout_tax_quotes WHERE id = ?",
@@ -360,11 +789,20 @@ describe("Easy Pay Direct destination tax checkout", () => {
     expect(offBody.tax_quote.id).not.toBe(quoteBody.tax_quote.id);
     expect(noTaxNetwork).not.toHaveBeenCalled();
 
-    const gatewayFetch = vi.fn<typeof fetch>(async (_input, init) => {
+    const gatewayFetch = vi.fn<typeof fetch>(async (input, init) => {
       const form = new URLSearchParams(String(init?.body));
+      if (String(input).endsWith("/api/query.php")) {
+        expect(form.get("order_id")).toBe(paymentRequestId);
+        return new Response(
+          `<nm_response><transaction><transaction_id>epd-local-tax-test-1</transaction_id><order_id>${paymentRequestId}</order_id><condition>complete</condition><currency>USD</currency><action><action_type>sale</action_type><success>1</success><amount>19.99</amount></action></transaction></nm_response>`,
+        );
+      }
       expect(form.get("amount")).toBe("19.99");
+      expect(form.has("billing_method")).toBe(false);
+      expect(form.has("customer_vault")).toBe(false);
+      expect(form.has("stored_credential_indicator")).toBe(false);
       return new Response(
-        "response=1&responsetext=Approved&response_code=100&transactionid=epd-local-tax-test-1&authcode=TEST&customer_vault_id=vault-local-tax-1",
+        "response=1&responsetext=Approved&response_code=100&transactionid=epd-local-tax-test-1&authcode=TEST",
       );
     });
     const paid = await handleEasyPayDirectCheckoutSubmission(
@@ -374,7 +812,7 @@ describe("Easy Pay Direct destination tax checkout", () => {
       gatewayFetch,
     );
     await expect(paid.json()).resolves.toMatchObject({ status: "succeeded" });
-    expect(gatewayFetch).toHaveBeenCalledTimes(1);
+    expect(gatewayFetch).toHaveBeenCalledTimes(2);
     await expect(
       env.BILLING_DB.prepare(
         "SELECT status, local_collection_mode, committed_at IS NOT NULL AS committed FROM easy_pay_direct_checkout_tax_quotes WHERE id = ?",
@@ -601,6 +1039,8 @@ function taxEnv(stripeKey = "rk_test_tax_synthetic"): Env {
   return new Proxy(env, {
     get(target, property, receiver) {
       if (property === "PAYMENT_MUTATIONS_ENABLED") return "1";
+      if (property === "EASY_PAY_DIRECT_ORGANIZATION_ID") return organizationId;
+      if (property === "EASY_PAY_DIRECT_ACCOUNT_CODE") return "epd-tax";
       if (property === "PUBLIC_BASE_URL") return "https://lago.test";
       if (property === "EASY_PAY_DIRECT_COMMERCE_API_KEY") {
         return "epd_synthetic_sk_test_tax";
@@ -635,6 +1075,42 @@ function localTaxEnv(): Env {
       return Reflect.get(target, property, receiver) as unknown;
     },
   }) as Env;
+}
+
+async function seedCouponAllocation(amount: number) {
+  const now = new Date().toISOString();
+  const id = `coupon-${invoiceId}`;
+  await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(`INSERT INTO coupons(id,organization_id,code,name,coupon_type,amount_minor,currency,frequency,expiration,reusable,status,request_sha256,created_at,updated_at)
+      VALUES(?,?,?,'Fixture discount','fixed_amount',?,'USD','once','no_expiration',1,'active','fixture',?,?)`).bind(
+      id,
+      organizationId,
+      id,
+      amount,
+      now,
+      now,
+    ),
+    env.BILLING_DB.prepare(`INSERT INTO applied_coupons(id,organization_id,customer_id,coupon_id,amount_minor,currency,frequency,status,request_sha256,created_at,updated_at)
+      VALUES(?,?,?,?,?,'USD','once','active','fixture',?,?)`).bind(
+      id,
+      organizationId,
+      customerId,
+      id,
+      amount,
+      now,
+      now,
+    ),
+    env.BILLING_DB.prepare(`INSERT INTO coupon_credits(id,organization_id,invoice_id,applied_coupon_id,applied_coupon_version,amount_minor,currency,before_taxes,allocations_json,created_at)
+      VALUES(?,?,?,?,1,?,'USD',1,?,?)`).bind(
+      id,
+      organizationId,
+      invoiceId,
+      id,
+      amount,
+      JSON.stringify([{ lineId: `line-${invoiceId}`, amountMinor: amount }]),
+      now,
+    ),
+  ]);
 }
 
 async function seedLocalTaxRule(

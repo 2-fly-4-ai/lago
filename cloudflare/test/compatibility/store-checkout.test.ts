@@ -39,12 +39,16 @@ afterEach(() => {
     EASY_PAY_DIRECT_COMMERCE_API_KEY: string;
     EASY_PAY_DIRECT_NETWORK_MODE: string;
     EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET: string;
+    EASY_PAY_DIRECT_ORGANIZATION_ID: string;
+    EASY_PAY_DIRECT_ACCOUNT_CODE: string;
     PUBLIC_BASE_URL: string;
   };
   mutableEnv.PAYMENT_MUTATIONS_ENABLED = "0";
   mutableEnv.EASY_PAY_DIRECT_COMMERCE_API_KEY = "";
   mutableEnv.EASY_PAY_DIRECT_NETWORK_MODE = "disabled";
   mutableEnv.EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET = "";
+  mutableEnv.EASY_PAY_DIRECT_ORGANIZATION_ID = "";
+  mutableEnv.EASY_PAY_DIRECT_ACCOUNT_CODE = "";
   mutableEnv.PUBLIC_BASE_URL = "https://lago.test";
   vi.unstubAllGlobals();
 });
@@ -459,12 +463,16 @@ describe("store-new Lago checkout compatibility", () => {
       EASY_PAY_DIRECT_COMMERCE_API_KEY: string;
       EASY_PAY_DIRECT_NETWORK_MODE: string;
       EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET: string;
+      EASY_PAY_DIRECT_ORGANIZATION_ID: string;
+      EASY_PAY_DIRECT_ACCOUNT_CODE: string;
       PUBLIC_BASE_URL: string;
     };
     mutableEnv.PAYMENT_MUTATIONS_ENABLED = "1";
     mutableEnv.EASY_PAY_DIRECT_COMMERCE_API_KEY = "epd_synthetic_checkout_test_key";
     mutableEnv.EASY_PAY_DIRECT_NETWORK_MODE = "test";
     mutableEnv.EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET = "synthetic-signing-secret";
+    mutableEnv.EASY_PAY_DIRECT_ORGANIZATION_ID = "org-test";
+    mutableEnv.EASY_PAY_DIRECT_ACCOUNT_CODE = "easy-pay-direct";
     mutableEnv.PUBLIC_BASE_URL = "https://lago.test";
 
     const request = () =>

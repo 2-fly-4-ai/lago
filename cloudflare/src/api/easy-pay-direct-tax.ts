@@ -8,6 +8,7 @@ import {
 } from "../providers/easy-pay-direct";
 import { encryptBillingAddress } from "../tax/billing-address-vault";
 import { calculateLocalD1Tax } from "../tax/local-d1";
+import { checkoutTaxSnapshotStatements } from "../tax/checkout-tax-snapshots";
 
 const STRIPE_TAX_CALCULATIONS_URL = "https://api.stripe.com/v1/tax/calculations";
 const STRIPE_TAX_TRANSACTIONS_URL =
@@ -204,6 +205,22 @@ export async function handleEasyPayDirectTaxQuote(
   const generatedTokenHash = await sha256Hex(generated.token);
   const replacementIdempotencyKey = `${checkout.idempotency_key}:tax:${quoteId}`;
   const eventId = `payment-request-checkout-tax-applied:${quoteId}`;
+  const taxSnapshots =
+    calculation.providerCode === "local_d1"
+      ? await checkoutTaxSnapshotStatements(env.BILLING_DB, {
+          organizationId: checkout.organization_id,
+          invoiceId: checkout.invoice_id,
+          quoteId,
+          ruleId: calculation.localRuleId!,
+          country: address.country,
+          collectionMode: calculation.localCollectionMode!,
+          rateResolution: calculation.rateResolution,
+          subtotalMinor: calculation.subtotalMinor,
+          taxMinor: calculation.taxMinor,
+          currency: checkout.currency,
+          now,
+        })
+      : [];
   const results = await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
       `UPDATE easy_pay_direct_checkout_tax_quotes
@@ -351,6 +368,7 @@ export async function handleEasyPayDirectTaxQuote(
       }),
       now,
     ),
+    ...taxSnapshots,
   ]).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : "";
     const errorCategory = message.includes("invalid_checkout_address_rate_identity")

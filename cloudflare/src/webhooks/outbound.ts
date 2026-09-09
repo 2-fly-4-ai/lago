@@ -120,7 +120,7 @@ async function deliverOne(
       },
       body: delivery.payload_json,
       redirect: "manual",
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(30_000),
     });
     const excerpt = await readResponseExcerpt(response);
     const retryable = isRetryableStatus(response.status) && attempt < MAX_ATTEMPTS;

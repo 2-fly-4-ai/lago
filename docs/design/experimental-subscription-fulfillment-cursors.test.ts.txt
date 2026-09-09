@@ -1,0 +1,390 @@
+// Quarantined experiment; deliberately not discovered by Vitest or TypeScript.
+// Original path: cloudflare/test/subscription-fulfillment-cursors.test.ts.
+// This suite requires the experimental SQL and must only run in an isolated worktree.
+import { env } from "cloudflare:test";
+import { describe, expect, it } from "vitest";
+import { holdCustomerForClosure, holdEmailForClosure } from "../src/api/customer-closure";
+import { reconcileEasyPayDirectRefundOperation } from "../src/billing/easy-pay-direct-refund-reconciliation";
+
+async function fixture() {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const db = env.BILLING_DB;
+  await db.batch([
+    db
+      .prepare(
+        "INSERT INTO organizations (id, external_id, name, created_at, updated_at) VALUES (?, ?, 'Cursor QA', ?, ?)",
+      )
+      .bind(id, id, now, now),
+    db
+      .prepare(
+        "INSERT INTO customers (id, organization_id, external_id, email, created_at, updated_at) VALUES (?, ?, ?, 'cursor@example.invalid', ?, ?)",
+      )
+      .bind(id, id, id, now, now),
+    db
+      .prepare(
+        "INSERT INTO plans (id, organization_id, code, name, interval, amount_minor, currency, created_at, updated_at) VALUES (?, ?, ?, 'Cursor QA', 'monthly', 900, 'USD', ?, ?)",
+      )
+      .bind(id, id, id, now, now),
+    db
+      .prepare(
+        "INSERT INTO subscriptions (id, organization_id, customer_id, plan_id, external_id, status, started_at, current_period_start, current_period_end, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, '2099-01-01T00:00:00Z', ?, ?)",
+      )
+      .bind(id, id, id, id, id, now, now, now, now),
+    db
+      .prepare(
+        "INSERT INTO invoices (id, organization_id, customer_id, subscription_id, status, payment_status, currency, subtotal_minor, total_due_minor, payment_overdue, created_at, updated_at) VALUES (?, ?, ?, ?, 'finalized', 'pending', 'USD', 900, 900, 1, ?, ?)",
+      )
+      .bind(id, id, id, id, now, now),
+    db
+      .prepare(
+        "INSERT INTO invoice_subscriptions (invoice_id, subscription_id, organization_id, invoicing_reason, period_start, period_end, created_at) VALUES (?, ?, ?, 'subscription_starting', ?, '2099-01-01T00:00:00Z', ?)",
+      )
+      .bind(id, id, id, now, now),
+    db
+      .prepare(
+        "INSERT INTO invoice_lines (id, invoice_id, line_type, description, quantity_decimal, unit_amount_decimal, amount_minor, source_type, source_id, metadata_json, created_at) VALUES (?, ?, 'subscription', 'Cursor QA', '1', '900', 900, 'plan', ?, '{}', ?)",
+      )
+      .bind(id, id, id, now),
+    db
+      .prepare(
+        "INSERT INTO payment_requests (id, organization_id, customer_id, amount_minor, currency, payment_status, created_at, updated_at) VALUES (?, ?, ?, 900, 'USD', 'pending', ?, ?)",
+      )
+      .bind(id, id, id, now, now),
+    db
+      .prepare(
+        "INSERT INTO invoices_payment_requests (id, organization_id, payment_request_id, invoice_id, invoice_version, created_at, updated_at) SELECT ?, organization_id, ?, id, version, ?, ? FROM invoices WHERE id = ?",
+      )
+      .bind(id, id, now, now, id),
+    db
+      .prepare(
+        "INSERT INTO payment_request_payments (id, organization_id, payment_request_id, provider, provider_account_code, provider_transaction_id, idempotency_key, amount_minor, currency, status, created_at, updated_at) VALUES (?, ?, ?, 'easy_pay_direct', 'cursor-qa', ?, ?, 900, 'USD', 'succeeded', ?, ?)",
+      )
+      .bind(id, id, id, id, id, now, now),
+    db
+      .prepare(
+        "INSERT INTO payment_request_payment_allocations (id, organization_id, payment_request_payment_id, payment_request_id, invoice_id, amount_minor, currency, created_at) VALUES (?, ?, ?, ?, ?, 900, 'USD', ?)",
+      )
+      .bind(id, id, id, id, id, now),
+    db
+      .prepare(
+        "INSERT INTO payment_attempts (id, organization_id, invoice_id, provider, provider_account_code, provider_transaction_id, idempotency_key, amount_minor, currency, status, created_at, updated_at) VALUES (?, ?, ?, 'easy_pay_direct', 'cursor-qa', ?, ?, 900, 'USD', 'succeeded', ?, ?)",
+      )
+      .bind(id, id, id, id, id, now, now),
+    db
+      .prepare(
+        "INSERT INTO credit_notes (id, organization_id, customer_id, invoice_id, sequential_id, number, status, credit_status, reason, currency, total_amount_minor, credit_amount_minor, balance_amount_minor, idempotency_key, request_sha256, issuing_date, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, 'finalized', 'available', 'other', 'USD', 450, 450, 450, ?, 'fixture', ?, ?, ?)",
+      )
+      .bind(id, id, id, id, id, id, now.slice(0, 10), now, now),
+    db
+      .prepare(
+        "INSERT INTO credit_note_financials (credit_note_id, organization_id, items_amount_minor, taxes_amount_minor, coupons_adjustment_minor, total_amount_minor, credit_amount_minor, refund_amount_minor, offset_amount_minor, precise_taxes_amount_minor, refund_status, created_at) VALUES (?, ?, 450, 0, 0, 450, 0, 450, 0, '0', 'pending', ?)",
+      )
+      .bind(id, id, now),
+    db
+      .prepare(
+        "INSERT INTO credit_note_refunds (id, organization_id, credit_note_id, invoice_id, provider_mode, amount_minor, currency, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'easy_pay_direct_test', 450, 'USD', 'pending', ?, ?)",
+      )
+      .bind(id, id, id, id, now, now),
+    db
+      .prepare(
+        "INSERT INTO provider_refund_operations (id, organization_id, credit_note_id, invoice_id, payment_attempt_id, provider, provider_account_code, provider_payment_id, idempotency_key, provider_idempotency_key, provider_refund_transaction_id, request_sha256, amount_minor, currency, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'easy_pay_direct', 'cursor-qa', ?, ?, ?, ?, 'fixture', 450, 'USD', 'submitted', ?, ?)",
+      )
+      .bind(id, id, id, id, id, id, id, crypto.randomUUID(), crypto.randomUUID(), now, now),
+  ]);
+  const read = async (subscriptionId = id) =>
+    (await db
+      .prepare(
+        "SELECT revision FROM subscription_fulfillment_cursors WHERE organization_id = ? AND subscription_id = ?",
+      )
+      .bind(id, subscriptionId)
+      .first<{ revision: number }>())!.revision;
+  return { id, now, read, auth: { organizationId: id, organizationExternalId: id, apiKeyId: id } };
+}
+
+describe("disabled subscription fulfillment cursor foundation", () => {
+  it("still follows settled allocations after a request's invoice link is removed", async () => {
+    const f = await fixture();
+    await env.BILLING_DB.prepare("DELETE FROM invoices_payment_requests WHERE id = ?").bind(f.id).run();
+    const before = await f.read();
+    await env.BILLING_DB.prepare("UPDATE payment_request_payments SET status = 'failed' WHERE id = ?").bind(f.id).run();
+    expect(await f.read()).toBeGreaterThan(before);
+  });
+  it("tracks OLD and NEW invoice mappings when a line is retargeted", async () => {
+    const f = await fixture();
+    const target = await fixture();
+    const untouched = await fixture();
+    const before = await f.read();
+    const targetBefore = await target.read();
+    const untouchedBefore = await untouched.read();
+    await env.BILLING_DB.prepare("UPDATE invoice_lines SET invoice_id = ? WHERE id = ?")
+      .bind(target.id, f.id)
+      .run();
+    expect(await f.read()).toBeGreaterThan(before);
+    expect(await target.read()).toBeGreaterThan(targetBefore);
+    expect(await untouched.read()).toBe(untouchedBefore);
+    const beforeDelete = await target.read();
+    await env.BILLING_DB.prepare("DELETE FROM invoice_lines WHERE id = ?").bind(f.id).run();
+    expect(await target.read()).toBeGreaterThan(beforeDelete);
+  });
+
+  it("does not follow a malformed invoice link into another tenant", async () => {
+    const f = await fixture();
+    const foreign = await fixture();
+    const before = await f.read();
+    const foreignBefore = await foreign.read();
+    await env.BILLING_DB.prepare(
+      "INSERT INTO invoice_subscriptions (invoice_id, subscription_id, organization_id, invoicing_reason, created_at) VALUES (?, ?, ?, 'subscription_starting', ?)",
+    )
+      .bind(f.id, foreign.id, foreign.id, f.now)
+      .run();
+    expect(await f.read()).toBeGreaterThan(before);
+    expect(await foreign.read()).toBe(foreignBefore);
+  });
+
+  it("records credit-note insertion without requiring a refund or an outbox event", async () => {
+    const f = await fixture();
+    const before = await f.read();
+    const note = crypto.randomUUID();
+    await env.BILLING_DB.prepare(`INSERT INTO credit_notes
+      (id, organization_id, customer_id, invoice_id, sequential_id, number, status, credit_status,
+       reason, currency, total_amount_minor, credit_amount_minor, balance_amount_minor,
+       idempotency_key, request_sha256, issuing_date, created_at, updated_at)
+      SELECT ?, organization_id, customer_id, invoice_id, 2, ?, status, credit_status,
+       reason, currency, total_amount_minor, credit_amount_minor, balance_amount_minor,
+       ?, request_sha256, issuing_date, created_at, updated_at FROM credit_notes WHERE id = ?`)
+      .bind(note, note, note, f.id)
+      .run();
+    expect(await f.read()).toBeGreaterThan(before);
+  });
+
+  it("keeps retired tombstones across ID retarget, reuse and tenant deletion without blocking billing deletes", async () => {
+    const id = crypto.randomUUID();
+    const moved = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const db = env.BILLING_DB;
+    const read = (key: string) =>
+      db
+        .prepare(
+          "SELECT revision, retired FROM subscription_fulfillment_cursors WHERE organization_id = ? AND subscription_id = ?",
+        )
+        .bind(id, key)
+        .first<{ revision: number; retired: number }>();
+    await db.batch([
+      db
+        .prepare(
+          "INSERT INTO organizations (id, external_id, name, created_at, updated_at) VALUES (?, ?, 'Tombstone QA', ?, ?)",
+        )
+        .bind(id, id, now, now),
+      db
+        .prepare(
+          "INSERT INTO customers (id, organization_id, external_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(id, id, id, now, now),
+      db
+        .prepare(
+          "INSERT INTO plans (id, organization_id, code, name, interval, amount_minor, currency, created_at, updated_at) VALUES (?, ?, ?, 'QA', 'monthly', 900, 'USD', ?, ?)",
+        )
+        .bind(id, id, id, now, now),
+      db
+        .prepare(
+          "INSERT INTO subscriptions (id, organization_id, customer_id, plan_id, external_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+        )
+        .bind(id, id, id, id, id, now, now),
+    ]);
+    expect(await read(id)).toEqual({ revision: 1, retired: 0 });
+    await db.prepare("UPDATE subscriptions SET id = ? WHERE id = ?").bind(moved, id).run();
+    const retired = (await read(id))!;
+    expect(retired.retired).toBe(1);
+    expect(retired.revision).toBeGreaterThan(1);
+    expect(await read(moved)).toEqual({ revision: 1, retired: 0 });
+    await db
+      .prepare(
+        "INSERT INTO subscriptions (id, organization_id, customer_id, plan_id, external_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+      )
+      .bind(id, id, id, id, `reused-${id}`, now, now)
+      .run();
+    expect((await read(id))!.retired).toBe(1);
+    expect((await read(id))!.revision).toBeGreaterThan(retired.revision);
+    await expect(
+      db
+        .prepare(
+          "UPDATE subscription_fulfillment_cursors SET retired = 0 WHERE organization_id = ? AND subscription_id = ?",
+        )
+        .bind(id, id)
+        .run(),
+    ).rejects.toThrow("retired_fulfillment_source");
+    await db.batch([
+      db.prepare("DELETE FROM subscriptions WHERE organization_id = ?").bind(id),
+      db.prepare("DELETE FROM customers WHERE organization_id = ?").bind(id),
+      db.prepare("DELETE FROM plans WHERE organization_id = ?").bind(id),
+      db.prepare("DELETE FROM organizations WHERE id = ?").bind(id),
+    ]);
+    expect((await read(moved))!.retired).toBe(1);
+    await db
+      .prepare(
+        "INSERT INTO organizations (id, external_id, name, created_at, updated_at) VALUES (?, ?, 'Recreated QA', ?, ?)",
+      )
+      .bind(id, id, now, now)
+      .run();
+    expect((await read(id))!.retired).toBe(1);
+    expect((await read(moved))!.retired).toBe(1);
+  });
+
+  it.each([
+    [
+      "invoice source",
+      `SELECT DISTINCT i.organization_id, s.id FROM invoices i JOIN subscriptions s
+      ON s.organization_id = i.organization_id AND s.customer_id = i.customer_id
+      WHERE i.id = ? AND (s.id = i.subscription_id OR EXISTS (SELECT 1 FROM invoice_subscriptions link
+        WHERE link.invoice_id = i.id AND link.subscription_id = s.id AND link.organization_id = i.organization_id))`,
+    ],
+    [
+      "plan subscribers",
+      "SELECT id FROM subscriptions WHERE plan_id = ? AND organization_id = 'test'",
+    ],
+    [
+      "email closure",
+      "SELECT s.id FROM customers c JOIN subscriptions s ON s.customer_id = c.id AND s.organization_id = c.organization_id WHERE c.organization_id = ? AND lower(c.email) = 'cursor@example.invalid'",
+    ],
+    [
+      "request invoice mapping",
+      "SELECT i.id FROM invoices i WHERE i.organization_id = 'test' AND i.id IN (SELECT link.invoice_id FROM invoices_payment_requests link WHERE link.payment_request_id = ? AND link.organization_id = 'test')",
+    ],
+  ])("uses indexed lookups for %s", async (_label, sql) => {
+    const result = await env.BILLING_DB.prepare(`EXPLAIN QUERY PLAN ${sql}`)
+      .bind("fixture")
+      .all<{ detail: string }>();
+    expect(result.results.some((row) => /SEARCH .*USING/.test(row.detail))).toBe(true);
+    expect(result.results.some((row) => /SCAN (?:s|c|i|link)\b/.test(row.detail))).toBe(false);
+  });
+
+  it.each([
+    ["subscription lifecycle", "UPDATE subscriptions SET status = 'past_due' WHERE id = ?"],
+    ["invoice payment", "UPDATE invoices SET payment_status = 'succeeded' WHERE id = ?"],
+    [
+      "invoice period link",
+      "UPDATE invoice_subscriptions SET period_end = '2098-01-01T00:00:00Z' WHERE invoice_id = ?",
+    ],
+    [
+      "plan invoice metadata",
+      'UPDATE invoice_lines SET metadata_json = \'{"periodEnd":"2098-01-01T00:00:00Z"}\' WHERE id = ?',
+    ],
+    ["payment attempt", "UPDATE payment_attempts SET status = 'failed' WHERE id = ?"],
+    ["request payment", "UPDATE payment_request_payments SET status = 'failed' WHERE id = ?"],
+    [
+      "request allocation",
+      "UPDATE payment_request_payment_allocations SET amount_minor = 450 WHERE id = ?",
+    ],
+    ["refund operation", "UPDATE provider_refund_operations SET status = 'failed' WHERE id = ?"],
+    [
+      "refund financial projection",
+      "UPDATE credit_note_financials SET refund_status = 'failed' WHERE credit_note_id = ?",
+    ],
+    ["refund local projection", "UPDATE credit_note_refunds SET status = 'failed' WHERE id = ?"],
+    ["customer identity", "UPDATE customers SET email = 'changed@example.invalid' WHERE id = ?"],
+    ["plan interval", "UPDATE plans SET interval = 'weekly' WHERE id = ?"],
+  ])("advances for %s and isolates another tenant", async (_label, sql) => {
+    const f = await fixture();
+    const unrelated = await fixture();
+    const before = await f.read();
+    const otherBefore = await unrelated.read();
+    await env.BILLING_DB.prepare(sql).bind(f.id).run();
+    expect(await f.read()).toBeGreaterThan(before);
+    expect(await unrelated.read()).toBe(otherBefore);
+  });
+
+  it("ignores no-op updates, retry timestamps, diagnostics and refund checkpoints", async () => {
+    const f = await fixture();
+    const before = await f.read();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        "UPDATE subscriptions SET status = status, updated_at = '2099-01-01T00:00:00Z' WHERE id = ?",
+      ).bind(f.id),
+      env.BILLING_DB.prepare(
+        "UPDATE provider_refund_operations SET updated_at = '2099-01-01T00:00:00Z', failure_code = 'read_unavailable', provider_refund_transaction_id = provider_refund_transaction_id WHERE id = ?",
+      ).bind(f.id),
+      env.BILLING_DB.prepare(
+        "UPDATE payment_attempts SET failure_message = 'diagnostic', updated_at = '2099-01-01T00:00:00Z' WHERE id = ?",
+      ).bind(f.id),
+    ]);
+    expect(await f.read()).toBe(before);
+  });
+
+  it("covers both closure APIs and hold removal, without changing unrelated tenants", async () => {
+    const f = await fixture();
+    const other = await fixture();
+    const otherBefore = await other.read();
+    let before = await f.read();
+    await holdEmailForClosure(env.BILLING_DB, f.auth, "cursor@example.invalid", f.id);
+    expect(await f.read()).toBeGreaterThan(before);
+    expect(await other.read()).toBe(otherBefore);
+    before = await f.read();
+    await env.BILLING_DB.prepare(
+      "DELETE FROM customer_closure_email_holds WHERE organization_id = ?",
+    )
+      .bind(f.id)
+      .run();
+    expect(await f.read()).toBeGreaterThan(before);
+    await env.BILLING_DB.prepare("DELETE FROM customer_closure_holds WHERE customer_id = ?")
+      .bind(f.id)
+      .run();
+    before = await f.read();
+    await holdCustomerForClosure(env.BILLING_DB, f.auth, f.id, f.id);
+    expect(await f.read()).toBeGreaterThan(before);
+  });
+
+  it("advances atomically when GET-only refund reconciliation resolves all ledger mirrors", async () => {
+    const f = await fixture();
+    const before = await f.read();
+    expect(
+      await reconcileEasyPayDirectRefundOperation(
+        {
+          BILLING_DB: env.BILLING_DB,
+          CREDIT_NOTE_REFUND_MODE: "easy_pay_direct_test",
+          PROVIDER_FINANCIALS: {
+            refundEasyPayDirect: async () => {
+              throw new Error("POST must never occur");
+            },
+            readEasyPayDirectRefund: async () => ({
+              id: `processor-refund-${f.id}`,
+              status: "succeeded",
+              responseText: "fixture",
+            }),
+            getIntegrationRuntimeStatuses: async () => [],
+          },
+        },
+        f.id,
+      ),
+    ).toBe("processed");
+    expect(await f.read()).toBeGreaterThan(before);
+    expect(
+      await env.BILLING_DB.prepare("SELECT status FROM provider_refund_operations WHERE id = ?")
+        .bind(f.id)
+        .first(),
+    ).toEqual({ status: "succeeded" });
+  });
+
+  it("rejects backward revisions and rolls cursor changes back with a failed ledger batch", async () => {
+    const f = await fixture();
+    const before = await f.read();
+    await expect(
+      env.BILLING_DB.prepare(
+        "UPDATE subscription_fulfillment_cursors SET revision = revision - 1 WHERE subscription_id = ?",
+      )
+        .bind(f.id)
+        .run(),
+    ).rejects.toThrow("non_monotonic_fulfillment_revision");
+    await expect(
+      env.BILLING_DB.batch([
+        env.BILLING_DB.prepare("UPDATE subscriptions SET status = 'past_due' WHERE id = ?").bind(
+          f.id,
+        ),
+        env.BILLING_DB.prepare(
+          "UPDATE subscriptions SET status = 'invalid-status' WHERE id = ?",
+        ).bind(f.id),
+      ]),
+    ).rejects.toThrow();
+    expect(await f.read()).toBe(before);
+  });
+});

@@ -23,6 +23,9 @@ import {
 beforeEach(async () => {
   const now = "2026-08-14T00:00:00.000Z";
   await env.BILLING_DB.batch([
+    env.BILLING_DB.prepare(`DELETE FROM payment_disputes
+      WHERE id = 'dispute-retention-race' OR id LIKE 'dispute-evidence-%'`),
+    env.BILLING_DB.prepare("DELETE FROM webhook_receipts WHERE id LIKE 'dispute-evidence-%'"),
     env.BILLING_DB.prepare(
       `DELETE FROM outbox_events WHERE aggregate_id IN
        ('invoice-overdue', 'invoice-future', 'invoice-draft-due', 'invoice-draft-future',
@@ -308,6 +311,97 @@ describe("scheduled ledger maintenance", () => {
       receiptsDeleted: 0,
     });
     await expect(env.BILLING_ARTIFACTS.get(archiveKey)).resolves.toBeNull();
+  });
+
+  it("retains dispute provenance and its archive without starving unrelated receipt cleanup", async () => {
+    const cutoff = "2026-05-16T01:10:00.000Z";
+    const archiveKey = "webhooks/test/dispute-provenance.json";
+    await env.BILLING_ARTIFACTS.put(archiveKey, "fictional dispute evidence");
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<99)
+        INSERT INTO webhook_receipts
+        (id, provider, provider_account_code, provider_event_id, signature_valid,
+         payload_sha256, received_at, processed_at, archive_key)
+        SELECT 'dispute-evidence-'||i, 'easy_pay_direct', 'org-schedule', 'event-'||i, 1,
+          'fictional-hash', '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:00.000Z',
+          CASE WHEN i=0 THEN ? ELSE NULL END FROM n`).bind(archiveKey),
+      env.BILLING_DB.prepare(`INSERT INTO payment_disputes
+        (id, organization_id, provider, provider_account_code, provider_dispute_id,
+         amount_minor, currency, status, livemode, provider_created_at,
+         last_provider_event_created_at, created_at, updated_at, last_provider_event_receipt_id)
+        SELECT id, 'org-schedule', 'easy_pay_direct', 'org-schedule', provider_event_id,
+          900, 'USD', 'won', 0, received_at, received_at, received_at, received_at, id
+        FROM webhook_receipts WHERE id LIKE 'dispute-evidence-%'`),
+      inboundReceiptStatement("receipt-old", "2026-05-15T00:00:00.000Z", null),
+    ]);
+    await expect(cleanupInboundWebhookReceipts(env, cutoff)).resolves.toEqual({
+      artifactsDeleted: 0,
+      receiptsDeleted: 1,
+    });
+    expect(await env.BILLING_ARTIFACTS.get(archiveKey)).not.toBeNull();
+    await expect(
+      env.BILLING_DB.prepare(`SELECT
+      (SELECT COUNT(*) FROM webhook_receipts WHERE id LIKE 'dispute-evidence-%') AS retained,
+      (SELECT COUNT(*) FROM artifact_cleanup_tasks WHERE archive_key=?) AS queued`)
+        .bind(archiveKey)
+        .first(),
+    ).resolves.toEqual({ retained: 100, queued: 0 });
+  });
+
+  it("rechecks dispute provenance if a receipt is referenced after retention selection", async () => {
+    const archiveKey = "webhooks/test/dispute-retention-race.json";
+    const oldAt = "2026-04-01T00:00:00.000Z";
+    await env.BILLING_ARTIFACTS.put(archiveKey, "fictional dispute race evidence");
+    await inboundReceiptStatement("receipt-old", oldAt, archiveKey).run();
+    let inserted = false;
+    const database = new Proxy(env.BILLING_DB, {
+      get(target, prop) {
+        if (prop !== "prepare") {
+          const value = Reflect.get(target, prop);
+          return typeof value === "function" ? value.bind(target) : value;
+        }
+        return (sql: string) => {
+          const wrap = (statement: D1PreparedStatement): D1PreparedStatement =>
+            new Proxy(statement, {
+              get(stmt, key) {
+                if (key === "bind") return (...values: unknown[]) => wrap(stmt.bind(...values));
+                if (key === "all" && sql.includes("SELECT id, archive_key FROM webhook_receipts")) {
+                  return async () => {
+                    const rows = await stmt.all();
+                    if (!inserted) {
+                      inserted = true;
+                      await env.BILLING_DB.prepare(`INSERT INTO payment_disputes
+                      (id, organization_id, provider, provider_account_code, provider_dispute_id,
+                       amount_minor, currency, status, livemode, provider_created_at,
+                       last_provider_event_created_at, created_at, updated_at, last_provider_event_receipt_id)
+                      VALUES ('dispute-retention-race', 'org-schedule', 'easy_pay_direct', 'org-schedule',
+                        'fictional-race-order', 900, 'USD', 'won', 0, ?, ?, ?, ?, 'receipt-old')`)
+                        .bind(oldAt, oldAt, oldAt, oldAt)
+                        .run();
+                    }
+                    return rows;
+                  };
+                }
+                const value = Reflect.get(stmt, key);
+                return typeof value === "function" ? value.bind(stmt) : value;
+              },
+            });
+          return wrap(target.prepare(sql));
+        };
+      },
+    });
+    await expect(
+      cleanupInboundWebhookReceipts({ ...env, BILLING_DB: database }, "2026-05-01T00:00:00.000Z"),
+    ).resolves.toEqual({ artifactsDeleted: 0, receiptsDeleted: 0 });
+    expect(inserted).toBe(true);
+    expect(await env.BILLING_ARTIFACTS.get(archiveKey)).not.toBeNull();
+    await expect(
+      env.BILLING_DB.prepare(
+        "SELECT COUNT(*) AS count FROM artifact_cleanup_tasks WHERE archive_key=?",
+      )
+        .bind(archiveKey)
+        .first(),
+    ).resolves.toEqual({ count: 0 });
   });
 
   it("marks due invoices overdue exactly once with outbox evidence", async () => {

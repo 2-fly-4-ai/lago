@@ -49,6 +49,12 @@ beforeEach(async () => {
     env.BILLING_DB.prepare(`DELETE FROM invoices_payment_requests WHERE organization_id = ?`).bind(
       organizationId,
     ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM payment_request_payment_allocations WHERE organization_id = ?`,
+    ).bind(organizationId),
+    env.BILLING_DB.prepare(`DELETE FROM payment_request_payments WHERE organization_id = ?`).bind(
+      organizationId,
+    ),
     env.BILLING_DB.prepare(`DELETE FROM payment_requests WHERE organization_id = ?`).bind(
       organizationId,
     ),
@@ -83,6 +89,61 @@ beforeEach(async () => {
 });
 
 describe("dunning campaigns", () => {
+  it("counts a partial request payment only once when mirrored in the invoice ledger", async () => {
+    expect((await createCampaign({ applied_to_organization: true })).status).toBe(200);
+    const now = "2026-08-15T00:00:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(`INSERT INTO payment_requests
+        (id, organization_id, customer_id, amount_minor, currency, payment_status,
+         ready_for_payment_processing, created_at, updated_at)
+        VALUES ('partial-request', ?, ?, 400, 'USD', 'succeeded', 0, ?, ?)`).bind(
+        organizationId,
+        customerId,
+        now,
+        now,
+      ),
+      env.BILLING_DB.prepare(`INSERT INTO invoices_payment_requests
+        (id, organization_id, payment_request_id, invoice_id, invoice_version, created_at, updated_at)
+        VALUES ('partial-link', ?, 'partial-request', 'invoice-dunning', 1, ?, ?)`).bind(
+        organizationId,
+        now,
+        now,
+      ),
+      env.BILLING_DB.prepare(`INSERT INTO payment_request_payments
+        (id, organization_id, payment_request_id, provider, provider_account_code,
+         provider_transaction_id, idempotency_key, amount_minor, currency, status, created_at, updated_at)
+        VALUES ('partial-payment', ?, 'partial-request', 'easy_pay_direct', 'test',
+          'partial-transaction', 'partial-request-key', 400, 'USD', 'succeeded', ?, ?)`).bind(
+        organizationId,
+        now,
+        now,
+      ),
+      env.BILLING_DB.prepare(`INSERT INTO payment_request_payment_allocations
+        (id, organization_id, payment_request_payment_id, payment_request_id, invoice_id, amount_minor, currency, created_at)
+        VALUES ('partial-allocation', ?, 'partial-payment', 'partial-request', 'invoice-dunning', 400, 'USD', ?)`).bind(
+        organizationId,
+        now,
+      ),
+      env.BILLING_DB.prepare(`INSERT INTO payment_attempts
+        (id, organization_id, invoice_id, provider, provider_account_code,
+         provider_transaction_id, idempotency_key, amount_minor, currency, status, created_at, updated_at)
+        VALUES ('partial-mirror', ?, 'invoice-dunning', 'easy_pay_direct', 'test',
+          'partial-transaction', 'partial-attempt-key', 400, 'USD', 'succeeded', ?, ?)`).bind(
+        organizationId,
+        now,
+        now,
+      ),
+    ]);
+    await processDunningCampaigns(env, "2026-08-15T01:45:00.000Z", "partial-ledger-review");
+    expect(
+      await env.BILLING_DB.prepare(
+        "SELECT amount_minor FROM payment_requests WHERE organization_id = ? AND source = 'dunning'",
+      )
+        .bind(organizationId)
+        .first(),
+    ).toEqual({ amount_minor: 600 });
+  });
+
   it("creates, replays, lists, updates, assigns, and deletes a tenant campaign", async () => {
     const created = await createCampaign({ applied_to_organization: true });
     expect(created.status).toBe(200);

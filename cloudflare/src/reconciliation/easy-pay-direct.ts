@@ -16,6 +16,7 @@ import {
 import {
   EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL,
   EASY_PAY_DIRECT_TAX_COMMIT_PENDING_SQL,
+  EASY_PAY_DIRECT_REPLAY_WINDOW_SQL,
 } from "../billing/easy-pay-direct-recovery-policy";
 import { commitAppliedCheckoutTaxQuote } from "../api/easy-pay-direct-tax";
 import { ApiError } from "../http";
@@ -40,12 +41,67 @@ type EasyPayDirectEvent = {
 
 type EasyPayDirectExecution = {
   id: string;
+  charge_transport: string;
+  payment_backend: string;
   status: string;
   organization_id: string;
   payment_request_id: string;
   provider_account_code: string;
   provider_transaction_id: string | null;
 };
+
+async function readElementsExecutionOrder(
+  env: Env,
+  execution: EasyPayDirectExecution,
+  fetcher: typeof fetch,
+): Promise<CommerceOrder> {
+  const expected =
+    await env.BILLING_DB.prepare(`SELECT e.provider_customer_id, e.provider_payment_method_id,
+    r.amount_minor, r.currency FROM easy_pay_direct_payment_executions e
+    JOIN payment_requests r ON r.id = e.payment_request_id AND r.organization_id = e.organization_id
+    WHERE e.id = ? AND e.payment_backend = 'commerce_elements' AND e.provider_transaction_id = ?`)
+      .bind(execution.id, execution.provider_transaction_id)
+      .first<{
+        provider_customer_id: string;
+        provider_payment_method_id: string;
+        amount_minor: number;
+        currency: string;
+      }>();
+  if (!expected || !execution.provider_transaction_id)
+    throw new ApiError(
+      409,
+      "easy_pay_direct_order_evidence_mismatch",
+      "Payment confirmation needs review.",
+    );
+  const epd = await import("../providers/easy-pay-direct-elements");
+  const result = await epd.getEasyPayDirectElementsOrder(
+    env,
+    execution.provider_transaction_id,
+    fetcher,
+  );
+  return epd.validateEasyPayDirectElementsOrder(result.evidence, {
+    orderId: execution.provider_transaction_id,
+    customerId: expected.provider_customer_id,
+    paymentMethodId: expected.provider_payment_method_id,
+    amountMinor: expected.amount_minor,
+    currency: expected.currency,
+  });
+}
+
+// A later verified success can supersede a failed event. Select this from the
+// durable ledger, not a second webhook write: interruption after settlement must
+// not strand recurring setup. The exact known order can only be read, not charged.
+const PAID_FAILED_EXECUTION_SQL = `status = 'failed' AND provider_transaction_id IS NOT NULL
+ AND EXISTS (SELECT 1 FROM payment_request_payments paid
+   JOIN payment_requests request ON request.id = paid.payment_request_id
+     AND request.organization_id = paid.organization_id
+   WHERE paid.organization_id = easy_pay_direct_payment_executions.organization_id
+     AND paid.payment_request_id = easy_pay_direct_payment_executions.payment_request_id
+     AND paid.provider = 'easy_pay_direct'
+     AND paid.provider_account_code = easy_pay_direct_payment_executions.provider_account_code
+     AND paid.provider_transaction_id = easy_pay_direct_payment_executions.provider_transaction_id
+     AND paid.status = 'succeeded' AND paid.amount_minor = request.amount_minor
+     AND paid.currency = request.currency)`;
 
 export async function pendingEasyPayDirectExecutions(
   database: D1Database,
@@ -57,19 +113,26 @@ export async function pendingEasyPayDirectExecutions(
   const result = await database
     .prepare(
       `SELECT id FROM easy_pay_direct_payment_executions
-     WHERE (status IN ('processing', 'unknown')
+     WHERE (charge_transport IN ('gateway', 'commerce') AND status IN ('processing', 'unknown')
        AND (provider_transaction_id IS NOT NULL
+            OR (payment_backend = 'gateway_vault' AND ? = 'gateway_test' AND (status = 'unknown' OR julianday(updated_at) <= julianday('now', '-2 minutes')))
             OR (customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL
                 AND length(phone_ciphertext) > 0 AND length(phone_iv) > 0
                 AND COALESCE(failure_code, '') <> 'easy_pay_direct_recovery_checkpoint_missing'
                 AND (? <> 'production' OR (length(gateway_billing_id) BETWEEN 1 AND 32
                      AND gateway_billing_id NOT GLOB '*[^0-9]*'))
                 AND ${EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL}
+                AND ${EASY_PAY_DIRECT_REPLAY_WINDOW_SQL}
                 AND COALESCE(failure_code, '') NOT IN (${EASY_PAY_DIRECT_SETUP_REVIEW_CODES.map(() => "?").join(", ")}))))
        OR (status = 'succeeded' AND ${EASY_PAY_DIRECT_TAX_COMMIT_PENDING_SQL})
+       OR (charge_transport IN ('gateway', 'commerce') AND (${PAID_FAILED_EXECUTION_SQL}))
      ORDER BY updated_at ASC, id ASC LIMIT 100`,
     )
-    .bind(networkMode ?? "production", ...EASY_PAY_DIRECT_SETUP_REVIEW_CODES)
+    .bind(
+      networkMode ?? "production",
+      networkMode ?? "production",
+      ...EASY_PAY_DIRECT_SETUP_REVIEW_CODES,
+    )
     .all<{ id: string }>();
   return result.results.map((row) => row.id);
 }
@@ -109,8 +172,14 @@ async function reconcileExecution(
   executionId: string,
   fetcher: typeof fetch,
 ): Promise<"processed" | "deferred"> {
+  await env.BILLING_DB.prepare(`UPDATE easy_pay_direct_payment_executions
+    SET status = 'unknown', completed_at = NULL, failure_code = 'easy_pay_direct_paid_followup_pending',
+        failure_message = 'Payment confirmed; saved-card setup needs a verified provider read'
+    WHERE id = ? AND (${PAID_FAILED_EXECUTION_SQL})`)
+    .bind(executionId)
+    .run();
   let execution = await env.BILLING_DB.prepare(
-    `SELECT id, status, organization_id, payment_request_id, provider_account_code,
+    `SELECT id, charge_transport, payment_backend, status, organization_id, payment_request_id, provider_account_code,
             provider_transaction_id
      FROM easy_pay_direct_payment_executions
      WHERE id = ? AND (status IN ('processing', 'unknown')
@@ -136,6 +205,12 @@ async function reconcileExecution(
       ? "deferred"
       : "processed";
   }
+  if (execution.charge_transport === "gateway") {
+    // A lost Gateway sale response has no Commerce vault/order checkpoint.
+    // Recover only through its stable request order ID, never resume a charge.
+    return reconcileEasyPayDirectGatewayTestExecution(env, execution.id, fetcher);
+  }
+  if (execution.charge_transport !== "commerce") return "deferred";
   if (execution.provider_transaction_id) {
     // Fair oldest-attempt ordering, without extending a pre-order claim lease.
     await env.BILLING_DB.prepare(
@@ -149,7 +224,7 @@ async function reconcileExecution(
     const resumed = await resumeEasyPayDirectExecution(env, executionId, fetcher);
     if (resumed === "deferred") return "deferred";
     execution = await env.BILLING_DB.prepare(
-      `SELECT id, status, organization_id, payment_request_id, provider_account_code,
+      `SELECT id, charge_transport, payment_backend, status, organization_id, payment_request_id, provider_account_code,
               provider_transaction_id
        FROM easy_pay_direct_payment_executions
        WHERE id = ? AND status IN ('processing', 'unknown') LIMIT 1`,
@@ -159,10 +234,10 @@ async function reconcileExecution(
     if (!execution?.provider_transaction_id) return "deferred";
   }
 
-  if (env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test") {
-    return reconcileEasyPayDirectGatewayTestExecution(env, execution.id, fetcher);
-  }
-  const order = await getEasyPayDirectOrder(env, execution.provider_transaction_id, fetcher);
+  const order =
+    execution.payment_backend === "commerce_elements"
+      ? await readElementsExecutionOrder(env, execution, fetcher)
+      : await getEasyPayDirectOrder(env, execution.provider_transaction_id, fetcher);
   if (!order || order.id !== execution.provider_transaction_id) {
     throw new ApiError(
       409,
@@ -309,12 +384,18 @@ export async function reconcileEasyPayDirectReceipt(
   }
   const eventType = event.type?.trim() || receipt.event_type;
   if (eventType.includes("chargeback") || eventType.includes("dispute")) {
-    await reconcileDispute(env.BILLING_DB, receipt, event, eventType);
-    return "processed";
+    return reconcileDispute(env.BILLING_DB, receipt, event, eventType);
   }
   if (eventType !== "order.succeeded" && eventType !== "order.failed") {
     await markIgnored(env.BILLING_DB, receiptId);
     return "processed";
+  }
+  if (event.data?.object?.status !== (eventType === "order.succeeded" ? "succeeded" : "failed")) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_order_evidence_mismatch",
+      "Payment event status needs a verified provider read.",
+    );
   }
   const paymentRequestId =
     event.data?.object?.metadata?.lago_payment_request_id?.trim() ||
@@ -324,6 +405,27 @@ export async function reconcileEasyPayDirectReceipt(
       receipt.provider_transaction_id,
     ));
   if (!paymentRequestId) throw new Error("payment_request_not_found");
+  const automaticExecutionId = event.data?.object?.metadata?.lago_automatic_execution_id;
+  if (automaticExecutionId) {
+    const { reconcileElementsAutomaticWebhook } =
+      await import("../billing/easy-pay-direct-commerce-renewal");
+    const checkpointed = await reconcileElementsAutomaticWebhook(env.BILLING_DB, {
+      organizationId: receipt.organization_id,
+      accountCode: receipt.provider_account_code,
+      paymentRequestId,
+      executionId: automaticExecutionId,
+      order: event.data?.object,
+    });
+    if (!checkpointed) throw new Error("easy_pay_direct_webhook_execution_mismatch");
+    // The automatic collection reader verifies and settles this saved order.
+    // This receipt supplies a recovery identity, not authorization to charge.
+    await env.BILLING_DB.prepare(
+      "UPDATE webhook_receipts SET processed_at = ?, processing_error_code = NULL WHERE id = ?",
+    )
+      .bind(new Date().toISOString(), receiptId)
+      .run();
+    return "processed";
+  }
   await requireEasyPayDirectOrderEvidence(
     env.BILLING_DB,
     receipt.organization_id,
@@ -335,7 +437,7 @@ export async function reconcileEasyPayDirectReceipt(
   // only to the exact local intent, never to a request ID alone. Otherwise the
   // paid-request guard would correctly stop replay but also strand finalization.
   const execution = await env.BILLING_DB.prepare(
-    `SELECT id FROM easy_pay_direct_payment_executions
+    `SELECT id, payment_backend, provider_customer_id, provider_payment_method_id FROM easy_pay_direct_payment_executions
      WHERE organization_id = ? AND provider_account_code = ? AND payment_request_id = ?
        AND (provider_transaction_id = ? OR
          (provider_transaction_id IS NULL AND checkout_intent_id = ? AND status IN ('processing', 'unknown')))
@@ -348,8 +450,30 @@ export async function reconcileEasyPayDirectReceipt(
       receipt.provider_transaction_id,
       event.data?.object?.metadata?.lago_checkout_intent_id ?? null,
     )
-    .first<{ id: string }>();
+    .first<{
+      id: string;
+      payment_backend: string;
+      provider_customer_id: string;
+      provider_payment_method_id: string;
+    }>();
   if (!execution) throw new Error("easy_pay_direct_webhook_execution_mismatch");
+  if (execution.payment_backend === "commerce_elements") {
+    const expected = await env.BILLING_DB.prepare(
+      "SELECT amount_minor, currency FROM payment_requests WHERE id = ? AND organization_id = ?",
+    )
+      .bind(paymentRequestId, receipt.organization_id)
+      .first<{ amount_minor: number; currency: string }>();
+    if (!expected) throw new Error("easy_pay_direct_webhook_execution_mismatch");
+    const { validateEasyPayDirectElementsOrder } =
+      await import("../providers/easy-pay-direct-elements");
+    validateEasyPayDirectElementsOrder(event.data?.object, {
+      orderId: receipt.provider_transaction_id,
+      customerId: execution.provider_customer_id,
+      paymentMethodId: execution.provider_payment_method_id,
+      amountMinor: expected.amount_minor,
+      currency: expected.currency,
+    });
+  }
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_payment_executions
      SET provider_transaction_id = ?, last_checkpoint = 'provider_order', updated_at = ?
@@ -424,38 +548,134 @@ async function reconcileDispute(
   receipt: PendingReceipt,
   event: EasyPayDirectEvent,
   eventType: string,
-): Promise<void> {
+): Promise<"processed" | "deferred"> {
+  // EPD's event envelope uses Unix seconds. Delivery/signature time and our
+  // processing clock cannot establish provider event order, especially on replay.
+  // https://docs.api.epd.com/api-reference/webhooks
+  const timestamp = new Date().toISOString();
+  const created = event.created;
+  if (
+    typeof created !== "number" ||
+    !Number.isSafeInteger(created) ||
+    created <= 0 ||
+    created > Math.floor(Date.now() / 1000) + 300
+  ) {
+    await database.batch([
+      database
+        .prepare(`UPDATE provider_webhook_events SET normalized_status = 'dispute_review',
+        normalized_at = ? WHERE receipt_id = ?`)
+        .bind(timestamp, receipt.receipt_id),
+      database
+        .prepare(`UPDATE webhook_receipts SET processing_error_code =
+        'epd_receipt_review:dispute_clock_unverified' WHERE id = ? AND processed_at IS NULL`)
+        .bind(receipt.receipt_id),
+    ]);
+    return "deferred";
+  }
+  const eventCreatedAt = new Date(created * 1000).toISOString();
   const transactionId = receipt.provider_transaction_id!;
-  const paymentRequestId =
-    event.data?.object?.metadata?.lago_payment_request_id?.trim() ||
-    (await findPaymentRequestId(database, receipt.provider_account_code, transactionId));
+  // A request ID in provider metadata is not proof that this transaction paid
+  // that invoice. Combined requests can cover several invoices; never LIMIT 1.
   const payment = await database
     .prepare(
-      `SELECT attempt.id AS payment_attempt_id, attempt.invoice_id
-       FROM payment_attempts attempt
-       WHERE attempt.organization_id = ? AND attempt.provider = 'easy_pay_direct'
-         AND attempt.provider_account_code = ? AND attempt.provider_transaction_id = ?
-       LIMIT 1`,
+      `WITH scope AS (SELECT ? AS organization_id, ? AS account_code, ? AS transaction_id),
+       paid_invoices AS (
+         SELECT attempt.id AS payment_attempt_id, attempt.invoice_id,
+           attempt.amount_minor AS order_total, attempt.currency,
+           CASE WHEN attempt.currency <> invoice.currency THEN 1 ELSE 0 END AS invalid_money
+         FROM payment_attempts attempt JOIN scope s
+         JOIN invoices invoice ON invoice.id = attempt.invoice_id AND invoice.organization_id = s.organization_id
+         WHERE attempt.organization_id = s.organization_id AND attempt.provider = 'easy_pay_direct'
+           AND attempt.provider_account_code = s.account_code AND attempt.provider_transaction_id = s.transaction_id
+           AND attempt.status = 'succeeded'
+         UNION ALL
+         SELECT NULL, allocation.invoice_id, paid.amount_minor, paid.currency,
+           CASE WHEN paid.currency <> allocation.currency OR paid.currency <> invoice.currency
+             OR paid.currency <> request.currency OR paid.amount_minor <> request.amount_minor
+             OR allocation.amount_minor <> paid.amount_minor THEN 1 ELSE 0 END
+         FROM payment_request_payments paid
+         JOIN payment_request_payment_allocations allocation ON allocation.payment_request_payment_id = paid.id
+           AND allocation.organization_id = paid.organization_id
+         JOIN payment_requests request ON request.id = paid.payment_request_id AND request.organization_id = paid.organization_id
+         JOIN invoices invoice ON invoice.id = allocation.invoice_id AND invoice.organization_id = paid.organization_id
+         JOIN scope s WHERE paid.organization_id = s.organization_id AND paid.provider = 'easy_pay_direct'
+           AND paid.provider_account_code = s.account_code AND paid.provider_transaction_id = s.transaction_id
+           AND paid.status = 'succeeded'
+       ) SELECT COUNT(DISTINCT invoice_id) AS invoice_count,
+         COUNT(DISTINCT order_total) AS amount_versions, MIN(order_total) AS order_total,
+         COUNT(DISTINCT currency) AS currency_versions, MIN(currency) AS currency,
+         SUM(invalid_money) AS invalid_money,
+         MIN(payment_attempt_id) AS payment_attempt_id, MIN(invoice_id) AS invoice_id FROM paid_invoices`,
     )
     .bind(receipt.organization_id, receipt.provider_account_code, transactionId)
-    .first<{ payment_attempt_id: string; invoice_id: string }>();
-  const linkedInvoice = paymentRequestId
-    ? await database
+    .first<{
+      invoice_count: number;
+      payment_attempt_id: string | null;
+      invoice_id: string | null;
+      amount_versions: number;
+      order_total: number | null;
+      currency_versions: number;
+      currency: string | null;
+      invalid_money: number | null;
+    }>();
+  if (payment?.invoice_count !== 1 || !payment.invoice_id) {
+    const ambiguous = Number(payment?.invoice_count ?? 0) > 1;
+    await database.batch([
+      database
+        .prepare(`UPDATE provider_webhook_events SET normalized_status = ?, normalized_at = ?
+        WHERE receipt_id = ?`)
+        .bind(
+          ambiguous ? "dispute_review" : "dispute_waiting_payment",
+          timestamp,
+          receipt.receipt_id,
+        ),
+      database
         .prepare(
-          `SELECT link.invoice_id FROM invoices_payment_requests link
-           WHERE link.organization_id = ? AND link.payment_request_id = ?
-           ORDER BY link.created_at, link.id LIMIT 1`,
+          `UPDATE webhook_receipts SET processing_error_code = ? WHERE id = ? AND processed_at IS NULL`,
         )
-        .bind(receipt.organization_id, paymentRequestId)
-        .first<{ invoice_id: string }>()
-    : null;
-  const invoiceId = payment?.invoice_id ?? linkedInvoice?.invoice_id ?? null;
-  const amountMinor = Number.isSafeInteger(event.data?.object?.total)
-    ? Number(event.data?.object?.total)
-    : 0;
-  const currency = event.data?.object?.currency?.trim().toUpperCase() || "USD";
+        .bind(
+          ambiguous
+            ? "epd_receipt_review:dispute_invoice_link_ambiguous"
+            : "epd_dispute_payment_link_pending",
+          receipt.receipt_id,
+        ),
+    ]);
+    return "deferred";
+  }
+  const invoiceId = payment.invoice_id;
+  // This adapter understands an order snapshot, whose `total` is the settled
+  // order total in minor units. It must not interpret an arbitrary dispute's
+  // partial `amount` as that total. Unknown payload shapes remain review-held.
+  // https://docs.api.epd.com/api-reference/orders
+  const object = event.data?.object;
+  const amountMinor = object?.total;
+  const currency = typeof object?.currency === "string" ? object.currency.toUpperCase() : "";
+  if (
+    object?.object !== "order" ||
+    object.id !== transactionId ||
+    typeof amountMinor !== "number" ||
+    !Number.isSafeInteger(amountMinor) ||
+    amountMinor <= 0 ||
+    !/^[A-Z]{3}$/.test(currency) ||
+    payment.amount_versions !== 1 ||
+    payment.currency_versions !== 1 ||
+    payment.invalid_money !== 0 ||
+    amountMinor !== payment.order_total ||
+    currency !== payment.currency
+  ) {
+    await database.batch([
+      database
+        .prepare(`UPDATE provider_webhook_events SET normalized_status='dispute_review', normalized_at=?
+        WHERE receipt_id=?`)
+        .bind(timestamp, receipt.receipt_id),
+      database
+        .prepare(`UPDATE webhook_receipts SET processing_error_code='epd_receipt_review:dispute_money_unverified'
+        WHERE id=? AND processed_at IS NULL`)
+        .bind(receipt.receipt_id),
+    ]);
+    return "deferred";
+  }
   const status = normalizeDisputeStatus(eventType, event.data?.object?.status);
-  const timestamp = new Date().toISOString();
   const providerDisputeId = transactionId;
   const disputeId = await deterministicUuid(
     "easy-pay-direct-dispute",
@@ -471,8 +691,9 @@ async function reconcileDispute(
          (id, organization_id, provider, provider_account_code, provider_dispute_id,
           payment_attempt_id, invoice_id, provider_payment_intent_id, provider_charge_id,
           amount_minor, currency, reason, status, evidence_due_by, livemode,
-          provider_created_at, last_provider_event_created_at, created_at, updated_at)
-         VALUES (?, ?, 'easy_pay_direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+          provider_created_at, last_provider_event_created_at, created_at, updated_at,
+          last_provider_event_receipt_id)
+         VALUES (?, ?, 'easy_pay_direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(provider, provider_account_code, provider_dispute_id) DO UPDATE SET
            payment_attempt_id = COALESCE(payment_disputes.payment_attempt_id,
                                          excluded.payment_attempt_id),
@@ -481,7 +702,14 @@ async function reconcileDispute(
                                THEN excluded.amount_minor ELSE payment_disputes.amount_minor END,
            currency = excluded.currency, reason = excluded.reason, status = excluded.status,
            last_provider_event_created_at = excluded.last_provider_event_created_at,
-           updated_at = excluded.updated_at`,
+           last_provider_event_receipt_id = excluded.last_provider_event_receipt_id,
+           updated_at = excluded.updated_at
+         WHERE payment_disputes.organization_id = excluded.organization_id
+           AND payment_disputes.last_provider_event_receipt_id IS NOT NULL
+           AND payment_disputes.livemode = excluded.livemode
+           AND (payment_disputes.invoice_id IS NULL OR excluded.invoice_id IS NULL
+                OR payment_disputes.invoice_id = excluded.invoice_id)
+           AND excluded.last_provider_event_created_at > payment_disputes.last_provider_event_created_at`,
       )
       .bind(
         disputeId,
@@ -497,35 +725,67 @@ async function reconcileDispute(
         reason.slice(0, 500),
         status,
         livemode,
+        eventCreatedAt,
+        eventCreatedAt,
         timestamp,
         timestamp,
-        timestamp,
-        timestamp,
+        receipt.receipt_id,
       ),
     database
       .prepare(
-        `UPDATE provider_webhook_events
-         SET invoice_id = ?, normalized_status = ?, normalized_at = ? WHERE receipt_id = ?`,
+        `UPDATE provider_webhook_events SET invoice_id = ?, normalized_at = ?,
+         normalized_status = COALESCE((SELECT CASE
+           WHEN last_provider_event_receipt_id IS NULL OR organization_id <> ? OR livemode <> ?
+             OR (invoice_id IS NOT NULL AND invoice_id IS NOT ?)
+             THEN 'dispute_review'
+           WHEN last_provider_event_created_at > ? THEN 'ignored_stale'
+           WHEN last_provider_event_created_at = ? AND status = ? AND amount_minor = ?
+             AND currency = ? AND reason = ? THEN status
+           ELSE 'dispute_review' END FROM payment_disputes
+           WHERE provider = 'easy_pay_direct' AND provider_account_code = ? AND provider_dispute_id = ?), 'dispute_review')
+         WHERE receipt_id = ? RETURNING normalized_status`,
       )
-      .bind(invoiceId, status, timestamp, receipt.receipt_id),
+      .bind(
+        invoiceId,
+        timestamp,
+        receipt.organization_id,
+        livemode,
+        invoiceId,
+        eventCreatedAt,
+        eventCreatedAt,
+        status,
+        amountMinor,
+        currency,
+        reason.slice(0, 500),
+        receipt.provider_account_code,
+        providerDisputeId,
+        receipt.receipt_id,
+      ),
     database
       .prepare(
         `UPDATE webhook_receipts
-         SET processed_at = ?, processing_error_code = NULL WHERE id = ?`,
+         SET processed_at = CASE WHEN (SELECT normalized_status FROM provider_webhook_events
+             WHERE receipt_id = ?) = 'dispute_review' THEN NULL ELSE ? END,
+           processing_error_code = CASE WHEN (SELECT normalized_status FROM provider_webhook_events
+             WHERE receipt_id = ?) = 'dispute_review'
+             THEN 'epd_receipt_review:dispute_ordering_conflict' ELSE NULL END WHERE id = ?`,
       )
-      .bind(timestamp, receipt.receipt_id),
+      .bind(receipt.receipt_id, timestamp, receipt.receipt_id, receipt.receipt_id),
   ];
   if (invoiceId && status === "lost") {
     statements.push(
       database
         .prepare(
           `UPDATE invoices SET payment_dispute_lost_at = COALESCE(payment_dispute_lost_at, ?),
-             updated_at = ? WHERE id = ? AND organization_id = ?`,
+             updated_at = ? WHERE id = ? AND organization_id = ?
+               AND EXISTS (SELECT 1 FROM provider_webhook_events
+                 WHERE receipt_id = ? AND normalized_status = 'lost')`,
         )
-        .bind(timestamp, timestamp, invoiceId, receipt.organization_id),
+        .bind(eventCreatedAt, timestamp, invoiceId, receipt.organization_id, receipt.receipt_id),
     );
   }
-  await database.batch(statements);
+  const results = await database.batch<{ normalized_status: string }>(statements);
+  return results[1]?.results[0]?.normalized_status === "dispute_review" ? "deferred" : "processed";
 }
 
 function normalizeDisputeStatus(eventType: string, condition: string | undefined) {

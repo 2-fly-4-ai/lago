@@ -1,4 +1,6 @@
 import type { AuthContext } from "../auth/api-key";
+import { showInvoiceFulfillment } from "./invoice-fulfillment";
+import { handleFulfillmentSourceRequest } from "./fulfillment-source";
 import { holdCustomerForClosure, holdEmailForClosure } from "./customer-closure";
 import { sha256Hex } from "../auth/api-key";
 import { ApiError, json, objectAt, optionalString, parseJsonObject, requiredString } from "../http";
@@ -193,6 +195,14 @@ export async function handleLagoCompatibilityRequest(
 ): Promise<Response | null> {
   const url = new URL(request.url);
 
+  const fulfillmentSourceResponse = await handleFulfillmentSourceRequest(
+    request,
+    env,
+    auth,
+    requestId,
+  );
+  if (fulfillmentSourceResponse) return fulfillmentSourceResponse;
+
   const planResponse = await handlePlanCatalogRequest(request, env, auth, requestId);
   if (planResponse) return planResponse;
 
@@ -263,6 +273,16 @@ export async function handleLagoCompatibilityRequest(
 
   if (request.method === "GET" && url.pathname === "/api/v1/invoices") {
     return listInvoices(url, env.BILLING_DB, auth, requestId);
+  }
+
+  const fulfillmentMatch = url.pathname.match(/^\/api\/v1\/invoices\/([^/]+)\/fulfillment$/);
+  if (request.method === "GET" && fulfillmentMatch?.[1]) {
+    return showInvoiceFulfillment(
+      decodeURIComponent(fulfillmentMatch[1]),
+      env.BILLING_DB,
+      auth,
+      requestId,
+    );
   }
 
   const invoiceMatch = url.pathname.match(/^\/api\/v1\/invoices\/([^/]+)$/);
@@ -2879,6 +2899,25 @@ async function generateInvoicePaymentUrl(
         "Payment provider mutations are disabled",
       );
     }
+    if (!env.EASY_PAY_DIRECT_ORGANIZATION_ID?.trim() || !env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim()) {
+      throw new ApiError(
+        503,
+        "easy_pay_direct_not_configured",
+        "Easy Pay Direct checkout is not configured.",
+      );
+    }
+    if (
+      auth.organizationId !== env.EASY_PAY_DIRECT_ORGANIZATION_ID ||
+      (invoice.payment_provider_code ?? "default") !== env.EASY_PAY_DIRECT_ACCOUNT_CODE
+    ) {
+      // Generating a URL must not implicitly rebind a customer or mint a link
+      // that the actual checkout transport will reject for a different scope.
+      throw new ApiError(
+        409,
+        "easy_pay_direct_checkout_scope_mismatch",
+        "This invoice is not mapped to the configured Easy Pay Direct account.",
+      );
+    }
     const paymentRequest = await env.BILLING_DB.prepare(
       `SELECT request.id, request.version
        FROM payment_requests request
@@ -2907,31 +2946,91 @@ async function generateInvoicePaymentUrl(
         return callback();
       },
     } as unknown as WorkflowStep;
-    await runCheckoutWorkflow(
-      env,
-      {
-        organizationId: auth.organizationId,
-        paymentRequestId: paymentRequest.id,
-        paymentRequestVersion: paymentRequest.version,
-        idempotencyKey,
-        correlationId: requestId,
-      },
-      inlineStep,
-    );
-    const intent = await env.BILLING_DB.prepare(
-      `SELECT payment_url, status, failure_code
-       FROM payment_request_checkout_intents
-       WHERE organization_id = ? AND payment_request_id = ?
-         AND payment_request_version = ? AND provider = 'easy_pay_direct'
-       ORDER BY created_at DESC LIMIT 1`,
-    )
-      .bind(auth.organizationId, paymentRequest.id, paymentRequest.version)
-      .first<{ payment_url: string | null; status: string; failure_code: string | null }>();
+    // Tax repricing already creates the unique intent for the new request
+    // version, using a tax-specific idempotency key. Re-running the canonical
+    // workflow would collide with that intent, not create a fresh payment URL.
+    const readIntent = () =>
+      env.BILLING_DB.prepare(
+        `SELECT intent.payment_url, intent.status, intent.failure_code, intent.expires_at,
+              intent.amount_minor, intent.currency, intent.customer_id, intent.provider_account_code
+       FROM payment_request_checkout_intents intent
+       JOIN payment_requests request ON request.id = intent.payment_request_id
+         AND request.organization_id = intent.organization_id
+         AND request.version = intent.payment_request_version
+         AND request.amount_minor = intent.amount_minor AND request.currency = intent.currency
+         AND request.customer_id = intent.customer_id
+       WHERE intent.organization_id = ? AND intent.payment_request_id = ?
+         AND intent.payment_request_version = ? AND intent.provider = 'easy_pay_direct'
+         AND request.payment_status <> 'succeeded' AND request.ready_for_payment_processing = 1
+       LIMIT 1`,
+      )
+        .bind(auth.organizationId, paymentRequest.id, paymentRequest.version)
+        .first<{
+          payment_url: string | null;
+          status: string;
+          failure_code: string | null;
+          expires_at: string | null;
+          amount_minor: number;
+          currency: string;
+          customer_id: string;
+          provider_account_code: string;
+        }>();
+    let intent = await readIntent();
+    if (!intent) {
+      try {
+        await runCheckoutWorkflow(
+          env,
+          {
+            organizationId: auth.organizationId,
+            paymentRequestId: paymentRequest.id,
+            paymentRequestVersion: paymentRequest.version,
+            idempotencyKey,
+            correlationId: requestId,
+          },
+          inlineStep,
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message === "payment_request_checkout_state_changed") {
+          throw new ApiError(
+            409,
+            "payment_url_state_changed",
+            "Invoice checkout changed; request its current payment URL again.",
+          );
+        }
+        throw error;
+      }
+      intent = await readIntent();
+    }
     if (!intent?.payment_url || intent.status !== "succeeded") {
       throw new ApiError(
         409,
         intent?.failure_code ?? "payment_url_creation_in_progress",
         "Easy Pay Direct checkout URL is not ready",
+      );
+    }
+    if (
+      intent.amount_minor !== outstandingMinor ||
+      intent.currency !== invoice.currency ||
+      intent.customer_id !== invoice.customer_id ||
+      intent.provider_account_code !== (invoice.payment_provider_code ?? "default")
+    ) {
+      throw new ApiError(
+        409,
+        "payment_url_state_changed",
+        "Invoice checkout no longer matches the payable invoice.",
+      );
+    }
+    if (
+      !intent.expires_at ||
+      !Number.isFinite(Date.parse(intent.expires_at)) ||
+      Date.parse(intent.expires_at) <= Date.now()
+    ) {
+      // An expired intent may already have an uncertain payment execution. Do
+      // not silently replace it, reset its execution, or return a dead link.
+      throw new ApiError(
+        410,
+        "easy_pay_direct_checkout_expired",
+        "This checkout link has expired and needs a fresh checkout after payment status is reviewed.",
       );
     }
     return paymentUrlResponse(invoice, intent.payment_url, requestId);
