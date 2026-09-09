@@ -62,6 +62,31 @@ product checkpoint for the held execution. It must never be replayed; a fresh ch
 
 ## Evidence and remaining verification
 
+### Final isolated validation on the direct-Gateway candidate
+
+- The currently deployed production Worker is version
+  `908c019f-f2fa-478a-80ff-09fb90a189ef`, uploaded from commit `eb727bd`. That
+  revision predates the production `gateway_direct` selection. The observed Sprout failure is
+  therefore the known mixed-transport incident, not evidence against the repaired path.
+- Candidate Lago commit `2b08265fea8bcd0729182349978c92fdd40abeac` keeps live mode disabled in
+  isolated staging and enables only supervised sandbox payment mutations. It is deployed there as
+  version `d4d21026-1679-4346-bd5a-58fc13035018`.
+- A fresh Store-origin monthly checkout on that version completed through the real EPD full-test
+  Gateway for USD 4.50 after the USD 4.50 regional discount. Durable readback found one successful
+  Gateway execution, one active reusable vault profile, one paid Store order, one acknowledged
+  source projection, active Auth access and exactly one sent Slack notification.
+- The same browser harness demonstrated Gateway duplicate protection with a second test-card
+  attempt; no provider transaction ID or charge was created for the rejected attempt.
+- Store commit `540177fc78c491b19ac097a20091886c738563af` passes its frozen release gate:
+  1,068 tests, the Store/Auth contract and typecheck. It also gives a newly paid, unverified buyer a
+  typed “payment received — verify your email” state instead of silently polling. Lago passes 100
+  Worker test files / 1,176
+  tests plus formatting, lint, Access, checkout UI, Gateway contract, tax, generated inventory,
+  typecheck and every development/production dry-run build.
+- Production test cards are not valid canary instruments. After the repaired live Worker is
+  approved and deployed, a human must use a real card for the narrowly scoped Sprout canary. EPD
+  sandbox cards remain confined to the isolated full-test Gateway.
+
 - The failed production checkout was a pre-charge integration failure, not a decline. Its generic
   status page is permanently closed by design and no provider transaction was created.
 - EPD's authenticated Gateway developer documentation and full-test account establish the direct
