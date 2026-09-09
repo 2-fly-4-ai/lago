@@ -6,6 +6,11 @@ import {
 } from "../api/easy-pay-direct-tax";
 import type { DomainEvent } from "../domain-events";
 import { deterministicUuid } from "../identifiers";
+import { ApiError } from "../http";
+import {
+  requireEasyPayDirectOrderEvidence,
+  hasSuccessfulEasyPayDirectPayment,
+} from "./easy-pay-direct-order-evidence";
 import { stableJson } from "../json";
 import {
   chargeEasyPayDirectStoredMethod,
@@ -15,6 +20,14 @@ import {
 import { reconcilePaymentRequest, type PendingReceipt } from "../reconciliation/authorize-net";
 import { decryptBillingAddress } from "../tax/billing-address-vault";
 import { calculateLocalD1Tax } from "../tax/local-d1";
+import { checkoutTaxSnapshotStatements } from "../tax/checkout-tax-snapshots";
+import { NO_IN_FLIGHT_EPD_PAYMENT_FOR_INVOICE_SQL } from "./easy-pay-direct-in-flight";
+import { easyPayDirectOutstandingInvoiceBalanceSql } from "./easy-pay-direct-recovery-policy";
+import {
+  chargeCommerceRenewal,
+  readCommerceRenewal,
+  commerceRenewalSandboxAllowed,
+} from "./easy-pay-direct-commerce-renewal";
 
 type RenewalCandidate = {
   invoice_id: string;
@@ -31,8 +44,11 @@ type RenewalCandidate = {
   invoice_version: number;
   plan_interval: string;
   provider_profile_id: string;
-  gateway_customer_vault_id: string;
-  initial_transaction_id: string;
+  gateway_customer_vault_id: string | null;
+  initial_transaction_id: string | null;
+  payment_backend: "gateway_vault" | "commerce_elements";
+  provider_customer_id: string;
+  provider_payment_method_id: string | null;
 };
 
 type AutomaticExecution = {
@@ -43,8 +59,16 @@ type AutomaticExecution = {
   provider_profile_id: string;
   provider_account_code: string;
   request_sha256: string;
-  gateway_customer_vault_id: string;
-  initial_transaction_id: string;
+  gateway_customer_vault_id: string | null;
+  initial_transaction_id: string | null;
+  payment_backend: "gateway_vault" | "commerce_elements";
+  commerce_customer_id: string | null;
+  commerce_payment_method_id: string | null;
+  product_idempotency_key: string | null;
+  order_idempotency_key: string | null;
+  commerce_product_id: string | null;
+  commerce_order_id: string | null;
+  order_submit_started_at: string | null;
   order_reference: string;
   status: "pending" | "processing" | "succeeded" | "failed" | "unknown";
   provider_transaction_id: string | null;
@@ -68,25 +92,22 @@ type SourceTaxQuote = {
 };
 
 export type AutomaticCollectionOutcome = "processed" | "deferred" | "not_applicable";
-type CollectionScopeMode = "scoped" | "product_scoped" | "all";
-
-function productPolicyEligibilitySql(mode: CollectionScopeMode): string {
-  if (mode !== "product_scoped") return "1 = 1";
-  return `EXISTS (
-    SELECT 1 FROM subscription_checkout_products attribution
-    JOIN easy_pay_direct_product_collection_policies policy
-      ON policy.organization_id = attribution.organization_id
-      AND policy.product_slug = attribution.product_slug AND policy.status = 'enabled'
-    WHERE attribution.subscription_id = subscription.id
-      AND attribution.organization_id = subscription.organization_id
-  )`;
-}
+import {
+  automaticCollectionScopeMode,
+  configuredAutomaticCollectionScope,
+  productPolicyEligibilitySql,
+  recurringSubscriptionEligibilitySql,
+  savedProfileEligibilitySql,
+  type CollectionScopeMode,
+} from "./easy-pay-direct-renewal-eligibility";
 
 // Only proven paid checkouts can enroll; neither shared plans nor a customer's
 // latest metadata authorize another subscription. Operator-disabled scopes stay off.
 export async function enrollProductScopedAutomaticCollections(
   database: D1Database,
+  configuredScope: { organizationId: string; accountCode: string },
 ): Promise<number> {
+  if (!configuredScope.organizationId.trim() || !configuredScope.accountCode.trim()) return 0;
   const now = new Date().toISOString();
   const result = await database
     .prepare(`
@@ -110,9 +131,9 @@ export async function enrollProductScopedAutomaticCollections(
       AND execution.organization_id = subscription.organization_id
       AND execution.status = 'succeeded' AND execution.terms_accepted_at IS NOT NULL
     WHERE subscription.status IN ('active', 'past_due') AND subscription.payment_method_type = 'provider'
+      AND subscription.organization_id = ? AND profile.provider_account_code = ?
       AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
-      AND profile.initial_transaction_id IS NOT NULL AND profile.initial_transaction_id <> ''
-      AND profile.gateway_customer_vault_id IS NOT NULL AND profile.gateway_customer_vault_id <> ''
+      AND ${savedProfileEligibilitySql()}
       AND customer.payment_provider = 'easy_pay_direct'
       AND profile.provider_account_code = COALESCE(customer.payment_provider_code, 'default')
       AND ${productPolicyEligibilitySql("product_scoped")}
@@ -128,7 +149,7 @@ export async function enrollProductScopedAutomaticCollections(
       )
     ON CONFLICT(subscription_id) DO NOTHING
   `)
-    .bind(now, now)
+    .bind(now, now, configuredScope.organizationId, configuredScope.accountCode)
     .run();
   return result.meta.changes;
 }
@@ -140,14 +161,21 @@ export async function prepareEasyPayDirectAutomaticCollection(
   fetcher: typeof fetch = fetch,
 ): Promise<AutomaticCollectionOutcome> {
   if (!automaticCollectionEnabled(env)) return "not_applicable";
-  const existing = await executionForInvoice(env.BILLING_DB, invoiceId);
+  const configuredScope = configuredAutomaticCollectionScope(env);
+  if (!configuredScope) return "not_applicable";
+  const existing = await executionForInvoice(env.BILLING_DB, invoiceId, configuredScope);
   if (existing) return "processed";
   const candidate = await loadRenewalCandidate(
     env.BILLING_DB,
     invoiceId,
     automaticCollectionScopeMode(env),
   );
-  if (!candidate) return "not_applicable";
+  if (
+    !candidate ||
+    candidate.organization_id !== configuredScope.organizationId ||
+    candidate.provider_account_code !== configuredScope.accountCode
+  )
+    return "not_applicable";
 
   const now = new Date().toISOString();
   let amountMinor = candidate.total_due_minor;
@@ -156,10 +184,19 @@ export async function prepareEasyPayDirectAutomaticCollection(
 
   if (env.EASY_PAY_DIRECT_TAX_MODE === "enforced") {
     if (env.EASY_PAY_DIRECT_TAX_PROVIDER !== "local_d1") {
-      throw new Error("easy_pay_direct_automatic_tax_provider_unsupported");
+      throw new ApiError(
+        503,
+        "easy_pay_direct_automatic_tax_provider_unsupported",
+        "easy_pay_direct_automatic_tax_provider_unsupported",
+      );
     }
     const source = await latestCommittedTaxQuote(env.BILLING_DB, candidate);
-    if (!source) throw new Error("easy_pay_direct_automatic_tax_address_missing");
+    if (!source)
+      throw new ApiError(
+        503,
+        "easy_pay_direct_automatic_tax_address_missing",
+        "easy_pay_direct_automatic_tax_address_missing",
+      );
     const address = await automaticTaxAddress(env, source);
     const taxableSubtotal = candidate.subtotal_minor - candidate.credits_minor;
     if (!Number.isSafeInteger(taxableSubtotal) || taxableSubtotal <= 0) {
@@ -243,6 +280,21 @@ export async function prepareEasyPayDirectAutomaticCollection(
         candidate.invoice_version,
       ),
     );
+    statements.push(
+      ...(await checkoutTaxSnapshotStatements(env.BILLING_DB, {
+        organizationId: candidate.organization_id,
+        invoiceId: candidate.invoice_id,
+        quoteId,
+        ruleId: calculation.ruleId,
+        country: source.billing_country,
+        collectionMode: calculation.collectionMode,
+        rateResolution: calculation.rateResolution ?? null,
+        subtotalMinor: calculation.subtotalMinor,
+        taxMinor: calculation.taxMinor,
+        currency: candidate.currency,
+        now,
+      })),
+    );
     amountMinor = calculation.totalMinor;
     invoiceVersion += 1;
   }
@@ -312,8 +364,9 @@ export async function prepareEasyPayDirectAutomaticCollection(
       `INSERT INTO easy_pay_direct_automatic_payment_executions
        (id, organization_id, payment_request_id, customer_id, provider_profile_id,
         provider_account_code, request_sha256, gateway_customer_vault_id,
-        initial_transaction_id, order_reference, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+        initial_transaction_id, order_reference, status, created_at, updated_at,
+        payment_backend, commerce_customer_id, commerce_payment_method_id, product_idempotency_key, order_idempotency_key, charge_transport)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       executionId,
       candidate.organization_id,
@@ -327,6 +380,14 @@ export async function prepareEasyPayDirectAutomaticCollection(
       paymentRequestId,
       now,
       now,
+      candidate.payment_backend,
+      candidate.payment_backend === "commerce_elements" ? candidate.provider_customer_id : null,
+      candidate.payment_backend === "commerce_elements"
+        ? candidate.provider_payment_method_id
+        : null,
+      candidate.payment_backend === "commerce_elements" ? crypto.randomUUID() : null,
+      candidate.payment_backend === "commerce_elements" ? crypto.randomUUID() : null,
+      candidate.payment_backend === "commerce_elements" ? "commerce" : "gateway",
     ),
     outboxStatement(env.BILLING_DB, candidate.organization_id, event),
   );
@@ -341,17 +402,26 @@ export async function processEasyPayDirectAutomaticCollection(
   fetcher: typeof fetch = fetch,
 ): Promise<AutomaticCollectionOutcome> {
   if (!automaticCollectionEnabled(env)) return "not_applicable";
+  const configuredScope = configuredAutomaticCollectionScope(env);
+  if (!configuredScope) return "not_applicable";
   let execution = await loadExecution(env.BILLING_DB, paymentRequestId);
   if (!execution) {
     await prepareEasyPayDirectDunningCollection(env, paymentRequestId);
     execution = await loadExecution(env.BILLING_DB, paymentRequestId);
   }
   if (!execution) return "not_applicable";
+  if (
+    execution.organization_id !== configuredScope.organizationId ||
+    execution.provider_account_code !== configuredScope.accountCode
+  )
+    return "not_applicable";
   if (execution.status === "succeeded" || execution.status === "failed") return "processed";
   // A processing lease expiring does not prove that the gateway rejected the charge.
   // Both states are reconciled by provider reads, never by another submission.
   if (execution.status === "unknown" || execution.status === "processing") return "deferred";
   if (String(env.PAYMENT_MUTATIONS_ENABLED) !== "1") return "deferred";
+  if (execution.payment_backend === "commerce_elements" && !commerceRenewalSandboxAllowed(env))
+    return "deferred";
 
   const now = new Date();
   const leaseExpiresAt = new Date(now.getTime() + 2 * 60 * 1000).toISOString();
@@ -361,6 +431,9 @@ export async function processEasyPayDirectAutomaticCollection(
          lease_expires_at = ?, updated_at = ?
      WHERE id = ? AND status = 'pending' AND EXISTS (
        SELECT 1 FROM customers customer WHERE customer.id = easy_pay_direct_automatic_payment_executions.customer_id
+       AND customer.organization_id = easy_pay_direct_automatic_payment_executions.organization_id
+       AND customer.payment_provider = 'easy_pay_direct'
+       AND COALESCE(customer.payment_provider_code, 'default') = easy_pay_direct_automatic_payment_executions.provider_account_code
        AND NOT EXISTS (SELECT 1 FROM customer_closure_holds h WHERE h.customer_id = customer.id)
        AND NOT EXISTS (SELECT 1 FROM customer_closure_email_holds h WHERE h.organization_id = customer.organization_id AND h.email = lower(customer.email))
      ) AND EXISTS (
@@ -370,8 +443,15 @@ export async function processEasyPayDirectAutomaticCollection(
         AND profile.organization_id = request.organization_id
         AND profile.customer_id = request.customer_id
         AND profile.provider = 'easy_pay_direct' AND profile.status = 'active'
-        AND profile.gateway_customer_vault_id = easy_pay_direct_automatic_payment_executions.gateway_customer_vault_id
-        AND profile.initial_transaction_id = easy_pay_direct_automatic_payment_executions.initial_transaction_id
+        AND profile.provider_account_code = easy_pay_direct_automatic_payment_executions.provider_account_code
+        AND profile.payment_backend = easy_pay_direct_automatic_payment_executions.payment_backend
+        AND ((profile.payment_backend = 'gateway_vault'
+          AND profile.gateway_customer_vault_id = easy_pay_direct_automatic_payment_executions.gateway_customer_vault_id
+          AND profile.initial_transaction_id = easy_pay_direct_automatic_payment_executions.initial_transaction_id)
+         OR (profile.payment_backend = 'commerce_elements'
+          AND profile.provider_customer_id = easy_pay_direct_automatic_payment_executions.commerce_customer_id
+          AND profile.provider_payment_method_id = easy_pay_direct_automatic_payment_executions.commerce_payment_method_id))
+        AND ${savedProfileEligibilitySql()}
        WHERE request.id = easy_pay_direct_automatic_payment_executions.payment_request_id
          AND request.payment_status = 'pending' AND request.ready_for_payment_processing = 1
          AND ${recurringInvoiceEligibilitySql(automaticCollectionScopeMode(env))}
@@ -384,29 +464,57 @@ export async function processEasyPayDirectAutomaticCollection(
 
   let transaction: GatewayTransactionResult;
   try {
-    const method = await env.BILLING_DB.prepare(
-      "SELECT gateway_billing_id FROM provider_customer_profiles WHERE id = ? AND organization_id = ?",
-    )
-      .bind(execution.provider_profile_id, execution.organization_id)
-      .first<{ gateway_billing_id: string | null }>();
-    if (!method) throw new Error("easy_pay_direct_renewal_profile_missing");
-    transaction = await chargeEasyPayDirectStoredMethod(
-      env,
-      {
-        amountMinor: execution.amount_minor,
-        currency: execution.currency,
-        customerVaultId: execution.gateway_customer_vault_id,
-        billingId: method.gateway_billing_id,
-        initialTransactionId: execution.initial_transaction_id,
-        orderId: execution.order_reference,
-        orderDescription: `SERP subscription renewal ${execution.payment_request_id}`,
-        idempotencyKey: execution.request_sha256,
-      },
-      fetcher,
-    );
+    if (execution.payment_backend === "commerce_elements") {
+      transaction = await chargeCommerceRenewal(env, execution, fetcher);
+    } else {
+      const method = await env.BILLING_DB.prepare(
+        "SELECT gateway_billing_id FROM provider_customer_profiles WHERE id = ? AND organization_id = ?",
+      )
+        .bind(execution.provider_profile_id, execution.organization_id)
+        .first<{ gateway_billing_id: string | null }>();
+      if (!method) throw new Error("easy_pay_direct_renewal_profile_missing");
+      transaction = await chargeEasyPayDirectStoredMethod(
+        env,
+        {
+          amountMinor: execution.amount_minor,
+          currency: execution.currency,
+          customerVaultId: execution.gateway_customer_vault_id!,
+          billingId: method.gateway_billing_id,
+          initialTransactionId: execution.initial_transaction_id!,
+          orderId: execution.order_reference,
+          orderDescription: `SERP subscription renewal ${execution.payment_request_id}`,
+          idempotencyKey: execution.request_sha256,
+        },
+        fetcher,
+      );
+    }
   } catch {
     await markUnknown(env.BILLING_DB, execution.id, "easy_pay_direct_gateway_outcome_unknown");
     return "deferred";
+  }
+  if (execution.payment_backend !== "commerce_elements") {
+    if (transaction.id?.trim() === "0") transaction = { ...transaction, id: null };
+    const successfulHttp =
+      transaction.httpStatus !== undefined &&
+      transaction.httpStatus >= 200 &&
+      transaction.httpStatus < 300;
+    const definitiveFailure =
+      !transaction.authCode &&
+      ((transaction.rawStatus === "2" && /^2\d{2}$/u.test(transaction.responseCode ?? "")) ||
+        (transaction.rawStatus === "3" && transaction.responseCode === "300" && !transaction.id));
+    // Communication errors, duplicate responses and malformed status tuples are
+    // not declines. Keep the shared invoice locked until a provider GET resolves
+    // them; otherwise dunning could create a second charge. Do not persist code
+    // 300 here: legacy invalid-vault recovery interprets that as definitive.
+    if (!successfulHttp || (transaction.status === "failed" && !definitiveFailure)) {
+      await markUnknown(
+        env.BILLING_DB,
+        execution.id,
+        "easy_pay_direct_gateway_outcome_unknown",
+        transaction.responseText,
+      );
+      return "deferred";
+    }
   }
   if (transaction.orderId && transaction.orderId !== execution.order_reference) {
     await markUnknown(env.BILLING_DB, execution.id, "easy_pay_direct_order_identity_mismatch");
@@ -416,10 +524,24 @@ export async function processEasyPayDirectAutomaticCollection(
     await markUnknown(
       env.BILLING_DB,
       execution.id,
-      transaction.responseCode ?? "easy_pay_direct_gateway_outcome_unknown",
+      execution.payment_backend === "commerce_elements"
+        ? (transaction.responseCode ?? "easy_pay_direct_gateway_outcome_unknown")
+        : "easy_pay_direct_gateway_outcome_unknown",
       transaction.responseText,
     );
     return "deferred";
+  }
+  if (execution.payment_backend !== "commerce_elements" && transaction.status === "succeeded") {
+    // An approval response carries no trustworthy amount/currency. Persist the
+    // exact charge identity before querying; a lost read must NEVER repeat sale.
+    await env.BILLING_DB.prepare(`UPDATE easy_pay_direct_automatic_payment_executions
+      SET provider_transaction_id = ?, status = 'unknown', lease_expires_at = NULL,
+          failure_code = 'easy_pay_direct_approval_requires_evidence', updated_at = ?
+      WHERE id = ? AND status = 'processing'
+        AND (provider_transaction_id IS NULL OR provider_transaction_id = ?)`)
+      .bind(transaction.id, new Date().toISOString(), execution.id, transaction.id)
+      .run();
+    return reconcileEasyPayDirectAutomaticCollection(env, execution.id, fetcher);
   }
   await reconcileAutomaticOutcome(env, execution, transaction);
   return "processed";
@@ -429,12 +551,14 @@ async function prepareEasyPayDirectDunningCollection(
   env: Env,
   paymentRequestId: string,
 ): Promise<void> {
+  const configuredScope = configuredAutomaticCollectionScope(env);
+  if (!configuredScope) return;
   const row = await env.BILLING_DB.prepare(
     `SELECT request.id AS payment_request_id, request.organization_id, request.customer_id,
               request.amount_minor, request.currency,
               COALESCE(customer.payment_provider_code, 'default') AS provider_account_code,
               profile.id AS provider_profile_id, profile.gateway_customer_vault_id,
-              profile.initial_transaction_id
+              profile.initial_transaction_id, profile.payment_backend, profile.provider_customer_id, profile.provider_payment_method_id
        FROM payment_requests request
        JOIN customers customer ON customer.id = request.customer_id
         AND customer.organization_id = request.organization_id
@@ -445,16 +569,19 @@ async function prepareEasyPayDirectDunningCollection(
         AND profile.provider_account_code = COALESCE(customer.payment_provider_code, 'default')
         AND profile.status = 'active'
        WHERE request.id = ? AND request.source = 'dunning'
+         AND request.organization_id = ? AND profile.provider_account_code = ?
          AND request.payment_status = 'pending' AND request.ready_for_payment_processing = 1
          AND customer.payment_provider = 'easy_pay_direct'
-         AND profile.gateway_customer_vault_id IS NOT NULL
-         AND profile.initial_transaction_id IS NOT NULL
-         AND lower(profile.gateway_customer_vault_id) NOT LIKE 'vault-test-%'
-         AND lower(profile.gateway_customer_vault_id) NOT LIKE 'synthetic-%'
+         AND ${savedProfileEligibilitySql()}
          AND ${recurringInvoiceEligibilitySql(automaticCollectionScopeMode(env))}
        LIMIT 1`,
   )
-    .bind(paymentRequestId, automaticCollectionScopeMode(env))
+    .bind(
+      paymentRequestId,
+      configuredScope.organizationId,
+      configuredScope.accountCode,
+      automaticCollectionScopeMode(env),
+    )
     .first<{
       payment_request_id: string;
       organization_id: string;
@@ -463,8 +590,11 @@ async function prepareEasyPayDirectDunningCollection(
       currency: string;
       provider_account_code: string;
       provider_profile_id: string;
-      gateway_customer_vault_id: string;
-      initial_transaction_id: string;
+      gateway_customer_vault_id: string | null;
+      initial_transaction_id: string | null;
+      payment_backend: "gateway_vault" | "commerce_elements";
+      provider_customer_id: string;
+      provider_payment_method_id: string | null;
     }>();
   if (!row) return;
   const executionId = await deterministicUuid(
@@ -485,8 +615,9 @@ async function prepareEasyPayDirectDunningCollection(
     `INSERT INTO easy_pay_direct_automatic_payment_executions
        (id, organization_id, payment_request_id, customer_id, provider_profile_id,
         provider_account_code, request_sha256, gateway_customer_vault_id,
-        initial_transaction_id, order_reference, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        initial_transaction_id, order_reference, status, created_at, updated_at,
+        payment_backend, commerce_customer_id, commerce_payment_method_id, product_idempotency_key, order_idempotency_key, charge_transport)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(payment_request_id) DO NOTHING`,
   )
     .bind(
@@ -502,6 +633,12 @@ async function prepareEasyPayDirectDunningCollection(
       row.payment_request_id,
       now,
       now,
+      row.payment_backend,
+      row.payment_backend === "commerce_elements" ? row.provider_customer_id : null,
+      row.payment_backend === "commerce_elements" ? row.provider_payment_method_id : null,
+      row.payment_backend === "commerce_elements" ? crypto.randomUUID() : null,
+      row.payment_backend === "commerce_elements" ? crypto.randomUUID() : null,
+      row.payment_backend === "commerce_elements" ? "commerce" : "gateway",
     )
     .run();
 }
@@ -509,7 +646,7 @@ async function prepareEasyPayDirectDunningCollection(
 // Every linked invoice must be eligible; one scoped invoice must not authorize a
 // mixed request containing unscoped or one-time purchases.
 function recurringInvoiceEligibilitySql(mode: CollectionScopeMode): string {
-  return `EXISTS (
+  return `${easyPayDirectOutstandingInvoiceBalanceSql("request")} AND EXISTS (
     SELECT 1 FROM invoices_payment_requests link WHERE link.payment_request_id = request.id
   ) AND NOT EXISTS (
     SELECT 1 FROM invoices_payment_requests link
@@ -527,16 +664,8 @@ function recurringInvoiceEligibilitySql(mode: CollectionScopeMode): string {
       OR invoice.status IS NOT 'finalized' OR invoice.payment_status = 'succeeded'
       OR invoice.ready_for_payment_processing IS NOT 1
       OR invoice.version IS NOT link.invoice_version OR invoice.currency IS NOT request.currency
-      OR subscription.payment_method_type IS NOT 'provider'
-      OR subscription.payment_method_id IS NOT profile.id
-      OR subscription.status NOT IN ('active', 'past_due')
-      OR plan.interval NOT IN ('weekly', 'monthly', 'quarterly', 'yearly')
-      OR NOT (${productPolicyEligibilitySql(mode)})
-      OR (? <> 'all' AND NOT EXISTS (
-        SELECT 1 FROM easy_pay_direct_automatic_collection_scopes scope
-        WHERE scope.subscription_id = subscription.id
-          AND scope.organization_id = request.organization_id AND scope.status = 'enabled'
-      ))
+      OR NOT (${NO_IN_FLIGHT_EPD_PAYMENT_FOR_INVOICE_SQL})
+      OR NOT COALESCE((${recurringSubscriptionEligibilitySql(mode)}), 0)
     )
   )`;
 }
@@ -547,11 +676,20 @@ export async function reconcileEasyPayDirectAutomaticCollection(
   fetcher: typeof fetch = fetch,
 ): Promise<AutomaticCollectionOutcome> {
   const execution = await loadExecutionById(env.BILLING_DB, executionId);
+  const configuredScope = configuredAutomaticCollectionScope(env);
+  if (
+    !configuredScope ||
+    (execution &&
+      (execution.organization_id !== configuredScope.organizationId ||
+        execution.provider_account_code !== configuredScope.accountCode))
+  )
+    return "not_applicable";
   if (!execution || execution.status === "succeeded" || execution.status === "failed") {
     return "processed";
   }
   if (
     execution.status === "unknown" &&
+    execution.payment_backend === "gateway_vault" &&
     execution.provider_transaction_id === null &&
     isInvalidCustomerVaultFailure(execution.failure_code, execution.failure_message)
   ) {
@@ -568,23 +706,48 @@ export async function reconcileEasyPayDirectAutomaticCollection(
     return "processed";
   }
   if (String(env.PROVIDER_READS_ENABLED) !== "1") return "deferred";
-  const transaction = await findEasyPayDirectGatewayTransactionByOrderId(
-    env,
-    execution.order_reference,
-    fetcher,
-  );
+  // Record the attempt before the network wait, including outages. The queue
+  // orders by updated_at, so an unavailable order must not monopolize its slot.
   await env.BILLING_DB.prepare(
     `UPDATE easy_pay_direct_automatic_payment_executions
      SET last_provider_read_at = ?, updated_at = ? WHERE id = ?`,
   )
     .bind(new Date().toISOString(), new Date().toISOString(), execution.id)
     .run();
-  if (!transaction || transaction.status === "unknown") return "deferred";
-  if (transaction.amountMinor !== null && transaction.amountMinor !== execution.amount_minor) {
-    throw new Error("easy_pay_direct_automatic_provider_amount_mismatch");
-  }
-  if (transaction.currency !== null && transaction.currency !== execution.currency) {
-    throw new Error("easy_pay_direct_automatic_provider_currency_mismatch");
+  let transaction;
+  try {
+    if (execution.payment_backend === "commerce_elements") {
+      transaction = await readCommerceRenewal(env, execution, fetcher);
+      if (!transaction || transaction.status === "unknown") return "deferred";
+    } else {
+      transaction = await findEasyPayDirectGatewayTransactionByOrderId(
+        env,
+        execution.order_reference,
+        fetcher,
+      );
+      if (!transaction || transaction.status === "unknown") return "deferred";
+      await requireEasyPayDirectOrderEvidence(
+        env.BILLING_DB,
+        execution.organization_id,
+        execution.payment_request_id,
+        { id: transaction.id, total: transaction.amountMinor, currency: transaction.currency },
+        execution.provider_transaction_id ?? transaction.id!,
+      );
+    }
+  } catch (error) {
+    if (!(error instanceof ApiError)) throw error;
+    await env.BILLING_DB.prepare(
+      `UPDATE easy_pay_direct_automatic_payment_executions
+       SET failure_code = ?, failure_message = ?
+       WHERE id = ? AND status IN ('processing', 'unknown')`,
+    )
+      .bind(
+        error.code,
+        "Renewal outcome needs a verified provider read; do not resubmit",
+        execution.id,
+      )
+      .run();
+    return "deferred";
   }
   await reconcileAutomaticOutcome(env, execution, transaction);
   return "processed";
@@ -595,18 +758,144 @@ export async function dispatchPendingEasyPayDirectAutomaticCollections(
   correlationId: string,
 ): Promise<number> {
   if (!automaticCollectionEnabled(env)) return 0;
-  await enrollProductScopedAutomaticCollections(env.BILLING_DB);
+  const configuredScope = configuredAutomaticCollectionScope(env);
+  if (!configuredScope) return 0;
+  await enrollProductScopedAutomaticCollections(env.BILLING_DB, configuredScope);
   const invoiceIds = await pendingEasyPayDirectAutomaticCollectionInvoices(
     env.BILLING_DB,
     automaticCollectionScopeMode(env),
+    configuredScope,
   );
-  let dispatched = 0;
+  let dispatched = await redispatchPendingEasyPayDirectAutomaticCollections(env, correlationId);
   for (const invoiceId of invoiceIds) {
-    if (
-      (await prepareEasyPayDirectAutomaticCollection(env, invoiceId, correlationId)) === "processed"
-    ) {
-      dispatched += 1;
+    try {
+      if (
+        (await prepareEasyPayDirectAutomaticCollection(env, invoiceId, correlationId)) ===
+        "processed"
+      )
+        dispatched += 1;
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      // A tax/address prerequisite failure is local to this invoice. Rotate it
+      // durably without changing money or version so later invoices can proceed.
+      // Unexpected database/programming failures still abort the operation.
+      await env.BILLING_DB.prepare(
+        `UPDATE invoices SET updated_at = ?
+         WHERE id = ? AND status = 'finalized' AND payment_status = 'pending'
+           AND NOT EXISTS (SELECT 1 FROM invoices_payment_requests link WHERE link.invoice_id = invoices.id)`,
+      )
+        .bind(new Date().toISOString(), invoiceId)
+        .run();
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "easy_pay_direct_automatic_collection_deferred",
+          code: error.code,
+        }),
+      );
     }
+  }
+  return dispatched;
+}
+
+// A disabled consumer can acknowledge the original event without claiming the
+// execution. Recover only never-submitted pending work, with a new event identity
+// because the original may already be in processed_messages. The existing atomic
+// charge claim rechecks every current eligibility and shared-invoice guard.
+export async function redispatchPendingEasyPayDirectAutomaticCollections(
+  env: Env,
+  correlationId: string,
+): Promise<number> {
+  if (!automaticCollectionEnabled(env) || String(env.PAYMENT_MUTATIONS_ENABLED) !== "1") return 0;
+  const configuredScope = configuredAutomaticCollectionScope(env);
+  if (!configuredScope) return 0;
+  const cutoff = new Date(Date.now() - 5 * 60_000).toISOString();
+  const candidates = await env.BILLING_DB.prepare(
+    `SELECT execution.id, execution.organization_id, execution.payment_request_id,
+            execution.updated_at, request.customer_id, request.amount_minor, request.currency,
+            (SELECT json_group_array(link.invoice_id) FROM invoices_payment_requests link
+             WHERE link.organization_id = execution.organization_id
+               AND link.payment_request_id = execution.payment_request_id) AS invoice_ids_json
+     FROM easy_pay_direct_automatic_payment_executions execution
+     JOIN payment_requests request ON request.id = execution.payment_request_id
+       AND request.organization_id = execution.organization_id
+     WHERE execution.status = 'pending' AND julianday(execution.updated_at) <= julianday(?)
+       AND execution.organization_id = ? AND execution.provider_account_code = ?
+     ORDER BY julianday(execution.updated_at), execution.id LIMIT 100`,
+  )
+    .bind(cutoff, configuredScope.organizationId, configuredScope.accountCode)
+    .all<{
+      id: string;
+      organization_id: string;
+      payment_request_id: string;
+      updated_at: string;
+      customer_id: string;
+      amount_minor: number;
+      currency: string;
+      invoice_ids_json: string;
+    }>();
+  let dispatched = 0;
+  for (const candidate of candidates.results) {
+    const now = new Date().toISOString();
+    const event: DomainEvent = {
+      id: `automatic-collection-recovery:${crypto.randomUUID()}`,
+      type: "payment_request.created",
+      version: 1,
+      aggregateType: "payment_request",
+      aggregateId: candidate.payment_request_id,
+      aggregateVersion: 1,
+      occurredAt: now,
+      causationId: correlationId,
+      correlationId,
+      payload: {
+        organizationId: candidate.organization_id,
+        paymentRequestId: candidate.payment_request_id,
+        customerId: candidate.customer_id,
+        amountMinor: candidate.amount_minor,
+        currency: candidate.currency,
+        invoiceIds: JSON.parse(candidate.invoice_ids_json),
+        automaticCollection: true,
+        recovery: true,
+      },
+    };
+    const results = await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO outbox_events
+         (event_id, organization_id, event_type, event_version, aggregate_type,
+          aggregate_id, aggregate_version, causation_id, correlation_id, payload_json,
+          occurred_at, published_at)
+         SELECT ?, organization_id, 'payment_request.created', 1, 'payment_request',
+                payment_request_id, 1, ?, ?, ?, ?, NULL
+         FROM easy_pay_direct_automatic_payment_executions
+         WHERE id = ? AND organization_id = ? AND status = 'pending' AND updated_at = ?`,
+      ).bind(
+        event.id,
+        correlationId,
+        correlationId,
+        stableJson(event.payload),
+        now,
+        candidate.id,
+        candidate.organization_id,
+        candidate.updated_at,
+      ),
+      env.BILLING_DB.prepare(
+        `UPDATE easy_pay_direct_automatic_payment_executions SET updated_at = ?
+         WHERE id = ? AND organization_id = ? AND status = 'pending' AND updated_at = ?
+           AND EXISTS (SELECT 1 FROM outbox_events WHERE event_id = ? AND organization_id = ?)`,
+      ).bind(
+        now,
+        candidate.id,
+        candidate.organization_id,
+        candidate.updated_at,
+        event.id,
+        candidate.organization_id,
+      ),
+    ]);
+    if (results[0]?.meta.changes !== 1) continue;
+    // The durable outbox survives a send failure; do not reset the pending claim
+    // or ever turn a processing/unknown attempt back into chargeable work.
+    await env.DOMAIN_EVENTS.send(event);
+    dispatched += 1;
   }
   return dispatched;
 }
@@ -614,7 +903,9 @@ export async function dispatchPendingEasyPayDirectAutomaticCollections(
 export async function pendingEasyPayDirectAutomaticCollectionInvoices(
   database: D1Database,
   scopeMode: CollectionScopeMode,
+  configuredScope: { organizationId: string; accountCode: string },
 ): Promise<string[]> {
+  if (!configuredScope.organizationId.trim() || !configuredScope.accountCode.trim()) return [];
   const rows = await database
     .prepare(
       `SELECT invoice.id
@@ -631,9 +922,12 @@ export async function pendingEasyPayDirectAutomaticCollectionInvoices(
        JOIN provider_customer_profiles profile
          ON profile.id = subscription.payment_method_id
         AND profile.customer_id = customer.id
+        AND profile.organization_id = invoice.organization_id
+        AND profile.provider_account_code = COALESCE(customer.payment_provider_code, 'default')
         AND profile.provider = 'easy_pay_direct'
         AND profile.status = 'active'
        WHERE invoice.status = 'finalized' AND invoice.payment_status = 'pending'
+         AND invoice.organization_id = ? AND profile.provider_account_code = ?
          AND invoice.ready_for_payment_processing = 1
          AND invoice.total_due_minor > 0
          AND invoice.net_payment_term = 0
@@ -649,29 +943,27 @@ export async function pendingEasyPayDirectAutomaticCollectionInvoices(
              AND scope.organization_id = invoice.organization_id
              AND scope.status = 'enabled'
          ))
-         AND profile.gateway_customer_vault_id IS NOT NULL
-         AND profile.initial_transaction_id IS NOT NULL
-         AND lower(profile.gateway_customer_vault_id) NOT LIKE 'vault-test-%'
-         AND lower(profile.gateway_customer_vault_id) NOT LIKE 'synthetic-%'
+         AND ${savedProfileEligibilitySql()}
          AND NOT EXISTS (
            SELECT 1 FROM invoices_payment_requests link WHERE link.invoice_id = invoice.id
          )
-       ORDER BY invoice.created_at, invoice.id LIMIT 100`,
+       ORDER BY invoice.updated_at, invoice.id LIMIT 100`,
     )
-    .bind(scopeMode)
+    .bind(configuredScope.organizationId, configuredScope.accountCode, scopeMode)
     .all<{ id: string }>();
   return rows.results.map((row) => row.id);
 }
 
-export async function pendingEasyPayDirectAutomaticExecutions(
-  database: D1Database,
-): Promise<string[]> {
-  const rows = await database
-    .prepare(
-      `SELECT id FROM easy_pay_direct_automatic_payment_executions
+export async function pendingEasyPayDirectAutomaticExecutions(env: Env): Promise<string[]> {
+  const configuredScope = configuredAutomaticCollectionScope(env);
+  if (!configuredScope) return [];
+  const rows = await env.BILLING_DB.prepare(
+    `SELECT id FROM easy_pay_direct_automatic_payment_executions
        WHERE status IN ('processing', 'unknown')
+         AND organization_id = ? AND provider_account_code = ?
        ORDER BY updated_at, id LIMIT 100`,
-    )
+  )
+    .bind(configuredScope.organizationId, configuredScope.accountCode)
     .all<{ id: string }>();
   return rows.results.map((row) => row.id);
 }
@@ -689,7 +981,8 @@ async function loadRenewalCandidate(
               invoice.currency, invoice.subtotal_minor, invoice.tax_minor,
               invoice.credits_minor, invoice.total_due_minor, invoice.version AS invoice_version,
               plan.interval AS plan_interval, profile.id AS provider_profile_id,
-              profile.gateway_customer_vault_id, profile.initial_transaction_id
+              profile.gateway_customer_vault_id, profile.initial_transaction_id,
+              profile.payment_backend, profile.provider_customer_id, profile.provider_payment_method_id
        FROM invoices invoice
        JOIN customers customer ON customer.id = invoice.customer_id
        JOIN subscriptions subscription ON subscription.id = invoice.subscription_id
@@ -717,10 +1010,7 @@ async function loadRenewalCandidate(
              AND scope.organization_id = invoice.organization_id
              AND scope.status = 'enabled'
          ))
-         AND profile.gateway_customer_vault_id IS NOT NULL
-         AND profile.initial_transaction_id IS NOT NULL
-         AND lower(profile.gateway_customer_vault_id) NOT LIKE 'vault-test-%'
-         AND lower(profile.gateway_customer_vault_id) NOT LIKE 'synthetic-%'
+         AND ${savedProfileEligibilitySql()}
          AND NOT EXISTS (
            SELECT 1 FROM invoices_payment_requests link WHERE link.invoice_id = invoice.id
          )
@@ -775,7 +1065,11 @@ async function automaticTaxAddress(env: Env, source: SourceTaxQuote): Promise<Bi
     !source.billing_address_ciphertext ||
     !source.billing_address_iv
   ) {
-    throw new Error("easy_pay_direct_automatic_tax_address_unavailable");
+    throw new ApiError(
+      503,
+      "easy_pay_direct_automatic_tax_address_unavailable",
+      "easy_pay_direct_automatic_tax_address_unavailable",
+    );
   }
   const decrypted = await decryptBillingAddress(
     source.billing_address_ciphertext,
@@ -798,7 +1092,11 @@ async function automaticTaxAddress(env: Env, source: SourceTaxQuote): Promise<Bi
   if (address.addressLine) identity.addressLine = address.addressLine;
   if (address.city) identity.city = address.city;
   if ((await sha256Hex(stableJson(identity))) !== source.billing_address_sha256) {
-    throw new Error("easy_pay_direct_automatic_tax_address_mismatch");
+    throw new ApiError(
+      503,
+      "easy_pay_direct_automatic_tax_address_mismatch",
+      "easy_pay_direct_automatic_tax_address_mismatch",
+    );
   }
   return address;
 }
@@ -806,6 +1104,7 @@ async function automaticTaxAddress(env: Env, source: SourceTaxQuote): Promise<Bi
 async function executionForInvoice(
   database: D1Database,
   invoiceId: string,
+  configuredScope: { organizationId: string; accountCode: string },
 ): Promise<string | null> {
   const row = await database
     .prepare(
@@ -813,9 +1112,10 @@ async function executionForInvoice(
        FROM easy_pay_direct_automatic_payment_executions execution
        JOIN invoices_payment_requests link
          ON link.payment_request_id = execution.payment_request_id
-       WHERE link.invoice_id = ? LIMIT 1`,
+       WHERE link.invoice_id = ? AND execution.organization_id = ?
+         AND execution.provider_account_code = ? LIMIT 1`,
     )
-    .bind(invoiceId)
+    .bind(invoiceId, configuredScope.organizationId, configuredScope.accountCode)
     .first<{ id: string }>();
   return row?.id ?? null;
 }
@@ -848,6 +1148,9 @@ function executionSelect(): string {
                  execution.initial_transaction_id, execution.order_reference,
                  execution.status, execution.provider_transaction_id,
                  execution.failure_code, execution.failure_message,
+                 execution.payment_backend, execution.commerce_customer_id, execution.commerce_payment_method_id,
+                 execution.product_idempotency_key, execution.order_idempotency_key,
+                 execution.commerce_product_id, execution.commerce_order_id, execution.order_submit_started_at,
                  request.amount_minor, request.currency
           FROM easy_pay_direct_automatic_payment_executions execution
           JOIN payment_requests request ON request.id = execution.payment_request_id`;
@@ -859,6 +1162,18 @@ async function reconcileAutomaticOutcome(
   transaction: GatewayTransactionResult,
 ): Promise<void> {
   const providerTransactionId = transaction.id;
+  if (
+    transaction.status === "failed" &&
+    providerTransactionId &&
+    (await hasSuccessfulEasyPayDirectPayment(
+      env.BILLING_DB,
+      execution.organization_id,
+      execution.payment_request_id,
+      execution.provider_account_code,
+      providerTransactionId,
+    ))
+  )
+    return;
   if (!providerTransactionId && transaction.status !== "failed") {
     throw new Error("easy_pay_direct_automatic_transaction_id_missing");
   }
@@ -933,6 +1248,7 @@ async function reconcileAutomaticOutcome(
     );
   if (
     transaction.status === "failed" &&
+    execution.payment_backend === "gateway_vault" &&
     isInvalidCustomerVaultFailure(transaction.responseCode, transaction.responseText)
   ) {
     await env.BILLING_DB.prepare(
@@ -940,7 +1256,12 @@ async function reconcileAutomaticOutcome(
        SET status = 'disabled', updated_at = ?
        WHERE id = ? AND organization_id = ? AND provider = 'easy_pay_direct'
          AND status = 'active' AND gateway_customer_vault_id = ?
-         AND initial_transaction_id = ?`,
+         AND initial_transaction_id = ?
+         AND NOT EXISTS (SELECT 1 FROM payment_request_payments paid
+           WHERE paid.payment_request_id = ? AND paid.organization_id = provider_customer_profiles.organization_id
+             AND paid.provider = 'easy_pay_direct'
+             AND paid.provider_account_code = provider_customer_profiles.provider_account_code
+             AND paid.provider_transaction_id = ? AND paid.status = 'succeeded')`,
     )
       .bind(
         now,
@@ -948,6 +1269,8 @@ async function reconcileAutomaticOutcome(
         execution.organization_id,
         execution.gateway_customer_vault_id,
         execution.initial_transaction_id,
+        execution.payment_request_id,
+        providerTransactionId,
       )
       .run();
   }
@@ -956,7 +1279,13 @@ async function reconcileAutomaticOutcome(
      SET status = ?, provider_transaction_id = ?, provider_response_code = ?,
          failure_code = ?, failure_message = ?, lease_expires_at = NULL,
          updated_at = ?, completed_at = ?
-     WHERE id = ? AND status IN ('processing', 'unknown')`,
+     WHERE id = ? AND status IN ('processing', 'unknown')
+       AND (? <> 'failed' OR NOT EXISTS (SELECT 1 FROM payment_request_payments paid
+         WHERE paid.organization_id = easy_pay_direct_automatic_payment_executions.organization_id
+           AND paid.payment_request_id = easy_pay_direct_automatic_payment_executions.payment_request_id
+           AND paid.provider = 'easy_pay_direct'
+           AND paid.provider_account_code = easy_pay_direct_automatic_payment_executions.provider_account_code
+           AND paid.provider_transaction_id = ? AND paid.status = 'succeeded'))`,
   )
     .bind(
       transaction.status,
@@ -969,6 +1298,8 @@ async function reconcileAutomaticOutcome(
       now,
       now,
       execution.id,
+      transaction.status,
+      providerTransactionId,
     )
     .run();
 }
@@ -1000,12 +1331,6 @@ async function markUnknown(
 
 function automaticCollectionEnabled(env: Env): boolean {
   return String(env.EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED) === "1";
-}
-
-function automaticCollectionScopeMode(env: Env): CollectionScopeMode {
-  if (env.EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE === "product_scoped")
-    return "product_scoped";
-  return env.EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE === "all" ? "all" : "scoped";
 }
 
 function paymentRequestCreatedEvent(

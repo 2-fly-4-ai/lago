@@ -13,6 +13,10 @@ remains useful, but SERP-specific decisions must be recorded in this repository.
 - [dev_environment.md](dev_environment.md) — Docker development workflow.
 - [reference/easy-pay-direct-operations.md](reference/easy-pay-direct-operations.md) — EPD and Lago
   dashboards, ownership, configuration names, staging posture, rollout, and rollback.
+- [reference/epd-staging-release-checklist.md](reference/epd-staging-release-checklist.md) — source-owned
+  release order, populated migration rehearsal, configuration traps and provider-backed exit gates.
+- [evidence/epd-follow-up-remediation-2026-09-08.md](evidence/epd-follow-up-remediation-2026-09-08.md)
+  — local follow-up repairs and explicit remaining provider, policy and release boundaries.
 - [evidence/global-indirect-tax-and-anrok-cost-estimate-2026-08-29.md](evidence/global-indirect-tax-and-anrok-cost-estimate-2026-08-29.md)
   — production sales distribution, likely tax markets, and Anrok cost scenarios.
 - [evidence/epd-stripe-tax-staging-upgrade-2026-08-30.md](evidence/epd-stripe-tax-staging-upgrade-2026-08-30.md)

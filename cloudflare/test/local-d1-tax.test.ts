@@ -13,32 +13,124 @@ beforeEach(async () => {
   const fixture = crypto.randomUUID();
   organizationId = `org-local-tax-${fixture}`;
   ruleSetId = `rules-local-tax-${fixture}`;
+  await env.BILLING_DB.prepare(
+    `INSERT INTO organizations (id, external_id, name, created_at, updated_at)
+     VALUES (?, ?, 'Local tax fixture', ?, ?)`,
+  )
+    .bind(organizationId, organizationId, now.toISOString(), now.toISOString())
+    .run();
+  await seedRuleSet();
+});
+
+async function seedRuleSet(effectiveTo: string | null = null, refreshedAt = now.toISOString()) {
   await env.BILLING_DB.batch([
     env.BILLING_DB.prepare("DELETE FROM indirect_tax_registration_scopes"),
     env.BILLING_DB.prepare("DELETE FROM indirect_tax_rules"),
     env.BILLING_DB.prepare("DELETE FROM indirect_tax_rule_sets"),
     env.BILLING_DB.prepare(
-      `INSERT INTO organizations (id, external_id, name, created_at, updated_at)
-       VALUES (?, ?, 'Local tax fixture', ?, ?)`,
-    ).bind(organizationId, organizationId, now.toISOString(), now.toISOString()),
-    env.BILLING_DB.prepare(
       `INSERT INTO indirect_tax_rule_sets
        (id, version, status, source_name, source_url, source_published_at, effective_from,
         effective_to, content_sha256, refreshed_at, created_at, activated_at)
        VALUES (?, 1, 'active', 'Synthetic tax fixture', 'https://example.invalid/tax-fixture',
-               ?, '2020-01-01T00:00:00.000Z', NULL, ?, ?, ?, ?)`,
+               ?, '2020-01-01T00:00:00.000Z', ?, ?, ?, ?, ?)`,
     ).bind(
       ruleSetId,
       now.toISOString(),
+      effectiveTo,
       "b".repeat(64),
-      now.toISOString(),
+      refreshedAt,
       now.toISOString(),
       now.toISOString(),
     ),
   ]);
-});
+}
 
 describe("local D1 indirect tax calculator", () => {
+  it.each(["indirect_tax_rule_sets", "indirect_tax_rules", "indirect_tax_registration_scopes"])(
+    "expires a quote at the earlier %s validity boundary",
+    async (table) => {
+      const boundary = "2026-08-30T10:05:00.000Z";
+      if (table === "indirect_tax_rule_sets") await seedRuleSet(boundary);
+      await seedScopeAndRule({
+        region: "NJ",
+        ratePpm: 66_250,
+        effectiveTo: table === "indirect_tax_rules" ? boundary : null,
+      });
+      if (table === "indirect_tax_registration_scopes")
+        await env.BILLING_DB.prepare("UPDATE indirect_tax_registration_scopes SET effective_to = ?")
+          .bind(boundary)
+          .run();
+      const result = await calculate({ country: "US", state: "NJ", postalCode: "07030" }, 900);
+      expect(result.expiresAt).toBe(boundary);
+      await expect(
+        calculate(
+          { country: "US", state: "NJ", postalCode: "07030" },
+          900,
+          new Date("2026-08-30T10:06:00.000Z"),
+        ),
+      ).rejects.toMatchObject({ status: 503 });
+    },
+  );
+
+  it("expires before the dataset freshness limit", async () => {
+    const boundary = new Date(now.getTime() + 5 * 60_000);
+    await seedRuleSet(null, new Date(boundary.getTime() - 45 * 86400_000).toISOString());
+    await seedScopeAndRule({ region: "NJ", ratePpm: 66_250 });
+    expect(
+      (await calculate({ country: "US", state: "NJ", postalCode: "07030" }, 900)).expiresAt,
+    ).toBe(boundary.toISOString());
+  });
+
+  it("expires before a future matching rule becomes effective", async () => {
+    await seedScopeAndRule({ region: "NJ", ratePpm: 66_250 });
+    await insertRule({
+      region: "NJ",
+      postalPrefix: "070",
+      idSuffix: "future",
+      ratePpm: 70_000,
+      effectiveFrom: "2026-08-30T10:05:00.000Z",
+    });
+    expect(
+      (await calculate({ country: "US", state: "NJ", postalCode: "07030" }, 900)).expiresAt,
+    ).toBe("2026-08-30T10:05:00.000Z");
+  });
+
+  it("expires at the Washington quarter boundary even when the normal TTL extends past it", async () => {
+    await seedWashingtonAddressRule();
+    const result = await calculateLocalD1Tax(
+      env.BILLING_DB,
+      {
+        address: {
+          country: "US",
+          state: "WA",
+          postalCode: "98104",
+          addressLine: "700 Fifth Avenue",
+          city: "Seattle",
+        },
+        currency: "USD",
+        fetcher: async () => washingtonResponse(),
+        organizationId,
+        requestHash: "f".repeat(64),
+        subtotalMinor: 900,
+        taxCode: "txcd_10103100",
+      },
+      new Date("2026-09-30T23:55:00.000Z"),
+    );
+    expect(result.expiresAt).toBe("2026-10-01T00:00:00.000Z");
+  });
+
+  it("expires before a future destination scope supersedes the current scope", async () => {
+    await seedCountryScope("US", `country-scope-${organizationId}`);
+    await seedScopeAndRule({
+      region: "NJ",
+      ratePpm: 66_250,
+      scopeEffectiveFrom: "2026-08-30T10:05:00.000Z",
+    });
+    const result = await calculate({ country: "US", state: "NJ", postalCode: "07030" }, 900);
+    expect(result.expiresAt).toBe("2026-08-30T10:05:00.000Z");
+    expect(result.collectionMode).toBe("collect");
+  });
+
   it("switches collection off without removing rates and gives the quote a new identity", async () => {
     await seedScopeAndRule({ region: "NJ", ratePpm: 66_250 });
     const address = { country: "US", state: "NJ", postalCode: "07030" };
@@ -395,19 +487,22 @@ async function seedScopeAndRule(input: {
   region: string;
   ratePpm: number;
   taxability?: "taxable" | "exempt";
+  effectiveTo?: string | null;
+  scopeEffectiveFrom?: string;
 }) {
   await env.BILLING_DB.prepare(
     `INSERT INTO indirect_tax_registration_scopes
      (id, organization_id, rule_set_id, country, region, status, registration_reference,
       effective_from, effective_to, created_at, updated_at)
      VALUES (?, ?, ?, 'US', ?, 'enabled', 'synthetic-only',
-             '2020-01-01T00:00:00.000Z', NULL, ?, ?)`,
+             ?, NULL, ?, ?)`,
   )
     .bind(
       `scope-${organizationId}-${input.region}`,
       organizationId,
       ruleSetId,
       input.region,
+      input.scopeEffectiveFrom ?? "2020-01-01T00:00:00.000Z",
       now.toISOString(),
       now.toISOString(),
     )
@@ -421,6 +516,8 @@ async function insertRule(input: {
   region: string;
   ratePpm: number;
   taxability?: "taxable" | "exempt";
+  effectiveTo?: string | null;
+  effectiveFrom?: string;
 }) {
   const taxability = input.taxability ?? "taxable";
   await env.BILLING_DB.prepare(
@@ -429,7 +526,7 @@ async function insertRule(input: {
       rate_ppm, priority, source_url, source_reference, effective_from, effective_to, created_at)
      VALUES (?, ?, 'US', ?, ?, 'txcd_10103100', ?, ?, 0,
              'https://example.invalid/tax-fixture', 'synthetic-only',
-             '2020-01-01T00:00:00.000Z', NULL, ?)`,
+             ?, ?, ?)`,
   )
     .bind(
       `rule-${organizationId}-${input.idSuffix ?? input.region}`,
@@ -438,6 +535,8 @@ async function insertRule(input: {
       input.postalPrefix ?? null,
       taxability,
       input.ratePpm,
+      input.effectiveFrom ?? "2020-01-01T00:00:00.000Z",
+      input.effectiveTo ?? null,
       now.toISOString(),
     )
     .run();

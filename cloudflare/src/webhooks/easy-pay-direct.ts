@@ -79,8 +79,14 @@ export async function handleEasyPayDirectWebhook(
     throw new ApiError(400, "webhook_livemode_missing", "Webhook livemode is required");
   }
   const expectsLive = env.EASY_PAY_DIRECT_NETWORK_MODE === "production";
+  // Keep signed sandbox receipts ingestible after rolling the capture UI back.
+  // Reconciliation still requires the exact persisted execution/payment identity.
+  const elementsSandbox =
+    ["development", "staging", "test"].includes(String(env.APP_ENV)) &&
+    env.EASY_PAY_DIRECT_LIVEMODE_ALLOWED === "0";
   if (
     env.EASY_PAY_DIRECT_NETWORK_MODE !== "test" &&
+    !(env.EASY_PAY_DIRECT_NETWORK_MODE === "gateway_test" && elementsSandbox) &&
     env.EASY_PAY_DIRECT_NETWORK_MODE !== "production"
   ) {
     throw new ApiError(
@@ -109,7 +115,9 @@ export async function handleEasyPayDirectWebhook(
   const providerTransactionId = event.data?.object?.id?.trim() || null;
   const receiptId = `epd_${providerEventId}`;
   const receivedAt = new Date().toISOString();
-  const archiveKey = `webhooks/easy-pay-direct/${organizationId}/${receivedAt.slice(0, 10)}/${encodeURIComponent(providerEventId)}.json`;
+  // Each ingest owns its candidate object. Concurrent duplicate requests must
+  // never overwrite/delete the object referenced by the winning D1 receipt.
+  const archiveKey = `webhooks/easy-pay-direct/${organizationId}/${receivedAt.slice(0, 10)}/${encodeURIComponent(providerEventId)}/${crypto.randomUUID()}.json`;
 
   const existing = await env.BILLING_DB.prepare(
     `SELECT id, payload_sha256 FROM webhook_receipts
@@ -153,8 +161,34 @@ export async function handleEasyPayDirectWebhook(
       ).bind(receiptId, organizationId, eventType, providerTransactionId),
     ]);
   } catch (error) {
-    await env.BILLING_ARTIFACTS.delete(archiveKey);
-    throw error;
+    const winner = await env.BILLING_DB.prepare(
+      `SELECT payload_sha256, archive_key FROM webhook_receipts
+       WHERE provider = 'easy_pay_direct' AND provider_account_code = ? AND provider_event_id = ?`,
+    )
+      .bind(providerAccountCode, providerEventId)
+      .first<{ payload_sha256: string; archive_key: string | null }>();
+    // A committed D1 batch can lose its response. Confirm receipt ownership
+    // before cleanup; if the read itself fails, preserve the candidate object.
+    if (winner?.archive_key === archiveKey) {
+      if (winner.payload_sha256 !== payloadHash)
+        throw new ApiError(
+          409,
+          "webhook_event_conflict",
+          "Webhook event ID was reused with different content",
+        );
+    } else {
+      await env.BILLING_ARTIFACTS.delete(archiveKey);
+      if (winner) {
+        if (winner.payload_sha256 !== payloadHash)
+          throw new ApiError(
+            409,
+            "webhook_event_conflict",
+            "Webhook event ID was reused with different content",
+          );
+        return json({ received: true, replayed: true }, { requestId });
+      }
+      throw error;
+    }
   }
 
   await env.DOMAIN_EVENTS.send({

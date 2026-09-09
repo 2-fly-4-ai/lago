@@ -26,6 +26,30 @@ beforeEach(async () => {
 });
 
 describe("outbound webhook delivery", () => {
+  it("allows a complete Store fulfillment round trip before timing out", async () => {
+    await request("/api/v1/webhook_endpoints", "POST", {
+      webhook_endpoint: {
+        webhook_url: "https://hooks.example.test/store-fulfillment",
+        event_types: ["invoice.finalized"],
+      },
+    });
+    const signal = new AbortController().signal;
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(signal);
+    try {
+      expect(
+        await deliverOutboundWebhooks(
+          testEnv(),
+          invoiceEvent(),
+          vi.fn<typeof fetch>(async () => new Response("accepted", { status: 202 })),
+        ),
+      ).toBe("complete");
+      expect(timeout).toHaveBeenCalledOnce();
+      expect(timeout).toHaveBeenCalledWith(30_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it("manages filtered endpoints and delivers an event exactly once with stable HMAC headers", async () => {
     const created = await request("/api/v1/webhook_endpoints", "POST", {
       webhook_endpoint: {

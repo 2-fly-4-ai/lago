@@ -9,6 +9,8 @@ data, webhook payloads, customer records, or signed checkout links to this repos
 - SERP Lago staging dashboard: <https://serp-dev-lago-operator.serpcompany.workers.dev/>
 - SERP Lago production dashboard: <https://serp-prod-lago-operator.serpcompany.workers.dev/>
 - EPD Gateway merchant login: <https://secure.easypaydirectgateway.com/merchants/login.php>
+- EPD Commerce dashboard: <https://commerce.epd.com/>
+- EPD Commerce team roles: <https://commerce.epd.com/user-management>
 - Production webhook destination:
   <https://serp-prod-lago-native.serpcompany.workers.dev/webhooks/easy_pay_direct/org-serp-billing>
 - EPD Gateway testing reference:
@@ -21,6 +23,34 @@ Cloudflare Access protects the SERP dashboard. The EPD portal is the provider au
 transactions and merchant-side configuration; the Lago dashboard is the SERP authority for Lago
 customers, invoices, payment requests, executions, allocations, reconciliation state, and provider
 connection status.
+
+### Do not conflate the two EPD dashboards or their credentials
+
+- **Gateway** is the merchant portal on `secure.easypaydirectgateway.com`. It owns Gateway
+  Customer Vault and processor transaction evidence. Collect.js, `transact.php` and `query.php`
+  belong to this surface.
+- **Commerce** is the separate dashboard on `commerce.epd.com`, backed by `api.epd.com/v1`.
+  The current production adapter crosses both systems: it vaults through Gateway, then calls
+  Commerce customer/payment-method/order endpoints. The customer-to-vault bridge must be verified;
+  neither dashboard alone proves the complete integration.
+- A **Commerce dashboard role** is not evidence of **Gateway portal permission** or of the
+  permissions/validity of the **deployed API credentials**. A browser session expiring also does
+  not prove a provider API key expired. Check each boundary independently.
+- In Commerce User Management, inspect the teammate's **More actions** menu rather than
+  assuming the displayed permission count is an editor. The inspected Workspace Admin role
+  has 9/51 permissions; Owner has 51/51. These names/counts are observations, not proof that
+  Owner is assignable to another teammate. If the Owner session exposes no role-change or
+  full-access choice, obtain the exact menu/role-selector evidence before requesting a
+  provider-side role change. Do not promise granular permission checkboxes or transfer
+  ownership as a workaround. No role was changed during this local audit.
+- Before requesting a role expansion, check the existing Gateway session and approved read-only
+  API path. On 2026-09-07 the inspected Commerce Workspace Admin role excluded business-data reads,
+  while the Gateway session separately redirected to merchant login. The execution shell had no
+  provider key bindings; this says nothing about the Worker secret values and does not justify
+  extracting, printing, rotating or replacing them.
+- Reauthenticate through the existing Gateway login when needed; never paste credentials into
+  chat or reset passwords just because a session expired. Do not use payment, vault-creation,
+  Gateway sync or reconciliation mutations as an authentication probe.
 
 ## Ownership map
 
@@ -151,13 +181,92 @@ them.
 
 ## Gateway and Commerce billing-ID contract
 
+### 2026-09-07 incident: deployment hold
+
+The Sprout production checkout failed at Commerce payment-method attachment. A numeric billing ID
+is **not sufficient evidence for recovery**: it belongs to a specific Gateway vault, and that vault
+must be the one linked to the Commerce customer. The original implementation vaulted first and
+then reused a customer by email, without verifying that relationship. An incomplete earlier
+checkout can create a Commerce customer before a reusable local profile exists.
+
+The repair on `codex/epd-vault-binding-repair` resolves and verifies the customer before vaulting,
+rejects mismatched or unverified bindings, explicitly attaches the submitted card, and prevents
+review-required executions from being re-claimed by a browser replay or background reconciliation.
+It preserves the existing evidence and does not change a customer's linked vault. It is not
+deployed and does not establish live checkout readiness.
+
+Read-only customer lookup timeouts, 429s, and service failures now return a fresh, unvaulted
+execution to `pending`. The customer may submit a fresh hosted token on that same checkout;
+email, phone, terms, and tax identity checks remain enforced, and the atomic claim prevents
+overlapping retries. The original token fingerprint remains immutable audit evidence. Only the
+specific read-only failure code permits this exception. Vault timeouts never get this reset.
+Already-vaulted executions retain their checkpoints and defer on a lookup outage without aborting
+the rest of reconciliation. Pre-order setup-review holds are excluded **before** the 100-row
+selection limit; executions with a provider order still undergo outcome reconciliation.
+
+Recovery now shares the same payable-state predicate as browser claims and the final pre-order
+check: the checkout intent must remain successful and belong to the same organization/request,
+the request must remain unpaid and enabled for processing, and customer closure holds must be
+absent. Provider setup involves network waits, so the check is repeated immediately before order
+creation. A state change at that boundary preserves checkpoints in a setup-review hold; it does
+not submit an order or automatically clear the hold. This is not a distributed lock against an
+independent payment occurring after that final check.
+
+Pre-order batch selection also excludes legacy nonnumeric production billing IDs, absent phone
+checkpoints, and recorded unrecoverable-phone failures before the 100-row limit. Invalid encrypted
+phone data is deferred and marked on its first recovery attempt. Existing provider orders bypass
+these pre-order filters so their outcomes can still be checked without creating another order.
+Do not delete held executions or clear their evidence to force them back into the batch.
+
+Payment success and post-payment setup are separate recovery milestones. Commerce executions
+remain eligible for read-only reconciliation until recurring-card binding and tax commitment are
+durable. A late processor transaction or interrupted D1 write must not cause a second charge.
+If an early success webhook records the order while a resumed POST loses its response, the
+transport-error handler must preserve that order reference. A null response is not evidence that
+the provider order disappeared. Recovery reads the checkpointed order rather than creating another.
+One-time plans do not wait for renewal setup. A delayed initial checkout must not replace a newer
+saved subscription card. Existing successful executions with an unfinished tax quote are eligible
+for tax-only replay only when an exact successful payment ledger entry proves the request,
+provider account, transaction, amount, and currency.
+
+Inline responses, provider reads, and success/failure webhooks must all carry the exact request
+amount, currency, and order identity before settlement. Missing totals are not inferred. An early
+webhook may attach an order to an interrupted execution only through the exact local checkout
+intent and organization/account/request identity. Pending and temporarily inconsistent provider
+reads rotate by last-attempt time, so the oldest 100 pending orders cannot indefinitely starve
+newer orders. Gateway test executions recover through the Gateway query API, not Commerce, and
+verify the original transaction and money before finishing local profile setup.
+
+The same money-evidence requirement applies to automatic-renewal Gateway reads. Unavailable or
+inconsistent reads defer and advance last-attempt ordering without resubmitting the charge.
+Wrong-account or empty-reference profiles are rejected before renewal candidate selection limits.
+Past-due monthly/other recurring subscriptions still require completed processor/vault binding.
+An exact successful payment ledger entry prevents a later failure from discarding unfinished
+recovery or disabling the paid renewal's profile; conditional SQL rechecks this at the write.
+
+These changes do not automatically reopen every historical successful execution with incomplete
+renewal setup. Before rollout, separately inspect affected historical records with approved
+read-only access; preserve newer card selections and never replay payment creation as a repair.
+
+Current public [EPD customer docs](https://docs.api.epd.com/api-reference/customers) and the
+[card-vaulting guide](https://docs.api.epd.com/api-reference/card-vaulting) describe an Elements
+`card_token` flow. They do not promise the legacy `epd_gateway_customer_vault_id` response field.
+The repair deliberately fails closed when that field is absent. Verify the actual pinned API
+contract before deployment; do not assume the field exists because a mock supplies it.
+
+`gateway_test` checkout skips Commerce attachment. Its provider-backed purchase/renewal proof
+does not validate the live Gateway-to-Commerce bridge. Keep both test results explicitly separate.
+The incident's owner, outstanding provider verification, and rollout gates are tracked in
+[the repair plan](../plans/active/2026-09-07-epd-vault-binding-repair.md).
+
 The live checkout crosses two EPD surfaces: Collect.js produces a single-use browser token, the
 Gateway stores that token in its Customer Vault, and EPD Commerce attaches the resulting billing
 record to its customer. The shared `billing_id` must be numeric and at most 32 digits. Lago derives
 that value deterministically from the payment-method idempotency key; do not substitute a UUID or
 hexadecimal digest.
 
-A numeric checkpoint is safe to resume without vaulting again. A legacy alphanumeric checkpoint
+A numeric checkpoint can resume without vaulting again only after the customer/vault relationship
+is verified and no review-required failure is present. A legacy alphanumeric checkpoint
 cannot be sent to Commerce. It may be replaced only during a fresh customer-initiated checkout:
 use the newly produced Collect.js token to add a billing record to the existing Gateway vault, then
 checkpoint the replacement numeric ID before continuing. Automated reconciliation without a fresh

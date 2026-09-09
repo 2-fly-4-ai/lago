@@ -1,0 +1,101 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "serp-dev-lago-epd-serptest",
+  "account_id": "cec5f04e1d18bcc65f2be0aefb04f059",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-12",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "assets": {
+    "directory": "operator-ui",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*",
+      "/health",
+      "/ready",
+      "/authorize_net/*",
+      "/easy_pay_direct/*",
+      "/webhooks/*",
+    ],
+  },
+  // Dedicated SERP TEST Gateway only. Never bind existing staging or production data.
+  // Quiesced between supervised test runs; never enable production processing here.
+  "vars": {
+    "APP_ENV": "development",
+    "PUBLIC_BASE_URL": "https://serp-dev-lago-epd-serptest.serpcompany.workers.dev",
+    "PAYMENT_MUTATIONS_ENABLED": "1",
+    "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_ENABLED": "0",
+    "EASY_PAY_DIRECT_AUTOMATIC_COLLECTION_SCOPE_MODE": "scoped",
+    "EASY_PAY_DIRECT_NETWORK_MODE": "gateway_test",
+    "EASY_PAY_DIRECT_LIVEMODE_ALLOWED": "0",
+    "EASY_PAY_DIRECT_ACCOUNT_CODE": "epd-serptest-20260909",
+    "EASY_PAY_DIRECT_ORGANIZATION_ID": "org-epd-serptest-20260909",
+    "CREDIT_NOTE_REFUND_MODE": "disabled",
+    "WALLET_FUNDING_MODE": "disabled",
+    "EXTERNAL_TAX_MODE": "disabled",
+    "EASY_PAY_DIRECT_TAX_MODE": "enforced",
+    "EASY_PAY_DIRECT_TAX_PROVIDER": "local_d1",
+    "EASY_PAY_DIRECT_TAX_CODE": "txcd_10103100",
+    "EASY_PAY_DIRECT_ONE_TIME_TAX_CODE": "txcd_10202000",
+    "EASY_PAY_DIRECT_TAX_MAX_DATA_AGE_DAYS": "45",
+    "INDIRECT_TAX_ADDRESS_ENCRYPTION_KEY_ID": "v1",
+    "PROVIDER_READS_ENABLED": "1",
+    "STRIPE_NETWORK_MODE": "disabled",
+    "STRIPE_WEBHOOKS_ENABLED": "0",
+    "STRIPE_LIVEMODE_ALLOWED": "0",
+    "OUTBOUND_WEBHOOKS_ENABLED": "1",
+    "EASY_PAY_DIRECT_SUCCESS_REDIRECT_URL": "https://serp-dev-safe-store-serptest.serpcompany.workers.dev/checkout/success",
+  },
+  "d1_databases": [
+    {
+      "binding": "BILLING_DB",
+      "database_name": "serp-dev-lago-epd-serptest-d1",
+      "database_id": "a88dfe97-3ea1-4b35-baf8-3690e1c4633f",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [
+    { "binding": "BILLING_ARTIFACTS", "bucket_name": "serp-dev-lago-epd-serptest-artifacts" },
+  ],
+  "browser": { "binding": "BROWSER" },
+  "durable_objects": {
+    "bindings": [{ "name": "BILLING_ACCOUNTS", "class_name": "BillingAccount" }],
+  },
+  "exports": { "BillingAccount": { "type": "durable-object", "storage": "sqlite" } },
+  "queues": {
+    "producers": [{ "binding": "DOMAIN_EVENTS", "queue": "serp-dev-lago-epd-serptest-events" }],
+    "consumers": [
+      {
+        "queue": "serp-dev-lago-epd-serptest-events",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "serp-dev-lago-epd-serptest-dlq",
+        "retry_delay": 30,
+      },
+    ],
+  },
+  "workflows": [
+    {
+      "name": "serp-dev-lago-epd-serptest-checkout",
+      "binding": "CHECKOUT_WORKFLOW",
+      "class_name": "CheckoutWorkflow",
+    },
+    {
+      "name": "serp-dev-lago-epd-serptest-reconcile",
+      "binding": "RECONCILIATION_WORKFLOW",
+      "class_name": "ReconciliationWorkflow",
+    },
+    {
+      "name": "serp-dev-lago-epd-serptest-documents",
+      "binding": "DOCUMENT_WORKFLOW",
+      "class_name": "DocumentWorkflow",
+    },
+    {
+      "name": "serp-dev-lago-epd-serptest-plan-delete",
+      "binding": "PLAN_DELETION_WORKFLOW",
+      "class_name": "PlanDeletionWorkflow",
+    },
+  ],
+  "triggers": { "crons": [] },
+}

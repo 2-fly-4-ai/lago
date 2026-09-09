@@ -1,0 +1,13 @@
+# EPD renewal recovery and dunning boundaries
+
+Local implementation only; this document is not deployment or provider-transaction evidence.
+
+- Maintenance redispatches never-submitted `pending` automatic executions after five minutes, using a fresh durable outbox event identity. The original event may have been acknowledged while automatic collection was disabled. Concurrent scans compare the execution timestamp in an atomic batch; queue failures leave the outbox for normal repair. `processing` and `unknown` executions are never reset or resubmitted.
+- The existing charge claim still verifies current scope, plan interval, customer/provider/profile, invoice balance and in-flight payment exclusions. Turning off either automatic collection or payment mutations prevents recovery dispatch. This code does not enable either setting.
+- Preparation, provider submission/read reconciliation, recovery candidate selection and EPD dunning are fenced to the Worker's trusted `EASY_PAY_DIRECT_ORGANIZATION_ID` and `EASY_PAY_DIRECT_ACCOUNT_CODE`. Missing or foreign scope is not allowed to use the configured Gateway credential. Inventory/enrollment helpers require explicit scope as well.
+- EPD dunning filters eligible recurring invoices before calculating the request total and consuming a campaign attempt. One-time, unscoped, unusable-profile and closure-held debts are not forgiven, charged, or added to the request. The eligible balance must independently meet the campaign threshold. Other providers retain their prior behavior.
+- One customer campaign currently permits one request per attempt. Multiple eligible EPD saved profiles cannot safely share that request. Such customers get a durable `epd_dunning_review_holds` row with `reason=multiple_eligible_provider_profiles`, no request and no consumed attempt. This is a backend review queue, not yet an operator-dashboard view. An empty/blocked candidate set does not resolve a hold; a proven single-profile set does.
+- Multi-profile debt partitioning remains unsupported and needs a separate campaign/request design. Do not loosen the final every-invoice/profile guard to bypass the hold.
+- The creator's eligibility read is rechecked inside the request batch using a transaction-local assertion row, not ledger triggers. If any selected invoice's current scope/profile/plan, closure state, currency, version, outstanding balance or in-flight status changes, the named assertion aborts all request/attempt writes. The final provider claim remains independently guarded against changes after request creation.
+
+Migration `0117_epd_dunning_review_holds.sql` must exist before running the updated dunning scheduler. It adds no ledger triggers and does not alter customer metadata or tax/amount records.

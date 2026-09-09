@@ -49,6 +49,7 @@ type RegistrationScopeRow = {
   id: string;
   region: string | null;
   collection_mode: "collect" | "off";
+  effective_to: string | null;
 };
 
 type RuleRow = {
@@ -59,6 +60,7 @@ type RuleRow = {
   rate_ppm: number;
   priority: number;
   calculation_method: "static" | "wa_dor_address";
+  effective_to: string | null;
 };
 
 export async function calculateLocalD1Tax(
@@ -150,6 +152,49 @@ export async function calculateLocalD1Tax(
   if (!Number.isSafeInteger(totalMinor)) {
     throw new ApiError(503, "checkout_tax_amount_invalid", "Tax amount is invalid");
   }
+  // A quote cannot promise a rate beyond any known input validity boundary.
+  // Future matching rules/scopes can supersede today's selection without ending it.
+  const nextBoundary = await database
+    .prepare(`SELECT boundary FROM (
+    SELECT effective_from AS boundary FROM indirect_tax_rules
+    WHERE rule_set_id = ? AND country = ? AND product_tax_code = ?
+      AND (region IS NULL OR region = ?)
+      AND (postal_prefix IS NULL OR substr(?, 1, length(postal_prefix)) = postal_prefix)
+      AND julianday(effective_from) > julianday(?)
+    UNION ALL
+    SELECT effective_from AS boundary FROM indirect_tax_registration_scopes
+    WHERE rule_set_id = ? AND organization_id = ? AND country = ? AND status = 'enabled'
+      AND (region IS NULL OR region = ?) AND julianday(effective_from) > julianday(?)
+  ) ORDER BY julianday(boundary) LIMIT 1`)
+    .bind(
+      ruleSet.id,
+      input.address.country,
+      input.taxCode,
+      input.address.state,
+      input.address.postalCode,
+      nowIso,
+      ruleSet.id,
+      input.organizationId,
+      input.address.country,
+      input.address.state,
+      nowIso,
+    )
+    .first<{ boundary: string }>();
+  const expiresAtMillis = Math.min(
+    now.getTime() + LOCAL_QUOTE_TTL_MS,
+    refreshedAt + maxDataAgeDays * 24 * 60 * 60 * 1000,
+    ...[
+      ruleSet.effective_to,
+      selectedScope.effective_to,
+      selectedRule.effective_to,
+      rateResolution?.validThrough,
+      nextBoundary?.boundary,
+    ]
+      .filter((value): value is string => value !== null && value !== undefined)
+      .map((value) => Date.parse(value)),
+  );
+  if (!Number.isFinite(expiresAtMillis) || expiresAtMillis <= now.getTime())
+    throw new ApiError(503, "checkout_tax_rules_stale", "Tax rules require review");
   const fingerprint = await sha256Hex(
     stableJson({
       address: input.address,
@@ -172,7 +217,7 @@ export async function calculateLocalD1Tax(
     subtotalMinor: input.subtotalMinor,
     taxMinor,
     totalMinor,
-    expiresAt: new Date(now.getTime() + LOCAL_QUOTE_TTL_MS).toISOString(),
+    expiresAt: new Date(expiresAtMillis).toISOString(),
     ruleSetId: ruleSet.id,
     ruleId: selectedRule.id,
     collectionMode: selectedScope.collection_mode,
@@ -208,7 +253,7 @@ async function loadRegistrationScopes(
 ): Promise<RegistrationScopeRow[]> {
   const rows = await database
     .prepare(
-      `SELECT id, region, collection_mode
+      `SELECT id, region, collection_mode, effective_to
        FROM indirect_tax_registration_scopes
        WHERE organization_id = ? AND rule_set_id = ? AND country = ? AND status = 'enabled'
          AND (region IS NULL OR region = ?)
@@ -247,7 +292,7 @@ async function loadMatchingRules(
 ): Promise<RuleRow[]> {
   const rows = await database
     .prepare(
-      `SELECT id, region, postal_prefix, taxability, rate_ppm, priority, calculation_method
+      `SELECT id, region, postal_prefix, taxability, rate_ppm, priority, calculation_method, effective_to
        FROM indirect_tax_rules
        WHERE rule_set_id = ? AND country = ? AND product_tax_code = ?
          AND (region IS NULL OR region = ?)

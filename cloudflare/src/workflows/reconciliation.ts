@@ -2,8 +2,13 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { reconcileAuthorizeNetReceipt } from "../reconciliation/authorize-net";
 import {
   reconcileEasyPayDirectExecution,
-  reconcileEasyPayDirectReceipt,
+  pendingEasyPayDirectExecutions,
 } from "../reconciliation/easy-pay-direct";
+import {
+  reconcileEasyPayDirectReceiptSafely,
+  pendingProviderReceipts,
+  quarantinedEasyPayDirectReceiptCount,
+} from "../reconciliation/easy-pay-direct-receipt-safety";
 import type { DomainEvent } from "../domain-events";
 import { closeBillingPeriod, dueBillingPeriodsForClosing } from "../billing/close-period";
 import { activatePendingSubscriptions } from "../billing/activate-pending-subscriptions";
@@ -47,6 +52,12 @@ import {
   progressiveBillingCandidates,
 } from "../billing/progressive-billing";
 import { processDunningCampaigns } from "../schedules/dunning";
+import { runSandboxRenewalProof, type SandboxRenewalProof } from "./sandbox-renewal-proof";
+import { runSandboxRefundReadback, type SandboxRefundReadback } from "./sandbox-refund-readback";
+import {
+  pendingEasyPayDirectRefundOperations,
+  reconcileEasyPayDirectRefundOperation,
+} from "../billing/easy-pay-direct-refund-reconciliation";
 import { dispatchPendingPaymentRequestCheckouts } from "./checkout";
 import {
   dispatchPendingEasyPayDirectAutomaticCollections,
@@ -55,6 +66,8 @@ import {
 } from "../billing/easy-pay-direct-automatic-collection";
 
 type ReconciliationParams = {
+  sandboxRefundReadback?: SandboxRefundReadback;
+  sandboxRenewalProof?: SandboxRenewalProof;
   schedule?: {
     cron: string;
     triggeredAt: number;
@@ -63,6 +76,19 @@ type ReconciliationParams = {
 
 export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, ReconciliationParams> {
   override async run(event: WorkflowEvent<ReconciliationParams>, step: WorkflowStep) {
+    if (event.payload.sandboxRefundReadback !== undefined) {
+      if (event.payload.schedule || event.payload.sandboxRenewalProof !== undefined)
+        throw new Error("sandbox_refund_readback_mixed_operation");
+      return step.do("read exact allowlisted sandbox sale refund evidence", () =>
+        runSandboxRefundReadback(this.env, event.payload.sandboxRefundReadback!),
+      );
+    }
+    if (event.payload.sandboxRenewalProof !== undefined) {
+      if (event.payload.schedule) throw new Error("sandbox_renewal_proof_mixed_schedule");
+      return step.do("close exact allowlisted sandbox period", () =>
+        runSandboxRenewalProof(this.env, event.payload.sandboxRenewalProof!),
+      );
+    }
     const triggeredAt = event.payload.schedule?.triggeredAt ?? event.timestamp.getTime();
     const triggeredAtIso = new Date(triggeredAt).toISOString();
     const cron = event.payload.schedule?.cron ?? "manual";
@@ -268,12 +294,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
 
       const pendingReceiptIds = await step.do("load pending provider receipts", async () => {
         if (!executors.has("reconcile_provider_receipts")) return [];
-        const result = await this.env.BILLING_DB.prepare(
-          `SELECT id, provider FROM webhook_receipts
-         WHERE provider IN ('authorize_net', 'easy_pay_direct') AND processed_at IS NULL
-         ORDER BY received_at ASC LIMIT 100`,
-        ).all<{ id: string; provider: "authorize_net" | "easy_pay_direct" }>();
-        return result.results;
+        return pendingProviderReceipts(this.env.BILLING_DB);
       });
 
       let processedReceipts = 0;
@@ -287,12 +308,16 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           },
           async () =>
             receipt.provider === "easy_pay_direct"
-              ? reconcileEasyPayDirectReceipt(this.env, receipt.id)
+              ? reconcileEasyPayDirectReceiptSafely(this.env, receipt.id)
               : reconcileAuthorizeNetReceipt(this.env, receipt.id),
         );
         if (outcome === "processed") processedReceipts += 1;
-        else deferredReceipts += 1;
+        else if (outcome === "deferred") deferredReceipts += 1;
       }
+      const quarantinedProviderReceipts = await step.do(
+        "count quarantined EPD receipts",
+        async () => quarantinedEasyPayDirectReceiptCount(this.env.BILLING_DB),
+      );
 
       const easyPayDirectExecutionIds = await step.do(
         "load pending Easy Pay Direct executions",
@@ -303,14 +328,10 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
           ) {
             return [];
           }
-          const result = await this.env.BILLING_DB.prepare(
-            `SELECT id FROM easy_pay_direct_payment_executions
-             WHERE status IN ('processing', 'unknown')
-               AND (provider_transaction_id IS NOT NULL
-                    OR (customer_vault_id IS NOT NULL AND gateway_billing_id IS NOT NULL))
-             ORDER BY created_at ASC LIMIT 100`,
-          ).all<{ id: string }>();
-          return result.results.map((row) => row.id);
+          return pendingEasyPayDirectExecutions(
+            this.env.BILLING_DB,
+            this.env.EASY_PAY_DIRECT_NETWORK_MODE,
+          );
         },
       );
       let reconciledEasyPayDirectExecutions = 0;
@@ -328,6 +349,21 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         else deferredEasyPayDirectExecutions += 1;
       }
 
+      const pendingRefundIds = await step.do(
+        "load pending Easy Pay Direct refund reads",
+        async () => pendingEasyPayDirectRefundOperations(this.env),
+      );
+      for (const operationId of pendingRefundIds) {
+        await step.do(
+          `reconcile Easy Pay Direct refund ${operationId}`,
+          {
+            retries: { limit: 3, delay: "10 seconds", backoff: "exponential" },
+            timeout: "1 minute",
+          },
+          async () => reconcileEasyPayDirectRefundOperation(this.env, operationId),
+        );
+      }
+
       const dispatchedEasyPayDirectAutomaticCollections = await step.do(
         "dispatch Easy Pay Direct automatic collections",
         { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
@@ -335,7 +371,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
       );
       const automaticExecutionIds = await step.do(
         "load pending Easy Pay Direct automatic executions",
-        async () => pendingEasyPayDirectAutomaticExecutions(this.env.BILLING_DB),
+        async () => pendingEasyPayDirectAutomaticExecutions(this.env),
       );
       let reconciledEasyPayDirectAutomaticExecutions = 0;
       let deferredEasyPayDirectAutomaticExecutions = 0;
@@ -531,6 +567,7 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
         pendingReceipts: pendingReceiptIds.length,
         processedReceipts,
         deferredReceipts,
+        quarantinedProviderReceipts,
         pendingEasyPayDirectExecutions: easyPayDirectExecutionIds.length,
         reconciledEasyPayDirectExecutions,
         deferredEasyPayDirectExecutions,
@@ -563,7 +600,9 @@ export class ReconciliationWorkflow extends WorkflowEntrypoint<Env, Reconciliati
          WHERE id = ?`,
         )
           .bind(
-            unimplementedScheduleKeys.length === 0 ? "completed" : "partial",
+            unimplementedScheduleKeys.length === 0 && quarantinedProviderReceipts === 0
+              ? "completed"
+              : "partial",
             JSON.stringify(result),
             new Date().toISOString(),
             new Date().toISOString(),

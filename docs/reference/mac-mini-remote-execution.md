@@ -5,6 +5,13 @@ Mac mini. Run Lago tests, inventory generation, TypeScript checks, Worker builds
 on the mini's local SSD through `ssh macmini`. Running those commands from the MacBook against SMB is
 dominated by small-file metadata latency and can take orders of magnitude longer.
 
+The **local SSH launch directory must also be on the MacBook's local disk**, not the SMB
+workspace. For agent terminal calls use `workdir: /Users/brianfarley` and `login: false`, then
+run the remote shell and `cd` to the mini path inside SSH. An unavailable SMB current directory
+can stall the local shell before SSH starts, even when the SSH command itself contains no SMB
+paths. Diagnose with a bounded SSH `/bin/echo connection-ok` from that local directory before
+retrying a build; do not start duplicate builds against a stalled mount.
+
 ## Path mapping
 
 ```text

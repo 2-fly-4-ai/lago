@@ -8,7 +8,7 @@ import { handleAuthorizeNetWebhook } from "./webhooks/authorize-net";
 import { handleEasyPayDirectWebhook } from "./webhooks/easy-pay-direct";
 import { handleStripeWebhook } from "./webhooks/stripe";
 import { reconcileAuthorizeNetReceipt } from "./reconciliation/authorize-net";
-import { reconcileEasyPayDirectReceipt } from "./reconciliation/easy-pay-direct";
+import { reconcileEasyPayDirectReceiptSafely } from "./reconciliation/easy-pay-direct-receipt-safety";
 import { deliverOutboundWebhooks } from "./webhooks/outbound";
 import { scheduleInstanceId } from "./schedules/registry";
 import { processPayInAdvanceUsageEvent } from "./billing/pay-in-advance-usage";
@@ -26,6 +26,7 @@ import { handleDataExportsApi } from "./api/data-exports";
 import { handleExternalTaxApi } from "./api/external-tax";
 import { handleEasyPayDirectCheckoutSubmission } from "./api/easy-pay-direct-checkout";
 import { handleEasyPayDirectTaxQuote } from "./api/easy-pay-direct-tax";
+import { publicEasyPayDirectError } from "./api/easy-pay-direct-public-errors";
 import {
   prepareEasyPayDirectAutomaticCollection,
   processEasyPayDirectAutomaticCollection,
@@ -185,7 +186,12 @@ export default {
             code: error.code,
           }),
         );
-        return apiErrorResponse(error, requestId);
+        return apiErrorResponse(
+          url.pathname === "/easy_pay_direct/payment_form"
+            ? publicEasyPayDirectError(error)
+            : error,
+          requestId,
+        );
       }
       console.error(
         JSON.stringify({
@@ -259,7 +265,7 @@ export default {
         }
 
         if (event.type === "easy_pay_direct.webhook.received") {
-          const outcome = await reconcileEasyPayDirectReceipt(env, event.aggregateId);
+          const outcome = await reconcileEasyPayDirectReceiptSafely(env, event.aggregateId);
           if (outcome === "deferred") {
             message.retry({ delaySeconds: 30 });
             continue;
