@@ -30,7 +30,7 @@
     "EASY_PAY_DIRECT_LIVEMODE_ALLOWED": "0",
     "EASY_PAY_DIRECT_ACCOUNT_CODE": "epd-serptest-20260909",
     "EASY_PAY_DIRECT_ORGANIZATION_ID": "org-epd-serptest-20260909",
-    "CREDIT_NOTE_REFUND_MODE": "disabled",
+    "CREDIT_NOTE_REFUND_MODE": "easy_pay_direct_test",
     "WALLET_FUNDING_MODE": "disabled",
     "EXTERNAL_TAX_MODE": "disabled",
     "EASY_PAY_DIRECT_TAX_MODE": "enforced",
