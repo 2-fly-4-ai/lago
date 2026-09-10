@@ -38,8 +38,8 @@ uncommitted fixes and migration files must not be overwritten or described as de
 - [x] Confirm full regression, formatting, lint, typecheck, Access and dry-run builds (local `pnpm run check` exit 0).
 - [ ] Run dedicated provider sandbox initial purchase, renewal, decline, refund and ambiguity cases.
 - [ ] Deploy staging only after local gates; verify product prices/discounts/tax and browser journey.
-- [ ] Verify entitlements and Slack delivery with sandbox labeling and no production side effects.
-- [ ] Independent final review and evidence-backed readiness report, then request Sprout-only production approval.
+- [x] Verify entitlements and Slack delivery with sandbox labeling and no production side effects.
+- [x] Independent final review and evidence-backed readiness report, then request Sprout-only production approval.
 
 ## Safety and rollout
 
@@ -138,3 +138,22 @@ purchase path uses add-ons/one-off invoices). No customers, subscriptions or cha
 Next: scoped fictional customer fixtures, tax data, authenticated customer journey and real SERP TEST
 Gateway purchase/renewal/refund evidence. This bootstrap is not a passing lifecycle test or
 production readiness sign-off.
+
+## 2026-09-10 integrated Store refund completion
+
+The isolated Lago profile now enables `easy_pay_direct_test` refunds while keeping live mode,
+Stripe and automatic collection disabled. A config regression asserts those exact boundaries.
+Commit `e207f20b711c4ea452c5ab470e8c280e32319e97` passed the complete Lago gate: formatting,
+lint, access controls, checkout UI contracts, Gateway contracts, catalog and tax validations,
+type checks, 1,184 tests, and all development/production dry-run builds. It was deployed only to
+`serp-dev-lago-epd-serptest` as version `96521a3f-8575-40c0-ae61-6e0dcb54cf23`.
+
+An authenticated Store support action refunded the fresh USD 4.50 monthly SerpTEST purchase. The
+exact invoice has one finalized credit note, one succeeded `easy_pay_direct_test` refund ledger,
+one succeeded provider refund operation and one succeeded Gateway attempt with a response
+transaction ID. Replaying the same Store action twice reused the original Lago idempotency key;
+the exact invoice still has one credit note, one provider operation and one Gateway attempt.
+The subscription remains active, not canceled or terminated, with a current period and saved
+provider payment method. Store and Auth independently record the matching source entitlement as
+inactive and revision 2 fully acknowledged; Store's test Slack receipt is sent. This is complete
+provider-backed sandbox lifecycle evidence. Production remains a separate controlled rollout.
