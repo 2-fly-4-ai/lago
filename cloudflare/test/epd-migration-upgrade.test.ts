@@ -6,7 +6,7 @@ const db = (env as typeof env & { MIGRATION_REHEARSAL_DB: D1Database }).MIGRATIO
 const now = "2026-09-08T00:00:00.000Z";
 
 describe("EPD additive migration upgrade rehearsal (local only)", () => {
-  it("preserves legacy financial evidence and enforces the new protections across 0114–0124", async () => {
+  it("preserves legacy financial evidence and enforces the new protections across 0114–0125", async () => {
     const migrations = env.TEST_MIGRATIONS!;
     const pending = migrations.filter((migration) => Number(migration.name.slice(0, 4)) >= 114);
     expect(pending.map((migration) => migration.name)).toEqual([
@@ -21,6 +21,7 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
       "0122_easy_pay_direct_live_refunds.sql",
       "0123_backfill_customer_invoice_currency.sql",
       "0124_enable_reviewed_epd_recurring_products.sql",
+      "0125_enable_production_epd_recurring_products.sql",
     ]);
     await applyD1Migrations(
       db,
@@ -79,7 +80,11 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
     );
     // Existing locally-timestamped dispute heads must not acquire invented provenance.
     expect((await db.prepare("PRAGMA foreign_key_check").all()).results).toEqual([]);
-    for (const organizationId of ["org-synthetic-e2e-20260815-001", "org-epd-serptest-20260909"]) {
+    for (const organizationId of [
+      "org-serp-billing",
+      "org-synthetic-e2e-20260815-001",
+      "org-epd-serptest-20260909",
+    ]) {
       const recurringPolicies = await db
         .prepare(
           `SELECT product_slug, status
@@ -102,15 +107,6 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
         expect.objectContaining({ product_slug: "eporner-video-downloader" }),
       );
     }
-    expect(
-      (
-        await db
-          .prepare(
-            "SELECT COUNT(*) AS count FROM easy_pay_direct_product_collection_policies WHERE organization_id = 'org-serp-billing'",
-          )
-          .first<{ count: number }>()
-      )?.count,
-    ).toBe(0);
     const triggersAfter = await db
       .prepare("SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
       .all();

@@ -258,3 +258,23 @@ or widened, and no payment or renewal was manually triggered.
   retirement on refund. No legacy grant was silently reclassified or revoked. A separate fresh
   post-rollout source-owned canary is still required to prove automatic entitlement retirement and
   reactivation across refund and a later successful renewal.
+
+## Full-catalog production preparation — 2026-09-12
+
+- Read-only production inspection confirms that all reviewed generic Lago plans exist, are active,
+  and retain the required $9, $17, $27, $37, $99 lifetime, and Bundle monthly/yearly amounts.
+- Production automatic collection currently has exactly one enabled product policy: the proven
+  Sprout canary. No other production product was enrolled during preparation.
+- Migration `0125_enable_production_epd_recurring_products.sql` adds the exact 48 recurring
+  Store product/plan slugs to product-scoped automatic collection for `org-serp-billing`. It omits
+  every one-time product and updates existing matching policies without replacing their original
+  creation timestamps. The migration is prepared and tested but remains unapplied in production.
+- The migration rehearsal now applies migrations 0114 through 0125 and verifies all 48 recurring
+  policies for production, synthetic, and SerpTEST organizations while proving that the one-time
+  Eporner product never receives a collection policy.
+- Production still runs Lago Worker version `ad6efa18-1cdf-4569-b20e-a3132caa899c`; the current
+  hardening and full-catalog renewal candidate has not been deployed. Production Store and Auth are
+  also unchanged, and Auth migration `0010_store_product_entitlements.sql` remains pending.
+- Production promotion requires a separate explicit approval. The order is Auth migration/deploy,
+  Lago migration/deploy, Store deploy, then read-only verification. The rollout must stop on any
+  health, route, ledger, entitlement, Slack, or confirmation-email failure.
