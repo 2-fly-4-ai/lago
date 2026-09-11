@@ -76,6 +76,23 @@ Then prove initial recurring purchase, later stored-card charge, one-time non-re
 decline and timeout recovery through the actual sandbox and the full staging customer journey.
 Do not infer readiness from docs, UI access or mock test counts. Production remains approval-gated.
 
+## 2026-09-12 webhook contract correction
+
+The Gateway checkout and renewal path must consume the Gateway webhook contract described above,
+not the separate Commerce-style envelope previously implemented by the Worker. The corrected
+receiver uses `Webhook-Signature: t=<nonce>,s=<hex digest>`, verifies HMAC-SHA256 over
+`<nonce>.<raw body>`, and reads `event_id`, `event_type`, and `event_body`. Gateway
+`transaction.sale.success` and `transaction.sale.failure` events are normalized to the existing
+payment-reconciliation model using the provider transaction ID, the Gateway `order_id` that Lago
+set to its payment-request ID, the requested amount, currency, test-mode evidence, and action
+outcome. The raw provider body remains the archived audit artifact.
+
+The Gateway documentation calls `t` a nonce and does not specify the five-minute age rule used by
+the old Commerce-style verifier. Replay resistance therefore comes from the signed raw body plus
+the durable unique `event_id`; the receiver rejects reuse of an event ID with different content.
+Provider-backed receipt delivery is still required before promotion; synthetic contract tests do
+not prove that the merchant webhook and signing key are configured.
+
 ## Local follow-up (not deployed)
 
 - Gateway-only URL/form/read/charge helpers no longer require a Commerce key. Legacy Commerce

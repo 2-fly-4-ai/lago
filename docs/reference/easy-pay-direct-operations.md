@@ -15,6 +15,8 @@ data, webhook payloads, customer records, or signed checkout links to this repos
   <https://serp-prod-lago-native.serpcompany.workers.dev/webhooks/easy_pay_direct/org-serp-billing>
 - EPD Gateway testing reference:
   <https://secure.easypaydirectgateway.com/merchants/resources/integration/integration_portal.php#testing>
+- EPD Gateway webhook reference:
+  <https://secure.easypaydirectgateway.com/merchants/resources/integration/integration_portal.php#webhooks_setup>
 - EPD Commerce API base (reference only): <https://api.epd.com/v1>
 - EPD Collect.js reference:
   <https://secure.easypaydirectgateway.com/merchants/resources/integration/integration_portal.php#collect_js>
@@ -276,6 +278,12 @@ The current live checkout stays on one EPD surface: Gateway Collect.js produces 
 token and Gateway `transact.php` processes the sale. A recurring customer-initiated sale also asks
 Gateway to create the Customer Vault record. Lago does not invent that vault ID; it stores only the
 provider-returned ID and original transaction reference after verified success.
+
+The same single-surface rule applies to asynchronous events. The Gateway portal webhook must point
+to the Lago URL above and use its Gateway signing key. Lago expects `Webhook-Signature` with the
+documented `t`/`s` values and the Gateway `event_id`/`event_type`/`event_body` JSON envelope. A
+Commerce `EPD-Signature` header or Commerce order envelope is not valid evidence for a
+`gateway_direct` payment.
 
 A numeric checkpoint can resume without vaulting again only after the customer/vault relationship
 is verified and no review-required failure is present. A legacy alphanumeric checkpoint
