@@ -6,7 +6,7 @@ const db = (env as typeof env & { MIGRATION_REHEARSAL_DB: D1Database }).MIGRATIO
 const now = "2026-09-08T00:00:00.000Z";
 
 describe("EPD additive migration upgrade rehearsal (local only)", () => {
-  it("preserves legacy financial evidence and enforces the new protections across 0114–0123", async () => {
+  it("preserves legacy financial evidence and enforces the new protections across 0114–0124", async () => {
     const migrations = env.TEST_MIGRATIONS!;
     const pending = migrations.filter((migration) => Number(migration.name.slice(0, 4)) >= 114);
     expect(pending.map((migration) => migration.name)).toEqual([
@@ -20,6 +20,7 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
       "0121_gateway_refund_attempts.sql",
       "0122_easy_pay_direct_live_refunds.sql",
       "0123_backfill_customer_invoice_currency.sql",
+      "0124_enable_reviewed_epd_recurring_products.sql",
     ]);
     await applyD1Migrations(
       db,
@@ -78,6 +79,38 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
     );
     // Existing locally-timestamped dispute heads must not acquire invented provenance.
     expect((await db.prepare("PRAGMA foreign_key_check").all()).results).toEqual([]);
+    for (const organizationId of ["org-synthetic-e2e-20260815-001", "org-epd-serptest-20260909"]) {
+      const recurringPolicies = await db
+        .prepare(
+          `SELECT product_slug, status
+           FROM easy_pay_direct_product_collection_policies
+           WHERE organization_id = ?
+           ORDER BY product_slug`,
+        )
+        .bind(organizationId)
+        .all();
+      expect(recurringPolicies.results).toHaveLength(48);
+      expect(recurringPolicies.results).toContainEqual({
+        product_slug: "cam4-video-downloader",
+        status: "enabled",
+      });
+      expect(recurringPolicies.results).toContainEqual({
+        product_slug: "sprout-video-downloader",
+        status: "enabled",
+      });
+      expect(recurringPolicies.results).not.toContainEqual(
+        expect.objectContaining({ product_slug: "eporner-video-downloader" }),
+      );
+    }
+    expect(
+      (
+        await db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM easy_pay_direct_product_collection_policies WHERE organization_id = 'org-serp-billing'",
+          )
+          .first<{ count: number }>()
+      )?.count,
+    ).toBe(0);
     const triggersAfter = await db
       .prepare("SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
       .all();
@@ -288,6 +321,21 @@ async function seedLegacyEvidence() {
     db
       .prepare(
         "INSERT INTO organizations (id, external_id, name, created_at, updated_at) VALUES ('org', 'org', 'Migration rehearsal', ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        "INSERT INTO organizations (id, external_id, name, created_at, updated_at) VALUES ('org-serp-billing', 'org-serp-billing', 'SERP Billing', ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        "INSERT INTO organizations (id, external_id, name, created_at, updated_at) VALUES ('org-synthetic-e2e-20260815-001', 'org-synthetic-e2e-20260815-001', 'Synthetic staging', ?, ?)",
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        "INSERT INTO organizations (id, external_id, name, created_at, updated_at) VALUES ('org-epd-serptest-20260909', 'org-epd-serptest-20260909', 'EPD SerpTEST staging', ?, ?)",
       )
       .bind(now, now),
     db
