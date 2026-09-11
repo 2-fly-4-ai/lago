@@ -269,6 +269,10 @@ or widened, and no payment or renewal was manually triggered.
   Store product/plan slugs to product-scoped automatic collection for `org-serp-billing`. It omits
   every one-time product and updates existing matching policies without replacing their original
   creation timestamps. The migration is prepared and tested but remains unapplied in production.
+- Production currently has two ordered Lago migrations pending. Migration `0124` targets only the
+  isolated synthetic and SerpTEST organization IDs and never targets `org-serp-billing`; migration
+  `0125` performs the reviewed production enrollment. Both must be allowed to journal in order
+  during an approved production migration run.
 - The migration rehearsal now applies migrations 0114 through 0125 and verifies all 48 recurring
   policies for production, synthetic, and SerpTEST organizations while proving that the one-time
   Eporner product never receives a collection policy.
@@ -276,5 +280,8 @@ or widened, and no payment or renewal was manually triggered.
   hardening and full-catalog renewal candidate has not been deployed. Production Store and Auth are
   also unchanged, and Auth migration `0010_store_product_entitlements.sql` remains pending.
 - Production promotion requires a separate explicit approval. The order is Auth migration/deploy,
-  Lago migration/deploy, Store deploy, then read-only verification. The rollout must stop on any
+  Lago migrations `0124`–`0125`/deploy, Store deploy, then read-only verification. The rollout must stop on any
   health, route, ledger, entitlement, Slack, or confirmation-email failure.
+- This exact Lago candidate was deployed to isolated SerpTEST after migration `0125` journaled;
+  `/health` and `/ready` passed, 48 recurring policies remain enabled, and the one-time Eporner
+  product has no collection policy. Production was not changed.
