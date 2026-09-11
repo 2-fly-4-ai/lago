@@ -7,7 +7,9 @@ The Store-owned companion plan is
 
 ## Lago scope
 
-- Keep automatic collection in `product_scoped` mode.
+- Enable automatic collection in `product_scoped` mode in the isolated SerpTEST environment so
+  reviewed recurring products can be exercised end to end without opening an unscoped renewal
+  path. Live-provider access remains disabled.
 - Add reviewed product policies for all 48 recurring products that can reach EPD in the Store
   staging catalog, including the 16 `Live Cams` products, JustForFans, OnlyFans, Bundle, and VPN.
 - Do not authorize one-time products for renewal; the recurring query must continue requiring a
