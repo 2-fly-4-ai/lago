@@ -90,6 +90,12 @@ remains unverified; his admin invitation is pending. Shared
 staging's additional policy/receipt migrations were deliberately not applied.
 Production and all uncertain payment outcomes remain untouched.
 
-Local changes can be reverted individually after review. Production remains at the
-previously approved versions. A reviewed deployment is a separate action; preserve
-historical financial evidence and established payment/renewal/refund controls.
+### Approved production release
+
+The user subsequently approved the paired production rollout. Source `dc2da8f`
+is deployed to native version `639eeb34-9da1-4ec2-802d-ac51a9ea5eb6` and operator
+version `6996e85b-f995-4509-a83e-6f80aef992ab`, both at 100%, after additive
+migration 0127. See `docs/evidence/operator-financial-truth-production-2026-09-13.md`
+for the pre/post aggregates, authenticated browser verification and rollback.
+Store, prices, credentials and payment controls are unchanged. The eight unknown
+checkout outcomes remain unresolved pending provider evidence.

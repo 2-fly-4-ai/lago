@@ -4,7 +4,9 @@
 
 The correction audit finished locally. The subsequent isolated staging billing
 deployment is recorded in [the staging receipt](operator-financial-truth-staging-2026-09-13.md).
-Production is unchanged; paired operator verification is still pending.
+Paired staging verification subsequently passed, followed by the user-approved
+production release. See [the production receipt](operator-financial-truth-production-2026-09-13.md)
+for current versions, aggregate verification and remaining capability boundaries.
 Final `pnpm run check` passed: **106 test files / 1,220 tests**, including the
 8 initial-payment eligibility cases and 3 period-close concurrency cases. The
 gate also passed formatting, lint, Access, checkout UI, gateway contract fixtures,
@@ -30,7 +32,8 @@ audit pass. The later staging deployment is separately documented above.
 - Apply additive migration 0127 before the native billing release, then deploy
   native and operator from the same reviewed revision. Record and verify both
   Worker version IDs; native deployment alone does not replace the old operator.
-- Production verification of these new changes is still outstanding.
+- Production deployment and read-only verification passed in the subsequent
+  production receipt; no new provider transaction was initiated.
 - Historical unknown provider outcomes remain unresolved; they require provider
   evidence, not expiry-based retries or fabricated failed/succeeded statuses.
 - General multi-invoice provider refunds now fail explicitly before financial
