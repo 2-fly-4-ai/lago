@@ -203,6 +203,68 @@ describe("payment receipt compatibility API", () => {
     });
   });
 
+  it("does not create a second receipt for the invoice mirror of a payment-request payment", async () => {
+    const now = "2026-08-15T00:02:30.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_requests
+         (id, organization_id, customer_id, amount_minor, currency, email, payment_attempts,
+          payment_status, ready_for_payment_processing, version, created_at, updated_at)
+         VALUES ('request-mirrored-receipt', 'org-payment-receipt-api',
+                 'customer-payment-receipt-api', 1000, 'USD', NULL, 0, 'pending', 1, 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices_payment_requests
+         (id, organization_id, payment_request_id, invoice_id, invoice_version,
+          created_at, updated_at)
+         VALUES ('request-link-mirrored-receipt', 'org-payment-receipt-api',
+                 'request-mirrored-receipt', 'invoice-payment-receipt-api', 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payments
+         (id, organization_id, payment_request_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          version, created_at, updated_at)
+         VALUES ('request-payment-mirrored', 'org-payment-receipt-api',
+                 'request-mirrored-receipt', 'easy_pay_direct', 'epd-test',
+                 'provider-mirrored-receipt', 'request-provider-mirrored-receipt', 1000, 'USD',
+                 'succeeded', 1, ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_attempts
+         (id, organization_id, invoice_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          payment_type, version, created_at, updated_at)
+         VALUES ('invoice-payment-mirror', 'org-payment-receipt-api',
+                 'invoice-payment-receipt-api', 'easy_pay_direct', 'epd-test',
+                 'provider-mirrored-receipt', 'invoice-provider-mirrored-receipt', 1000, 'USD',
+                 'succeeded', 'provider', 1, ?, ?)`,
+      ).bind(now, now),
+    ]);
+
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE payment_requests SET payment_status = 'succeeded', version = version + 1,
+                                    updated_at = ?
+         WHERE id = 'request-mirrored-receipt'`,
+      ).bind(now),
+      env.BILLING_DB.prepare(
+        `UPDATE invoices SET payment_status = 'succeeded', version = version + 1, updated_at = ?
+         WHERE id = 'invoice-payment-receipt-api'`,
+      ).bind(now),
+    ]);
+
+    await expect(receiptCounts()).resolves.toEqual({ receipts: 1, counter: 1, events: 1 });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT payment_kind, payment_id FROM payment_receipts
+         WHERE organization_id = 'org-payment-receipt-api'`,
+      ).all(),
+    ).resolves.toMatchObject({
+      results: [{ payment_kind: "payment_request", payment_id: "request-payment-mirrored" }],
+    });
+  });
+
   it("enforces tenant/version guards and rolls the payable back when receipt audit fails", async () => {
     await expect(
       env.BILLING_DB.prepare(

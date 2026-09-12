@@ -6,7 +6,7 @@ const db = (env as typeof env & { MIGRATION_REHEARSAL_DB: D1Database }).MIGRATIO
 const now = "2026-09-08T00:00:00.000Z";
 
 describe("EPD additive migration upgrade rehearsal (local only)", () => {
-  it("preserves legacy financial evidence and enforces the new protections across 0114–0125", async () => {
+  it("preserves legacy financial evidence and enforces the new protections across 0114–0126", async () => {
     const migrations = env.TEST_MIGRATIONS!;
     const pending = migrations.filter((migration) => Number(migration.name.slice(0, 4)) >= 114);
     expect(pending.map((migration) => migration.name)).toEqual([
@@ -22,12 +22,19 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
       "0123_backfill_customer_invoice_currency.sql",
       "0124_enable_reviewed_epd_recurring_products.sql",
       "0125_enable_production_epd_recurring_products.sql",
+      "0126_canonical_payment_request_receipts.sql",
     ]);
     await applyD1Migrations(
       db,
       migrations.filter((migration) => !pending.includes(migration)),
     );
     await seedLegacyEvidence();
+    await seedMirroredPaymentReceiptDuplicate();
+    await expect(paymentReceiptRows()).resolves.toMatchObject([
+      { id: "payment-receipt:payment", payment_kind: "invoice" },
+      { id: "payment-receipt:receipt-invoice-mirror", payment_kind: "invoice" },
+      { id: "payment-receipt:receipt-request-payment", payment_kind: "payment_request" },
+    ]);
     const tables = ["organizations", "invoices", "payment_attempts", "webhook_receipts"];
     const before = await Promise.all(tables.map((table) => rows(table)));
     const customersBefore = await rows("customers");
@@ -40,6 +47,29 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
       .all();
 
     await applyD1Migrations(db, pending);
+    await expect(paymentReceiptRows()).resolves.toEqual([
+      expect.objectContaining({ id: "payment-receipt:payment", payment_kind: "invoice" }),
+      expect.objectContaining({
+        id: "payment-receipt:receipt-request-payment",
+        payment_kind: "payment_request",
+      }),
+    ]);
+    await expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM payment_receipt_document_artifacts
+           WHERE payment_receipt_id = 'payment-receipt:receipt-invoice-mirror'`,
+        )
+        .first(),
+    ).resolves.toEqual({ count: 0 });
+    await expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM outbox_events
+           WHERE aggregate_id = 'payment-receipt:receipt-invoice-mirror'`,
+        )
+        .first(),
+    ).resolves.toEqual({ count: 0 });
     expect(await Promise.all(tables.map((table) => rows(table)))).toEqual(before);
     expect(await rows("customers")).toEqual(
       customersBefore.map((row) =>
@@ -115,6 +145,9 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
       "easy_pay_direct_automatic_execution_identity_immutable",
       "credit_note_refund_scope_guard",
       "credit_note_refund_identity_immutable",
+      "payment_receipt_after_invoice_payment_insert",
+      "payment_receipt_after_invoice_payment_update",
+      "payment_receipt_after_invoice_settlement",
     ]);
     expect(
       triggersAfter.results.filter(
@@ -137,6 +170,14 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
       triggersAfter.results.find((row) => row.name === "credit_note_refund_identity_immutable")
         ?.sql,
     ).toContain("immutable_credit_note_refund_identity");
+    for (const name of [
+      "payment_receipt_after_invoice_payment_insert",
+      "payment_receipt_after_invoice_payment_update",
+      "payment_receipt_after_invoice_settlement",
+    ])
+      expect(triggersAfter.results.find((row) => row.name === name)?.sql).toContain(
+        "payment_request_payments",
+      );
     expect(
       triggersAfter.results
         .filter((row) => !triggersBefore.results.some((old) => old.name === row.name))
@@ -310,6 +351,86 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
 async function rows(table: string) {
   // All table names are source-defined test constants, never user input.
   return (await db.prepare(`SELECT * FROM ${table} ORDER BY 1`).all()).results;
+}
+
+async function paymentReceiptRows() {
+  return (
+    await db
+      .prepare(
+        `SELECT id, payment_kind, payment_id, number
+         FROM payment_receipts WHERE organization_id = 'org' ORDER BY id`,
+      )
+      .all()
+  ).results;
+}
+
+async function seedMirroredPaymentReceiptDuplicate() {
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO invoices
+         (id, organization_id, customer_id, status, payment_status, currency, subtotal_minor,
+          total_due_minor, payment_overdue, ready_for_payment_processing, version,
+          created_at, updated_at)
+         VALUES ('receipt-invoice', 'org', 'customer', 'finalized', 'pending', 'USD', 900, 900,
+                 1, 1, 1, ?, ?)`,
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        `INSERT INTO payment_requests
+         (id, organization_id, customer_id, amount_minor, currency, payment_status,
+          ready_for_payment_processing, version, created_at, updated_at)
+         VALUES ('receipt-request', 'org', 'customer', 900, 'USD', 'succeeded', 0, 1, ?, ?)`,
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        `INSERT INTO invoices_payment_requests
+         (id, organization_id, payment_request_id, invoice_id, invoice_version,
+          created_at, updated_at)
+         VALUES ('receipt-request-link', 'org', 'receipt-request', 'receipt-invoice', 1, ?, ?)`,
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        `INSERT INTO payment_attempts
+         (id, organization_id, invoice_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          version, created_at, updated_at)
+         VALUES ('receipt-invoice-mirror', 'org', 'receipt-invoice', 'easy_pay_direct',
+                 'fictional-account', 'receipt-fictional-sale', 'receipt-invoice-mirror', 900,
+                 'USD', 'succeeded', 1, ?, ?)`,
+      )
+      .bind(now, now),
+    db
+      .prepare(
+        `UPDATE payment_requests SET payment_status = 'succeeded', ready_for_payment_processing = 0,
+                                    version = version + 1, updated_at = ?
+         WHERE id = 'receipt-request'`,
+      )
+      .bind(now),
+    db
+      .prepare(
+        `UPDATE invoices SET payment_status = 'succeeded', payment_overdue = 0,
+                            ready_for_payment_processing = 0, version = version + 1,
+                            updated_at = ?
+         WHERE id = 'receipt-invoice'`,
+      )
+      .bind(now),
+    db
+      .prepare(
+        `INSERT INTO payment_request_payments
+         (id, organization_id, payment_request_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          version, created_at, updated_at)
+         VALUES ('receipt-request-payment', 'org', 'receipt-request', 'easy_pay_direct',
+                 'fictional-account', 'receipt-fictional-sale', 'receipt-request-payment', 900,
+                 'USD',
+                 'succeeded', 1, ?, ?)`,
+      )
+      .bind(now, now),
+  ]);
 }
 
 async function seedLegacyEvidence() {
