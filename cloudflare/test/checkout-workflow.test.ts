@@ -48,6 +48,24 @@ beforeEach(async () => {
   ]);
   await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(
+      `DELETE FROM payment_request_payment_allocations
+       WHERE payment_request_id = 'payment-request-checkout-workflow-prior'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM payment_request_payments
+       WHERE payment_request_id = 'payment-request-checkout-workflow-prior'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM invoices_payment_requests
+       WHERE payment_request_id = 'payment-request-checkout-workflow-prior'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM payment_requests WHERE id = 'payment-request-checkout-workflow-prior'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM payment_attempts WHERE id = 'payment-attempt-checkout-workflow-prior'`,
+    ),
+    env.BILLING_DB.prepare(
       `DELETE FROM outbox_events WHERE organization_id = ?
        AND aggregate_type = 'payment_request_checkout'`,
     ).bind(organizationId),
@@ -56,7 +74,8 @@ beforeEach(async () => {
     ).bind(organizationId),
     env.BILLING_DB.prepare(
       `UPDATE payment_requests
-       SET payment_status = 'pending', ready_for_payment_processing = 1, version = 1,
+       SET amount_minor = 1700, payment_status = 'pending', ready_for_payment_processing = 1,
+           version = 1,
            updated_at = ? WHERE id = ? AND organization_id = ?`,
     ).bind(now, paymentRequestId, organizationId),
     env.BILLING_DB.prepare(
@@ -91,6 +110,67 @@ describe("payment request checkout workflow", () => {
       id: `payment-request-checkout-${paymentRequestId}-v1`,
       params: checkoutParams(),
     });
+  });
+
+  it("counts a prior payment-request allocation and its invoice mirror once", async () => {
+    const now = "2026-08-15T06:05:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_requests
+         (id, organization_id, customer_id, amount_minor, currency, email, payment_attempts,
+          payment_status, ready_for_payment_processing, version, created_at, updated_at)
+         VALUES ('payment-request-checkout-workflow-prior', ?, ?, 450, 'USD',
+                 'billing@example.com', 1, 'pending', 1, 1, ?, ?)`,
+      ).bind(organizationId, customerId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices_payment_requests
+         (id, organization_id, payment_request_id, invoice_id, invoice_version,
+          created_at, updated_at)
+         VALUES ('link-checkout-workflow-prior', ?,
+                 'payment-request-checkout-workflow-prior', 'invoice-checkout-workflow',
+                 1, ?, ?)`,
+      ).bind(organizationId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payments
+         (id, organization_id, payment_request_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          created_at, updated_at)
+         VALUES ('payment-request-payment-checkout-workflow-prior', ?,
+                 'payment-request-checkout-workflow-prior', 'authorize_net',
+                 'checkout-provider', 'transaction-checkout-workflow-prior',
+                 'payment-request-payment-checkout-workflow-prior', 450, 'USD',
+                 'succeeded', ?, ?)`,
+      ).bind(organizationId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payment_allocations
+         (id, organization_id, payment_request_payment_id, payment_request_id,
+          invoice_id, amount_minor, currency, created_at)
+         VALUES ('allocation-checkout-workflow-prior', ?,
+                 'payment-request-payment-checkout-workflow-prior',
+                 'payment-request-checkout-workflow-prior', 'invoice-checkout-workflow',
+                 450, 'USD', ?)`,
+      ).bind(organizationId, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_attempts
+         (id, organization_id, invoice_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          created_at, updated_at)
+         VALUES ('payment-attempt-checkout-workflow-prior', ?, 'invoice-checkout-workflow',
+                 'authorize_net', 'checkout-provider', 'transaction-checkout-workflow-prior',
+                 'payment-attempt-checkout-workflow-prior', 450, 'USD', 'succeeded', ?, ?)`,
+      ).bind(organizationId, now, now),
+      env.BILLING_DB.prepare(
+        `UPDATE payment_requests SET amount_minor = 1250 WHERE id = ? AND organization_id = ?`,
+      ).bind(paymentRequestId, organizationId),
+    ]);
+
+    const providerFetch = vi.fn<typeof fetch>(async () =>
+      Response.json({ token: "synthetic-deduplicated-balance-token" }),
+    );
+    await expect(
+      runCheckoutWorkflow(enabledEnv(), checkoutParams(), immediateStep(), providerFetch),
+    ).resolves.toMatchObject({ accepted: true, replayed: false, paymentRequestId });
+    expect(providerFetch).toHaveBeenCalledOnce();
   });
 
   it("persists a sensitive hosted-link outcome and replays without another provider call", async () => {

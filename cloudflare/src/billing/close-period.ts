@@ -2,6 +2,7 @@ import { sha256Hex } from "../auth/api-key";
 import type { DomainEvent } from "../domain-events";
 import { deterministicUuid } from "../identifiers";
 import { stableJson } from "../json";
+import { checkoutPeriodEligibility } from "./checkout-period-eligibility";
 import { couponCreditStatements } from "./coupon-credits";
 import { walletAllocationStatements } from "./wallet-credits";
 import { creditNoteAllocationStatements } from "./credit-note-credits";
@@ -48,6 +49,7 @@ export async function dueBillingPeriodsForClosing(
          AND subscription.current_period_end IS NOT NULL
          AND subscription.current_period_end <= ?
          AND (subscription.ending_at IS NULL OR subscription.ending_at > ?)
+         AND ${checkoutPeriodEligibility}
        ORDER BY subscription.current_period_end, subscription.id LIMIT 100`,
     )
     .bind(dueAt, dueAt)
@@ -80,7 +82,11 @@ export async function closeBillingPeriod(
 
   const periodStart = subscription.current_period_start;
   const periodEnd = subscription.current_period_end;
+  const closeVersion = await findPeriodCloseVersion(env.BILLING_DB, subscription);
+  if (!closeVersion) throw new Error("billing_period_changed");
   const pendingDowngrade = await findPendingDowngrade(env.BILLING_DB, subscription, periodEnd);
+  const expectedSubscriptionVersion =
+    pendingDowngrade?.previous_version ?? closeVersion.subscription_version;
   const periodStartMs = Date.parse(periodStart);
   const periodEndMs = Date.parse(periodEnd);
   if (
@@ -98,6 +104,17 @@ export async function closeBillingPeriod(
   if (existing?.status === "closed" && existing.invoice_id) {
     return cycleResult(env.BILLING_DB, existing.id, existing.invoice_id, true, periodEnd);
   }
+
+  const eligible = await env.BILLING_DB.prepare(
+    `SELECT subscription.id FROM subscriptions subscription
+     JOIN plans plan ON plan.id = subscription.plan_id AND plan.organization_id = subscription.organization_id
+     WHERE subscription.id = ? AND subscription.organization_id = ?
+       AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
+       AND ${checkoutPeriodEligibility}`,
+  )
+    .bind(subscription.id, subscription.organization_id)
+    .first();
+  if (!eligible) throw new Error("billing_period_initial_payment_required");
 
   const reservationKey = `billing-cycle:${subscription.id}:${periodStart}:${periodEnd}`;
   const billingAccount = env.BILLING_ACCOUNTS.getByName(`customer:${subscription.customer_id}`);
@@ -183,7 +200,11 @@ export async function closeBillingPeriod(
           ? (
               await calculateInitialSubscriptionInvoice(
                 env.BILLING_DB,
-                { ...pendingDowngrade, trial_end_at: periodEnd, trial_ended_at: periodEnd },
+                {
+                  ...pendingDowngrade,
+                  trial_end_at: periodEnd,
+                  trial_ended_at: periodEnd,
+                },
                 invoiceId,
                 periodEnd,
                 pendingDowngrade.current_period_end,
@@ -354,7 +375,60 @@ export async function closeBillingPeriod(
             correlationId,
           ),
         );
+    const pendingDowngradeFence = pendingDowngrade
+      ? `AND EXISTS (
+           SELECT 1 FROM subscriptions next
+           JOIN plans next_plan ON next_plan.id = next.plan_id
+             AND next_plan.organization_id = next.organization_id
+           WHERE next.id = ? AND next.organization_id = subscription.organization_id
+             AND next.customer_id = subscription.customer_id AND next.plan_id = ?
+             AND next.version = ? AND next_plan.version = ?
+             AND next.status = 'pending' AND next.previous_subscription_id = subscription.id
+             AND next.transition_kind = 'downgrade' AND next.transition_at = ?
+         )`
+      : `AND NOT EXISTS (
+           SELECT 1 FROM subscriptions next
+           WHERE next.previous_subscription_id = subscription.id
+             AND next.organization_id = subscription.organization_id
+             AND next.status = 'pending' AND next.transition_kind = 'downgrade'
+             AND next.transition_at = ?
+         )`;
+    const pendingDowngradeFenceBindings = pendingDowngrade
+      ? [
+          pendingDowngrade.id,
+          pendingDowngrade.plan_id,
+          pendingDowngrade.version,
+          pendingDowngrade.plan_version,
+          periodEnd,
+        ]
+      : [periodEnd];
     const statements: D1PreparedStatement[] = [
+      env.BILLING_DB.prepare(
+        `INSERT INTO billing_period_close_fences (guard_id, eligible)
+         SELECT ?, EXISTS (
+           SELECT 1 FROM subscriptions subscription
+           JOIN plans plan ON plan.id = subscription.plan_id AND plan.organization_id = subscription.organization_id
+           WHERE subscription.id = ? AND subscription.organization_id = ?
+             AND subscription.status IN ('active', 'past_due')
+             AND subscription.version = ? AND subscription.plan_id = ? AND plan.version = ?
+             AND subscription.current_period_start = ? AND subscription.current_period_end = ?
+             AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
+             AND (subscription.ending_at IS NULL OR subscription.ending_at > ?)
+             AND ${checkoutPeriodEligibility}
+             ${pendingDowngradeFence}
+         )`,
+      ).bind(
+        cycleId,
+        subscription.id,
+        subscription.organization_id,
+        expectedSubscriptionVersion,
+        subscription.plan_id,
+        closeVersion.plan_version,
+        periodStart,
+        periodEnd,
+        periodEnd,
+        ...pendingDowngradeFenceBindings,
+      ),
       ...(correctionCreditNote?.statements ?? []),
       ...(correctionCreditNote
         ? [
@@ -426,7 +500,7 @@ export async function closeBillingPeriod(
               periodEnd,
               now,
               subscription.id,
-              pendingDowngrade.previous_version,
+              expectedSubscriptionVersion,
               periodStart,
               periodEnd,
             ),
@@ -457,8 +531,18 @@ export async function closeBillingPeriod(
               `UPDATE subscriptions
                SET current_period_start = ?, current_period_end = ?,
                    version = version + 1, updated_at = ?
-               WHERE id = ? AND current_period_start = ? AND current_period_end = ?`,
-            ).bind(periodEnd, nextEnd, now, subscription.id, periodStart, periodEnd),
+               WHERE id = ? AND version = ? AND status IN ('active', 'past_due')
+                 AND plan_id = ? AND current_period_start = ? AND current_period_end = ?`,
+            ).bind(
+              periodEnd,
+              nextEnd,
+              now,
+              subscription.id,
+              expectedSubscriptionVersion,
+              subscription.plan_id,
+              periodStart,
+              periodEnd,
+            ),
           ]),
       ...(pendingDowngrade
         ? [
@@ -556,7 +640,15 @@ export async function closeBillingPeriod(
         now,
       ),
     ];
+    statements.push(
+      env.BILLING_DB.prepare("DELETE FROM billing_period_close_fences WHERE guard_id = ?").bind(
+        cycleId,
+      ),
+    );
     const results = await env.BILLING_DB.batch(statements);
+    // Keep the established mutation-result offsets independent of the fences.
+    results.shift();
+    results.pop();
     if (!draft) {
       const correctionPrefixCount =
         (correctionCreditNote?.statements.length ?? 0) + (correctionCreditNote ? 1 : 0);
@@ -628,9 +720,57 @@ function shiftCalendarDate(value: string, days: number): string {
 
 type PendingDowngrade = BillableSubscription & {
   version: number;
+  plan_version: number;
   previous_version: number;
   transition_at: string;
 };
+
+type PeriodCloseVersion = {
+  subscription_version: number;
+  plan_version: number;
+};
+
+async function findPeriodCloseVersion(
+  database: D1Database,
+  subscription: BillableSubscription,
+): Promise<PeriodCloseVersion | null> {
+  return database
+    .prepare(
+      `SELECT s.version AS subscription_version, p.version AS plan_version
+       FROM subscriptions s
+       JOIN plans p ON p.id = s.plan_id AND p.organization_id = s.organization_id
+       JOIN customers c ON c.id = s.customer_id AND c.organization_id = s.organization_id
+       JOIN organizations o ON o.id = s.organization_id
+       WHERE s.id = ? AND s.organization_id = ? AND s.customer_id = ? AND s.plan_id = ?
+         AND s.status IN ('active', 'past_due')
+         AND s.current_period_start = ? AND s.current_period_end = ?
+         AND p.interval = ? AND p.currency = ? AND p.amount_minor = ? AND p.pay_in_advance = ?
+         AND s.billing_time = ? AND s.billing_timezone = ?
+         AND s.trial_started_at IS ? AND s.trial_end_at IS ? AND s.trial_ended_at IS ?
+         AND COALESCE(c.net_payment_term, o.net_payment_term) = ?
+         AND COALESCE(c.invoice_grace_period, o.invoice_grace_period) = ?`,
+    )
+    .bind(
+      subscription.id,
+      subscription.organization_id,
+      subscription.customer_id,
+      subscription.plan_id,
+      subscription.current_period_start,
+      subscription.current_period_end,
+      subscription.interval,
+      subscription.currency,
+      subscription.plan_amount_minor,
+      subscription.plan_pay_in_advance,
+      subscription.billing_time,
+      subscription.billing_timezone,
+      subscription.trial_started_at,
+      subscription.trial_end_at,
+      subscription.trial_ended_at,
+      subscription.net_payment_term,
+      subscription.invoice_grace_period,
+    )
+    .first<PeriodCloseVersion>();
+}
 
 async function findPendingDowngrade(
   database: D1Database,
@@ -646,7 +786,8 @@ async function findPendingDowngrade(
               COALESCE(c.net_payment_term, o.net_payment_term) AS net_payment_term,
               COALESCE(c.invoice_grace_period, o.invoice_grace_period) AS invoice_grace_period,
               s.billing_time, s.billing_timezone, s.trial_started_at, s.trial_end_at,
-              s.trial_ended_at, s.version, previous.version AS previous_version,
+              s.trial_ended_at, s.version, p.version AS plan_version,
+              previous.version AS previous_version,
               s.transition_at
        FROM subscriptions s JOIN subscriptions previous ON previous.id = s.previous_subscription_id
        JOIN plans p ON p.id = s.plan_id

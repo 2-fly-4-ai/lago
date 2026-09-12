@@ -414,11 +414,21 @@ async function invoiceBatch(
               i.subtotal_minor, i.coupons_minor, i.tax_minor, i.credit_notes_minor,
               i.prepaid_credit_minor, i.total_due_minor, i.payment_due_date, i.payment_overdue,
               COALESCE((SELECT SUM(amount_minor) FROM (
-                SELECT payment.amount_minor FROM payment_attempts payment
+                SELECT payment.provider, payment.provider_account_code,
+                       COALESCE(payment.provider_transaction_id, 'attempt:' || payment.id)
+                         AS transaction_key,
+                       payment.amount_minor
+                FROM payment_attempts payment
                 WHERE payment.invoice_id = i.id AND payment.status = 'succeeded'
-                UNION ALL
-                SELECT allocation.amount_minor FROM payment_request_payment_allocations allocation
-                WHERE allocation.invoice_id = i.id
+                UNION
+                SELECT payment.provider, payment.provider_account_code,
+                       COALESCE(payment.provider_transaction_id,
+                                'request-payment:' || payment.id),
+                       allocation.amount_minor
+                FROM payment_request_payment_allocations allocation
+                JOIN payment_request_payments payment
+                  ON payment.id = allocation.payment_request_payment_id
+                WHERE allocation.invoice_id = i.id AND payment.status = 'succeeded'
               )), 0) AS total_paid_minor,
               COALESCE((SELECT SUM(offset_amount_minor) FROM credit_notes note
                 WHERE note.invoice_id = i.id AND note.credit_status <> 'voided'), 0) AS total_offset_minor,

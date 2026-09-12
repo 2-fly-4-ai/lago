@@ -100,6 +100,7 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/payment-requests",
       "/api/operator/v1/analytics",
       "/api/operator/v1/forecasts",
+      "/api/operator/v1/observability/payment-executions",
       "/api/operator/v1/billable-metrics",
       "/api/operator/v1/features",
       "/api/operator/v1/ai/conversations",
@@ -137,7 +138,13 @@ describe("isolated operator app assets", () => {
     ]) {
       expect(operatorIndex).toContain(identifier);
     }
-    for (const tab of ["Revenue streams", "MRR", "Usage", "Prepaid credits", "Invoices"]) {
+    for (const tab of [
+      "Invoiced value",
+      "List-price run rate",
+      "Usage",
+      "Prepaid credits",
+      "Invoices",
+    ]) {
       expect(operatorIndex).toContain(tab);
     }
     expect(operatorIndex).toContain("Optimistic");
@@ -276,7 +283,9 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("Recurring paid credits");
     expect(operatorIndex).toContain("Live-mode credentials are always rejected");
     expect(operatorIndex).toContain("PDF generation and download are");
-    expect(operatorIndex).toContain("Settlement ledger");
+    expect(operatorIndex).toContain("Payment ledger");
+    expect(operatorIndex).toContain("Payments requiring review");
+    expect(operatorScript).toContain("Recorded payments");
     expect(operatorIndex).toContain("payment-link");
     expect(operatorIndex).toContain("Quotes have no PDF, template, generation, download, email");
     expect(operatorIndex).toContain("Artifact download and completion email remain unavailable");

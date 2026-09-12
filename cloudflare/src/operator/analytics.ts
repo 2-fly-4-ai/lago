@@ -1,4 +1,6 @@
+import { checkoutSubscriptionOrigin } from "../billing/checkout-origin";
 import { ApiError, json } from "../http";
+import { recordedPayments } from "./recorded-payments";
 
 type MoneyPointRow = {
   period: string;
@@ -109,9 +111,14 @@ async function analytics(
       .bind(organizationId, currency, range.from, range.to, ...customerBindings),
     database
       .prepare(
-        `SELECT CASE WHEN invoice.subscription_id IS NULL THEN 'one_off' ELSE 'subscription' END AS stream,
+        `SELECT CASE WHEN plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
+                  THEN 'subscription' ELSE 'one_off' END AS stream,
                 SUM(invoice.total_due_minor) AS amount_minor, COUNT(*) AS invoice_count
          FROM invoices invoice
+         LEFT JOIN subscriptions subscription ON subscription.id = invoice.subscription_id
+           AND subscription.organization_id = invoice.organization_id
+         LEFT JOIN plans plan ON plan.id = subscription.plan_id
+           AND plan.organization_id = invoice.organization_id
          WHERE invoice.organization_id = ? AND invoice.currency = ? AND invoice.status = 'finalized'
            AND date(COALESCE(invoice.finalized_at, invoice.created_at)) BETWEEN date(?) AND date(?)
            ${invoiceCustomer}
@@ -131,12 +138,14 @@ async function analytics(
          JOIN plans plan ON plan.id = subscription.plan_id
          WHERE subscription.organization_id = ? AND plan.currency = ?
            AND subscription.status IN ('active', 'past_due')
+           AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
            ${customerId ? "AND subscription.customer_id = ?" : ""}`,
       )
       .bind(organizationId, currency, ...customerBindings),
     database
       .prepare(
-        `SELECT snapshot.usage_date AS period, SUM(snapshot.amount_minor) AS amount_minor,
+        `SELECT snapshot.usage_date AS period,
+                COALESCE(SUM(charge.delta_amount_minor), 0) AS amount_minor,
                 CAST(COALESCE(SUM(CAST(charge.delta_units_decimal AS REAL)), 0) AS TEXT) AS units,
                 COALESCE(SUM(charge.delta_events_count), 0) AS events_count
          FROM daily_usage_snapshots snapshot
@@ -242,6 +251,7 @@ async function analytics(
          JOIN plans plan ON plan.id = subscription.plan_id
          WHERE subscription.organization_id = ? AND plan.currency = ?
            AND subscription.status IN ('active', 'past_due')
+           AND plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
            ${customerId ? "AND subscription.customer_id = ?" : ""}
          GROUP BY plan.id, plan.code, plan.name ORDER BY amount_minor DESC, plan.code`,
       )
@@ -249,7 +259,28 @@ async function analytics(
     database
       .prepare(
         `SELECT CASE
-                  WHEN invoice.payment_status = 'succeeded' THEN 'collected'
+                  WHEN EXISTS (
+                    SELECT 1 FROM invoices_payment_requests link
+                    JOIN easy_pay_direct_payment_executions execution
+                      ON execution.payment_request_id = link.payment_request_id
+                      AND execution.organization_id = link.organization_id
+                    WHERE link.invoice_id = invoice.id AND link.organization_id = invoice.organization_id
+                      AND execution.status = 'unknown'
+                  ) OR EXISTS (
+                    SELECT 1 FROM invoices_payment_requests link
+                    JOIN easy_pay_direct_automatic_payment_executions execution
+                      ON execution.payment_request_id = link.payment_request_id
+                      AND execution.organization_id = link.organization_id
+                    WHERE link.invoice_id = invoice.id AND link.organization_id = invoice.organization_id
+                      AND execution.status = 'unknown'
+                  ) THEN 'provider_review_required'
+                  WHEN invoice.payment_status = 'succeeded' THEN 'paid_invoice'
+                  WHEN EXISTS (
+                    SELECT 1 FROM subscription_invoice_contexts context
+                    WHERE context.invoice_id = invoice.id AND context.organization_id = invoice.organization_id
+                      AND context.context_type = 'initial'
+                      AND ${checkoutSubscriptionOrigin("context.subscription_id", "context.organization_id")}
+                  ) THEN 'unpaid_checkout'
                   WHEN invoice.payment_due_date IS NOT NULL
                     AND date(invoice.payment_due_date) < date('now') THEN 'overdue'
                   ELSE 'outstanding'
@@ -264,6 +295,13 @@ async function analytics(
       .bind(organizationId, currency, range.from, range.to, ...customerBindings),
   ];
   const results = await database.batch(statements);
+  const payments = await recordedPayments(
+    database,
+    organizationId,
+    range.from,
+    range.to,
+    customerId,
+  );
   const revenue = results[0]?.results as unknown as MoneyPointRow[];
   const streams = results[1]?.results as unknown as RevenueStreamRow[];
   const mrr = results[2]?.results[0] as unknown as {
@@ -286,11 +324,16 @@ async function analytics(
   return json(
     {
       analytics: {
+        recorded_payments: payments,
+        timezone: "UTC",
         currency,
         from: range.from,
         to: range.to,
         customer_external_id: url.searchParams.get("customer_external_id") || null,
         revenue_streams: {
+          basis: "finalized_invoice_value",
+          includes_unpaid: true,
+          net_of_refunds: false,
           total_amount_minor: sum(revenue, "amount_minor"),
           monthly: revenue.map(numberRow),
           breakdown: streams.map((row) => ({
@@ -302,6 +345,10 @@ async function analytics(
           plan_breakdown: revenuePlans.map(namedAmount),
         },
         mrr: {
+          basis: "current_list_price_run_rate",
+          date_range_applies: false,
+          discounts_applied: false,
+          payment_verified: false,
           amount_minor: Number(mrr?.amount_minor) || 0,
           subscriptions_count: Number(mrr?.subscriptions_count) || 0,
           plan_breakdown: mrrPlans.map((row) => ({
@@ -390,11 +437,23 @@ async function forecasts(
        FROM invoices
        WHERE organization_id = ? AND currency = ? AND status = 'finalized'
          AND date(COALESCE(finalized_at, created_at)) >= date('now', '-12 months', 'start of month')
+         AND date(COALESCE(finalized_at, created_at)) < date('now', 'start of month')
        GROUP BY period ORDER BY period`,
     )
     .bind(organizationId, organization.default_currency)
     .all<MoneyPointRow>();
-  const history = historyResult.results.map(numberRow);
+  const observed = new Map(
+    historyResult.results.map((row) => [row.period, Number(row.amount_minor) || 0]),
+  );
+  const current = new Date();
+  const history = Array.from({ length: 12 }, (_, index) => {
+    const period = new Date(
+      Date.UTC(current.getUTCFullYear(), current.getUTCMonth() - 12 + index, 1),
+    )
+      .toISOString()
+      .slice(0, 7);
+    return { period, amount_minor: observed.get(period) ?? 0 };
+  });
   const recent = history.slice(-6);
   const baseline = recent.length ? sum(recent, "amount_minor") / recent.length : 0;
   const first = recent[0]?.amount_minor ?? baseline;
@@ -419,7 +478,8 @@ async function forecasts(
         generated_at: new Date().toISOString(),
         historical_months: history,
         projected_months: points,
-        methodology: "Trailing six-month invoiced revenue with bounded month-over-month trend",
+        methodology:
+          "Last six completed UTC invoice months with bounded trend, including zero-activity months; excludes the current partial month. Includes unpaid invoices, before refunds. Illustrative invoice-value projection, not a cash-collection forecast",
       },
     },
     { requestId },
@@ -460,7 +520,11 @@ function dateRange(url: URL): { from: string; to: string } {
 
 function dateParameter(value: string | null, fallback: string, name: string): string {
   if (!value) return fallback;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    Number.isNaN(Date.parse(`${value}T00:00:00Z`)) ||
+    new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value
+  ) {
     throw new ApiError(422, "validation_error", `${name} must be an ISO date`);
   }
   return value;

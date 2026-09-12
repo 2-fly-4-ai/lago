@@ -59,6 +59,21 @@ beforeEach(async () => {
       `DELETE FROM payment_links WHERE invoice_id IN (?, 'invoice-payment-retry-other')`,
     ).bind(invoiceId),
     env.BILLING_DB.prepare(
+      `DELETE FROM payment_request_payment_allocations
+       WHERE payment_request_id = 'payment-request-invoice-retry-prior'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM payment_request_payments
+       WHERE payment_request_id = 'payment-request-invoice-retry-prior'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM invoices_payment_requests
+       WHERE payment_request_id = 'payment-request-invoice-retry-prior'`,
+    ),
+    env.BILLING_DB.prepare(
+      `DELETE FROM payment_requests WHERE id = 'payment-request-invoice-retry-prior'`,
+    ),
+    env.BILLING_DB.prepare(
       `UPDATE invoices
        SET status = 'finalized', payment_status = 'failed', ready_for_payment_processing = 1,
            version = 1, updated_at = ?
@@ -161,6 +176,66 @@ describe("invoice payment retry", () => {
     await expect(payments.json()).resolves.toMatchObject({
       payments: [{ lago_id: attempt?.id, payment_status: "pending", provider_payment_id: null }],
     });
+  });
+
+  it("counts a prior payment-request allocation and its invoice mirror once", async () => {
+    const now = "2026-08-15T12:01:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_requests
+         (id, organization_id, customer_id, amount_minor, currency, payment_attempts,
+          payment_status, ready_for_payment_processing, version, collection_mode,
+          created_at, updated_at)
+         VALUES ('payment-request-invoice-retry-prior', ?,
+                 'customer-invoice-payment-retry', 400, 'USD', 1, 'pending', 1, 1,
+                 'checkout', ?, ?)`,
+      ).bind(organizationId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices_payment_requests
+         (id, organization_id, payment_request_id, invoice_id, invoice_version,
+          created_at, updated_at)
+         VALUES ('link-invoice-retry-prior', ?, 'payment-request-invoice-retry-prior',
+                 ?, 1, ?, ?)`,
+      ).bind(organizationId, invoiceId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payments
+         (id, organization_id, payment_request_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          created_at, updated_at)
+         VALUES ('payment-request-payment-invoice-retry-prior', ?,
+                 'payment-request-invoice-retry-prior', 'authorize_net', 'retry-provider',
+                 'transaction-invoice-retry-prior',
+                 'payment-request-payment-invoice-retry-prior', 400, 'USD', 'succeeded', ?, ?)`,
+      ).bind(organizationId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payment_allocations
+         (id, organization_id, payment_request_payment_id, payment_request_id,
+          invoice_id, amount_minor, currency, created_at)
+         VALUES ('allocation-invoice-retry-prior', ?,
+                 'payment-request-payment-invoice-retry-prior',
+                 'payment-request-invoice-retry-prior', ?, 400, 'USD', ?)`,
+      ).bind(organizationId, invoiceId, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_attempts
+         (id, organization_id, invoice_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          created_at, updated_at)
+         VALUES ('payment-attempt-invoice-retry-prior', ?, ?, 'authorize_net',
+                 'retry-provider', 'transaction-invoice-retry-prior',
+                 'payment-attempt-invoice-retry-prior', 400, 'USD', 'succeeded', ?, ?)`,
+      ).bind(organizationId, invoiceId, now, now),
+    ]);
+
+    const response = await retry("deduplicated-balance", {});
+    expect(response?.status).toBe(200);
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT amount_minor FROM payment_attempts
+         WHERE organization_id = ? AND status = 'intent_recorded'`,
+      )
+        .bind(organizationId)
+        .first(),
+    ).resolves.toEqual({ amount_minor: 600 });
   });
 
   it("converges concurrent replay and rejects reuse for another invoice", async () => {

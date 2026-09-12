@@ -350,6 +350,7 @@ type PaymentRequestInvoiceRow = {
 };
 
 type PaymentRequestPaymentRow = {
+  payment_request_id: string;
   status: "pending" | "succeeded" | "failed" | "unknown";
   version: number;
 };
@@ -380,7 +381,7 @@ export async function reconcilePaymentRequest(
 
   const existingPayment = await database
     .prepare(
-      `SELECT status, version FROM payment_request_payments
+      `SELECT payment_request_id, status, version FROM payment_request_payments
        WHERE provider = ? AND provider_account_code = ?
          AND provider_transaction_id = ? LIMIT 1`,
     )
@@ -393,6 +394,13 @@ export async function reconcilePaymentRequest(
   const timestamp = new Date().toISOString();
 
   if (paymentRequest.payment_status === "succeeded") {
+    if (
+      !existingPayment ||
+      existingPayment.payment_request_id !== paymentRequest.id ||
+      existingPayment.status !== "succeeded"
+    ) {
+      throw new Error("payment_request_transaction_conflict");
+    }
     await database.batch([
       database
         .prepare(
@@ -859,6 +867,7 @@ function reconciliationErrorCode(error: unknown): string {
       "payment_request_currency_mismatch",
       "payment_request_balance_changed",
       "payment_request_amount_overflow",
+      "payment_request_transaction_conflict",
     ].includes(error.message)
   ) {
     return error.message;
@@ -874,10 +883,19 @@ async function successfulPaymentTotal(
   const value = await database
     .prepare(
       `SELECT COALESCE(SUM(amount_minor), 0) AS total FROM (
-         SELECT amount_minor FROM payment_attempts
+         SELECT provider, provider_account_code,
+                COALESCE(provider_transaction_id, 'attempt:' || id) AS transaction_key,
+                amount_minor
+         FROM payment_attempts
          WHERE invoice_id = ? AND status = 'succeeded' AND id <> ?
-         UNION ALL
-         SELECT amount_minor FROM payment_request_payment_allocations WHERE invoice_id = ?
+         UNION
+         SELECT payment.provider, payment.provider_account_code,
+                COALESCE(payment.provider_transaction_id, 'request-payment:' || payment.id),
+                allocation.amount_minor
+         FROM payment_request_payment_allocations allocation
+         JOIN payment_request_payments payment
+           ON payment.id = allocation.payment_request_payment_id
+         WHERE allocation.invoice_id = ? AND payment.status = 'succeeded'
        )`,
     )
     .bind(invoiceId, excludedPaymentId, invoiceId)

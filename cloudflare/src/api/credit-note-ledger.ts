@@ -363,13 +363,6 @@ export async function createCreditNote(
         "credit_note_refunds_disabled",
         "Credit note refunds are disabled for this environment",
       );
-    const refundable = await refundableAmount(env.BILLING_DB, auth.organizationId, invoice.id);
-    if (requestedRefund > refundable)
-      throw new ApiError(
-        422,
-        "refund_amount_exceeds_paid_amount",
-        "Refund amount exceeds successful payments that have not already been refunded",
-      );
   }
   const refundPayment =
     requestedRefund > 0
@@ -380,6 +373,24 @@ export async function createCreditNote(
           requestedRefund,
         )
       : null;
+  if (requestedRefund > 0) {
+    if (
+      !refundPayment &&
+      (await hasUnmirroredPaymentAllocation(env.BILLING_DB, auth.organizationId, invoice.id))
+    )
+      throw new ApiError(
+        422,
+        "payment_request_refund_unsupported",
+        "Refunds funded by payment-request allocations require allocation-aware refund support; no credit note or provider refund was created",
+      );
+    const refundable = await refundableAmount(env.BILLING_DB, auth.organizationId, invoice.id);
+    if (requestedRefund > refundable)
+      throw new ApiError(
+        422,
+        "refund_amount_exceeds_paid_amount",
+        "Refund amount exceeds successful payments that have not already been refunded",
+      );
+  }
   if (requestedRefund > 0 && !refundPayment) {
     throw new ApiError(
       422,
@@ -597,12 +608,17 @@ export async function createCreditNote(
           env.BILLING_DB.prepare(
             `INSERT INTO credit_note_offsets
              (id, organization_id, credit_note_id, invoice_id, amount_minor, status, created_at)
-             VALUES (?, ?, ?, ?, ?, 'succeeded', ?)`,
+             VALUES (?, ?, ?, (SELECT invoices.id FROM invoices
+               WHERE invoices.id = ? AND invoices.organization_id = ? AND invoices.status = 'finalized'
+                 AND invoices.total_due_minor - ${successfulInvoicePaymentAmountSql()} >= ?),
+               ?, 'succeeded', ?)`,
           ).bind(
             await deterministicUuid("credit-note-offset", id),
             auth.organizationId,
             id,
             invoice.id,
+            auth.organizationId,
+            requestedOffset,
             requestedOffset,
             now,
           ),
@@ -611,20 +627,14 @@ export async function createCreditNote(
              SET credits_minor = credits_minor + ?, credit_notes_minor = credit_notes_minor + ?,
                  total_due_minor = total_due_minor - ?,
                  payment_status = CASE
-                   WHEN total_due_minor - ? = COALESCE((SELECT SUM(payment.amount_minor)
-                     FROM payment_attempts payment
-                     WHERE payment.invoice_id = invoices.id AND payment.status = 'succeeded'), 0)
+                   WHEN total_due_minor - ? = ${successfulInvoicePaymentAmountSql()}
                    THEN 'succeeded' ELSE payment_status END,
                  ready_for_payment_processing = CASE
-                   WHEN total_due_minor - ? = COALESCE((SELECT SUM(payment.amount_minor)
-                     FROM payment_attempts payment
-                     WHERE payment.invoice_id = invoices.id AND payment.status = 'succeeded'), 0)
+                   WHEN total_due_minor - ? = ${successfulInvoicePaymentAmountSql()}
                    THEN 0 ELSE ready_for_payment_processing END,
                  version = version + 1, updated_at = ?
              WHERE id = ? AND organization_id = ? AND status = 'finalized'
-               AND total_due_minor - COALESCE((SELECT SUM(payment.amount_minor)
-                 FROM payment_attempts payment
-                 WHERE payment.invoice_id = invoices.id AND payment.status = 'succeeded'), 0) >= ?`,
+               AND total_due_minor - ${successfulInvoicePaymentAmountSql()} >= ?`,
           ).bind(
             requestedOffset,
             requestedOffset,
@@ -1235,12 +1245,55 @@ function proportionalRounded(total: number, part: number, whole: number): number
 async function successfulPaymentAmount(db: D1Database, invoiceId: string): Promise<number> {
   const result = await db
     .prepare(
-      `SELECT COALESCE(SUM(amount_minor), 0) AS amount
-       FROM payment_attempts WHERE invoice_id = ? AND status = 'succeeded'`,
+      `SELECT ${successfulInvoicePaymentAmountSql()} AS amount
+       FROM invoices WHERE id = ?`,
     )
     .bind(invoiceId)
     .first<{ amount: number }>();
   return result?.amount ?? 0;
+}
+
+// Allocation rows own the invoice share of a request payment. A matching invoice
+// attempt is only a mirror and must not add another copy of the collected money.
+function successfulInvoicePaymentAmountSql(): string {
+  return `(COALESCE((SELECT SUM(payment.amount_minor) FROM payment_attempts payment
+    WHERE payment.invoice_id = invoices.id AND payment.organization_id = invoices.organization_id
+      AND payment.status = 'succeeded' AND NOT EXISTS (
+        SELECT 1 FROM payment_request_payment_allocations allocation
+        JOIN payment_request_payments receipt ON receipt.id = allocation.payment_request_payment_id
+          AND receipt.organization_id = allocation.organization_id AND receipt.status = 'succeeded'
+        WHERE allocation.invoice_id = payment.invoice_id AND allocation.organization_id = payment.organization_id
+          AND receipt.provider = payment.provider AND receipt.provider_account_code = payment.provider_account_code
+          AND receipt.provider_transaction_id = payment.provider_transaction_id
+      )), 0) + COALESCE((SELECT SUM(allocation.amount_minor)
+      FROM payment_request_payment_allocations allocation
+      JOIN payment_request_payments receipt ON receipt.id = allocation.payment_request_payment_id
+        AND receipt.organization_id = allocation.organization_id AND receipt.status = 'succeeded'
+      WHERE allocation.invoice_id = invoices.id AND allocation.organization_id = invoices.organization_id), 0))`;
+}
+
+// The refund-operation schema requires a same-invoice payment_attempt_id. Do not
+// manufacture attempts for shared transactions: their unique provider identity
+// and total refund capacity belong to the request payment, not each allocation.
+async function hasUnmirroredPaymentAllocation(
+  db: D1Database,
+  organizationId: string,
+  invoiceId: string,
+): Promise<boolean> {
+  const allocation = await db
+    .prepare(`SELECT allocation.id
+    FROM payment_request_payment_allocations allocation
+    JOIN payment_request_payments receipt ON receipt.id = allocation.payment_request_payment_id
+      AND receipt.organization_id = allocation.organization_id AND receipt.status = 'succeeded'
+    WHERE allocation.organization_id = ? AND allocation.invoice_id = ?
+      AND NOT EXISTS (SELECT 1 FROM payment_attempts payment
+        WHERE payment.organization_id = allocation.organization_id AND payment.invoice_id = allocation.invoice_id
+          AND payment.provider = receipt.provider AND payment.provider_account_code = receipt.provider_account_code
+          AND payment.provider_transaction_id = receipt.provider_transaction_id AND payment.status = 'succeeded')
+    LIMIT 1`)
+    .bind(organizationId, invoiceId)
+    .first();
+  return allocation !== null;
 }
 async function refundableAmount(
   db: D1Database,
