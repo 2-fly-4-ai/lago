@@ -4,7 +4,7 @@
 
 Billing deployed to isolated SerpTEST. The user subsequently approved aligning
 the existing staging admin with SerpTEST and providing both approved users admin
-access. Operator deployment and paired browser verification are in progress.
+access. Operator deployment and paired authenticated browser verification passed.
 Production, the older shared staging database/native Worker, Store routing and
 all provider credentials are unchanged.
 
@@ -70,7 +70,45 @@ The normal verified Access login claims an invitation and creates the subject-bo
 membership; no subject identity was guessed or copied from another organization.
 No existing memberships or Access policies were changed.
 
-Deployment version and post-deployment evidence will be recorded below.
+### Operator deployment and verification
+
+- Operator source: `4126ca148533e19ccee0e8bab53517be9318daa7`.
+- Previous operator version: `b3d1ac8c-9a9d-4dc0-be32-accbd9dddce1`.
+- New operator version: `3a184d9d-72f1-40d1-8955-ba913ef71470`, deployed at 100%.
+- Deployment timestamp: `2026-09-12T14:13:55.554201Z`.
+- Tag: `serptest-admin-4126ca1`; deployed with `--keep-vars`.
+- Full gate passed: 1,220 Vitest tests in 106 files, the additional staging binding
+  consistency test in the Access gate, formatting, lint, types, inventories, tax
+  checks and every development/production dry-run build. Production dry runs
+  uploaded nothing.
+- Remote version metadata confirmed every deployed D1, R2, workflow, Durable
+  Object, event queue and provider-service target matches SerpTEST.
+- The browser automatically claimed Farley's invitation and displayed
+  **SERP TEST isolated QA / Administrator**. Remote D1 confirms one accepted
+  admin invitation, one active admin membership and one pending admin invitation.
+- Devin's approved admin invitation is pending his first login, expiring
+  `2026-09-19T14:09:38.469Z`. His personal login was not exercised. An Access
+  application-list read returned no applications, so the existing allowlist
+  could not be independently inspected with that credential; no Access policy
+  was changed. Farley's authenticated login and anonymous Access redirects were
+  verified, not used as proof of Devin's login.
+- Anonymous requests to operator health and session routes returned HTTP 302
+  to the Access boundary rather than exposing billing data.
+- Authenticated analytics loaded for the isolated organization, showing USD
+  177.49 recorded payments, 31.56 confirmed refunds, 145.93 payments less refunds,
+  and 742.84 finalized invoice value. These are test-ledger figures, not live
+  sales, net profit or verified processor settlement. The displayed invoice
+  total and 75 invoices matched a read-only query over the same UTC date range.
+- The Payments page loaded provider/refund records and one held checkout
+  execution, explicitly labeled unknown outcome. It was not retried or cleared.
+- The Webhooks page loaded the existing isolated staging Store endpoint.
+- The post-deployment foreign-key check returned zero violations.
+
+Staging admin: https://serp-dev-lago-operator.serpcompany.workers.dev/epd-serptest-20260909/analytics
+
+This verifies the paired deployed dashboard/backend read path and Farley's
+membership claim, not a new purchase, refund, document workflow or financial
+mutation. No payment flag, collection scope or unknown outcome was changed.
 
 ## Rollback boundary
 
@@ -79,6 +117,10 @@ version only after checking current operations. Retain additive migration 0127 a
 all financial/provider evidence; do not reset or restore the database as a routine
 code rollback. Production is outside this release. The root operator/user owns the
 rollback decision.
+
+The previous operator version also contains the older shared-staging bindings.
+An operator rollback must therefore explicitly account for that resource change;
+do not treat it as an assets-only rollback or move/delete either database.
 
 Local deployment logs are in the ignored
 `cloudflare/.wrangler/financial-truth-release/` directory on the Mac mini. They are

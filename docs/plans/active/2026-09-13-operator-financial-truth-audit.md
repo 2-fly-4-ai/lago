@@ -83,7 +83,10 @@ source was frozen at `39e95d9`. Only migration 0127 and the native billing Worke
 were deployed to isolated SerpTEST; see
 `docs/evidence/operator-financial-truth-staging-2026-09-13.md` for version IDs,
 read-only verification. The user approved staging-admin alignment with SerpTEST
-and the two admin invitations; configuration and verification are in progress. Shared
+and the two admin invitations. Operator source `4126ca1` is deployed as
+`3a184d9d-72f1-40d1-8955-ba913ef71470`; authenticated SerpTEST analytics and payment
+review passed, and Farley's admin invitation was claimed. Devin's first sign-in
+remains unverified; his admin invitation is pending. Shared
 staging's additional policy/receipt migrations were deliberately not applied.
 Production and all uncertain payment outcomes remain untouched.
 
