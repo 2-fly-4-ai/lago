@@ -1019,6 +1019,28 @@ describe("credit-note ledger", () => {
         refund_amount_minor: amountMinor,
         provider_idempotency_key: identity.idempotencyKey,
       });
+      const resolutionEvents = await env.BILLING_DB.prepare(`SELECT event_type, aggregate_id,
+        payload_json FROM outbox_events WHERE event_id LIKE 'credit-note-refund-succeeded:%'
+        AND aggregate_id = ?`)
+        .bind(
+          (
+            await env.BILLING_DB.prepare(
+              "SELECT credit_note_id FROM provider_refund_operations WHERE id = ?",
+            )
+              .bind(identity.operationId)
+              .first<{ credit_note_id: string }>()
+          )?.credit_note_id,
+        )
+        .all<{ event_type: string; aggregate_id: string; payload_json: string }>();
+      expect(resolutionEvents.results).toHaveLength(1);
+      expect(resolutionEvents.results[0]).toMatchObject({
+        event_type: "credit_note.created",
+      });
+      expect(JSON.parse(resolutionEvents.results[0]!.payload_json)).toMatchObject({
+        organizationId: "org-credit-note",
+        invoiceId: fixture.invoiceId,
+        totalAmountMinor: amountMinor,
+      });
       await expect(
         checkpointEasyPayDirectRefund(env.BILLING_DB, identity, "different-refund"),
       ).rejects.toThrow();

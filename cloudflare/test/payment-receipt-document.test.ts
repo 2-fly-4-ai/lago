@@ -1,6 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatchPaymentReceiptDocument } from "../src/api/payment-receipts";
+import { deterministicUuid } from "../src/identifiers";
 import { sha256Hex } from "../src/auth/api-key";
 import { generatePaymentReceiptPdf } from "../src/documents/payment-receipt";
 
@@ -183,8 +184,12 @@ describe("payment receipt documents", () => {
       1,
       "receipt-correlation",
     );
+    const expectedInstanceId = await deterministicUuid(
+      "payment-receipt-document-workflow",
+      `${receiptId}:v1`,
+    );
     expect(create).toHaveBeenCalledWith({
-      id: `payment-receipt-pdf-${receiptId}-v1`,
+      id: `payment-receipt-pdf-${expectedInstanceId}`,
       params: {
         kind: "payment_receipt",
         paymentReceiptId: receiptId,
@@ -192,6 +197,8 @@ describe("payment receipt documents", () => {
         correlationId: "receipt-correlation",
       },
     });
+    expect(`payment-receipt-pdf-${expectedInstanceId}`).toHaveLength(56);
+    expect(`payment-receipt-pdf-${expectedInstanceId}`).toMatch(/^[A-Za-z0-9_-]+$/u);
 
     const duplicate = vi.fn(async () => {
       throw new Error("workflow instance already exists");
