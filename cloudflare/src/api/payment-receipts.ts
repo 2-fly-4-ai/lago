@@ -1,5 +1,6 @@
 import type { AuthContext } from "../auth/api-key";
 import { ApiError, json } from "../http";
+import { deterministicUuid } from "../identifiers";
 import { type PaymentRow, paymentRows, serializePayment } from "./payment-ledger";
 
 type ReceiptPaymentRow = {
@@ -244,9 +245,18 @@ export async function dispatchPaymentReceiptDocument(
   receiptVersion: number,
   correlationId: string,
 ): Promise<void> {
+  const instanceId = await deterministicUuid(
+    "payment-receipt-document-workflow",
+    `${paymentReceiptId}:v${receiptVersion}`,
+  );
   try {
     await env.DOCUMENT_WORKFLOW.create({
-      id: `payment-receipt-pdf-${paymentReceiptId}-v${receiptVersion}`,
+      // User-created Workflow instance IDs accept letters, numbers, underscores,
+      // and hyphens only. Receipt IDs include a "payment-receipt:" prefix, so
+      // embedding the raw ID introduced a forbidden colon and left receipt
+      // events retrying forever. A deterministic UUID preserves idempotency and
+      // keeps the provider-facing ID within its documented length limit.
+      id: `payment-receipt-pdf-${instanceId}`,
       params: {
         kind: "payment_receipt",
         paymentReceiptId,
