@@ -1,21 +1,20 @@
 import { sha256Hex } from "../auth/api-key";
 import { ApiError, json, readBoundedText } from "../http";
 
-type EasyPayDirectWebhook = {
-  id?: string;
-  object?: string;
-  type?: string;
-  created?: number;
-  livemode?: boolean;
-  data?: {
-    object?: {
-      id?: string;
-      object?: string;
-      status?: string;
-      metadata?: Record<string, string>;
-      total?: number;
-      currency?: string;
-      failure_reason?: string | null;
+export type EasyPayDirectGatewayWebhook = {
+  event_id?: string;
+  event_type?: string;
+  event_body?: {
+    features?: { is_test_mode?: boolean };
+    transaction_id?: string;
+    order_id?: string;
+    requested_amount?: string;
+    currency?: string;
+    action?: {
+      success?: string;
+      response_code?: string;
+      response_text?: string;
+      processor_response_text?: string;
     };
   };
 };
@@ -26,7 +25,7 @@ export async function handleEasyPayDirectWebhook(
   organizationId: string,
   requestId: string,
 ): Promise<Response> {
-  const signature = request.headers.get("EPD-Signature")?.trim();
+  const signature = request.headers.get("Webhook-Signature")?.trim();
   if (!signature) {
     throw new ApiError(401, "webhook_signature_missing", "Webhook signature is required");
   }
@@ -69,14 +68,28 @@ export async function handleEasyPayDirectWebhook(
     throw new ApiError(401, "webhook_signature_invalid", "Webhook signature is invalid");
   }
 
-  let event: EasyPayDirectWebhook;
+  let event: EasyPayDirectGatewayWebhook;
   try {
-    event = JSON.parse(rawBody) as EasyPayDirectWebhook;
+    event = JSON.parse(rawBody) as EasyPayDirectGatewayWebhook;
   } catch {
     throw new ApiError(400, "invalid_json", "Webhook body is not valid JSON");
   }
-  if (typeof event.livemode !== "boolean") {
-    throw new ApiError(400, "webhook_livemode_missing", "Webhook livemode is required");
+  const providerEventId = event.event_id?.trim();
+  const eventType = event.event_type?.trim();
+  if (!providerEventId || !eventType || !event.event_body || typeof event.event_body !== "object") {
+    throw new ApiError(
+      400,
+      "webhook_envelope_invalid",
+      "Gateway webhook event_id, event_type, and event_body are required",
+    );
+  }
+  const isTestMode = event.event_body.features?.is_test_mode;
+  if (typeof isTestMode !== "boolean") {
+    throw new ApiError(
+      400,
+      "webhook_environment_missing",
+      "Gateway webhook test-mode evidence is required",
+    );
   }
   const expectsLive = env.EASY_PAY_DIRECT_NETWORK_MODE === "production";
   // Keep signed sandbox receipts ingestible after rolling the capture UI back.
@@ -95,7 +108,7 @@ export async function handleEasyPayDirectWebhook(
       "Easy Pay Direct network access is disabled",
     );
   }
-  if (event.livemode !== expectsLive) {
+  if (isTestMode === expectsLive) {
     throw new ApiError(
       409,
       "webhook_environment_mismatch",
@@ -110,9 +123,7 @@ export async function handleEasyPayDirectWebhook(
     );
   }
   const payloadHash = await sha256Hex(rawBody);
-  const providerEventId = event.id?.trim() || payloadHash;
-  const eventType = event.type?.trim() || "unknown";
-  const providerTransactionId = event.data?.object?.id?.trim() || null;
+  const providerTransactionId = event.event_body.transaction_id?.trim() || null;
   const receiptId = `epd_${providerEventId}`;
   const receivedAt = new Date().toISOString();
   // Each ingest owns its candidate object. Concurrent duplicate requests must
@@ -210,15 +221,10 @@ export async function validEasyPayDirectSignature(
   rawBody: string,
   providedSignature: string,
   signingKey: string,
-  now = Date.now(),
 ): Promise<boolean> {
-  const match = providedSignature.match(/^t=(\d{1,12}),v1=([0-9a-f]{64})$/i);
+  const match = providedSignature.match(/^t=([^,\s]+),s=([0-9a-f]{64})$/i);
   if (!match?.[1] || !match[2]) return false;
-  const timestamp = Number.parseInt(match[1], 10);
-  if (!Number.isSafeInteger(timestamp) || Math.abs(Math.floor(now / 1000) - timestamp) > 300) {
-    return false;
-  }
-  const expected = await hmacSha256Hex(signingKey, `${timestamp}.${rawBody}`);
+  const expected = await hmacSha256Hex(signingKey, `${match[1]}.${rawBody}`);
   return constantTimeEqual(match[2].toLowerCase(), expected);
 }
 
@@ -226,13 +232,9 @@ export async function validEasyPayDirectSignatureForAnyKey(
   rawBody: string,
   providedSignature: string,
   signingKeys: string[],
-  now = Date.now(),
 ): Promise<boolean> {
   for (const signingKey of signingKeys) {
-    if (
-      signingKey &&
-      (await validEasyPayDirectSignature(rawBody, providedSignature, signingKey, now))
-    ) {
+    if (signingKey && (await validEasyPayDirectSignature(rawBody, providedSignature, signingKey))) {
       return true;
     }
   }

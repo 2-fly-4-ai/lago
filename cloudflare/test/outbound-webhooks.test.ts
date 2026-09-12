@@ -2,7 +2,11 @@ import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
 import type { DomainEvent } from "../src/domain-events";
-import { deliverOutboundWebhooks } from "../src/webhooks/outbound";
+import {
+  deliverOutboundWebhooks,
+  MAX_OUTBOUND_WEBHOOK_ATTEMPTS,
+  outboundWebhookRetryDelaySeconds,
+} from "../src/webhooks/outbound";
 
 const apiKey = "outbound-webhook-key";
 
@@ -26,6 +30,15 @@ beforeEach(async () => {
 });
 
 describe("outbound webhook delivery", () => {
+  it("uses a bounded retry window long enough for delayed Store activation", () => {
+    expect(MAX_OUTBOUND_WEBHOOK_ATTEMPTS).toBe(20);
+    expect(outboundWebhookRetryDelaySeconds(1)).toBe(30);
+    expect(outboundWebhookRetryDelaySeconds(2)).toBe(60);
+    expect(outboundWebhookRetryDelaySeconds(8)).toBe(3_600);
+    expect(outboundWebhookRetryDelaySeconds(20)).toBe(3_600);
+    expect(outboundWebhookRetryDelaySeconds(Number.NaN)).toBe(30);
+  });
+
   it("allows a complete Store fulfillment round trip before timing out", async () => {
     await request("/api/v1/webhook_endpoints", "POST", {
       webhook_endpoint: {

@@ -515,8 +515,10 @@ describe("operator integration registry", () => {
         STRIPE_ORGANIZATION_ID: organization.id,
         STRIPE_LIVEMODE_ALLOWED: "0",
         EASY_PAY_DIRECT_NETWORK_MODE: "test",
+        EASY_PAY_DIRECT_CHECKOUT_BACKEND: "commerce_elements",
         EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
         EASY_PAY_DIRECT_COMMERCE_API_KEY: "synthetic-epd-key",
+        EASY_PAY_DIRECT_PUBLISHABLE_KEY: "synthetic-epd-publishable-key",
         EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET: "synthetic-checkout-secret",
         EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY: "synthetic-webhook-key",
         EASY_PAY_DIRECT_ACCOUNT_CODE: "synthetic-epd-account",
@@ -570,8 +572,10 @@ describe("operator integration registry", () => {
     const runtimeStatuses = integrationRuntimeStatuses(
       {
         EASY_PAY_DIRECT_NETWORK_MODE: "production",
+        EASY_PAY_DIRECT_CHECKOUT_BACKEND: "gateway_direct",
         EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "1",
-        EASY_PAY_DIRECT_COMMERCE_API_KEY: "synthetic-epd-live-key",
+        EASY_PAY_DIRECT_SECURITY_KEY: "synthetic-epd-live-key",
+        EASY_PAY_DIRECT_TOKENIZATION_KEY: "synthetic-epd-tokenization-key",
         EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET: "synthetic-checkout-secret",
         EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY: "synthetic-webhook-key",
         EASY_PAY_DIRECT_ACCOUNT_CODE: "easy-pay-direct",
@@ -603,6 +607,42 @@ describe("operator integration registry", () => {
       ]),
     );
     expect(JSON.stringify(payload)).not.toContain("synthetic-epd-live-key");
+  });
+
+  it("requires the secrets for the selected EPD checkout backend", async () => {
+    const organization = await createOrganization("integration-runtime-backend-aware");
+    const base = {
+      EASY_PAY_DIRECT_NETWORK_MODE: "gateway_test",
+      EASY_PAY_DIRECT_LIVEMODE_ALLOWED: "0",
+      EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET: "synthetic-checkout-secret",
+      EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY: "synthetic-webhook-key",
+      EASY_PAY_DIRECT_ACCOUNT_CODE: "synthetic-epd-account",
+      EASY_PAY_DIRECT_ORGANIZATION_ID: organization.id,
+      PAYMENT_MUTATIONS_ENABLED: "1",
+    } as const;
+
+    expect(
+      integrationRuntimeStatuses(
+        {
+          ...base,
+          EASY_PAY_DIRECT_CHECKOUT_BACKEND: "gateway_direct",
+          EASY_PAY_DIRECT_COMMERCE_API_KEY: "irrelevant-commerce-key",
+        } as Env,
+        organization.id,
+      ).find((status) => status.providerCode === "easy_pay_direct"),
+    ).toMatchObject({ secretReady: false });
+
+    expect(
+      integrationRuntimeStatuses(
+        {
+          ...base,
+          EASY_PAY_DIRECT_CHECKOUT_BACKEND: "gateway_direct",
+          EASY_PAY_DIRECT_SECURITY_KEY: "synthetic-security-key",
+          EASY_PAY_DIRECT_TOKENIZATION_KEY: "synthetic-tokenization-key",
+        } as Env,
+        organization.id,
+      ).find((status) => status.providerCode === "easy_pay_direct"),
+    ).toMatchObject({ secretReady: true });
   });
 });
 

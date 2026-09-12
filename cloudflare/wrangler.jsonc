@@ -93,7 +93,7 @@
         "queue": "serp-dev-lago-domain-events",
         "max_batch_size": 10,
         "max_batch_timeout": 5,
-        "max_retries": 5,
+        "max_retries": 20,
         "dead_letter_queue": "serp-dev-lago-domain-events-dlq",
         "retry_delay": 30,
       },

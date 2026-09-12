@@ -15,8 +15,13 @@ type DeliveryRow = EndpointRow & {
   status: string;
   attempts: number;
 };
-const MAX_ATTEMPTS = 5;
+export const MAX_OUTBOUND_WEBHOOK_ATTEMPTS = 20;
 const MAX_RESPONSE_EXCERPT_BYTES = 2048;
+
+export function outboundWebhookRetryDelaySeconds(attempt: number): number {
+  const safeAttempt = Number.isFinite(attempt) ? Math.max(1, Math.floor(attempt)) : 1;
+  return Math.min(3_600, 30 * 2 ** Math.min(safeAttempt - 1, 7));
+}
 
 export type OutboundWebhookOutcome = "disabled" | "complete" | "retry";
 
@@ -123,7 +128,7 @@ async function deliverOne(
       signal: AbortSignal.timeout(30_000),
     });
     const excerpt = await readResponseExcerpt(response);
-    const retryable = isRetryableStatus(response.status) && attempt < MAX_ATTEMPTS;
+    const retryable = isRetryableStatus(response.status) && attempt < MAX_OUTBOUND_WEBHOOK_ATTEMPTS;
     const status = response.ok ? "succeeded" : retryable ? "retrying" : "failed";
     await updateDelivery(
       database,
@@ -138,7 +143,7 @@ async function deliverOne(
     return retryable ? "retry" : "complete";
   } catch (error) {
     const code = error instanceof Error ? error.name.slice(0, 100) : "network_error";
-    const retryable = attempt < MAX_ATTEMPTS;
+    const retryable = attempt < MAX_OUTBOUND_WEBHOOK_ATTEMPTS;
     await updateDelivery(
       database,
       delivery.delivery_id,

@@ -39,6 +39,101 @@ type EasyPayDirectEvent = {
   };
 };
 
+type EasyPayDirectGatewayEvent = {
+  event_id?: string;
+  event_type?: string;
+  event_body?: {
+    features?: { is_test_mode?: boolean };
+    transaction_id?: string;
+    order_id?: string;
+    requested_amount?: string;
+    currency?: string;
+    action?: {
+      success?: string;
+      response_code?: string;
+      response_text?: string;
+      processor_response_text?: string;
+    };
+  };
+};
+
+type NormalizedArchivedEasyPayDirectEvent = {
+  event: EasyPayDirectEvent;
+  gateway: boolean;
+};
+
+function gatewayAmountMinor(value: string | undefined): number | null {
+  const match = value?.trim().match(/^(\d{1,12})(?:\.(\d{1,2}))?$/);
+  if (!match?.[1]) return null;
+  const cents = `${match[2] ?? ""}00`.slice(0, 2);
+  const amount = Number(match[1]) * 100 + Number(cents);
+  return Number.isSafeInteger(amount) ? amount : null;
+}
+
+export function normalizeArchivedEasyPayDirectEvent(
+  raw: string,
+): NormalizedArchivedEasyPayDirectEvent {
+  let parsed: EasyPayDirectEvent | EasyPayDirectGatewayEvent;
+  try {
+    parsed = JSON.parse(raw) as EasyPayDirectEvent | EasyPayDirectGatewayEvent;
+  } catch {
+    throw new Error("easy_pay_direct_webhook_invalid_json");
+  }
+  if (!("event_id" in parsed) && !("event_type" in parsed) && !("event_body" in parsed)) {
+    return { event: parsed as EasyPayDirectEvent, gateway: false };
+  }
+  const gateway = parsed as EasyPayDirectGatewayEvent;
+  const eventType = gateway.event_type?.trim();
+  const body = gateway.event_body;
+  const translatedType =
+    eventType === "transaction.sale.success"
+      ? "order.succeeded"
+      : eventType === "transaction.sale.failure"
+        ? "order.failed"
+        : eventType;
+  const translatedStatus =
+    translatedType === "order.succeeded"
+      ? "succeeded"
+      : translatedType === "order.failed"
+        ? "failed"
+        : undefined;
+  if (
+    (translatedStatus === "succeeded" && body?.action?.success !== "1") ||
+    (translatedStatus === "failed" && body?.action?.success !== "0")
+  ) {
+    throw new ApiError(
+      409,
+      "easy_pay_direct_order_evidence_mismatch",
+      "Gateway webhook event and action outcomes do not match.",
+    );
+  }
+  return {
+    gateway: true,
+    event: {
+      id: gateway.event_id?.trim(),
+      type: translatedType,
+      livemode:
+        typeof body?.features?.is_test_mode === "boolean" ? !body.features.is_test_mode : undefined,
+      data: {
+        object: {
+          id: body?.transaction_id?.trim(),
+          object: "gateway_transaction",
+          status: translatedStatus,
+          total: gatewayAmountMinor(body?.requested_amount) ?? undefined,
+          currency: body?.currency?.trim().toLowerCase(),
+          failure_reason:
+            translatedStatus === "failed"
+              ? body?.action?.response_text?.trim() ||
+                body?.action?.processor_response_text?.trim() ||
+                null
+              : null,
+          metadata: body?.order_id?.trim() ? { lago_payment_request_id: body.order_id.trim() } : {},
+        },
+      },
+    },
+  };
+}
+
 type EasyPayDirectExecution = {
   id: string;
   charge_transport: string;
@@ -378,12 +473,8 @@ export async function reconcileEasyPayDirectReceipt(
   const archived = await env.BILLING_ARTIFACTS.get(receipt.archive_key);
   if (!archived) throw new Error("easy_pay_direct_webhook_archive_missing");
   const raw = await archived.text();
-  let event: EasyPayDirectEvent;
-  try {
-    event = JSON.parse(raw) as EasyPayDirectEvent;
-  } catch {
-    throw new Error("easy_pay_direct_webhook_invalid_json");
-  }
+  const normalizedEvent = normalizeArchivedEasyPayDirectEvent(raw);
+  const event = normalizedEvent.event;
   const eventType = event.type?.trim() || receipt.event_type;
   if (eventType.includes("chargeback") || eventType.includes("dispute")) {
     return reconcileDispute(env.BILLING_DB, receipt, event, eventType);
@@ -441,8 +532,9 @@ export async function reconcileEasyPayDirectReceipt(
   const execution = await env.BILLING_DB.prepare(
     `SELECT id, payment_backend, provider_customer_id, provider_payment_method_id FROM easy_pay_direct_payment_executions
      WHERE organization_id = ? AND provider_account_code = ? AND payment_request_id = ?
-       AND (provider_transaction_id = ? OR
-         (provider_transaction_id IS NULL AND checkout_intent_id = ? AND status IN ('processing', 'unknown')))
+      AND (provider_transaction_id = ? OR
+         (provider_transaction_id IS NULL AND status IN ('processing', 'unknown')
+          AND (? = 1 OR checkout_intent_id = ?)))
      LIMIT 1`,
   )
     .bind(
@@ -450,6 +542,7 @@ export async function reconcileEasyPayDirectReceipt(
       receipt.provider_account_code,
       paymentRequestId,
       receipt.provider_transaction_id,
+      normalizedEvent.gateway ? 1 : 0,
       event.data?.object?.metadata?.lago_checkout_intent_id ?? null,
     )
     .first<{
@@ -459,6 +552,9 @@ export async function reconcileEasyPayDirectReceipt(
       provider_payment_method_id: string;
     }>();
   if (!execution) throw new Error("easy_pay_direct_webhook_execution_mismatch");
+  if (normalizedEvent.gateway && execution.payment_backend !== "gateway_vault") {
+    throw new Error("easy_pay_direct_webhook_execution_mismatch");
+  }
   if (execution.payment_backend === "commerce_elements") {
     const expected = await env.BILLING_DB.prepare(
       "SELECT amount_minor, currency FROM payment_requests WHERE id = ? AND organization_id = ?",

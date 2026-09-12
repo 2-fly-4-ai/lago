@@ -5,8 +5,62 @@ import {
   validEasyPayDirectSignature,
   validEasyPayDirectSignatureForAnyKey,
 } from "../src/webhooks/easy-pay-direct";
+import { normalizeArchivedEasyPayDirectEvent } from "../src/reconciliation/easy-pay-direct";
 
 describe("Easy Pay Direct webhook signatures", () => {
+  it("normalizes the documented Gateway sale envelope for existing reconciliation", () => {
+    const normalized = normalizeArchivedEasyPayDirectEvent(
+      JSON.stringify({
+        event_id: "gateway-event-1",
+        event_type: "transaction.sale.success",
+        event_body: {
+          features: { is_test_mode: true },
+          transaction_id: "12544297879",
+          order_id: "payment-request-1",
+          requested_amount: "41.97",
+          currency: "USD",
+          action: { success: "1", response_code: "100", response_text: "SUCCESS" },
+        },
+      }),
+    );
+    expect(normalized).toMatchObject({
+      gateway: true,
+      event: {
+        id: "gateway-event-1",
+        type: "order.succeeded",
+        livemode: false,
+        data: {
+          object: {
+            id: "12544297879",
+            status: "succeeded",
+            total: 4197,
+            currency: "usd",
+            metadata: { lago_payment_request_id: "payment-request-1" },
+          },
+        },
+      },
+    });
+  });
+
+  it("rejects contradictory Gateway event and action outcomes", () => {
+    expect(() =>
+      normalizeArchivedEasyPayDirectEvent(
+        JSON.stringify({
+          event_id: "gateway-event-2",
+          event_type: "transaction.sale.success",
+          event_body: {
+            features: { is_test_mode: true },
+            transaction_id: "12544297880",
+            order_id: "payment-request-2",
+            requested_amount: "9.00",
+            currency: "USD",
+            action: { success: "0", response_code: "200", response_text: "DECLINE" },
+          },
+        }),
+      ),
+    ).toThrowError(/outcomes do not match/i);
+  });
+
   it("accepts signed Elements sandbox receipts after UI rollback and rejects unsafe modes", async () => {
     const organizationId = `elements-webhook-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
@@ -16,14 +70,19 @@ describe("Easy Pay Direct webhook signatures", () => {
       .bind(organizationId, organizationId, now, now)
       .run();
     const signingKey = "fictional-elements-signing-key";
-    const request = async (livemode = false) => {
-      const timestamp = Math.floor(Date.now() / 1000);
+    const request = async (isTestMode = true) => {
+      const nonce = `${Date.now()}`;
       const body = JSON.stringify({
-        id: crypto.randomUUID(),
-        type: "order.succeeded",
-        created: timestamp,
-        livemode,
-        data: { object: { id: crypto.randomUUID(), total: 900, currency: "usd" } },
+        event_id: crypto.randomUUID(),
+        event_type: "transaction.sale.success",
+        event_body: {
+          features: { is_test_mode: isTestMode },
+          transaction_id: crypto.randomUUID(),
+          order_id: crypto.randomUUID(),
+          requested_amount: "9.00",
+          currency: "USD",
+          action: { success: "1", response_code: "100", response_text: "SUCCESS" },
+        },
       });
       const key = await crypto.subtle.importKey(
         "raw",
@@ -35,14 +94,14 @@ describe("Easy Pay Direct webhook signatures", () => {
       const digest = await crypto.subtle.sign(
         "HMAC",
         key,
-        new TextEncoder().encode(`${timestamp}.${body}`),
+        new TextEncoder().encode(`${nonce}.${body}`),
       );
       const signature = [...new Uint8Array(digest)]
         .map((byte) => byte.toString(16).padStart(2, "0"))
         .join("");
       return new Request("https://lago.example.test/webhook", {
         method: "POST",
-        headers: { "EPD-Signature": `t=${timestamp},v1=${signature}` },
+        headers: { "Webhook-Signature": `t=${nonce},s=${signature}` },
         body,
       });
     };
@@ -61,7 +120,7 @@ describe("Easy Pay Direct webhook signatures", () => {
         .status,
     ).toBe(200);
     await expect(
-      handleEasyPayDirectWebhook(await request(true), runtime, organizationId, "fixture"),
+      handleEasyPayDirectWebhook(await request(false), runtime, organizationId, "fixture"),
     ).rejects.toMatchObject({ code: "webhook_environment_mismatch" });
     await expect(
       handleEasyPayDirectWebhook(
@@ -89,10 +148,16 @@ describe("Easy Pay Direct webhook signatures", () => {
       .bind(organizationId, organizationId, now, now)
       .run();
     const body = JSON.stringify({
-      id: eventId,
-      type: "order.succeeded",
-      livemode: false,
-      data: { object: { id: `fixture-order-${eventId}`, total: 900, currency: "usd" } },
+      event_id: eventId,
+      event_type: "transaction.sale.success",
+      event_body: {
+        features: { is_test_mode: true },
+        transaction_id: `fixture-order-${eventId}`,
+        order_id: `fixture-request-${eventId}`,
+        requested_amount: "9.00",
+        currency: "USD",
+        action: { success: "1", response_code: "100", response_text: "SUCCESS" },
+      },
     });
     const timestamp = Math.floor(Date.now() / 1000);
     const key = await crypto.subtle.importKey(
@@ -141,7 +206,7 @@ describe("Easy Pay Direct webhook signatures", () => {
     const response = await handleEasyPayDirectWebhook(
       new Request("https://example.com/webhook", {
         method: "POST",
-        headers: { "EPD-Signature": `t=${timestamp},v1=${signature}` },
+        headers: { "Webhook-Signature": `t=${timestamp},s=${signature}` },
         body,
       }),
       runtimeEnv,
@@ -167,10 +232,16 @@ describe("Easy Pay Direct webhook signatures", () => {
       .bind(organizationId, organizationId, now, now)
       .run();
     const body = JSON.stringify({
-      id: eventId,
-      type: "order.succeeded",
-      livemode: false,
-      data: { object: { id: `fixture-order-${eventId}`, total: 900, currency: "usd" } },
+      event_id: eventId,
+      event_type: "transaction.sale.success",
+      event_body: {
+        features: { is_test_mode: true },
+        transaction_id: `fixture-order-${eventId}`,
+        order_id: `fixture-request-${eventId}`,
+        requested_amount: "9.00",
+        currency: "USD",
+        action: { success: "1", response_code: "100", response_text: "SUCCESS" },
+      },
     });
     const timestamp = Math.floor(Date.now() / 1000);
     const key = await crypto.subtle.importKey(
@@ -227,7 +298,7 @@ describe("Easy Pay Direct webhook signatures", () => {
     const request = () =>
       new Request("https://example.com/webhook", {
         method: "POST",
-        headers: { "EPD-Signature": `t=${timestamp},v1=${signature}` },
+        headers: { "Webhook-Signature": `t=${timestamp},s=${signature}` },
         body,
       });
     const results = await Promise.all([
@@ -251,12 +322,11 @@ describe("Easy Pay Direct webhook signatures", () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it("verifies the documented timestamp.raw-body HMAC-SHA256 format", async () => {
+  it("verifies the documented nonce.raw-body HMAC-SHA256 format", async () => {
     const body = JSON.stringify({
-      id: "synthetic-event-1",
-      type: "order.succeeded",
-      livemode: false,
-      data: { object: { id: "synthetic-order-1", object: "order" } },
+      event_id: "synthetic-event-1",
+      event_type: "transaction.sale.success",
+      event_body: { transaction_id: "synthetic-order-1" },
     });
     const now = Date.parse("2026-08-22T00:00:00.000Z");
     const timestamp = Math.floor(now / 1000);
@@ -276,29 +346,20 @@ describe("Easy Pay Direct webhook signatures", () => {
       .map((byte) => byte.toString(16).padStart(2, "0"))
       .join("");
     await expect(
-      validEasyPayDirectSignature(
-        body,
-        `t=${timestamp},v1=${signature}`,
-        "synthetic-signing-key",
-        now,
-      ),
+      validEasyPayDirectSignature(body, `t=${timestamp},s=${signature}`, "synthetic-signing-key"),
     ).resolves.toBe(true);
     await expect(
       validEasyPayDirectSignature(
         `${body} `,
-        `t=${timestamp},v1=${signature}`,
+        `t=${timestamp},s=${signature}`,
         "synthetic-signing-key",
-        now,
       ),
     ).resolves.toBe(false);
+    // Gateway calls this value a nonce and does not document a five-minute age window.
+    // Replay safety is enforced by the unique event_id stored by the receiver.
     await expect(
-      validEasyPayDirectSignature(
-        body,
-        `t=${timestamp},v1=${signature}`,
-        "synthetic-signing-key",
-        now + 301_000,
-      ),
-    ).resolves.toBe(false);
+      validEasyPayDirectSignature(body, `t=${timestamp},s=${signature}`, "synthetic-signing-key"),
+    ).resolves.toBe(true);
   });
 
   it("rejects malformed signature headers", async () => {
@@ -328,12 +389,10 @@ describe("Easy Pay Direct webhook signatures", () => {
       .join("");
 
     await expect(
-      validEasyPayDirectSignatureForAnyKey(
-        body,
-        `t=${timestamp},v1=${signature}`,
-        ["current-signing-key", "previous-signing-key"],
-        now,
-      ),
+      validEasyPayDirectSignatureForAnyKey(body, `t=${timestamp},s=${signature}`, [
+        "current-signing-key",
+        "previous-signing-key",
+      ]),
     ).resolves.toBe(true);
   });
 });

@@ -3692,25 +3692,25 @@ describe("Easy Pay Direct Commerce checkout execution", () => {
     });
 
     const successPayload = JSON.stringify({
-      id: "evt-order-succeeded-1",
-      object: "event",
-      type: "order.succeeded",
-      livemode: false,
-      data: {
-        object: {
-          id: "epd-order-1",
-          object: "order",
-          status: "succeeded",
-          total: 1999,
-          currency: "usd",
-          metadata: { lago_payment_request_id: paymentRequestId },
+      event_id: "evt-order-succeeded-1",
+      event_type: "transaction.sale.success",
+      event_body: {
+        features: { is_test_mode: true },
+        transaction_id: "epd-order-1",
+        order_id: paymentRequestId,
+        requested_amount: "19.99",
+        currency: "USD",
+        action: {
+          success: "1",
+          response_code: "100",
+          response_text: "SUCCESS",
         },
       },
     });
     await insertArchivedEvent(
       "epd_evt_order_success_1",
       "evt-order-succeeded-1",
-      "order.succeeded",
+      "transaction.sale.success",
       "epd-order-1",
       successPayload,
     );

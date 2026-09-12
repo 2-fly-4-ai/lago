@@ -9,7 +9,7 @@ import { handleEasyPayDirectWebhook } from "./webhooks/easy-pay-direct";
 import { handleStripeWebhook } from "./webhooks/stripe";
 import { reconcileAuthorizeNetReceipt } from "./reconciliation/authorize-net";
 import { reconcileEasyPayDirectReceiptSafely } from "./reconciliation/easy-pay-direct-receipt-safety";
-import { deliverOutboundWebhooks } from "./webhooks/outbound";
+import { deliverOutboundWebhooks, outboundWebhookRetryDelaySeconds } from "./webhooks/outbound";
 import { scheduleInstanceId } from "./schedules/registry";
 import { processPayInAdvanceUsageEvent } from "./billing/pay-in-advance-usage";
 import { processUsageEventSubscriptionActivity } from "./usage/lifetime-usage";
@@ -326,7 +326,9 @@ export default {
 
         const outboundOutcome = await deliverOutboundWebhooks(env, event);
         if (outboundOutcome === "retry") {
-          message.retry();
+          message.retry({
+            delaySeconds: outboundWebhookRetryDelaySeconds(message.attempts),
+          });
           continue;
         }
 

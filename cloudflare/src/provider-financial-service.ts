@@ -123,8 +123,18 @@ export function integrationRuntimeStatuses(
   );
   const stripeNetworkReady =
     env.STRIPE_NETWORK_MODE === "enabled" && env.STRIPE_LIVEMODE_ALLOWED !== "1";
+  const easyPayDirectBackend = env.EASY_PAY_DIRECT_CHECKOUT_BACKEND;
+  const easyPayDirectProviderSecretsReady =
+    easyPayDirectBackend === "commerce_elements"
+      ? Boolean(
+          env.EASY_PAY_DIRECT_COMMERCE_API_KEY?.trim() &&
+          env.EASY_PAY_DIRECT_PUBLISHABLE_KEY?.trim(),
+        )
+      : Boolean(
+          env.EASY_PAY_DIRECT_SECURITY_KEY?.trim() && env.EASY_PAY_DIRECT_TOKENIZATION_KEY?.trim(),
+        );
   const easyPayDirectSecretReady = Boolean(
-    env.EASY_PAY_DIRECT_COMMERCE_API_KEY?.trim() &&
+    easyPayDirectProviderSecretsReady &&
     env.EASY_PAY_DIRECT_CHECKOUT_SIGNING_SECRET?.trim() &&
     env.EASY_PAY_DIRECT_WEBHOOK_SIGNING_KEY?.trim() &&
     env.EASY_PAY_DIRECT_ACCOUNT_CODE?.trim() &&
