@@ -17,6 +17,7 @@ import {
 } from "../billing/easy-pay-direct-refund-reconciliation";
 import { createStripeRefund } from "../providers/stripe";
 import { Decimal } from "../rating/decimal";
+import { creditNoteRefundSummary } from "../billing/refund-summary";
 
 type CreditNoteRow = {
   id: string;
@@ -795,7 +796,15 @@ export async function showCreditNote(
 ): Promise<Response> {
   const note = await findCreditNote(db, auth.organizationId, id);
   if (!note) throw new ApiError(404, "credit_note_not_found", "Credit note was not found");
-  return json({ credit_note: await serializeCreditNote(db, note, origin) }, { requestId });
+  return json(
+    {
+      credit_note: {
+        ...(await serializeCreditNote(db, note, origin)),
+        refund_summary: await creditNoteRefundSummary(db, auth.organizationId, id),
+      },
+    },
+    { requestId },
+  );
 }
 
 export async function voidCreditNote(
