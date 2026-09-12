@@ -82,7 +82,8 @@ The user approved continuing to staging after the correction report. The reviewe
 source was frozen at `39e95d9`. Only migration 0127 and the native billing Worker
 were deployed to isolated SerpTEST; see
 `docs/evidence/operator-financial-truth-staging-2026-09-13.md` for version IDs,
-read-only verification and the pending staging-admin alignment choice. Shared
+read-only verification. The user approved staging-admin alignment with SerpTEST
+and the two admin invitations; configuration and verification are in progress. Shared
 staging's additional policy/receipt migrations were deliberately not applied.
 Production and all uncertain payment outcomes remain untouched.
 

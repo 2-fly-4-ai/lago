@@ -32,9 +32,9 @@ describe("isolated operator app assets", () => {
     expect(operatorConfig).toContain(
       '"ACCESS_AUD": "4e2aeb75eccbd0abda500c9318a371acbeab7a244f8727904358021daea5a951"',
     );
-    expect(operatorConfig).toContain('"database_id": "2f32f159-c269-46c6-a4dd-9e38477f5d25"');
+    expect(operatorConfig).toContain('"database_id": "a88dfe97-3ea1-4b35-baf8-3690e1c4633f"');
     expect(operatorConfig).toContain('"name": "BILLING_ACCOUNTS"');
-    expect(operatorConfig).toContain('"script_name": "serp-dev-lago-native"');
+    expect(operatorConfig).toContain('"script_name": "serp-dev-lago-epd-serptest"');
     expect(operatorConfig).toContain('"binding": "AI"');
     expect(operatorConfig).toContain('"binding": "BILLING_ARTIFACTS"');
     expect(operatorConfig).toContain('"@cf/zai-org/glm-4.7-flash"');

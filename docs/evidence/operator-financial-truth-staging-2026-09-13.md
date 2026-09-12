@@ -2,9 +2,11 @@
 
 ## Current status
 
-Billing deployed to isolated SerpTEST. Operator deployment and paired browser
-verification remain pending approval to align the staging admin with SerpTEST.
-Production, shared staging, Store routing and all provider credentials are unchanged.
+Billing deployed to isolated SerpTEST. The user subsequently approved aligning
+the existing staging admin with SerpTEST and providing both approved users admin
+access. Operator deployment and paired browser verification are in progress.
+Production, the older shared staging database/native Worker, Store routing and
+all provider credentials are unchanged.
 
 The user's “great continue” approved proceeding with the proposed staging step.
 The older shared staging database was discovered to be missing migrations 0124–0126,
@@ -53,17 +55,22 @@ newly enabled. No manual reconciliation, charge, refund or webhook replay was ru
 These are real remote deployment/schema/read-only checks, not a new provider-backed
 payment journey. The 1,220-test suite remains local migrated-D1/contract evidence.
 
-## Pending paired operator step
+## Approved paired operator step
 
-`serp-dev-lago-operator` still points to shared `serp-dev-lago-native-d1` and its
-existing billing service, not SerpTEST. The isolated database has no operator
-memberships yet. Repointing without arranging the approved admin memberships would
-lock users out; deploying the old shared-database configuration would not verify
-the isolated billing release.
+The existing `serp-dev-lago-operator` hostname is retained. Its checked-in config
+now points its D1, R2, Durable Object, workflow, provider service and event queue
+bindings to the corresponding resources in `wrangler.serptest.jsonc`. Access
+audience/enforcement and the operator refund flag are unchanged. A regression
+test compares all these resource mappings and runs in the normal Access gate.
 
-An explicit choice was requested: align the existing staging admin with SerpTEST,
-or preserve the shared staging admin. No Access policy, membership, operator binding
-or operator deployment was changed while awaiting that choice.
+Exactly two admin invitations were inserted in the isolated organization
+`org-epd-serptest-20260909`, for the user-approved Farley and Devin email
+addresses. Only normalized email hashes are stored, with seven-day expiry.
+The normal verified Access login claims an invitation and creates the subject-bound
+membership; no subject identity was guessed or copied from another organization.
+No existing memberships or Access policies were changed.
+
+Deployment version and post-deployment evidence will be recorded below.
 
 ## Rollback boundary
 

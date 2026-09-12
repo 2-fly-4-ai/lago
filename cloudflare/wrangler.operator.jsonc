@@ -29,15 +29,15 @@
   "d1_databases": [
     {
       "binding": "BILLING_DB",
-      "database_name": "serp-dev-lago-native-d1",
-      "database_id": "2f32f159-c269-46c6-a4dd-9e38477f5d25",
+      "database_name": "serp-dev-lago-epd-serptest-d1",
+      "database_id": "a88dfe97-3ea1-4b35-baf8-3690e1c4633f",
       "migrations_dir": "migrations",
     },
   ],
   "r2_buckets": [
     {
       "binding": "BILLING_ARTIFACTS",
-      "bucket_name": "serp-dev-lago-native-billing-artifacts",
+      "bucket_name": "serp-dev-lago-epd-serptest-artifacts",
     },
   ],
   "durable_objects": {
@@ -45,28 +45,28 @@
       {
         "name": "BILLING_ACCOUNTS",
         "class_name": "BillingAccount",
-        "script_name": "serp-dev-lago-native",
+        "script_name": "serp-dev-lago-epd-serptest",
       },
     ],
   },
   "workflows": [
     {
-      "name": "serp-dev-lago-plan-deletion",
+      "name": "serp-dev-lago-epd-serptest-plan-delete",
       "binding": "PLAN_DELETION_WORKFLOW",
       "class_name": "PlanDeletionWorkflow",
-      "script_name": "serp-dev-lago-native",
+      "script_name": "serp-dev-lago-epd-serptest",
     },
     {
-      "name": "serp-dev-lago-documents",
+      "name": "serp-dev-lago-epd-serptest-documents",
       "binding": "DOCUMENT_WORKFLOW",
       "class_name": "DocumentWorkflow",
-      "script_name": "serp-dev-lago-native",
+      "script_name": "serp-dev-lago-epd-serptest",
     },
   ],
   "services": [
     {
       "binding": "PROVIDER_FINANCIALS",
-      "service": "serp-dev-lago-native",
+      "service": "serp-dev-lago-epd-serptest",
       "entrypoint": "ProviderFinancialService",
     },
   ],
@@ -74,7 +74,7 @@
     "producers": [
       {
         "binding": "DOMAIN_EVENTS",
-        "queue": "serp-dev-lago-domain-events",
+        "queue": "serp-dev-lago-epd-serptest-events",
       },
     ],
   },
