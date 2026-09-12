@@ -4,6 +4,8 @@ import type {
   ProviderFinancialServiceBinding,
   EasyPayDirectRefundRpcResult,
 } from "../provider-financial-service";
+import type { DomainEvent } from "../domain-events";
+import { stableJson } from "../json";
 
 export type RefundCheckpointIdentity = {
   operationId: string;
@@ -18,6 +20,7 @@ export type RefundCheckpointIdentity = {
 type RecoveryEnv = {
   APP_ENV?: string;
   BILLING_DB: D1Database;
+  DOMAIN_EVENTS: Queue;
   CREDIT_NOTE_REFUND_MODE?: string;
   PROVIDER_READS_ENABLED?: string;
   EASY_PAY_DIRECT_ACCOUNT_CODE?: string;
@@ -73,10 +76,15 @@ export async function reconcileEasyPayDirectRefundOperation(
   fetcher: typeof fetch = fetch,
 ): Promise<"processed" | "deferred"> {
   if (!easyPayDirectRefundMode(env.CREDIT_NOTE_REFUND_MODE)) return "deferred";
-  const operation = await env.BILLING_DB.prepare(`SELECT id, organization_id, credit_note_id,
-    provider_account_code, provider_payment_id, provider_refund_transaction_id,
-    provider_idempotency_key, amount_minor, currency, status
-    FROM provider_refund_operations WHERE id = ? AND provider = 'easy_pay_direct'`)
+  const operation = await env.BILLING_DB.prepare(`SELECT op.id, op.organization_id,
+    op.credit_note_id, op.provider_account_code, op.provider_payment_id,
+    op.provider_refund_transaction_id, op.provider_idempotency_key, op.amount_minor,
+    op.currency, op.status, note.invoice_id, note.total_amount_minor,
+    note.version AS credit_note_version
+    FROM provider_refund_operations op
+    JOIN credit_notes note ON note.id = op.credit_note_id
+      AND note.organization_id = op.organization_id
+    WHERE op.id = ? AND op.provider = 'easy_pay_direct'`)
     .bind(operationId)
     .first<{
       id: string;
@@ -89,6 +97,9 @@ export async function reconcileEasyPayDirectRefundOperation(
       amount_minor: number;
       currency: string;
       status: string;
+      invoice_id: string;
+      total_amount_minor: number;
+      credit_note_version: number;
     }>();
   if (!operation || !operation.credit_note_id) return "deferred";
   if (operation.status === "succeeded" || operation.status === "failed") return "processed";
@@ -141,7 +152,26 @@ export async function reconcileEasyPayDirectRefundOperation(
     return "deferred";
   }
   const failure = result.status === "failed" ? "Easy Pay Direct confirmed the refund failed" : null;
-  await env.BILLING_DB.batch([
+  const resolvedEvent: DomainEvent | null =
+    result.status === "succeeded"
+      ? {
+          id: `credit-note-refund-succeeded:${operation.credit_note_id}:${result.id}`,
+          type: "credit_note.created",
+          version: 1,
+          aggregateType: "credit_note",
+          aggregateId: operation.credit_note_id,
+          aggregateVersion: operation.credit_note_version,
+          occurredAt: now,
+          causationId: operation.id,
+          correlationId: operation.id,
+          payload: {
+            organizationId: operation.organization_id,
+            invoiceId: operation.invoice_id,
+            totalAmountMinor: operation.total_amount_minor,
+          },
+        }
+      : null;
+  const statements = [
     env.BILLING_DB.prepare(`UPDATE provider_refund_operations
       SET status = ?, provider_refund_id = ?, failure_code = ?, failure_message = ?, updated_at = ?
       WHERE id = ? AND (status = 'submitted' OR (? = 'succeeded' AND status = 'failed'))
@@ -178,7 +208,35 @@ export async function reconcileEasyPayDirectRefundOperation(
       operation.id,
       result.status,
     ),
-  ]);
+    ...(resolvedEvent
+      ? [
+          env.BILLING_DB.prepare(`INSERT INTO outbox_events
+            (event_id, organization_id, event_type, event_version, aggregate_type,
+             aggregate_id, aggregate_version, causation_id, correlation_id,
+             payload_json, occurred_at, published_at)
+            SELECT ?,?,?,?,?,?,?,?,?,?,?,NULL
+            WHERE EXISTS (SELECT 1 FROM provider_refund_operations
+              WHERE id = ? AND status = 'succeeded' AND provider_refund_id = ?)
+            ON CONFLICT(event_id) DO NOTHING`).bind(
+            resolvedEvent.id,
+            operation.organization_id,
+            resolvedEvent.type,
+            resolvedEvent.version,
+            resolvedEvent.aggregateType,
+            resolvedEvent.aggregateId,
+            resolvedEvent.aggregateVersion,
+            resolvedEvent.causationId,
+            resolvedEvent.correlationId,
+            stableJson(resolvedEvent.payload),
+            resolvedEvent.occurredAt,
+            operation.id,
+            result.id,
+          ),
+        ]
+      : []),
+  ];
+  const writes = await env.BILLING_DB.batch(statements);
+  if (resolvedEvent && writes[0]?.meta.changes === 1) await env.DOMAIN_EVENTS.send(resolvedEvent);
   return "processed";
 }
 
