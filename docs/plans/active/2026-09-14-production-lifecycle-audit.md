@@ -34,6 +34,32 @@ production versions and customer financial history.
 
 ## Progress
 
+### Approved remediation and staging — September 14, 04:20 Fiji
+
+- Re-ran the complete gate at `ac249002482d196e34048533cd79e0dcd0320dd4`:
+  107 Vitest files / 1,248 tests passed, including all 28 purchase-scope cases;
+  formatting, lint, Access, checkout/provider, tax, types and all dry-run builds passed.
+- Compared against the prior isolated staging source `39e95d9`: native payment
+  runtime changes are comments/braces only. The rejected product-origin guard
+  was never deployed; separate generic-plan purchases remain supported.
+- Staging D1 reports no pending migrations. Deployed only
+  `serp-dev-lago-epd-serptest`, version `1ec27b5b-3993-490f-91f3-18b6468a35a2`,
+  retaining runtime vars, isolated D1/R2/queues/workflows, Gateway test mode,
+  live-mode prohibition and no scheduled cron. Rollback version:
+  `1aca0b81-8fc5-4b8f-82b2-b1b285323c1e`.
+- Remote smoke checks: health/readiness 200; unauthenticated customer API and
+  invalid signed-checkout token 401. These are deployed smoke checks, not a new
+  sandbox purchase or proof of a future monthly renewal.
+- Approved Store-owned held Dub sale recovery completed separately: exactly one
+  conversion, matching amount/currency/invoice/pinned historical customer. Its
+  click/link match all 25 previous Stripe sales on that customer, rather than
+  the checkout's newer click. No payment request or customer refund was made.
+- Eight historical uncertain payment outcomes still require provider evidence.
+  A fresh Gateway request redirects to login; cached signed-in pages are not
+  accepted as evidence. No uncertain execution was retried or reclassified.
+- No production Worker deployment, production payment configuration change,
+  subscription cancellation or mutation to either Kajabi subscription in this step.
+
 ### Current correction — September 14
 
 - Removed the unshipped checkout-origin uniqueness predicate and its customer-facing
