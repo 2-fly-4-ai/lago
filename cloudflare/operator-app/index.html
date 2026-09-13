@@ -292,7 +292,9 @@
                 <div>
                   <p class="route-breadcrumb">Reports / Analytics</p>
                   <h1 id="analytics-title">Analytics</h1>
-                  <p>Understand revenue, recurring subscriptions, usage, credits, and invoices.</p>
+                  <p>
+                    Review recorded payments, invoice value, recurring plans, usage, and credits.
+                  </p>
                 </div>
                 <div class="date-filter" aria-label="Analytics date range">
                   <label for="analytics-from">From</label>
@@ -306,9 +308,9 @@
               </header>
               <nav class="report-tabs" aria-label="Analytics sections">
                 <button class="active" type="button" data-analytics-tab="revenue">
-                  Revenue streams
+                  Invoiced value
                 </button>
-                <button type="button" data-analytics-tab="mrr">MRR</button>
+                <button type="button" data-analytics-tab="mrr">List-price run rate</button>
                 <button type="button" data-analytics-tab="usage">Usage</button>
                 <button type="button" data-analytics-tab="credits">Prepaid credits</button>
                 <button type="button" data-analytics-tab="invoices">Invoices</button>
@@ -319,8 +321,8 @@
                 <section class="chart-card" aria-labelledby="analytics-chart-title">
                   <div class="chart-card-heading">
                     <div>
-                      <p class="eyebrow" id="analytics-chart-eyebrow">Revenue</p>
-                      <h2 id="analytics-chart-title">Revenue streams over time</h2>
+                      <p class="eyebrow" id="analytics-chart-eyebrow">Invoiced value</p>
+                      <h2 id="analytics-chart-title">Finalized invoice value over time</h2>
                     </div>
                     <span class="role-pill" id="analytics-currency">—</span>
                   </div>
@@ -1526,11 +1528,11 @@
             <section class="keys-section" id="payments" aria-labelledby="payments-title">
               <div class="section-heading">
                 <div>
-                  <p class="eyebrow">Settlement ledger</p>
+                  <p class="eyebrow">Payment ledger</p>
                   <h2 id="payments-title">Payments</h2>
                   <p>
-                    Read-only provider and manual settlement evidence. Retry and payment-link
-                    actions remain unavailable.
+                    Read-only provider and manual payment records, not bank settlements. Retry and
+                    payment-link actions remain unavailable.
                   </p>
                 </div>
               </div>
@@ -1541,7 +1543,7 @@
                 <div class="empty-state" id="payments-empty" hidden>
                   <img class="empty-icon" src="/assets/icons/coin-dollar.svg" alt="" />
                   <h3>No payments</h3>
-                  <p>No settlement records are available.</p>
+                  <p>No payment records are available.</p>
                 </div>
                 <div class="table-scroll" id="payments-table-shell" hidden>
                   <table>
@@ -1557,6 +1559,32 @@
                       </tr>
                     </thead>
                     <tbody id="payments-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="billing-subsection" aria-labelledby="payment-review-title">
+                <h3 id="payment-review-title">Payments requiring review</h3>
+                <p>
+                  Unknown does not mean declined. Verify the provider outcome before any retry or
+                  account cleanup.
+                </p>
+                <p id="payment-review-summary" aria-live="polite">Loading review diagnostics…</p>
+                <button type="button" class="secondary-button" id="payment-review-refresh">
+                  Refresh review diagnostics
+                </button>
+                <div class="table-scroll">
+                  <table aria-label="Held payment executions">
+                    <thead>
+                      <tr>
+                        <th scope="col">Execution</th>
+                        <th scope="col">Kind</th>
+                        <th scope="col">Review reason</th>
+                        <th scope="col">Since update</th>
+                        <th scope="col">Checkpoint</th>
+                        <th scope="col">Failure code</th>
+                      </tr>
+                    </thead>
+                    <tbody id="payment-review-body"></tbody>
                   </table>
                 </div>
               </div>

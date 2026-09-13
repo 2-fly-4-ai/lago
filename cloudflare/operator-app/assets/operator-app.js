@@ -1319,6 +1319,7 @@ async function loadWorkspace({ replaceHistory = false } = {}) {
     renderWallets(walletsPayload.wallets);
     renderCreditNotes(creditNotesPayload.credit_notes);
     renderPayments(paymentsPayload.payments);
+    await loadPaymentReview();
     renderPaymentDisputes(paymentDisputesPayload.payment_disputes);
     renderProviderRefunds(providerRefundsPayload.provider_refunds);
     renderQuotes(quotesPayload.quotes);
@@ -2615,9 +2616,9 @@ async function renderCustomerAnalytics(customer) {
     const analytics = payload.analytics;
     elements.customerDetailTabPanel.replaceChildren(
       createDetailSummary(
-        "Revenue",
+        "Invoiced value",
         formatMoney(analytics.revenue_streams.total_amount_minor, analytics.currency),
-        "Finalized invoices in the selected year",
+        "Includes unpaid invoices; before refunds. Not collected revenue.",
       ),
       createDetailSummary(
         "Usage",
@@ -2650,6 +2651,44 @@ function selectAnalyticsTab(event) {
   renderAnalytics(state.analytics);
 }
 
+async function loadPaymentReview() {
+  const summary = document.querySelector("#payment-review-summary");
+  const body = document.querySelector("#payment-review-body");
+  const refresh = document.querySelector("#payment-review-refresh");
+  if (!summary || !body || !refresh) return;
+  refresh.onclick = () => void loadPaymentReview();
+  refresh.disabled = true;
+  summary.textContent = "Loading review diagnostics…";
+  body.replaceChildren();
+  try {
+    const payload = await requestJson("/api/operator/v1/observability/payment-executions?limit=50");
+    const items = payload.payment_executions;
+    summary.textContent = `${payload.summary.total_count} payment execution(s) need review; showing ${items.length}. This view never retries a payment.`;
+    for (const item of items) {
+      const row = document.createElement("tr");
+      const values = [
+        item.lago_id,
+        humanize(item.execution_kind),
+        humanize(item.review_reason),
+        `${Math.floor(item.age_seconds / 3600)} hours`,
+        item.checkpoint ?? "—",
+        item.failure_code ?? "—",
+      ];
+      for (const value of values) {
+        const cell = document.createElement("td");
+        cell.textContent = String(value);
+        row.append(cell);
+      }
+      body.append(row);
+    }
+  } catch {
+    summary.textContent =
+      "Review diagnostics unavailable. This does not mean there are no unresolved payments. Refresh to try the read-only check again.";
+  } finally {
+    refresh.disabled = false;
+  }
+}
+
 function renderAnalytics(analytics) {
   state.analytics = analytics;
   elements.analyticsLoading.hidden = Boolean(analytics);
@@ -2668,18 +2707,18 @@ function renderAnalytics(analytics) {
   elements.analyticsBreakdown.replaceChildren();
   const tab = state.analyticsTab;
   if (tab === "mrr") {
-    elements.analyticsChartEyebrow.textContent = "Monthly recurring revenue";
-    elements.analyticsChartTitle.textContent = "Current MRR";
+    elements.analyticsChartEyebrow.textContent = "Current recurring plan value";
+    elements.analyticsChartTitle.textContent = "Current list-price run rate";
     appendMetricCards([
       [
-        "MRR",
+        "List-price run rate",
         formatMoney(analytics.mrr.amount_minor, analytics.currency),
-        "Normalized recurring plan value",
+        "Before discounts; includes unpaid subscriptions. Not historical MRR.",
       ],
       [
         "Subscriptions",
         String(analytics.mrr.subscriptions_count),
-        "Active and past-due subscriptions",
+        "Current active and past-due recurring subscriptions; not payment-verified",
       ],
     ]);
     renderBarChart(
@@ -2758,7 +2797,7 @@ function renderAnalytics(analytics) {
       [
         "Invoice value",
         formatMoney(analytics.invoices.total_amount_minor, analytics.currency),
-        "All invoices in range",
+        "Documents, not cash. Unpaid checkout and provider-review totals are separated below.",
       ],
       ["Invoices", String(analytics.invoices.total_count), "Documents in range"],
     ]);
@@ -2781,22 +2820,45 @@ function renderAnalytics(analytics) {
     ]);
     return;
   }
-  elements.analyticsChartEyebrow.textContent = "Revenue";
-  elements.analyticsChartTitle.textContent = "Revenue streams over time";
+  elements.analyticsChartEyebrow.textContent = "Invoiced value";
+  elements.analyticsChartTitle.textContent = "Finalized invoice value over time";
+  const recorded = analytics.recorded_payments?.currencies?.find(
+    (item) => item.currency === analytics.currency,
+  );
   appendMetricCards([
+    ...(analytics.recorded_payments
+      ? [
+          [
+            "Recorded payments",
+            formatMoney(recorded?.paid_minor ?? 0, analytics.currency),
+            "Succeeded payment records only; UTC record dates. Includes internal purchases; not bank settlement.",
+          ],
+          [
+            "Confirmed refunds",
+            formatMoney(recorded?.refunded_minor ?? 0, analytics.currency),
+            "Succeeded refund records only; excludes pending refunds and credit-only adjustments.",
+          ],
+          [
+            "Payments less refunds",
+            formatMoney(recorded?.net_minor ?? 0, analytics.currency),
+            "Before processor fees; not net profit or a bank payout.",
+          ],
+        ]
+      : []),
     [
-      "Revenue",
+      "Invoiced value",
       formatMoney(analytics.revenue_streams.total_amount_minor, analytics.currency),
-      "Finalized invoice value",
-    ],
-    [
-      "Streams",
-      String(analytics.revenue_streams.breakdown.length),
-      "Subscription and one-off revenue",
+      "Includes unpaid and failed checkouts; before refunds. Not collected revenue.",
     ],
   ]);
   renderBarChart(analytics.revenue_streams.monthly, analytics.currency);
   renderBreakdown([
+    ...(analytics.recorded_payments?.currencies ?? [])
+      .filter((item) => item.currency !== analytics.currency)
+      .map((item) => [
+        `Other currency · ${item.currency}`,
+        `${formatMoney(item.paid_minor, item.currency)} payments · ${formatMoney(item.refunded_minor, item.currency)} refunds (not converted)`,
+      ]),
     ...analytics.revenue_streams.breakdown.map((item) => [
       humanize(item.stream),
       `${formatMoney(item.amount_minor, analytics.currency)} · ${item.invoice_count} invoices`,

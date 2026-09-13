@@ -268,12 +268,22 @@ function findRetryableInvoice(
               c.payment_provider, c.payment_provider_code,
               COALESCE((
                 SELECT SUM(amount_minor) FROM (
-                  SELECT payment.amount_minor FROM payment_attempts payment
+                  SELECT payment.provider, payment.provider_account_code,
+                         COALESCE(payment.provider_transaction_id, 'attempt:' || payment.id)
+                           AS transaction_key,
+                         payment.amount_minor
+                  FROM payment_attempts payment
                   WHERE payment.invoice_id = i.id AND payment.status = 'succeeded'
-                  UNION ALL
-                  SELECT allocation.amount_minor
+                  UNION
+                  SELECT payment.provider, payment.provider_account_code,
+                         COALESCE(payment.provider_transaction_id,
+                                  'request-payment:' || payment.id),
+                         allocation.amount_minor
                   FROM payment_request_payment_allocations allocation
+                  JOIN payment_request_payments payment
+                    ON payment.id = allocation.payment_request_payment_id
                   WHERE allocation.invoice_id = i.id
+                    AND payment.status = 'succeeded'
                 )
               ), 0) AS total_paid_minor
        FROM invoices i

@@ -45,6 +45,27 @@ beforeEach(async () => {
     env.BILLING_DB.prepare("DELETE FROM credit_notes WHERE organization_id = ?").bind(
       organizationId,
     ),
+    env.BILLING_DB.prepare(
+      "DELETE FROM payment_request_payment_allocations WHERE organization_id = ?",
+    ).bind(organizationId),
+    env.BILLING_DB.prepare(
+      "DELETE FROM payment_receipt_document_artifacts WHERE organization_id = ?",
+    ).bind(organizationId),
+    env.BILLING_DB.prepare("DELETE FROM payment_receipts WHERE organization_id = ?").bind(
+      organizationId,
+    ),
+    env.BILLING_DB.prepare("DELETE FROM payment_request_payments WHERE organization_id = ?").bind(
+      organizationId,
+    ),
+    env.BILLING_DB.prepare("DELETE FROM invoices_payment_requests WHERE organization_id = ?").bind(
+      organizationId,
+    ),
+    env.BILLING_DB.prepare("DELETE FROM payment_requests WHERE organization_id = ?").bind(
+      organizationId,
+    ),
+    env.BILLING_DB.prepare("DELETE FROM payment_attempts WHERE organization_id = ?").bind(
+      organizationId,
+    ),
     env.BILLING_DB.prepare("DELETE FROM invoice_lines WHERE invoice_id = ?").bind(invoiceId),
     env.BILLING_DB.prepare("DELETE FROM invoices WHERE organization_id = ?").bind(organizationId),
     env.BILLING_DB.prepare("DELETE FROM subscriptions WHERE organization_id = ?").bind(
@@ -183,6 +204,67 @@ describe("container-free data exports", () => {
     expect(feeCsv).toContain("invoice-data-export,INV-EXPORT-001,2026-08-15,line-data-export");
     expect(feeCsv).toContain('"Synthetic, metered fee"');
     expect(feeCsv).toContain('"{""region"":""test""}"');
+  });
+
+  it("counts a payment-request allocation and its invoice mirror only once", async () => {
+    const now = "2026-08-15T00:30:00.000Z";
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `UPDATE invoices
+         SET ready_for_payment_processing = 1, payment_due_date = '2026-08-15'
+         WHERE id = ?`,
+      ).bind(invoiceId),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_requests
+         (id, organization_id, customer_id, amount_minor, currency, payment_status,
+          ready_for_payment_processing, version, collection_mode, created_at, updated_at)
+         VALUES ('request-data-export', ?, ?, 1100, 'USD', 'succeeded', 0, 1,
+                 'checkout', ?, ?)`,
+      ).bind(organizationId, customerId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO invoices_payment_requests
+         (id, organization_id, payment_request_id, invoice_id, invoice_version,
+          created_at, updated_at)
+         VALUES ('request-link-data-export', ?, 'request-data-export', ?, 1, ?, ?)`,
+      ).bind(organizationId, invoiceId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payments
+         (id, organization_id, payment_request_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          version, created_at, updated_at)
+         VALUES ('request-payment-data-export', ?, 'request-data-export', 'easy_pay_direct',
+                 'epd-data-export', 'transaction-data-export', 'request-payment-data-export',
+                 1100, 'USD', 'succeeded', 1, ?, ?)`,
+      ).bind(organizationId, now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payment_allocations
+         (id, organization_id, payment_request_payment_id, payment_request_id, invoice_id,
+          amount_minor, currency, created_at)
+         VALUES ('request-allocation-data-export', ?, 'request-payment-data-export',
+                 'request-data-export', ?, 1100, 'USD', ?)`,
+      ).bind(organizationId, invoiceId, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_attempts
+         (id, organization_id, invoice_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          payment_type, version, created_at, updated_at)
+         VALUES ('invoice-payment-data-export', ?, ?, 'easy_pay_direct', 'epd-data-export',
+                 'transaction-data-export', 'invoice-payment-data-export', 1100, 'USD',
+                 'succeeded', 'provider', 1, ?, ?)`,
+      ).bind(organizationId, invoiceId, now, now),
+    ]);
+
+    const exportId = await exportIdFrom(
+      await createExport("invoice-payment-mirror", "invoices", {
+        customer_external_id: "customer-data-export-external",
+      }),
+    );
+    await generateDataExport(env, exportId);
+    const [headerLine, rowLine] = (await downloadText(exportId)).trim().split("\n");
+    const headers = headerLine!.split(",");
+    const values = rowLine!.split(",");
+    expect(values[headers.indexOf("total_due_amount_cents")]).toBe("0");
+    expect(values[headers.indexOf("total_paid_amount_cents")]).toBe("1100");
   });
 
   it("streams credit-note and item CSV contracts and supports private downloads", async () => {

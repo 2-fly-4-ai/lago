@@ -45,6 +45,85 @@ type WebhookLogRow = {
   updated_at: string;
 };
 
+type EasyPayDirectExecutionReviewRow = {
+  id: string;
+  execution_kind: "checkout" | "automatic";
+  status: "pending" | "processing" | "unknown";
+  review_reason: "pending_with_failure" | "stale_processing" | "unknown_outcome";
+  checkpoint: string;
+  failure_code: string | null;
+  attempt_count: number;
+  payment_backend: "gateway_vault" | "commerce_elements";
+  charge_transport: "commerce" | "gateway" | "legacy_unknown";
+  provider_transaction_recorded: number;
+  age_seconds: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type EasyPayDirectExecutionReviewSummaryRow = {
+  total_count: number;
+  checkout_count: number;
+  automatic_count: number;
+  pending_count: number;
+  processing_count: number;
+  unknown_count: number;
+  oldest_age_seconds: number | null;
+};
+
+const EASY_PAY_DIRECT_EXECUTION_REVIEW_CTE = `WITH review_executions AS (
+  SELECT execution.id, 'checkout' AS execution_kind, execution.status,
+         CASE execution.status
+           WHEN 'unknown' THEN 'unknown_outcome'
+           WHEN 'processing' THEN 'stale_processing'
+           ELSE 'pending_with_failure'
+         END AS review_reason,
+         execution.last_checkpoint AS checkpoint, execution.failure_code,
+         execution.resume_count AS attempt_count, execution.payment_backend,
+         execution.charge_transport,
+         CASE WHEN execution.provider_transaction_id IS NULL THEN 0 ELSE 1 END
+           AS provider_transaction_recorded,
+         CAST(MAX(0, (julianday('now') - julianday(execution.updated_at)) * 86400) AS INTEGER)
+           AS age_seconds,
+         execution.created_at, execution.updated_at
+  FROM easy_pay_direct_payment_executions execution
+  WHERE execution.organization_id = ? AND (
+    execution.status = 'unknown'
+    OR (execution.status = 'processing'
+        AND julianday(execution.updated_at) <= julianday('now', '-2 minutes'))
+    OR (execution.status = 'pending' AND execution.failure_code IS NOT NULL)
+  )
+  UNION ALL
+  SELECT execution.id, 'automatic' AS execution_kind, execution.status,
+         CASE execution.status
+           WHEN 'unknown' THEN 'unknown_outcome'
+           WHEN 'processing' THEN 'stale_processing'
+           ELSE 'pending_with_failure'
+         END AS review_reason,
+         CASE
+           WHEN execution.provider_transaction_id IS NOT NULL
+             OR execution.commerce_order_id IS NOT NULL THEN 'provider_order'
+           WHEN execution.order_submit_started_at IS NOT NULL THEN 'order_submit_started'
+           WHEN execution.commerce_product_id IS NOT NULL THEN 'provider_product'
+           ELSE 'created'
+         END AS checkpoint,
+         execution.failure_code, execution.attempt_count, execution.payment_backend,
+         execution.charge_transport,
+         CASE WHEN execution.provider_transaction_id IS NULL THEN 0 ELSE 1 END
+           AS provider_transaction_recorded,
+         CAST(MAX(0, (julianday('now') - julianday(execution.updated_at)) * 86400) AS INTEGER)
+           AS age_seconds,
+         execution.created_at, execution.updated_at
+  FROM easy_pay_direct_automatic_payment_executions execution
+  WHERE execution.organization_id = ? AND (
+    execution.status = 'unknown'
+    OR (execution.status = 'processing'
+        AND (execution.lease_expires_at IS NULL
+             OR julianday(execution.lease_expires_at) <= julianday('now')))
+    OR (execution.status = 'pending' AND execution.failure_code IS NOT NULL)
+  )
+)`;
+
 export async function handleOperatorObservabilityRequest(
   request: Request,
   database: D1Database,
@@ -78,6 +157,10 @@ export async function handleOperatorObservabilityRequest(
     return usageEvents(database, organizationId, requestId, eventId, url.searchParams);
   }
 
+  if (url.pathname === "/api/operator/v1/observability/payment-executions") {
+    return easyPayDirectExecutionReview(database, organizationId, requestId, url.searchParams);
+  }
+
   const webhookMatch = url.pathname.match(
     /^\/api\/operator\/v1\/webhook-endpoints\/([^/]+)\/logs(?:\/([^/]+))?$/,
   );
@@ -93,6 +176,79 @@ export async function handleOperatorObservabilityRequest(
   }
 
   return null;
+}
+
+async function easyPayDirectExecutionReview(
+  database: D1Database,
+  organizationId: string,
+  requestId: string,
+  search: URLSearchParams,
+): Promise<Response> {
+  const [summary, executions] = await Promise.all([
+    database
+      .prepare(
+        `${EASY_PAY_DIRECT_EXECUTION_REVIEW_CTE}
+         SELECT COUNT(*) AS total_count,
+                COALESCE(SUM(execution_kind = 'checkout'), 0) AS checkout_count,
+                COALESCE(SUM(execution_kind = 'automatic'), 0) AS automatic_count,
+                COALESCE(SUM(status = 'pending'), 0) AS pending_count,
+                COALESCE(SUM(status = 'processing'), 0) AS processing_count,
+                COALESCE(SUM(status = 'unknown'), 0) AS unknown_count,
+                MAX(age_seconds) AS oldest_age_seconds
+         FROM review_executions`,
+      )
+      .bind(organizationId, organizationId)
+      .first<EasyPayDirectExecutionReviewSummaryRow>(),
+    database
+      .prepare(
+        `${EASY_PAY_DIRECT_EXECUTION_REVIEW_CTE}
+         SELECT id, execution_kind, status, review_reason, checkpoint, failure_code,
+                attempt_count, payment_backend, charge_transport,
+                provider_transaction_recorded, age_seconds, created_at, updated_at
+         FROM review_executions
+         ORDER BY updated_at ASC, id ASC LIMIT ${listLimit(search)}`,
+      )
+      .bind(organizationId, organizationId)
+      .all<EasyPayDirectExecutionReviewRow>(),
+  ]);
+  const counts = summary ?? {
+    total_count: 0,
+    checkout_count: 0,
+    automatic_count: 0,
+    pending_count: 0,
+    processing_count: 0,
+    unknown_count: 0,
+    oldest_age_seconds: null,
+  };
+  return json(
+    {
+      payment_executions: executions.results.map((row) => ({
+        lago_id: row.id,
+        execution_kind: row.execution_kind,
+        status: row.status,
+        review_reason: row.review_reason,
+        age_seconds: row.age_seconds,
+        checkpoint: row.checkpoint,
+        failure_code: redactedDiagnosticCode(row.failure_code),
+        attempt_count: row.attempt_count,
+        payment_backend: row.payment_backend,
+        charge_transport: row.charge_transport,
+        provider_transaction_recorded: row.provider_transaction_recorded === 1,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      })),
+      summary: {
+        total_count: counts.total_count,
+        checkout_count: counts.checkout_count,
+        automatic_count: counts.automatic_count,
+        pending_count: counts.pending_count,
+        processing_count: counts.processing_count,
+        unknown_count: counts.unknown_count,
+        oldest_age_seconds: counts.oldest_age_seconds,
+      },
+    },
+    { requestId },
+  );
 }
 
 export async function recordOperatorApiLog(
@@ -304,6 +460,11 @@ function listLimit(search: URLSearchParams): number {
 function boundedFilter(value: string | null, max: number): string | null {
   const candidate = value?.trim();
   return candidate && candidate.length <= max ? candidate : null;
+}
+
+function redactedDiagnosticCode(value: string | null): string | null {
+  if (!value) return null;
+  return /^(?:easy_pay_direct_[a-z0-9_]{1,80}|[0-9]{3})$/u.test(value) ? value : "[redacted]";
 }
 
 function routeTemplate(pathname: string): string {

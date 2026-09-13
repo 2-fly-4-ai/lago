@@ -32,9 +32,9 @@ describe("isolated operator app assets", () => {
     expect(operatorConfig).toContain(
       '"ACCESS_AUD": "4e2aeb75eccbd0abda500c9318a371acbeab7a244f8727904358021daea5a951"',
     );
-    expect(operatorConfig).toContain('"database_id": "2f32f159-c269-46c6-a4dd-9e38477f5d25"');
+    expect(operatorConfig).toContain('"database_id": "a88dfe97-3ea1-4b35-baf8-3690e1c4633f"');
     expect(operatorConfig).toContain('"name": "BILLING_ACCOUNTS"');
-    expect(operatorConfig).toContain('"script_name": "serp-dev-lago-native"');
+    expect(operatorConfig).toContain('"script_name": "serp-dev-lago-epd-serptest"');
     expect(operatorConfig).toContain('"binding": "AI"');
     expect(operatorConfig).toContain('"binding": "BILLING_ARTIFACTS"');
     expect(operatorConfig).toContain('"@cf/zai-org/glm-4.7-flash"');
@@ -100,6 +100,7 @@ describe("isolated operator app assets", () => {
       "/api/operator/v1/payment-requests",
       "/api/operator/v1/analytics",
       "/api/operator/v1/forecasts",
+      "/api/operator/v1/observability/payment-executions",
       "/api/operator/v1/billable-metrics",
       "/api/operator/v1/features",
       "/api/operator/v1/ai/conversations",
@@ -137,7 +138,13 @@ describe("isolated operator app assets", () => {
     ]) {
       expect(operatorIndex).toContain(identifier);
     }
-    for (const tab of ["Revenue streams", "MRR", "Usage", "Prepaid credits", "Invoices"]) {
+    for (const tab of [
+      "Invoiced value",
+      "List-price run rate",
+      "Usage",
+      "Prepaid credits",
+      "Invoices",
+    ]) {
       expect(operatorIndex).toContain(tab);
     }
     expect(operatorIndex).toContain("Optimistic");
@@ -276,7 +283,9 @@ describe("isolated operator app assets", () => {
     expect(operatorIndex).toContain("Recurring paid credits");
     expect(operatorIndex).toContain("Live-mode credentials are always rejected");
     expect(operatorIndex).toContain("PDF generation and download are");
-    expect(operatorIndex).toContain("Settlement ledger");
+    expect(operatorIndex).toContain("Payment ledger");
+    expect(operatorIndex).toContain("Payments requiring review");
+    expect(operatorScript).toContain("Recorded payments");
     expect(operatorIndex).toContain("payment-link");
     expect(operatorIndex).toContain("Quotes have no PDF, template, generation, download, email");
     expect(operatorIndex).toContain("Artifact download and completion email remain unavailable");

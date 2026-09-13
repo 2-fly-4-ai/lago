@@ -2,6 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../src/auth/api-key";
 import { createCreditNote } from "../src/api/credit-note-ledger";
+import { creditNoteRefundSummary } from "../src/billing/refund-summary";
 import type { EasyPayDirectRefundRpcInput } from "../src/provider-financial-service";
 import {
   checkpointEasyPayDirectRefund,
@@ -1428,3 +1429,64 @@ function request(
     body: body ? JSON.stringify(body) : undefined,
   });
 }
+
+describe("authoritative provider refund summary", () => {
+  it("accumulates successful partial notes and ignores pending provider work", async () => {
+    const fixture = await epdRefundFixture("summary", 250, 1000);
+    const provider = vi
+      .fn()
+      .mockResolvedValue({ id: "summary-refund-1", status: "succeeded", responseText: "approved" });
+    const first = await fixture.submit(provider);
+    expect(first.status).toBe(200);
+    const body = (await first.json()) as { credit_note: { lago_id: string } };
+    let summary = await creditNoteRefundSummary(
+      env.BILLING_DB,
+      "org-credit-note",
+      body.credit_note.lago_id,
+    );
+    expect(summary).toMatchObject({
+      allocation_complete: true,
+      payment_amount_cents: 1000,
+      original_net_amount_cents: 1000,
+      refunded_amount_cents: 250,
+      refunded_net_amount_cents: 250,
+      successful_refund_count: 1,
+    });
+    provider.mockResolvedValueOnce({
+      id: "summary-refund-2",
+      status: "succeeded",
+      responseText: "approved",
+    });
+    expect((await fixture.submit(provider, "-2")).status).toBe(200);
+    summary = await creditNoteRefundSummary(
+      env.BILLING_DB,
+      "org-credit-note",
+      body.credit_note.lago_id,
+    );
+    expect(summary).toMatchObject({
+      allocation_complete: true,
+      refunded_amount_cents: 500,
+      successful_refund_count: 2,
+    });
+    const revision = summary!.revision;
+    expect(
+      await creditNoteRefundSummary(env.BILLING_DB, "other-org", body.credit_note.lago_id),
+    ).toBeNull();
+    expect(
+      (await creditNoteRefundSummary(env.BILLING_DB, "org-credit-note", body.credit_note.lago_id))!
+        .revision,
+    ).toBe(revision);
+    // A successful provider operation without local note allocation cannot be
+    // silently dropped from the cumulative total.
+    await env.BILLING_DB.prepare(`INSERT INTO provider_refund_operations
+      (id,organization_id,invoice_id,payment_attempt_id,provider,provider_account_code,provider_payment_id,
+       idempotency_key,request_sha256,amount_minor,currency,status,created_at,updated_at)
+      SELECT 'summary-unallocated',organization_id,invoice_id,id,provider,provider_account_code,provider_transaction_id,
+        'summary-unallocated','fixture',100,currency,'succeeded',created_at,updated_at FROM payment_attempts WHERE invoice_id=?`)
+      .bind(fixture.invoiceId)
+      .run();
+    expect(
+      await creditNoteRefundSummary(env.BILLING_DB, "org-credit-note", body.credit_note.lago_id),
+    ).toMatchObject({ allocation_complete: false, refunded_amount_cents: 600 });
+  });
+});

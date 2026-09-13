@@ -261,6 +261,101 @@ describe("Authorize.Net webhooks", () => {
     ).resolves.toEqual({ payment_status: "succeeded", version: 2 });
   });
 
+  it("does not settle an invoice by double-counting a payment-request mirror", async () => {
+    const now = new Date().toISOString();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, email, name, currency, metadata_json,
+          payment_provider, payment_provider_code, created_at, updated_at)
+         VALUES ('customer-webhook-mirror', 'org-webhook', 'customer-webhook-mirror', NULL,
+                 'Synthetic mirror', 'USD', '{}', 'authorize_net', 'org-webhook', ?, ?)`,
+      ).bind(now, now),
+      paymentRequestInvoiceStatement(
+        "invoice-webhook-mirror",
+        "customer-webhook-mirror",
+        "INV-WEBHOOK-MIRROR",
+        1000,
+        now,
+      ),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_requests
+         (id, organization_id, customer_id, amount_minor, currency, payment_attempts,
+          payment_status, ready_for_payment_processing, version, created_at, updated_at)
+         VALUES ('payment-request-webhook-mirror', 'org-webhook',
+                 'customer-webhook-mirror', 400, 'USD', 1, 'pending', 1, 1, ?, ?)`,
+      ).bind(now, now),
+      paymentRequestLinkStatement(
+        "link-payment-request-webhook-mirror",
+        "payment-request-webhook-mirror",
+        "invoice-webhook-mirror",
+        now,
+      ),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payments
+         (id, organization_id, payment_request_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          created_at, updated_at)
+         VALUES ('payment-request-payment-webhook-mirror', 'org-webhook',
+                 'payment-request-webhook-mirror', 'authorize_net', 'org-webhook',
+                 'transaction-webhook-mirror-prior', 'payment-request-payment-webhook-mirror',
+                 400, 'USD', 'succeeded', ?, ?)`,
+      ).bind(now, now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payment_allocations
+         (id, organization_id, payment_request_payment_id, payment_request_id,
+          invoice_id, amount_minor, currency, created_at)
+         VALUES ('allocation-webhook-mirror', 'org-webhook',
+                 'payment-request-payment-webhook-mirror', 'payment-request-webhook-mirror',
+                 'invoice-webhook-mirror', 400, 'USD', ?)`,
+      ).bind(now),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_attempts
+         (id, organization_id, invoice_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          created_at, updated_at)
+         VALUES ('payment-attempt-webhook-mirror', 'org-webhook', 'invoice-webhook-mirror',
+                 'authorize_net', 'org-webhook', 'transaction-webhook-mirror-prior',
+                 'payment-attempt-webhook-mirror', 400, 'USD', 'succeeded', ?, ?)`,
+      ).bind(now, now),
+    ]);
+    await insertSyntheticReceipt(
+      "notification-webhook-mirror-current",
+      "transaction-webhook-mirror-current",
+      now,
+    );
+    const providerFetch = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        transaction: {
+          transId: "transaction-webhook-mirror-current",
+          transactionStatus: "settledSuccessfully",
+          authAmount: "3.00",
+          order: { invoiceNumber: "INV-WEBHOOK-MIRROR" },
+          userFields: {
+            userField: [{ name: "lago_invoice_id", value: "invoice-webhook-mirror" }],
+          },
+        },
+        messages: { resultCode: "Ok" },
+      }),
+    );
+
+    await expect(
+      reconcileAuthorizeNetReceipt(env, "anet_notification-webhook-mirror-current", providerFetch),
+    ).resolves.toBe("processed");
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT payment_status, payment_overdue, version FROM invoices
+         WHERE id = 'invoice-webhook-mirror'`,
+      ).first(),
+    ).resolves.toEqual({ payment_status: "pending", payment_overdue: 1, version: 1 });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT amount_minor, status FROM payment_attempts
+         WHERE provider_transaction_id = 'transaction-webhook-mirror-current'`,
+      ).first(),
+    ).resolves.toEqual({ amount_minor: 300, status: "succeeded" });
+  });
+
   it("settles a multi-invoice payment request with auditable allocations", async () => {
     const now = new Date().toISOString();
     await env.BILLING_DB.batch([
@@ -589,6 +684,99 @@ describe("Authorize.Net webhooks", () => {
         `SELECT payment_status, version FROM payment_requests WHERE id = 'payment-request-changed'`,
       ).first(),
     ).resolves.toEqual({ payment_status: "pending", version: 1 });
+  });
+
+  it("quarantines a distinct provider transaction after a payment request succeeded", async () => {
+    const now = new Date().toISOString();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(
+        `INSERT INTO customers
+         (id, organization_id, external_id, name, currency, metadata_json, created_at, updated_at)
+         VALUES ('customer-payment-request-conflict', 'org-webhook',
+                 'customer-payment-request-conflict', 'Conflict', 'USD', '{}', ?, ?)`,
+      ).bind(now, now),
+      paymentRequestInvoiceStatement(
+        "invoice-payment-request-conflict",
+        "customer-payment-request-conflict",
+        "INV-PR-CONFLICT",
+        1000,
+        now,
+      ),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_requests
+         (id, organization_id, customer_id, amount_minor, currency, payment_attempts,
+          payment_status, ready_for_payment_processing, version, created_at, updated_at)
+         VALUES ('payment-request-conflict', 'org-webhook', 'customer-payment-request-conflict',
+                 1000, 'USD', 1, 'succeeded', 0, 2, ?, ?)`,
+      ).bind(now, now),
+      paymentRequestLinkStatement(
+        "link-payment-request-conflict",
+        "payment-request-conflict",
+        "invoice-payment-request-conflict",
+        now,
+      ),
+      env.BILLING_DB.prepare(
+        `INSERT INTO payment_request_payments
+         (id, organization_id, payment_request_id, provider, provider_account_code,
+          provider_transaction_id, idempotency_key, amount_minor, currency, status,
+          version, created_at, updated_at)
+         VALUES ('payment-request-conflict-original', 'org-webhook', 'payment-request-conflict',
+                 'authorize_net', 'org-webhook', 'transaction-payment-request-original',
+                 'payment-request-conflict-original', 1000, 'USD', 'succeeded', 1, ?, ?)`,
+      ).bind(now, now),
+    ]);
+    await insertSyntheticReceipt(
+      "notification-payment-request-conflict",
+      "transaction-payment-request-distinct",
+      now,
+    );
+    const providerFetch = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        transaction: {
+          transId: "transaction-payment-request-distinct",
+          transactionStatus: "settledSuccessfully",
+          authAmount: "10.00",
+          userFields: {
+            userField: [
+              { name: "lago_payment_request_id", value: "payment-request-conflict" },
+              { name: "lago_payable_type", value: "PaymentRequest" },
+            ],
+          },
+        },
+        messages: { resultCode: "Ok" },
+      }),
+    );
+
+    await expect(
+      reconcileAuthorizeNetReceipt(
+        env,
+        "anet_notification-payment-request-conflict",
+        providerFetch,
+      ),
+    ).rejects.toThrow("payment_request_transaction_conflict");
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT processed_at, processing_error_code FROM webhook_receipts
+         WHERE id = 'anet_notification-payment-request-conflict'`,
+      ).first(),
+    ).resolves.toEqual({
+      processed_at: null,
+      processing_error_code: "payment_request_transaction_conflict",
+    });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT normalized_status FROM provider_webhook_events
+         WHERE receipt_id = 'anet_notification-payment-request-conflict'`,
+      ).first(),
+    ).resolves.toEqual({ normalized_status: null });
+    await expect(
+      env.BILLING_DB.prepare(
+        `SELECT provider_transaction_id FROM payment_request_payments
+         WHERE payment_request_id = 'payment-request-conflict'`,
+      ).all(),
+    ).resolves.toMatchObject({
+      results: [{ provider_transaction_id: "transaction-payment-request-original" }],
+    });
   });
 });
 

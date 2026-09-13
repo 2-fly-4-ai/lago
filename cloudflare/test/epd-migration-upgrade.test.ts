@@ -6,7 +6,7 @@ const db = (env as typeof env & { MIGRATION_REHEARSAL_DB: D1Database }).MIGRATIO
 const now = "2026-09-08T00:00:00.000Z";
 
 describe("EPD additive migration upgrade rehearsal (local only)", () => {
-  it("preserves legacy financial evidence and enforces the new protections across 0114–0126", async () => {
+  it("preserves legacy financial evidence and enforces the new protections across 0114–0127", async () => {
     const migrations = env.TEST_MIGRATIONS!;
     const pending = migrations.filter((migration) => Number(migration.name.slice(0, 4)) >= 114);
     expect(pending.map((migration) => migration.name)).toEqual([
@@ -23,6 +23,7 @@ describe("EPD additive migration upgrade rehearsal (local only)", () => {
       "0124_enable_reviewed_epd_recurring_products.sql",
       "0125_enable_production_epd_recurring_products.sql",
       "0126_canonical_payment_request_receipts.sql",
+      "0127_billing_period_close_fences.sql",
     ]);
     await applyD1Migrations(
       db,

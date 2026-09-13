@@ -552,6 +552,30 @@ function previewApi(pathname, requestedSlug, method = "GET", searchParams = new 
   if (pathname === "/api/operator/v1/analytics") {
     return previewAnalytics(organization.currency);
   }
+  if (pathname === "/api/operator/v1/observability/payment-executions") {
+    return {
+      payment_executions: [
+        {
+          lago_id: "synthetic-review-execution",
+          execution_kind: "checkout",
+          status: "unknown",
+          review_reason: "unknown_outcome",
+          age_seconds: 90000,
+          checkpoint: "gateway_vaulted",
+          failure_code: "provider_outcome_unverified",
+        },
+      ],
+      summary: {
+        total_count: 1,
+        checkout_count: 1,
+        automatic_count: 0,
+        pending_count: 0,
+        processing_count: 0,
+        unknown_count: 1,
+        oldest_age_seconds: 90000,
+      },
+    };
+  }
   if (pathname === "/api/operator/v1/forecasts") {
     return previewForecast(organization.currency);
   }
@@ -963,10 +987,22 @@ function previewAnalytics(currency) {
     ["2026-05", 24600],
     ["2026-06", 27400],
     ["2026-07", 30100],
-    ["2026-08", 32800],
+    ["2026-08", 52800],
   ].map(([period, amount_minor]) => ({ period, amount_minor }));
   return {
     analytics: {
+      recorded_payments: {
+        currencies: [
+          {
+            currency,
+            paid_minor: 44430,
+            refunded_minor: 450,
+            net_minor: 43980,
+            payment_count: 22,
+            refund_count: 1,
+          },
+        ],
+      },
       currency,
       from: "2025-09-01",
       to: "2026-08-18",

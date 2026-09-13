@@ -541,8 +541,9 @@ export async function handleEasyPayDirectCheckoutSubmission(
   )
     .bind(new Date().toISOString(), executionId, ...EASY_PAY_DIRECT_SETUP_REVIEW_CODES)
     .run();
-  if (claimed.meta.changes !== 1)
+  if (claimed.meta.changes !== 1) {
     throw new ApiError(409, "easy_pay_direct_processing", "Checkout is already processing");
+  }
 
   try {
     await requireEasyPayDirectReplayWindow(env.BILLING_DB, executionId);
