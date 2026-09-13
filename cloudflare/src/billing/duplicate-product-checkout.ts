@@ -3,6 +3,10 @@
 // Separate checkout IDs must not authorize two subscriptions to the same app.
 // Unsubmitted/definitively declined attempts do not reserve a product. Unknown
 // provider outcomes do: a timeout is not proof that no money moved.
+// Store's direct generic-plan checkout records the offer slug as its origin.
+// Those five price buckets are NOT product assignments: customers may purchase
+// several and assign each to a different app. Keep this list aligned with
+// store-core/src/generic-plans.ts; the bundle is not a one-app price bucket.
 export const noDuplicateProductCheckoutSql = `NOT EXISTS (
   SELECT 1 FROM invoices_payment_requests own_link
   JOIN invoices own_invoice ON own_invoice.id = own_link.invoice_id
@@ -28,6 +32,10 @@ export const noDuplicateProductCheckoutSql = `NOT EXISTS (
   JOIN invoices other_invoice ON other_invoice.subscription_id = other_subscription.id
     AND other_invoice.organization_id = other_subscription.organization_id
   WHERE own_link.payment_request_id = r.id AND own_link.organization_id = r.organization_id
+    AND own_product.product_slug NOT IN (
+      'serp-1-app-plan', 'serp-app-plus-plan', 'serp-1-app-plus-plan',
+      'serp-1-app-premium-plan', 'serp-1-app-lifetime-plan'
+    )
     AND own_plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
     AND other_plan.interval IN ('weekly', 'monthly', 'quarterly', 'yearly')
     AND other_subscription.id <> own_subscription.id

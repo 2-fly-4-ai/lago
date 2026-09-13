@@ -124,6 +124,21 @@ async function claim(id: string) {
 }
 
 describe("same-product recurring purchase protection (real local D1)", () => {
+  it.each([
+    "serp-1-app-plan",
+    "serp-app-plus-plan",
+    "serp-1-app-plus-plan",
+    "serp-1-app-premium-plan",
+    "serp-1-app-lifetime-plan",
+  ])("allows a repeated unassigned price-bucket checkout: %s", async (product) => {
+    const org = await fixture();
+    const first = await checkout(org, { paid: true, product });
+    const second = await checkout(org, { product });
+    await env.BILLING_DB.prepare("UPDATE subscriptions SET plan_id=? WHERE id=?")
+      .bind(first, second)
+      .run();
+    expect(await claim(second)).toBe(1);
+  });
   it("blocks a second paid subscription across customer IDs and normalized emails", async () => {
     const org = await fixture();
     await checkout(org, { paid: true, email: " Buyer@Example.Test " });
@@ -185,5 +200,43 @@ describe("same-product recurring purchase protection (real local D1)", () => {
     const org = await fixture();
     await checkout(org, { paid: true });
     expect(await claim(await checkout(org, { interval: "one_time" }))).toBe(1);
+  });
+  it("allows the same customer to buy the exact same generic plan for another app", async () => {
+    const org = await fixture();
+    const first = await checkout(org, { paid: true, product: "first-app" });
+    const second = await checkout(org, { product: "second-app" });
+    await env.BILLING_DB.prepare("UPDATE subscriptions SET plan_id=? WHERE id=?")
+      .bind(first, second)
+      .run();
+    expect(await allowed(second)).toBe(true);
+    expect(await claim(second)).toBe(1);
+  });
+  it("allows multiple unassigned purchases of the exact same generic plan", async () => {
+    const org = await fixture();
+    const first = await checkout(org, { paid: true });
+    const second = await checkout(org);
+    await env.BILLING_DB.prepare("UPDATE subscriptions SET plan_id=? WHERE id=?")
+      .bind(first, second)
+      .run();
+    await env.BILLING_DB.prepare(
+      "DELETE FROM subscription_checkout_products WHERE subscription_id IN (?,?)",
+    )
+      .bind(first, second)
+      .run();
+    expect(await claim(second)).toBe(1);
+  });
+  it("does not mistake an unassigned generic-plan purchase for an assigned app purchase", async () => {
+    const org = await fixture();
+    const first = await checkout(org, { paid: true });
+    const second = await checkout(org);
+    await env.BILLING_DB.prepare("UPDATE subscriptions SET plan_id=? WHERE id=?")
+      .bind(first, second)
+      .run();
+    await env.BILLING_DB.prepare(
+      "DELETE FROM subscription_checkout_products WHERE subscription_id=?",
+    )
+      .bind(first)
+      .run();
+    expect(await claim(second)).toBe(1);
   });
 });
