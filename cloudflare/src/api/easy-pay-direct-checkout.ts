@@ -7,6 +7,7 @@ import {
 } from "../billing/easy-pay-direct-recovery-policy";
 import { requireEasyPayDirectOrderEvidence } from "../billing/easy-pay-direct-order-evidence";
 import { easyPayDirectPurchaseKind } from "../billing/easy-pay-direct-purchase-kind";
+import { noDuplicateProductCheckoutSql } from "../billing/duplicate-product-checkout";
 import {
   addEasyPayDirectPaymentMethod,
   chargeEasyPayDirectGatewayToken,
@@ -541,8 +542,22 @@ export async function handleEasyPayDirectCheckoutSubmission(
   )
     .bind(new Date().toISOString(), executionId, ...EASY_PAY_DIRECT_SETUP_REVIEW_CODES)
     .run();
-  if (claimed.meta.changes !== 1)
+  if (claimed.meta.changes !== 1) {
+    const duplicate = await env.BILLING_DB.prepare(
+      `SELECT r.id FROM payment_requests r WHERE r.id = ? AND r.organization_id = ?
+       AND NOT (${noDuplicateProductCheckoutSql})`,
+    )
+      .bind(checkout.payment_request_id, checkout.organization_id)
+      .first();
+    if (duplicate) {
+      throw new ApiError(
+        409,
+        "easy_pay_direct_duplicate_subscription",
+        "You already have a subscription or a payment awaiting confirmation for this app. Check your account or contact support before purchasing again.",
+      );
+    }
     throw new ApiError(409, "easy_pay_direct_processing", "Checkout is already processing");
+  }
 
   try {
     await requireEasyPayDirectReplayWindow(env.BILLING_DB, executionId);
