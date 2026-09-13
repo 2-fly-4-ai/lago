@@ -1,5 +1,3 @@
-import { noDuplicateProductCheckoutSql } from "./duplicate-product-checkout";
-
 // Correlated against easy_pay_direct_payment_executions in SELECT/UPDATE.
 // Keep claims, batch selection, and the last pre-order check on the same rules.
 // EPD retains Commerce idempotency keys for 24 hours. Stop mutating retries
@@ -100,7 +98,9 @@ export const EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL = `
           AND currency_customer.currency = i.currency
       )
       AND ${easyPayDirectOutstandingInvoiceBalanceSql("r")}
-      AND ${noDuplicateProductCheckoutSql}
+      -- Deduplicate the financial obligation, not the customer's plan or
+      -- checkout-origin product. Separate invoices can be legitimate purchases
+      -- of the same generic plan, including plans bound to different apps.
       AND NOT EXISTS (
         SELECT 1 FROM invoices_payment_requests own_link
         JOIN invoices_payment_requests shared_link

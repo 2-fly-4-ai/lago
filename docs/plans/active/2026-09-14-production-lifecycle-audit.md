@@ -2,8 +2,8 @@
 
 ## Scope and ownership
 
-Audit the live EPD Gateway/Lago lifecycle after rollout and fix the confirmed
-cross-checkout duplicate recurring-purchase gap. Root Cloudflare code owns payment
+Audit the live EPD Gateway/Lago lifecycle after rollout and verify duplicate-charge
+protection without prohibiting independent purchases. Root Cloudflare code owns payment
 execution and billing; Store owns checkout initiation and customer access. No API
 or frontend submodule pointer changes are planned.
 
@@ -19,8 +19,9 @@ contract, not the legacy Commerce API.
 
 - Fresh production payment, invoice, refund, renewal, outbox and delivery checks.
 - Inspect duplicate paid subscriptions and unpaid subscriptions' actual renewal eligibility.
-- Prevent a second same-product recurring charge across distinct checkout requests,
-  including concurrent submissions; preserve distinct-product purchases.
+- Prevent duplicate claims of the same execution and concurrent/uncertain charges
+  against the same invoice; preserve independent invoices, even for the same plan,
+  email and checkout-origin product. Origin is not authoritative app assignment.
 - Add regression tests and run the full Cloudflare gate.
 - Separate production evidence, local simulated tests and remaining unknowns.
 - Report deployment status and exact required customer remediation.
@@ -32,6 +33,26 @@ and reviewed before an explicitly approved deployment. Preserve the current
 production versions and customer financial history.
 
 ## Progress
+
+### Current correction — September 14
+
+- Removed the unshipped checkout-origin uniqueness predicate and its customer-facing
+  duplicate-subscription rejection. The preceding historical implementation notes
+  below are superseded: same email/plan/origin does not prove a duplicate purchase.
+- Retained the existing atomic execution claim, same-invoice in-flight/unknown
+  exclusions, outstanding-balance checks and provider idempotency safeguards.
+- All 28 local-D1 purchase-scope cases pass, including concurrent claims for one
+  execution, two requests for one invoice, paid invoices, and independent purchases
+  sharing the exact customer, plan and origin. Updated fixtures construct immutable
+  checkout identities correctly rather than attempting to mutate signed identities.
+- Full `pnpm run check` passed after the correction: formatting, lint, Access,
+  checkout/provider contracts, inventory, tax checks, binding types, TypeScript,
+  full regression suite and every development/production dry-run build.
+- No Lago deployment or production financial mutation was performed for this
+  correction. A Store-owned optional already-owned-app warning would be a separate
+  UX rule, not a payment-layer prohibition inferred from checkout origin.
+
+### Historical checkpoints
 
 - Confirmed two distinct approved $17 monthly payments for the same product/customer
   in Gateway and Lago; a third unpaid attempt has an active subscription record.

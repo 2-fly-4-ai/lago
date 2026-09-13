@@ -1,6 +1,5 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { noDuplicateProductCheckoutSql } from "../src/billing/duplicate-product-checkout";
 import { EASY_PAY_DIRECT_PAYABLE_EXECUTION_SQL } from "../src/billing/easy-pay-direct-recovery-policy";
 
 const now = new Date().toISOString();
@@ -21,9 +20,12 @@ async function checkout(
     interval?: string;
     paid?: boolean;
     status?: string;
+    customerAndPlan?: string;
+    invoiceId?: string;
   } = {},
 ) {
   const id = crypto.randomUUID();
+  const customer = options.customerAndPlan ?? id;
   await env.BILLING_DB.batch([
     env.BILLING_DB.prepare(`INSERT INTO customers
       (id,organization_id,external_id,email,currency,payment_provider,payment_provider_code,created_at,updated_at)
@@ -47,7 +49,16 @@ async function checkout(
     ),
     env.BILLING_DB.prepare(`INSERT INTO subscriptions
       (id,organization_id,customer_id,plan_id,external_id,status,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?)`).bind(id, org, id, id, id, options.status ?? "active", now, now),
+      VALUES (?,?,?,?,?,?,?,?)`).bind(
+      id,
+      org,
+      customer,
+      customer,
+      id,
+      options.status ?? "active",
+      now,
+      now,
+    ),
     env.BILLING_DB.prepare(`INSERT INTO subscription_checkout_products
       (subscription_id,organization_id,product_slug,created_at) VALUES (?,?,?,?)`).bind(
       id,
@@ -61,7 +72,7 @@ async function checkout(
       VALUES (?,?,?,?,?,'finalized',?,'USD',1700,1700,1,?,?)`).bind(
       id,
       org,
-      id,
+      customer,
       id,
       id,
       "pending",
@@ -70,16 +81,16 @@ async function checkout(
     ),
     env.BILLING_DB.prepare(`INSERT INTO payment_requests
       (id,organization_id,customer_id,amount_minor,currency,collection_mode,created_at,updated_at)
-      VALUES (?,?,?,1700,'USD','checkout',?,?)`).bind(id, org, id, now, now),
+      VALUES (?,?,?,1700,'USD','checkout',?,?)`).bind(id, org, customer, now, now),
     env.BILLING_DB.prepare(`INSERT INTO invoices_payment_requests
       (id,organization_id,payment_request_id,invoice_id,invoice_version,created_at,updated_at)
-      VALUES (?,?,?,?,1,?,?)`).bind(id, org, id, id, now, now),
+      VALUES (?,?,?,?,1,?,?)`).bind(id, org, id, options.invoiceId ?? id, now, now),
     env.BILLING_DB.prepare(`INSERT INTO payment_request_checkout_intents
       (id,organization_id,payment_request_id,customer_id,provider,provider_account_code,
        idempotency_key,request_sha256,amount_minor,currency,payment_request_version,status,
        payment_url,provider_token_sha256,created_at,updated_at)
       VALUES (?,?,?,?,'easy_pay_direct','fixture',?,'fixture',1700,'USD',1,'succeeded',
-       'https://fixture.test','fixture',?,?)`).bind(id, org, id, id, id, now, now),
+       'https://fixture.test','fixture',?,?)`).bind(id, org, id, customer, id, now, now),
     env.BILLING_DB.prepare(`INSERT INTO easy_pay_direct_payment_executions
       (id,organization_id,checkout_intent_id,payment_request_id,provider_account_code,
        request_sha256,payment_token_sha256,phone_sha256,customer_idempotency_key,
@@ -105,14 +116,6 @@ async function checkout(
   }
   return id;
 }
-async function allowed(id: string) {
-  return (
-    (await env.BILLING_DB.prepare(`SELECT r.id FROM payment_requests r
-    WHERE r.id=? AND ${noDuplicateProductCheckoutSql}`)
-      .bind(id)
-      .first()) !== null
-  );
-}
 async function claim(id: string) {
   return (
     await env.BILLING_DB.prepare(`UPDATE easy_pay_direct_payment_executions
@@ -123,7 +126,9 @@ async function claim(id: string) {
   ).meta.changes;
 }
 
-describe("same-product recurring purchase protection (real local D1)", () => {
+// Checkout origin is not Store's final app assignment. Only the same financial
+// obligation/execution is deduplicated here, never email + generic plan/product.
+describe("independent purchases and same-invoice protection (real local D1)", () => {
   it.each([
     "serp-1-app-plan",
     "serp-app-plus-plan",
@@ -139,24 +144,26 @@ describe("same-product recurring purchase protection (real local D1)", () => {
       .run();
     expect(await claim(second)).toBe(1);
   });
-  it("blocks a second paid subscription across customer IDs and normalized emails", async () => {
+  it("allows a separate purchase despite a paid subscription and normalized email match", async () => {
     const org = await fixture();
     await checkout(org, { paid: true, email: " Buyer@Example.Test " });
     const second = await checkout(org);
-    expect(await allowed(second)).toBe(false);
-    expect(await claim(second)).toBe(0);
+    expect(await claim(second)).toBe(1);
   });
-  it.each(["processing", "unknown", "succeeded"])("holds another %s outcome", async (status) => {
-    const org = await fixture();
-    const first = await checkout(org);
-    const second = await checkout(org);
-    await env.BILLING_DB.prepare(
-      "UPDATE easy_pay_direct_payment_executions SET status=? WHERE id=?",
-    )
-      .bind(status, first)
-      .run();
-    expect(await claim(second)).toBe(0);
-  });
+  it.each(["processing", "unknown", "succeeded"])(
+    "does not block a separate invoice with another %s outcome",
+    async (status) => {
+      const org = await fixture();
+      const first = await checkout(org);
+      const second = await checkout(org);
+      await env.BILLING_DB.prepare(
+        "UPDATE easy_pay_direct_payment_executions SET status=? WHERE id=?",
+      )
+        .bind(status, first)
+        .run();
+      expect(await claim(second)).toBe(1);
+    },
+  );
   it.each(["pending", "failed"])("allows another %s uncharged/declined attempt", async (status) => {
     const org = await fixture();
     const first = await checkout(org);
@@ -168,18 +175,52 @@ describe("same-product recurring purchase protection (real local D1)", () => {
       .run();
     expect(await claim(second)).toBe(1);
   });
-  it("atomically allows only one of two concurrent distinct checkout claims", async () => {
+  it("allows concurrent independent purchases, even from the same product page", async () => {
     const org = await fixture();
     const first = await checkout(org);
     const second = await checkout(org);
     const results = await Promise.all([claim(first), claim(second)]);
-    expect(results.sort()).toEqual([0, 1]);
+    expect(results).toEqual([1, 1]);
   });
-  it("does not block itself after winning the claim", async () => {
+  it("only claims a single execution once under concurrent submissions", async () => {
     const org = await fixture();
     const id = await checkout(org);
-    expect(await claim(id)).toBe(1);
-    expect(await allowed(id)).toBe(true);
+    expect((await Promise.all([claim(id), claim(id)])).sort()).toEqual([0, 1]);
+  });
+  it("claims only one of two concurrent payment requests for the same invoice", async () => {
+    const org = await fixture();
+    const first = await checkout(org);
+    const second = await checkout(org, { customerAndPlan: first, invoiceId: first });
+    expect((await Promise.all([claim(first), claim(second)])).sort()).toEqual([0, 1]);
+  });
+  it.each(["processing", "unknown"])(
+    "blocks a second request for the same invoice with a %s outcome",
+    async (status) => {
+      const org = await fixture();
+      const first = await checkout(org);
+      const second = await checkout(org, { customerAndPlan: first, invoiceId: first });
+      await env.BILLING_DB.prepare(
+        "UPDATE easy_pay_direct_payment_executions SET status=? WHERE id=?",
+      )
+        .bind(status, first)
+        .run();
+      expect(await claim(second)).toBe(0);
+    },
+  );
+  it("blocks a stale request after its shared invoice has been paid", async () => {
+    const org = await fixture();
+    const first = await checkout(org);
+    const second = await checkout(org, { customerAndPlan: first, invoiceId: first });
+    await env.BILLING_DB.prepare("UPDATE invoices SET payment_status='succeeded' WHERE id=?")
+      .bind(first)
+      .run();
+    expect(await claim(second)).toBe(0);
+  });
+  it("allows separate invoices for the exact same customer, plan and checkout origin", async () => {
+    const org = await fixture();
+    const first = await checkout(org, { paid: true });
+    const second = await checkout(org, { customerAndPlan: first });
+    expect(await claim(second)).toBe(1);
   });
   it.each([
     { product: "other-app" },
@@ -204,11 +245,7 @@ describe("same-product recurring purchase protection (real local D1)", () => {
   it("allows the same customer to buy the exact same generic plan for another app", async () => {
     const org = await fixture();
     const first = await checkout(org, { paid: true, product: "first-app" });
-    const second = await checkout(org, { product: "second-app" });
-    await env.BILLING_DB.prepare("UPDATE subscriptions SET plan_id=? WHERE id=?")
-      .bind(first, second)
-      .run();
-    expect(await allowed(second)).toBe(true);
+    const second = await checkout(org, { product: "second-app", customerAndPlan: first });
     expect(await claim(second)).toBe(1);
   });
   it("allows multiple unassigned purchases of the exact same generic plan", async () => {
