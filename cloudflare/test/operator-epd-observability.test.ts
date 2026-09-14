@@ -245,6 +245,106 @@ describe("operator EPD payment execution review", () => {
     expect(serialized).not.toContain("private-order-");
   });
 
+  it("separates reviewed history without resolving or hiding executions and reopens changed evidence", async () => {
+    const tenant = await organization("review-annotation");
+    const now = new Date().toISOString();
+    const id = await checkoutExecution(tenant, { status: "unknown", updatedAt: now });
+    const other = await checkoutExecution(tenant, { status: "unknown", updatedAt: now });
+    const invoiceId = crypto.randomUUID();
+    await env.BILLING_DB.batch([
+      env.BILLING_DB.prepare(`INSERT INTO invoices
+        (id,organization_id,customer_id,status,payment_status,currency,payment_overdue,created_at,updated_at)
+        VALUES (?, ?, ?, 'finalized','pending','USD',1,?,?)`).bind(
+        invoiceId,
+        tenant,
+        `customer-${id}`,
+        now,
+        now,
+      ),
+      env.BILLING_DB.prepare(`INSERT INTO invoices_payment_requests
+        (id,organization_id,payment_request_id,invoice_id,invoice_version,created_at,updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, ?)`).bind(
+        crypto.randomUUID(),
+        tenant,
+        `request-${id}`,
+        invoiceId,
+        now,
+        now,
+      ),
+    ]);
+    const note = {
+      execution_id: id,
+      outcome: "no_matching_gateway_charge_found",
+      checkpoint: "created",
+      resume_count: 0,
+      failure_code: null,
+    };
+    const metadataId = crypto.randomUUID();
+    await env.BILLING_DB.prepare(`INSERT INTO invoice_metadata
+      (id,organization_id,invoice_id,key,value,created_at,updated_at)
+      VALUES (?, ?, ?, 'epd_execution_review', ?, ?, ?)`)
+      .bind(metadataId, tenant, invoiceId, JSON.stringify(note), now, now)
+      .run();
+    async function readReview() {
+      const response = await handleOperatorObservabilityRequest(
+        new Request("https://operator.test/api/operator/v1/observability/payment-executions"),
+        env.BILLING_DB,
+        tenant,
+        "review-annotation-test",
+      );
+      return response!.json<{
+        summary: { total_count: number; reviewed_count: number; action_required_count: number };
+        payment_executions: Array<{ lago_id: string; status: string; review_status: string }>;
+      }>();
+    }
+    const reviewed = await readReview();
+    expect(reviewed.summary).toMatchObject({
+      total_count: 2,
+      reviewed_count: 1,
+      action_required_count: 1,
+    });
+    expect(reviewed.payment_executions[0]?.lago_id).toBe(other);
+    expect(reviewed.payment_executions).toContainEqual(
+      expect.objectContaining({
+        lago_id: id,
+        status: "unknown",
+        review_status: "reviewed_no_gateway_match",
+      }),
+    );
+    for (const invalid of [
+      "not json",
+      JSON.stringify({ ...note, execution_id: other }),
+      JSON.stringify({ ...note, checkpoint: "provider_customer" }),
+    ]) {
+      await env.BILLING_DB.prepare("UPDATE invoice_metadata SET value=? WHERE id=?")
+        .bind(invalid, metadataId)
+        .run();
+      expect((await readReview()).summary.reviewed_count).toBe(0);
+    }
+    await env.BILLING_DB.prepare("UPDATE invoice_metadata SET value=? WHERE id=?")
+      .bind(JSON.stringify(note), metadataId)
+      .run();
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_payment_executions SET resume_count=1 WHERE id=?",
+    )
+      .bind(id)
+      .run();
+    expect((await readReview()).summary.reviewed_count).toBe(0);
+    await env.BILLING_DB.prepare(
+      "UPDATE easy_pay_direct_payment_executions SET resume_count=0, provider_transaction_id='test-new-evidence' WHERE id=?",
+    )
+      .bind(id)
+      .run();
+    expect((await readReview()).summary.reviewed_count).toBe(0);
+    expect(
+      await env.BILLING_DB.prepare(
+        "SELECT status FROM easy_pay_direct_payment_executions WHERE id=?",
+      )
+        .bind(id)
+        .first("status"),
+    ).toBe("unknown");
+  });
+
   it("does not handle mutations", async () => {
     const primary = await organization("epd-observability-read-only");
     const response = await handleOperatorObservabilityRequest(

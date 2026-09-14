@@ -1,6 +1,7 @@
 import { ApiError, json } from "../http";
 import { authenticateOperatorAccess, type OperatorEnv } from "./access";
 import type { JWTVerifyGetKey } from "jose";
+import { reviewedCheckoutSql } from "./payment-review";
 
 type ActivityRow = {
   event_id: string;
@@ -46,6 +47,7 @@ type WebhookLogRow = {
 };
 
 type EasyPayDirectExecutionReviewRow = {
+  historically_reviewed: number;
   id: string;
   execution_kind: "checkout" | "automatic";
   status: "pending" | "processing" | "unknown";
@@ -62,6 +64,7 @@ type EasyPayDirectExecutionReviewRow = {
 };
 
 type EasyPayDirectExecutionReviewSummaryRow = {
+  reviewed_count: number;
   total_count: number;
   checkout_count: number;
   automatic_count: number;
@@ -73,6 +76,7 @@ type EasyPayDirectExecutionReviewSummaryRow = {
 
 const EASY_PAY_DIRECT_EXECUTION_REVIEW_CTE = `WITH review_executions AS (
   SELECT execution.id, 'checkout' AS execution_kind, execution.status,
+         CASE WHEN ${reviewedCheckoutSql} THEN 1 ELSE 0 END AS historically_reviewed,
          CASE execution.status
            WHEN 'unknown' THEN 'unknown_outcome'
            WHEN 'processing' THEN 'stale_processing'
@@ -95,6 +99,7 @@ const EASY_PAY_DIRECT_EXECUTION_REVIEW_CTE = `WITH review_executions AS (
   )
   UNION ALL
   SELECT execution.id, 'automatic' AS execution_kind, execution.status,
+         0 AS historically_reviewed,
          CASE execution.status
            WHEN 'unknown' THEN 'unknown_outcome'
            WHEN 'processing' THEN 'stale_processing'
@@ -189,6 +194,7 @@ async function easyPayDirectExecutionReview(
       .prepare(
         `${EASY_PAY_DIRECT_EXECUTION_REVIEW_CTE}
          SELECT COUNT(*) AS total_count,
+                COALESCE(SUM(historically_reviewed), 0) AS reviewed_count,
                 COALESCE(SUM(execution_kind = 'checkout'), 0) AS checkout_count,
                 COALESCE(SUM(execution_kind = 'automatic'), 0) AS automatic_count,
                 COALESCE(SUM(status = 'pending'), 0) AS pending_count,
@@ -202,16 +208,17 @@ async function easyPayDirectExecutionReview(
     database
       .prepare(
         `${EASY_PAY_DIRECT_EXECUTION_REVIEW_CTE}
-         SELECT id, execution_kind, status, review_reason, checkpoint, failure_code,
+         SELECT id, execution_kind, status, historically_reviewed, review_reason, checkpoint, failure_code,
                 attempt_count, payment_backend, charge_transport,
                 provider_transaction_recorded, age_seconds, created_at, updated_at
          FROM review_executions
-         ORDER BY updated_at ASC, id ASC LIMIT ${listLimit(search)}`,
+         ORDER BY historically_reviewed ASC, updated_at ASC, id ASC LIMIT ${listLimit(search)}`,
       )
       .bind(organizationId, organizationId)
       .all<EasyPayDirectExecutionReviewRow>(),
   ]);
   const counts = summary ?? {
+    reviewed_count: 0,
     total_count: 0,
     checkout_count: 0,
     automatic_count: 0,
@@ -227,6 +234,8 @@ async function easyPayDirectExecutionReview(
         execution_kind: row.execution_kind,
         status: row.status,
         review_reason: row.review_reason,
+        review_status:
+          row.historically_reviewed === 1 ? "reviewed_no_gateway_match" : "needs_review",
         age_seconds: row.age_seconds,
         checkpoint: row.checkpoint,
         failure_code: redactedDiagnosticCode(row.failure_code),
@@ -239,6 +248,8 @@ async function easyPayDirectExecutionReview(
       })),
       summary: {
         total_count: counts.total_count,
+        reviewed_count: counts.reviewed_count,
+        action_required_count: counts.total_count - counts.reviewed_count,
         checkout_count: counts.checkout_count,
         automatic_count: counts.automatic_count,
         pending_count: counts.pending_count,
