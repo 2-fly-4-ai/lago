@@ -2663,13 +2663,15 @@ async function loadPaymentReview() {
   try {
     const payload = await requestJson("/api/operator/v1/observability/payment-executions?limit=50");
     const items = payload.payment_executions;
-    summary.textContent = `${payload.summary.total_count} payment execution(s) need review; showing ${items.length}. This view never retries a payment.`;
+    summary.textContent = `${payload.summary.action_required_count ?? payload.summary.total_count} payment execution(s) need review; ${payload.summary.reviewed_count ?? 0} historically reviewed with no matching Gateway charge found; showing ${items.length}. Financial outcomes remain unchanged. This view never retries a payment.`;
     for (const item of items) {
       const row = document.createElement("tr");
       const values = [
         item.lago_id,
         humanize(item.execution_kind),
-        humanize(item.review_reason),
+        item.review_status === "reviewed_no_gateway_match"
+          ? "Reviewed — no matching Gateway charge found; outcome unknown"
+          : humanize(item.review_reason),
         `${Math.floor(item.age_seconds / 3600)} hours`,
         item.checkpoint ?? "—",
         item.failure_code ?? "—",
